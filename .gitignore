@@ -22,8 +22,8 @@ evals/reports/local*/
 crash.log
 *.agekey
 
-# private — the candid docs never ship
-hidden.md
+# local working files
+notes.md
 REQUIREMENTS.md
 his.md
 pl/
