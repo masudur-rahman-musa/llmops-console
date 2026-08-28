@@ -1,0 +1,3 @@
+# Architecture
+
+An OpenAI-compatible FastAPI gateway that authenticates tenants, resolves model aliases through a routing policy with deny-by-default EU residency, redacts PII, checks budgets and rate limits, serves from a semantic cache when safe, calls the provider (hosted or self-hosted llama.cpp / vLLM) with circuit breakers and fallbacks, and records cost, tokens and traces (Langfuse EU, OpenTelemetry, Prometheus). Beside it: an eval runner that scores the companion helpdesk against its golden set in CI and nightly, a console UI reading from Postgres and Prometheus through a console API, and the infra (Terraform on Hetzner, k3s, Grafana, Alertmanager) that deploys both repos. A diagram lands at the first milestone.
