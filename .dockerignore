@@ -1,0 +1,50 @@
+# What never enters the shipped image. Mirror of the rule:
+# src/ is what runs, tests/ is what checks, dev-process/ is how we work.
+
+# version control and editor
+.git
+.gitignore
+.gitattributes
+.editorconfig
+.vscode
+.idea
+.DS_Store
+
+# secrets and local config (real config is injected at runtime)
+.env
+.env.*
+!.env.example
+
+# the coding agent and its tooling
+.claude
+CLAUDE.md
+.mcp.json
+
+# verification, CI, and dev tooling
+tests
+project-evals
+project-obs
+infra
+.github
+.pre-commit-config.yaml
+Makefile
+
+# our working process and documentation
+dev-process
+docs
+README.md
+LICENSE
+
+# ADAPT: language artifacts that must be built inside the image, not copied in
+# __pycache__/ .venv/ .pytest_cache/ .ruff_cache/ .mypy_cache/
+# node_modules/ .next/ dist/ build/ coverage/
+
+# scripts: keep only if a script must run on the server (migrations, seed)
+# scripts
+
+# private working files (never in an image either)
+notes.md
+his.md
+REQUIREMENTS.md
+pl
+dev-process

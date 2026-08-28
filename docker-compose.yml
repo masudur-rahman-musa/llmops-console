@@ -1,0 +1,17 @@
+# One command brings up the whole local stack: `docker compose up -d`.
+# ADAPT services to the stack. Never real secrets here; read from .env.
+services:
+  app:
+    build: .
+    env_file: .env
+    ports: ["8000:8000"]
+    depends_on: [db]
+  db:
+    image: postgres:16   # ADAPT
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    volumes: ["dbdata:/var/lib/postgresql/data"]
+volumes:
+  dbdata:

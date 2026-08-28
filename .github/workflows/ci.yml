@@ -1,0 +1,17 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # ADAPT: toolchain setup, then mirror the Makefile gate:
+      # - run: make setup
+      # - run: pre-commit run --all-files   # same checks as local; unskippable here
+      # - run: make lint
+      # - run: make typecheck
+      # - run: make test
+      - run: echo "ADAPT ci.yml, then remove this line" && exit 1

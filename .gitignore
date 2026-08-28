@@ -27,5 +27,12 @@ notes.md
 REQUIREMENTS.md
 his.md
 pl/
-plans/
+dev-process/plans/
 .claude/hooks/local_*
+# AI
+project-evals/reports/
+# Service
+.terraform/
+*.tfstate
+*.tfstate.backup
+crash.log
