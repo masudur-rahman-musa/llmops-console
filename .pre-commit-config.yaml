@@ -1,4 +1,3 @@
-# Generic hooks work for any language. ADAPT: add your formatter/linter hooks.
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -14,4 +13,9 @@ repos:
     rev: v8.24.3
     hooks:
       - id: gitleaks
-  # ADAPT: language hooks (ruff / prettier / eslint / gofmt ...)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.6
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format

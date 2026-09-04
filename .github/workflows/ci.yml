@@ -3,15 +3,27 @@ on:
   pull_request:
   push:
     branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Superseded PR runs are worth cancelling; a main commit's gate is not, or it
+  # ends up recorded as neither passed nor failed.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # ADAPT: toolchain setup, then mirror the Makefile gate:
-      # - run: make setup
-      # - run: pre-commit run --all-files   # same checks as local; unskippable here
-      # - run: make lint
-      # - run: make typecheck
-      # - run: make test
-      - run: echo "ADAPT ci.yml, then remove this line" && exit 1
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      # Same checks as the local pre-commit hooks, and unskippable here.
+      - run: uv run pre-commit run --all-files
+      # Mirrors the Makefile gate. `format` runs as a check with the locked ruff,
+      # not only through the pre-commit-pinned one.
+      - run: uv run ruff format --check .
+      - run: make lint
+      - run: make typecheck
+      - run: make test
