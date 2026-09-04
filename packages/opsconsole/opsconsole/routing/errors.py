@@ -1,26 +1,30 @@
 """Typed routing failures.
 
 Each client-facing error carries the wire `code` from the API error contract and
-the HTTP status it maps to. An earlier change builds the OpenAI-shaped body from these two
-attributes, so they are pinned exactly by
+the HTTP status it maps to. `opsconsole.gateway.errors` builds the OpenAI-shaped
+body from those two attributes, so they are pinned exactly by
 `test_empty_candidates_raises_residency_unavailable`, `test_unknown_alias_raises`,
-`test_is_healthy_filtering_everything_raises_all_providers_unavailable` and
-`test_identifier_rejection_table` rather than left to a later reader.
+`test_is_healthy_filtering_everything_raises_all_providers_unavailable`,
+`test_identifier_rejection_table` and, as a set,
+`test_error_code_set_is_exhaustive`.
 
 `PolicyInvalid` is the exception to that: a rejected policy file is an operator
-error reported to whoever reloaded it, so it has no client code.
+error reported to whoever reloaded it, never an answer to a caller, so it is a
+plain exception rather than a `GatewayError` with no code the handler could use.
 """
 
 from __future__ import annotations
 
 from typing import ClassVar
 
-
-class RoutingError(Exception):
-    """Base for every failure raised by the routing package."""
+from opsconsole.core.errors import ErrorCode, GatewayError
 
 
-class PolicyInvalid(RoutingError):
+class RoutingError(GatewayError):
+    """Base for every client-facing failure raised by the routing package."""
+
+
+class PolicyInvalid(Exception):
     """The policy file could not be read, parsed or validated."""
 
 
@@ -32,7 +36,7 @@ class AliasUnknown(RoutingError):
     name it cannot use; pinned by `test_unknown_alias_raises`.
     """
 
-    code: ClassVar[str] = "ALIAS_UNKNOWN"
+    code: ClassVar[ErrorCode] = ErrorCode.ALIAS_UNKNOWN
     http_status: ClassVar[int] = 404
 
 
@@ -43,19 +47,24 @@ class ResidencyUnavailable(RoutingError):
     never widens the region set to avoid raising it.
     """
 
-    code: ClassVar[str] = "RESIDENCY_UNAVAILABLE"
+    code: ClassVar[ErrorCode] = ErrorCode.RESIDENCY_UNAVAILABLE
     http_status: ClassVar[int] = 451
 
 
 class AllProvidersUnavailable(RoutingError):
     """Candidates were allowed by residency, but none of them is healthy."""
 
-    code: ClassVar[str] = "ALL_PROVIDERS_FAILED"
+    code: ClassVar[ErrorCode] = ErrorCode.ALL_PROVIDERS_FAILED
     http_status: ClassVar[int] = 503
 
 
 class IdentifierInvalid(RoutingError):
-    """A client-supplied identifier failed its pre-check."""
+    """A client-supplied identifier failed its pre-check.
 
-    code: ClassVar[str] = "VALIDATION"
+    Raised by the resolver for a tenant or alias, and by
+    `opsconsole.gateway.context` for the `X-Tenant`, `X-Session` and
+    `X-Data-Class` headers, so one code covers every rejected input.
+    """
+
+    code: ClassVar[ErrorCode] = ErrorCode.VALIDATION
     http_status: ClassVar[int] = 422
