@@ -15,8 +15,15 @@ setup:      ## Install dependencies and pre-commit hooks
 	$(call console,install)
 run:        ## Run the project locally
 	docker compose up -d && uv run python -c 'from services.gateway.main import serve; serve(reload=True)'
+# The packages that carry a guarantee rather than a feature. They are gated at
+# 100% on top of the 80% the whole tree has to clear. This reads the coverage
+# data pytest just wrote instead of re-running with `--cov=<path>`, because that
+# flag overrides `[tool.coverage.run] source` and would silently unmeasure
+# everything outside the path.
+COVERED_100 = packages/opsconsole/opsconsole/routing/*
 test:       ## Run tests with the coverage gate
 	uv run pytest -q --cov --cov-fail-under=80
+	uv run coverage report --include='$(COVERED_100)' --fail-under=100
 lint:       ## Lint
 	uv run ruff check .
 	$(call console,lint)
