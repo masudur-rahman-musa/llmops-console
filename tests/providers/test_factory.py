@@ -17,8 +17,10 @@ import logging
 
 import pytest
 
+from opsconsole.providers.anthropic import AnthropicAdapter
 from opsconsole.providers.base import Adapter
 from opsconsole.providers.factory import build_adapters
+from opsconsole.providers.openai_compatible import OpenAICompatibleAdapter
 from opsconsole.routing.policy import Policy, Provider, ProviderKind
 
 KEY_ENV = "ANTHROPIC_API_KEY_EU"
@@ -139,3 +141,153 @@ def test_an_empty_policy_builds_nothing_and_says_nothing(caplog: pytest.LogCaptu
 
     assert adapters == {}
     assert caplog.records == []
+
+
+# --- the openai_compatible kind -----------------------------------
+#
+# A policy of its own rather than more rows in `POLICY` above: the cases there
+# assert the whole built set (`set(adapters) == {"anthropic-eu"}`), so adding a
+# provider to it would edit an existing test's meaning. Every provider below
+# differs from the built one in exactly one attribute - the `enabled` flag, the
+# `key_env`, the `base_url` or the kind - so a row going green can only be the
+# control it names.
+
+LOCAL_KEY_ENV = "VLLM_API_KEY_NOWHERE"
+
+LOCAL_POLICY = Policy(
+    providers={
+        # The shipped `local`: enabled, a base url, and no `key_env` at all.
+        "local": Provider(
+            kind=ProviderKind.OPENAI_COMPATIBLE, region="self", base_url="http://llama:8082/v1"
+        ),
+        # The shipped `vllm`, enabled here: the same kind on a second endpoint.
+        "vllm": Provider(
+            kind=ProviderKind.OPENAI_COMPATIBLE, region="self", base_url="http://vllm:8000/v1"
+        ),
+        # `enabled=False` is the ONLY difference from `local`.
+        "local-off": Provider(
+            kind=ProviderKind.OPENAI_COMPATIBLE,
+            region="self",
+            base_url="http://llama:8082/v1",
+            enabled=False,
+        ),
+        # A declared key that is not in the environment is the only difference.
+        "local-keyed": Provider(
+            kind=ProviderKind.OPENAI_COMPATIBLE,
+            region="self",
+            base_url="http://llama:8082/v1",
+            key_env=LOCAL_KEY_ENV,
+        ),
+        # No base url is the only difference: there is no endpoint to call.
+        "local-nourl": Provider(kind=ProviderKind.OPENAI_COMPATIBLE, region="self"),
+        # A different kind on the same policy, with its key set.
+        "anthropic-eu": Provider(kind=ProviderKind.ANTHROPIC, region="eu", key_env=KEY_ENV),
+    },
+    eu_regions=("eu", "self"),
+    aliases={},
+    tenants={},
+)
+
+
+def test_an_openai_compatible_provider_with_no_key_env_is_built() -> None:
+    """Catches a factory that demands a key of every provider (decision B): `local` and
+    `vllm` sit on a private network and declare none, so a key check applied to them drops
+    the residency-only route and every EU `pii` request stays a 503."""
+    adapters = build_adapters(LOCAL_POLICY, ENVIRON)
+
+    assert "local" in adapters
+    built = adapters["local"]
+    assert isinstance(built, OpenAICompatibleAdapter)
+    assert built.name == "local"
+    assert built.price_key("qwen2.5-7b-instruct") == "local/qwen2.5-7b-instruct"
+
+
+def test_one_class_serves_both_openai_compatible_providers() -> None:
+    """Catches a factory that special-cases the provider NAME `local`: `vllm` is the same
+    kind on another endpoint, and a name-keyed factory would silently drop it or
+    build it with the wrong base url."""
+    adapters = build_adapters(LOCAL_POLICY, ENVIRON)
+
+    local = adapters["local"]
+    vllm = adapters["vllm"]
+    assert isinstance(local, OpenAICompatibleAdapter)
+    assert isinstance(vllm, OpenAICompatibleAdapter)
+    assert type(local) is type(vllm)
+    assert vllm.name == "vllm"
+    # `rstrip`: httpx normalises a base url to a trailing slash, which is the one
+    # difference between the policy string and the client's own.
+    assert str(local.client.base_url).rstrip("/") == "http://llama:8082/v1"
+    assert str(vllm.client.base_url).rstrip("/") == "http://vllm:8000/v1"
+
+
+def test_the_anthropic_kind_still_gets_its_own_adapter() -> None:
+    """Catches a factory that builds the new class for every enabled provider, which would
+    send Anthropic traffic to the OpenAI chat-completions path with a bearer token - a
+    401 on every request the EU tenants do not make locally."""
+    adapters = build_adapters(LOCAL_POLICY, ENVIRON)
+
+    assert isinstance(adapters["anthropic-eu"], AnthropicAdapter)
+    assert not isinstance(adapters["anthropic-eu"], OpenAICompatibleAdapter)
+
+
+def test_a_disabled_openai_compatible_provider_is_omitted_without_a_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Catches a factory that ignores `enabled` for the new kind (an operator switching
+    the model box off would keep having traffic routed to it) and one that warns about a
+    deliberate decision, which trains operators to ignore the warning that matters."""
+    with caplog.at_level(logging.WARNING):
+        adapters = build_adapters(LOCAL_POLICY, ENVIRON)
+
+    assert "local-off" not in adapters
+    assert [
+        record.getMessage() for record in caplog.records if "local-off" in record.getMessage()
+    ] == []
+
+
+def test_an_openai_compatible_provider_declaring_an_unset_key_is_dropped_with_a_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Catches decision B applied too widely: an absent `key_env` is legal, but one that
+    is DECLARED and unset is a half-configured deployment, and building it anyway would
+    put an adapter behind the resolver that 401s on the first real request."""
+    with caplog.at_level(logging.WARNING):
+        adapters = build_adapters(LOCAL_POLICY, ENVIRON)
+
+    assert "local-keyed" not in adapters
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.WARNING and "local-keyed" in record.getMessage()
+    ]
+    assert len(warnings) == 1, "expected exactly one warning naming local-keyed"
+    assert LOCAL_KEY_ENV in warnings[0], "the warning must name the variable to set"
+
+
+def test_an_openai_compatible_provider_without_a_base_url_is_dropped_with_a_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Catches a factory that falls back to a default endpoint (the Anthropic one, or
+    `localhost`) when the policy names none: an adapter with a guessed base url sends a
+    tenant's `pii` traffic wherever that url happens to point, and the whole point of this
+    provider is that its region is the box we run. A silent drop is caught too - it looks
+    to an operator like a routing bug."""
+    with caplog.at_level(logging.WARNING):
+        adapters = build_adapters(LOCAL_POLICY, ENVIRON)
+
+    assert "local-nourl" not in adapters
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.WARNING and "local-nourl" in record.getMessage()
+    ]
+    assert len(warnings) == 1, "expected exactly one warning naming local-nourl"
+
+
+def test_exactly_the_usable_providers_of_both_kinds_are_built() -> None:
+    """Catches every drop above being explained by something other than its own control:
+    the built set is asserted whole, so a factory that dropped `local` for want of a key
+    or kept `local-nourl` with a guessed endpoint fails here as well as in its own row."""
+    adapters = build_adapters(LOCAL_POLICY, ENVIRON)
+
+    assert set(adapters) == {"local", "vllm", "anthropic-eu"}

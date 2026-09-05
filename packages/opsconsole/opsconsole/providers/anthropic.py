@@ -26,7 +26,6 @@ raise below, for tool call `arguments` that will not parse as JSON.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import random
 import time
@@ -52,38 +51,45 @@ from opsconsole.providers.base import (
     UsageTotal,
     checked_tool_name,
 )
+from opsconsole.providers.transport import (
+    CONNECT_TIMEOUT,
+    MAX_RETRIES,
+    PROVIDER_MESSAGE_LIMIT,
+    READ_TIMEOUT,
+    RETRY_BASE_DELAY,
+    STREAM_READ_TIMEOUT,
+    ProviderTransport,
+    unreadable,
+)
 from opsconsole.routing.errors import IdentifierInvalid
+
+__all__ = [
+    # Re-exported from `providers.transport`, which owns the HTTP policy every
+    # adapter shares (the design). Named here for one reason only: an earlier change's tests
+    # import them from this module, and the an earlier change extraction that moved them
+    # was meant to change no behaviour and edit no test
+    # (`grep -n "from opsconsole.providers.anthropic import" -A 10 tests/providers/`
+    # shows both `test_anthropic_transport.py` and `test_anthropic_streaming.py`
+    # reading them here). Nothing in this module uses them.
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_TOOL_CHOICE_BY_MODE",
+    "ANTHROPIC_VERSION",
+    "CONNECT_TIMEOUT",
+    "MAX_RETRIES",
+    "MESSAGES_PATH",
+    "PROVIDER_MESSAGE_LIMIT",
+    "READ_TIMEOUT",
+    "RETRY_BASE_DELAY",
+    "STREAM_READ_TIMEOUT",
+    "AnthropicAdapter",
+    "from_anthropic",
+    "from_anthropic_events",
+    "to_anthropic",
+]
 
 ANTHROPIC_BASE_URL = "https://api.anthropic.com"
 ANTHROPIC_VERSION = "2023-06-01"
 MESSAGES_PATH = "/v1/messages"
-
-CONNECT_TIMEOUT = 5.0
-READ_TIMEOUT = 60.0
-"""The fixed timeouts (the design). Not caller-settable: a caller able to raise the
-read timeout could hold a worker for as long as it liked. Pinned on the constants
-by `test_timeout_constants_are_exactly_the_spec_values` and on the built client by
-`test_client_timeouts_are_fixed_at_five_and_sixty`."""
-
-STREAM_READ_TIMEOUT = 120.0
-"""The read timeout on a streamed call, longer because the gap being measured is
-the one between EVENTS rather than the whole answer (the design).
-
-Set per request rather than on the client, so an ordinary completion still gives
-up after 60s: raising the client's timeout to 120 would let every non-streaming
-call hold a worker twice as long. Both halves are pinned by
-`test_stream_read_timeout_is_exactly_120`, which asserts the streamed request's
-timeout and the client's own in the same test."""
-
-MAX_RETRIES = 2
-RETRY_BASE_DELAY = 0.5
-"""Two retries, so three attempts at most, with the delay doubling and jittered.
-
-Retries are restricted to 429, any 5xx and a timeout: those are the failures a
-second attempt can fix. Every other status is raised on the first attempt,
-because retrying a 400 bills the tenant three times for a request that cannot
-succeed. `test_retry_table_by_status` holds the whole table, request counts
-included, and `test_backoff_doubles_and_is_jittered` pins the two delays."""
 
 ANTHROPIC_TOOL_CHOICE_BY_MODE = {"auto": "auto", "none": "none", "required": "any"}
 """The neutral `ToolChoice.mode` in Anthropic's own words.
@@ -93,27 +99,6 @@ translation happens (`grep -rn ANTHROPIC_TOOL_CHOICE_BY_MODE packages/`), which
 is the whole reason the neutral contract keeps its own word for it. The `tool`
 mode is absent from the table because it carries a name and is built separately.
 Pinned row by row by `test_tool_choice_maps_to_the_anthropic_table`."""
-
-PROVIDER_MESSAGE_LIMIT = 500
-"""How much of a provider's error body is kept for the log, so a proxy answering
-with a megabyte of HTML cannot write a megabyte per failure. Pinned by
-`test_provider_message_limit_is_exactly_500` and
-`test_an_oversized_provider_body_is_truncated`; it never reaches the client
-(`test_provider_message_never_reaches_the_client_message`)."""
-
-
-def _unreadable(exc: Exception) -> ProviderError:
-    """The one answer to a body we cannot parse: a 502, not a traceback.
-
-    Not retryable: a well-formed failure would have carried a status, so a body
-    we cannot read is a shape change or a bug, and a second identical request
-    produces the same unreadable answer.
-    """
-    return ProviderError(
-        "the provider answered with a body the adapter could not read",
-        retryable=False,
-        provider_message=f"{type(exc).__name__}: {exc}",
-    )
 
 
 def _tool_use_block(call: ToolCall, field: str) -> dict[str, Any]:
@@ -309,7 +294,7 @@ def from_anthropic(payload: Mapping[str, Any]) -> ChatResponse:
 
         content = "".join(text)
         if not content and not calls:
-            # Not `_unreadable`: the body parsed fine, it simply carried nothing
+            # Not `transport.unreadable`: the body parsed fine, it simply carried nothing
             # this adapter can render. Saying so is what stops an operator
             # chasing a parse bug that is not there.
             raise ProviderError(
@@ -333,7 +318,7 @@ def from_anthropic(payload: Mapping[str, Any]) -> ChatResponse:
             ),
         )
     except (KeyError, TypeError, ValueError) as exc:
-        raise _unreadable(exc) from exc
+        raise unreadable(exc) from exc
 
 
 @dataclass
@@ -448,7 +433,7 @@ def from_anthropic_events(lines: Iterable[str]) -> Iterator[StreamEvent]:
             # can claim is answer text, which is the same rule `from_anthropic`
             # applies to an unknown content block.
     except (KeyError, TypeError, ValueError) as exc:
-        raise _unreadable(exc) from exc
+        raise unreadable(exc) from exc
 
     if stop_reason is None or prompt_tokens is None or completion_tokens is None:
         raise ProviderError(
@@ -513,35 +498,45 @@ class AnthropicAdapter:
         jitter: Callable[[], float] = random.random,
     ) -> None:
         self.name = name
-        self._sleep = sleep
-        self._jitter = jitter
-        self.client = httpx.Client(
+        self.http = ProviderTransport(
+            name=name,
             base_url=base_url,
             headers={"x-api-key": api_key, "anthropic-version": ANTHROPIC_VERSION},
-            timeout=httpx.Timeout(READ_TIMEOUT, connect=CONNECT_TIMEOUT),
             transport=transport,
+            sleep=sleep,
+            jitter=jitter,
         )
+
+    @property
+    def client(self) -> httpx.Client:
+        """The underlying HTTP client, so the fixed timeouts stay observable here.
+
+        Asserted on by `test_client_timeouts_are_fixed_at_five_and_sixty` and
+        `test_close_releases_the_client`.
+        """
+        return self.http.client
 
     def chat(self, request: ChatRequest) -> ChatResponse:
         """Run one non-streaming completion."""
         body = to_anthropic(request)
-        response = self._send(body)
+        response = self.http.send(MESSAGES_PATH, body)
         try:
             payload = response.json()
         except ValueError as exc:
             # A 200 that is not JSON at all - a proxy's HTML error page, a
             # truncated body. Pinned by `test_a_non_json_success_body_is_a_provider_error`.
-            raise _unreadable(exc) from exc
+            raise unreadable(exc) from exc
         return from_anthropic(payload)
 
     def stream_chat(self, request: ChatRequest) -> Iterator[StreamEvent]:
         """Run one streamed completion, yielding neutral events as they arrive.
 
-        The open and the read are deliberately separate. `_open_stream` owns the
-        retry loop, so the retry cannot reach around the iteration: once one
-        event has been yielded the client has already been shown part of an
-        answer, and nothing that cannot be un-sent is resent (an earlier change decision
-        C, `test_stream_open_retries_only_before_the_first_event`).
+        The open and the read are deliberately separate.
+        `ProviderTransport.open_stream` owns the retry loop, so the retry cannot
+        reach around the iteration: once one event has been yielded the client
+        has already been shown part of an answer, and nothing that cannot be
+        un-sent is resent (an earlier change decision C,
+        `test_stream_open_retries_only_before_the_first_event`).
 
         A transport failure part way through the body is wrapped here rather than
         escaping raw, so the module's promise holds on this path too - every
@@ -552,11 +547,11 @@ class AnthropicAdapter:
         # Copied rather than mutated in place: `to_anthropic` is the shape the
         # non-streaming path sends, and the one difference belongs to this call.
         streamed = {**body, "stream": True}
-        with self._open_stream(streamed) as response:
+        with self.http.open_stream(MESSAGES_PATH, streamed) as response:
             try:
                 yield from from_anthropic_events(response.iter_lines())
             except httpx.RequestError as exc:
-                raise self._transport_error(exc) from exc
+                raise self.http.transport_error(exc) from exc
 
     def healthcheck(self) -> bool:
         """Always true, and it calls nothing.
@@ -574,91 +569,4 @@ class AnthropicAdapter:
 
     def close(self) -> None:
         """Release the connection pool."""
-        self.client.close()
-
-    def _send(self, body: Mapping[str, Any]) -> httpx.Response:
-        """POST the body, retrying per the table, and raise `ProviderError` otherwise.
-
-        The body is built once and resent unchanged, so a retry cannot ask the
-        provider something the caller did not (`test_retry_resends_the_same_body`).
-        """
-        attempt = 0
-        while True:
-            try:
-                response = self.client.post(MESSAGES_PATH, json=body)
-            except httpx.RequestError as exc:
-                error = self._transport_error(exc)
-            else:
-                if response.status_code == httpx.codes.OK:
-                    return response
-                error = self._status_error(response)
-
-            if error.retryable and attempt < MAX_RETRIES:
-                # A 429's `retry-after` is deliberately not read: honouring it
-                # would let a provider hold a gateway worker for as long as it
-                # asked, past the read timeout this adapter fixes. Two short
-                # jittered waits, then the caller is told; an earlier change's breaker is
-                # what a sustained 429 is supposed to trip.
-                self._sleep(RETRY_BASE_DELAY * (2**attempt) * (0.5 + 0.5 * self._jitter()))
-                attempt += 1
-                continue
-            raise error
-
-    @contextlib.contextmanager
-    def _open_stream(self, body: Mapping[str, Any]) -> Iterator[httpx.Response]:
-        """Open the streamed POST, retrying per the table, and yield the live response.
-
-        The read timeout is `STREAM_READ_TIMEOUT` on this request only, so the
-        client's 60s still applies to every ordinary completion. A failure status
-        is read to the end before it is turned into an error, because the
-        provider's body is what `provider_message` carries and an unread
-        streaming response has none (`test_a_failure_status_on_the_open_never_starts_a_stream`).
-        """
-        attempt = 0
-        while True:
-            try:
-                with self.client.stream(
-                    "POST",
-                    MESSAGES_PATH,
-                    json=dict(body),
-                    timeout=httpx.Timeout(STREAM_READ_TIMEOUT, connect=CONNECT_TIMEOUT),
-                ) as response:
-                    if response.status_code == httpx.codes.OK:
-                        yield response
-                        return
-                    response.read()
-                    error = self._status_error(response)
-            except httpx.RequestError as exc:
-                error = self._transport_error(exc)
-
-            if error.retryable and attempt < MAX_RETRIES:
-                self._sleep(RETRY_BASE_DELAY * (2**attempt) * (0.5 + 0.5 * self._jitter()))
-                attempt += 1
-                continue
-            raise error
-
-    def _status_error(self, response: httpx.Response) -> ProviderError:
-        """Turn a failure status into the typed error, keeping the provider's words out.
-
-        `message` is client-facing and carries the provider name and the status
-        only; the body goes to `provider_message` for the log.
-        """
-        status = response.status_code
-        return ProviderError(
-            f"{self.name}: the provider answered {status}",
-            retryable=status == httpx.codes.TOO_MANY_REQUESTS or status >= 500,
-            provider_message=response.text[:PROVIDER_MESSAGE_LIMIT],
-        )
-
-    def _transport_error(self, exc: httpx.RequestError) -> ProviderError:
-        """Turn a request that never completed into the typed error.
-
-        Only a timeout is retryable. Any other transport failure is reported as
-        it is rather than tried twice, which keeps the retry table to the three
-        cases the plan allows.
-        """
-        return ProviderError(
-            f"{self.name}: the request did not complete ({type(exc).__name__})",
-            retryable=isinstance(exc, httpx.TimeoutException),
-            provider_message=str(exc),
-        )
+        self.http.close()

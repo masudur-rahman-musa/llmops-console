@@ -1,0 +1,24 @@
+{
+  "id": "chatcmpl-local-toolcall-0003",
+  "object": "chat.completion",
+  "created": 1757000003,
+  "model": "qwen2.5-7b-instruct",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Checking the weather.",
+        "tool_calls": [
+          {
+            "id": "call_local_weather_0001",
+            "type": "function",
+            "function": {"name": "get_weather", "arguments": "{\"city\":  \"Berlin\"}"}
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {"prompt_tokens": 88, "completion_tokens": 33, "total_tokens": 121}
+}

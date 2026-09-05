@@ -1,0 +1,14 @@
+{
+  "id": "chatcmpl-local-plain-0001",
+  "object": "chat.completion",
+  "created": 1757000001,
+  "model": "qwen2.5-7b-instruct",
+  "choices": [
+    {
+      "index": 0,
+      "message": {"role": "assistant", "content": "Ship it."},
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {"prompt_tokens": 41, "completion_tokens": 7, "total_tokens": 48}
+}

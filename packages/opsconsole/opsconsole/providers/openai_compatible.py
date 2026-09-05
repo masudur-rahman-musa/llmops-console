@@ -1,0 +1,532 @@
+"""The OpenAI-compatible adapter: llama.cpp, vLLM and anything else on that wire shape.
+
+One class serves every provider whose `kind` is `openai_compatible`, because
+`local` and `vllm` differ only in the endpoint the policy gives them. What makes
+this adapter worth having is not a second vendor: it is the `self` region. A
+tenant whose data class allows the box we run ourselves and nothing else has no
+other route, so this module is the residency-only path and its failures are
+final rather than something an earlier change can fall back from.
+
+The mapping and the transport are kept apart, as in the adapter next door.
+`to_openai`, `from_openai` and `from_openai_events` are pure - over dictionaries
+for the completion pair, over the decoded SSE lines for the stream - so both
+directions are tested against payloads on disk with no transport at all;
+`OpenAICompatibleAdapter` adds only the endpoint, the auth header and the
+streamed body, because the client, the fixed timeouts, the retry table and the
+provider-message truncation are `providers.transport`, shared with every other
+HTTP adapter (the design). No provider SDK is imported.
+
+This wire shape is the one the gateway itself publishes, so the mapping is close
+to an identity - and that is the trap. The adapter next door lifts the system
+turn, renames `required`, rewrites a tool result as a user turn and re-serialises
+a call's arguments; every one of those would be wrong here, so each is asserted
+rather than assumed (`tests/providers/test_local_mapping.py`).
+
+Every PROVIDER failure that leaves this module is a `ProviderError` carrying
+`retryable`. The caller's own bad input is the deliberate exception: it leaves as
+`IdentifierInvalid` (422) before any call is made. Six inputs reach that path,
+the six `checked_tool_name` call sites this module has:
+`grep -n checked_tool_name packages/opsconsole/opsconsole/providers/openai_compatible.py`
+returns 9 lines - these two prose lines, the import, and those six calls - which
+are a tool call's id and its name, the `tool_call_id` on a result turn, a
+`tools[].name`, a forced `tool_choice.name` and a `response_format.name`.
+"""
+
+from __future__ import annotations
+
+import json
+import random
+import time
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from dataclasses import dataclass, field
+from typing import Any
+
+import httpx
+
+from opsconsole.core.errors import ProviderError
+from opsconsole.providers.base import (
+    DEFAULT_MAX_TOKENS,
+    ChatMessage,
+    ChatRequest,
+    ChatResponse,
+    FinishReason,
+    StreamEvent,
+    StreamStart,
+    TextDelta,
+    ToolCall,
+    ToolCallDelta,
+    Usage,
+    UsageTotal,
+    checked_tool_name,
+)
+from opsconsole.providers.transport import ProviderTransport, unreadable
+
+CHAT_COMPLETIONS_PATH = "/chat/completions"
+"""Appended to the policy's `base_url`, which already ends in `/v1`.
+
+A path carrying its own `/v1` would send the request to `/v1/v1/chat/completions`.
+`test_the_completions_path_is_appended_to_the_policy_base_url` asserts the whole
+URL against a base url ending in `/v1`, mirroring the shipped policy's - it does
+not read `routing.yaml`, and nothing validates that suffix at load time, so a
+policy edited to drop the `/v1` 404s at request time with no config-time signal.
+An earlier change's admin reload is where that check belongs."""
+
+OPENAI_TOOL_CHOICE_BY_MODE = {"auto": "auto", "none": "none", "required": "required"}
+"""The three nameless `ToolChoice` modes, in this wire's words.
+
+Unlike Anthropic's table next door, every row here is the identity: this wire
+spells `required` the same way the neutral contract does. The table exists so
+that stays a fact a test can hold rather than an assumption
+(`test_tool_choice_maps_to_the_openai_table`,
+`test_the_nameless_tool_choice_table_is_exactly_the_three_modes`). The `tool`
+mode is absent because it carries a name and is built as an object."""
+
+DONE_SENTINEL = "[DONE]"
+"""The line that ends an OpenAI-compatible stream.
+
+It is not JSON, so a reader that parses every `data:` line fails on every single
+stream; and a reader that ignores it keeps parsing whatever a proxy appended
+after it (`test_the_reader_stops_at_the_done_sentinel`)."""
+
+SSE_DATA_PREFIX = "data: "
+"""The only SSE field this reader looks at. Comments, `id:` lines and the blank
+separators carry nothing the `data:` payload does not."""
+
+
+def _tool_call_wire(call: ToolCall, field_name: str) -> dict[str, Any]:
+    """Render one tool call the model made, as this wire replays it.
+
+    Both ids are checked here rather than at the contract, so an invalid one
+    raises before any outbound request is built
+    (`test_every_request_path_identifier_is_checked_before_any_outbound_call`).
+
+    `arguments` is passed through as the JSON STRING it already is. The adapter
+    next door has to parse it, because Anthropic's `input` is an object; doing
+    the same here would re-serialise the model's own output and change what the
+    model is told it said (`test_tool_call_arguments_travel_as_the_caller_wrote_them`).
+    """
+    return {
+        "id": checked_tool_name(call.id, f"{field_name}.id"),
+        "type": "function",
+        "function": {
+            "name": checked_tool_name(call.name, f"{field_name}.name"),
+            "arguments": call.arguments,
+        },
+    }
+
+
+def _rendered_turn(index: int, message: ChatMessage) -> dict[str, Any]:
+    """Render one turn. Every role survives as itself, including `system` and `tool`.
+
+    That is the whole difference from the Anthropic mapping, which has neither
+    role and has to rewrite a tool result as a `user` turn
+    (`test_the_system_turn_stays_a_system_role_message_in_place`,
+    `test_a_tool_result_turn_keeps_the_tool_role_and_its_id`).
+    """
+    if message.role == "tool":
+        return {
+            "role": "tool",
+            # `or ""` rather than a branch: an absent id fails the same pre-check
+            # as a malformed one, with the same 422 naming the same field
+            # (`test_a_tool_turn_without_a_tool_call_id_raises_before_any_outbound_call`).
+            "tool_call_id": checked_tool_name(
+                message.tool_call_id or "", f"messages[{index}].tool_call_id"
+            ),
+            "content": message.content,
+        }
+
+    turn: dict[str, Any] = {"role": message.role, "content": message.content}
+    if message.tool_calls:
+        turn["tool_calls"] = [
+            _tool_call_wire(call, f"messages[{index}].tool_calls[{position}]")
+            for position, call in enumerate(message.tool_calls)
+        ]
+    return turn
+
+
+def to_openai(request: ChatRequest) -> dict[str, Any]:
+    """Render a normalised request as an OpenAI-compatible chat completions body.
+
+    `max_tokens` is always sent: this wire treats an omitted value as unbounded,
+    and an unbounded generation on a CPU box holds a worker for minutes
+    (`test_max_tokens_default_and_override`). `stream` and `stream_options`
+    are deliberately NOT set here - they belong to the streamed call alone
+    (`test_the_non_streaming_body_carries_neither_stream_flag`).
+    """
+    body: dict[str, Any] = {
+        "model": request.model,
+        "messages": [
+            _rendered_turn(index, message) for index, message in enumerate(request.messages)
+        ],
+        "max_tokens": request.max_tokens if request.max_tokens is not None else DEFAULT_MAX_TOKENS,
+    }
+
+    if request.temperature is not None:
+        # `is not None`, not truthiness: an explicit temperature of 0 is the
+        # setting an eval run depends on, and dropping it would change the answer.
+        body["temperature"] = request.temperature
+
+    if request.tools:
+        # Omitted entirely rather than sent empty: some OpenAI-compatible servers
+        # validate an empty `tools` rather than ignoring it.
+        body["tools"] = [
+            {
+                "type": "function",
+                "function": {
+                    "name": checked_tool_name(tool.name, f"tools[{index}].name"),
+                    "description": tool.description,
+                    "parameters": dict(tool.parameters),
+                },
+            }
+            for index, tool in enumerate(request.tools)
+        ]
+
+    if request.tool_choice is not None:
+        choice = request.tool_choice
+        if choice.mode == "tool":
+            # `or ""` for the same reason as the tool result id above: a `tool`
+            # mode with no name fails the pre-check rather than sending `null`.
+            body["tool_choice"] = {
+                "type": "function",
+                "function": {"name": checked_tool_name(choice.name or "", "tool_choice.name")},
+            }
+        else:
+            body["tool_choice"] = OPENAI_TOOL_CHOICE_BY_MODE[choice.mode]
+
+    if request.response_format is not None:
+        # A first-class field on this wire, so it neither becomes a tool nor
+        # touches `tool_choice` - both of which the Anthropic mapping has to do,
+        # and both of which would take the caller's own tools away here
+        # (`test_response_format_leaves_the_callers_tools_alone`). `strict` is
+        # what makes the schema binding rather than a suggestion.
+        body["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": checked_tool_name(request.response_format.name, "response_format.name"),
+                "schema": dict(request.response_format.json_schema),
+                "strict": True,
+            },
+        }
+
+    return body
+
+
+def _usage(block: Mapping[str, Any]) -> Usage:
+    """Read one usage block, keeping the provider's own total where it gave one.
+
+    `total_tokens` is not recomputed: a server counting a cached or reused prefix
+    reports a total that is not the sum, and the ledger books what the provider
+    says it served (`test_total_tokens_is_the_providers_own_number_not_a_recomputed_sum`).
+    The two counts are required - a missing one raises rather than defaulting to
+    zero, which would book a real, billed call as free
+    (`test_a_response_without_usage_raises_provider_error`) - while an absent
+    total falls back to the sum, because some builds omit it
+    (`test_a_usage_block_without_a_total_falls_back_to_the_sum`).
+    """
+    prompt_tokens = block["prompt_tokens"]
+    completion_tokens = block["completion_tokens"]
+    total = block.get("total_tokens")
+    return Usage(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=prompt_tokens + completion_tokens if total is None else total,
+    )
+
+
+def from_openai(payload: Mapping[str, Any]) -> ChatResponse:
+    """Read an OpenAI-compatible chat completion into the normalised response.
+
+    Everything is read from `choices[0]`: a `content` of `null` becomes the empty
+    string the frozen contract requires, and `tool_calls` keep the JSON *string*
+    the published API promises its clients rather than being parsed into a dict
+    (`test_tool_calls_keep_their_id_name_and_argument_string`).
+
+    An answer with real usage but nothing to render is refused rather than served
+    as an empty string a tenant is billed for, which is the same verdict the
+    Anthropic path reaches for the same reply
+    (`test_an_answer_with_usage_but_nothing_to_render_raises`). An empty
+    `choices` is refused the same way rather than escaping as an `IndexError`
+    (`test_a_response_with_no_choices_raises`).
+    """
+    try:
+        choices = payload["choices"]
+        if not choices:
+            raise ProviderError(
+                "the provider answered with no choices",
+                retryable=False,
+                provider_message=f"id={payload.get('id')!r}, choices={choices!r}",
+            )
+        choice = choices[0]
+        message = choice["message"]
+
+        content = message.get("content") or ""
+        calls = tuple(
+            ToolCall(
+                id=call["id"],
+                name=call["function"]["name"],
+                arguments=call["function"]["arguments"],
+            )
+            for call in message.get("tool_calls") or ()
+        )
+
+        usage = _usage(payload["usage"])
+
+        if not content and not calls:
+            # Not `unreadable`: the body parsed fine, it simply carried nothing
+            # this adapter can render. Saying so is what stops an operator
+            # chasing a parse bug that is not there.
+            raise ProviderError(
+                "the provider answered with no readable content",
+                retryable=False,
+                provider_message=f"finish_reason={choice.get('finish_reason')!r}",
+            )
+
+        return ChatResponse(
+            model=payload["model"],
+            content=content,
+            tool_calls=calls,
+            finish_reason=choice["finish_reason"],
+            usage=usage,
+        )
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        raise unreadable(exc) from exc
+
+
+@dataclass
+class _OpenCall:
+    """One tool call being assembled from its `delta.tool_calls[]` fragments.
+
+    Kept in a dict keyed by the call's own `index`, never by "the call that
+    opened last": this wire interleaves two calls' fragments, so matching on the
+    index is what stops one call's JSON being appended to another's
+    (`test_the_reader_emits_every_buffered_call_before_the_finish_reason`).
+    """
+
+    id: str = ""
+    name: str = ""
+    fragments: list[str] = field(default_factory=list)
+
+
+def _sse_payload(line: str) -> dict[str, Any] | None:
+    """The JSON object on one `data:` line, `None` for a line that carries none.
+
+    The `[DONE]` sentinel is not JSON and is handled by the caller, so it never
+    reaches this function.
+    """
+    if not line.startswith(SSE_DATA_PREFIX):
+        return None
+    payload: Any = json.loads(line[len(SSE_DATA_PREFIX) :])
+    if not isinstance(payload, dict):
+        raise TypeError(f"an SSE data line carried {type(payload).__name__}, not an object")
+    return payload
+
+
+def from_openai_events(lines: Iterable[str]) -> Iterator[StreamEvent]:
+    """Read OpenAI-compatible chat completion chunks into the neutral stream events.
+
+    Pure, and pure on purpose: it takes the decoded lines `iter_lines()` yields
+    and never touches a transport, so every shape it has to handle is a `.sse`
+    file rather than a mocked socket.
+
+    Text arrives as `delta.content` and is forwarded in the provider's order; the
+    opening chunk's empty string is not an answer fragment and is not forwarded.
+    A tool call is ASSEMBLED: its `function.arguments` fragments are buffered per
+    `index` and every buffered call is emitted, in index order, when the finish
+    reason arrives - decision C. Flushing a call when the NEXT index opens would
+    be a guess about provider ordering, and this wire interleaves them
+    (`test_a_streamed_tool_call_arrives_as_one_whole_delta`,
+    `test_the_reader_emits_every_buffered_call_before_the_finish_reason`).
+
+    Usage rides a final chunk whose `choices` is empty and is required, which is
+    why the adapter always asks for it. A stream that ends without it raises
+    rather than yielding a total the ledger would price as zero
+    (`test_a_stream_that_ends_without_usage_raises_rather_than_zero_filling`),
+    and so does one that renders nothing at all
+    (`test_a_stream_that_renders_nothing_raises`).
+    """
+    started = False
+    rendered = False
+    finish_reason: str | None = None
+    usage: Usage | None = None
+    open_calls: dict[int, _OpenCall] = {}
+
+    try:
+        for line in lines:
+            if line.startswith(SSE_DATA_PREFIX) and line[len(SSE_DATA_PREFIX) :] == DONE_SENTINEL:
+                break
+            payload = _sse_payload(line)
+            if payload is None:
+                continue
+
+            if not started:
+                # On the first chunk rather than on the first text delta: an
+                # answer that is only a tool call has no text delta and still
+                # has to open.
+                started = True
+                yield StreamStart()
+
+            if payload.get("usage"):
+                usage = _usage(payload["usage"])
+
+            choices = payload.get("choices") or ()
+            if not choices:
+                continue
+            choice = choices[0]
+            delta = choice.get("delta") or {}
+
+            content = delta.get("content")
+            if content:
+                rendered = True
+                yield TextDelta(text=content)
+
+            for fragment in delta.get("tool_calls") or ():
+                open_call = open_calls.setdefault(fragment["index"], _OpenCall())
+                function = fragment.get("function") or {}
+                if fragment.get("id"):
+                    open_call.id = fragment["id"]
+                if function.get("name"):
+                    open_call.name = function["name"]
+                if function.get("arguments"):
+                    open_call.fragments.append(function["arguments"])
+
+            if choice.get("finish_reason"):
+                finish_reason = choice["finish_reason"]
+                for index in sorted(open_calls):
+                    closed = open_calls[index]
+                    rendered = True
+                    yield ToolCallDelta(
+                        index=index,
+                        call=ToolCall(
+                            id=closed.id,
+                            name=closed.name,
+                            arguments="".join(closed.fragments),
+                        ),
+                    )
+                open_calls.clear()
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        raise unreadable(exc) from exc
+
+    if finish_reason is None or usage is None:
+        raise ProviderError(
+            "the provider ended the stream before it finished",
+            retryable=False,
+            provider_message=f"finish_reason={finish_reason!r}, usage={usage!r}",
+        )
+
+    if not rendered:
+        # The streaming twin of `from_openai`'s no-readable-content guard, and it
+        # exists for the same reason: finishing the stream with a usage chunk
+        # would bill the tenant for an empty answer. Second, not first: a stream
+        # cut off before its first delta renders nothing EITHER, and reporting
+        # that as an empty answer would point an operator at a content bug
+        # instead of the dropped connection it was.
+        raise ProviderError(
+            "the provider streamed no readable content",
+            retryable=False,
+            provider_message=f"finish_reason={finish_reason!r}",
+        )
+
+    yield FinishReason(reason=finish_reason)
+    yield UsageTotal(usage=usage)
+
+
+class OpenAICompatibleAdapter:
+    """One OpenAI-compatible endpoint, addressed by its policy provider name.
+
+    `name` is that policy name, never the kind: `local` and `vllm` are the same
+    kind on two different boxes, and the ledger, the metric label and the
+    resolver all have to address them apart
+    (`test_price_key_is_the_policy_provider_name_slash_model`).
+
+    `api_key` is optional, and that is decision B: the shipped `local` and `vllm`
+    providers sit on a private network and declare no `key_env`, so no
+    `Authorization` header is sent at all rather than an empty bearer
+    (`test_no_api_key_sends_no_authorization_header`). A key given travels only
+    in that header (`test_an_api_key_travels_only_as_a_bearer_header`).
+
+    This module logs nothing. What reaches a log on a failure is
+    `ProviderError.provider_message`, which holds the provider's answer or the
+    transport's own exception text, never the request body or its headers.
+    """
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        base_url: str,
+        api_key: str | None = None,
+        transport: httpx.BaseTransport | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+        jitter: Callable[[], float] = random.random,
+    ) -> None:
+        self.name = name
+        self.http = ProviderTransport(
+            name=name,
+            base_url=base_url,
+            headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
+            transport=transport,
+            sleep=sleep,
+            jitter=jitter,
+        )
+
+    @property
+    def client(self) -> httpx.Client:
+        """The underlying HTTP client, so the fixed timeouts stay observable here.
+
+        Asserted on by `test_client_timeouts_are_fixed_at_five_and_sixty` and
+        `test_close_releases_the_client`.
+        """
+        return self.http.client
+
+    def chat(self, request: ChatRequest) -> ChatResponse:
+        """Run one non-streaming completion."""
+        body = to_openai(request)
+        response = self.http.send(CHAT_COMPLETIONS_PATH, body)
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            # A 200 that is not JSON at all - a reverse proxy's HTML error page,
+            # a truncated body (`test_a_non_json_success_body_is_a_provider_error`).
+            raise unreadable(exc) from exc
+        return from_openai(payload)
+
+    def stream_chat(self, request: ChatRequest) -> Iterator[StreamEvent]:
+        """Run one streamed completion, yielding neutral events as they arrive.
+
+        `stream_options.include_usage` is always sent, never left to the caller:
+        without it this wire sends no usage chunk, and the reader would refuse
+        every streamed answer rather than book one at zero
+        (`test_the_streamed_body_asks_for_usage_as_well_as_the_stream`).
+
+        The open and the read are separate. `ProviderTransport.open_stream` owns
+        the retry loop, so a retry cannot reach around the iteration: once one
+        event has been yielded the client has already been shown part of an
+        answer, and nothing that cannot be un-sent is resent
+        (`test_the_stream_open_is_retried_but_a_started_answer_is_not`).
+        """
+        body = to_openai(request)
+        # Copied rather than mutated in place: `to_openai` is the shape the
+        # non-streaming path sends, and the two extra fields belong to this call.
+        streamed = {**body, "stream": True, "stream_options": {"include_usage": True}}
+        with self.http.open_stream(CHAT_COMPLETIONS_PATH, streamed) as response:
+            try:
+                yield from from_openai_events(response.iter_lines())
+            except httpx.RequestError as exc:
+                raise self.http.transport_error(exc) from exc
+
+    def healthcheck(self) -> bool:
+        """Always true, and it calls nothing.
+
+        The seam exists so an earlier change's circuit breaker has somewhere to answer
+        from. Probing here would load a slot on a CPU box for every readiness
+        probe (`test_healthcheck_is_true_without_calling_the_provider`).
+        """
+        return True
+
+    def price_key(self, model: str) -> str:
+        """The stable `"<provider>/<model>"` string the ledger stores."""
+        return f"{self.name}/{model}"
+
+    def close(self) -> None:
+        """Release the connection pool."""
+        self.http.close()

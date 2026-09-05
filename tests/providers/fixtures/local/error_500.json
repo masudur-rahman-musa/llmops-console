@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": 500,
+    "message": "upstream-detail-2f7c1a-do-not-leak: failed to decode, context shift disabled",
+    "type": "server_error"
+  }
+}

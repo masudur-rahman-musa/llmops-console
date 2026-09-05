@@ -1,0 +1,13 @@
+{
+  "id": "chatcmpl-local-nousage-0006",
+  "object": "chat.completion",
+  "created": 1757000006,
+  "model": "qwen2.5-7b-instruct",
+  "choices": [
+    {
+      "index": 0,
+      "message": {"role": "assistant", "content": "Ship it."},
+      "finish_reason": "stop"
+    }
+  ]
+}

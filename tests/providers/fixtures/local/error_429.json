@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": 429,
+    "message": "upstream-detail-2f7c1a-do-not-leak: slot unavailable, all 4 slots busy",
+    "type": "server_error"
+  }
+}

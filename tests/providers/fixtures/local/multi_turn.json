@@ -1,0 +1,14 @@
+{
+  "id": "chatcmpl-local-multiturn-0002",
+  "object": "chat.completion",
+  "created": 1757000002,
+  "model": "qwen2.5-7b-instruct",
+  "choices": [
+    {
+      "index": 0,
+      "message": {"role": "assistant", "content": "Berlin is the capital."},
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {"prompt_tokens": 128, "completion_tokens": 19, "total_tokens": 147}
+}

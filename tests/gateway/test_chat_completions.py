@@ -32,7 +32,14 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 from httpx import Response
-from providers.conftest import PROVIDER_DETAIL_MARKER, fail, make_adapter, ok
+from providers.conftest import (
+    PROVIDER_DETAIL_MARKER,
+    fail,
+    local_ok,
+    make_adapter,
+    make_local_adapter,
+    ok,
+)
 
 from opsconsole.core.errors import ProviderError
 from opsconsole.core.settings import Settings
@@ -681,3 +688,34 @@ def test_chat_rejects_a_tenant_that_is_not_the_keys(chat_client: TestClient) -> 
     )
 
     assert_error_body(response, status=403, code="TENANT_MISMATCH")
+
+
+def test_an_eu_pii_request_is_served_by_the_local_provider(
+    settings: Settings, chat_client: TestClient
+) -> None:
+    """Catches the local adapter being reachable everywhere except from the route: this is
+    the request the plan exists for, and it is the one path with no alternative - the
+    `nordlicht` tenant's `pii` rule allows the region `self` alone, so a resolver, a
+    factory or an adapter set that does not offer `local` leaves it a 503 forever rather
+    than falling back to somewhere the data may not go.
+
+    The first half asserts that same request IS a 503 without a `local` adapter, so the
+    200 below can only be the new adapter and not a residency rule that quietly widened."""
+    body = chat_body(model=ALIAS)
+
+    denied = post_chat(chat_client, body, key=NORDLICHT_KEY, tenant="nordlicht", data_class="pii")
+    assert_error_body(denied, status=503, code="ALL_PROVIDERS_FAILED")
+
+    adapter, scripted = make_local_adapter([local_ok("plain")], name="local")
+    with build_chat_client(settings, {"local": adapter}) as client:
+        served = post_chat(client, body, key=NORDLICHT_KEY, tenant="nordlicht", data_class="pii")
+
+    assert served.status_code == 200, served.text
+    assert scripted.request_count == 1, "the local provider was not actually called"
+    assert served.headers["x-gateway-provider"] == "local"
+    assert served.headers["x-gateway-region"] == "self"
+    assert served.headers["x-gateway-model"] == "qwen2.5-7b-instruct"
+    assert served.json()["choices"][0]["message"]["content"] == "Ship it."
+    assert scripted.body()["model"] == "qwen2.5-7b-instruct", (
+        "the provider model id, never the alias, goes on the wire"
+    )

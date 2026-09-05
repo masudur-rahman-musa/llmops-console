@@ -3,9 +3,9 @@
 Everything a provider adapter takes and returns is defined here, in the
 gateway's own vocabulary. The models are OpenAI-shaped because that is the API
 this product publishes, but they are ours: no provider SDK is imported, and no
-provider's field names appear, so the OpenAI, Azure and OpenAI-compatible
-adapters of later plans implement this unchanged rather than translating into
-one provider's dialect. `test_base_contract_carries_no_provider_vocabulary`
+provider's field names appear, so `providers/openai_compatible.py` implements it unchanged
+rather than translating into one provider's dialect, and the OpenAI and Azure
+adapters of an earlier change are meant to do the same. `test_base_contract_carries_no_provider_vocabulary`
 holds that by walking this module's names and every model's fields.
 
 The models are frozen and reject unknown fields. Frozen because an adapter must
@@ -53,13 +53,14 @@ CRLF and a trailing space; the accepted set (uppercase included) is held by
 
 
 def checked_tool_name(value: str, field: str) -> str:
-    """Validate one caller-supplied identifier before it reaches a provider.
+    r"""Validate one caller-supplied identifier before it reaches a provider.
 
     Named for its first caller and now used for every identifier in a tool loop.
-    `grep -rn checked_tool_name packages/` returns six CALL sites as of an earlier change,
-    all in `providers/anthropic.py` (the rest of its output is this definition,
-    that module's import, and the docstrings naming it): a tool call's id and its name, the
-    `tool_call_id` on a result turn, a `tools[].name`, a forced
+    `grep -rnE "checked_tool_name\(" packages/` returns 13 lines as of an earlier change:
+    this definition and TWELVE call sites, the same six in each of the two
+    adapters that build an outbound body - `providers/anthropic.py` and
+    `providers/openai_compatible.py`. The six are a tool call's id and its name,
+    the `tool_call_id` on a result turn, a `tools[].name`, a forced
     `tool_choice.name` and a `response_format.name`. They share a cap and a
     character set because they are the same kind of string - one the model calls
     back by name - and one rule is one place to change it.

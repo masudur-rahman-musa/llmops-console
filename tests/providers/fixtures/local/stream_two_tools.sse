@@ -1,0 +1,22 @@
+: HAND-WRITTEN, not recorded (see stream_text.sse). The two calls' fragments are
+: INTERLEAVED on purpose: call 1 opens while call 0 is still unfinished, and
+: call 0's last fragment arrives after it. A reader buffering against "the call
+: that opened last" appends it to the wrong call, which a strictly sequential
+: fixture could never show.
+data: {"id":"chatcmpl-local-streamtwo","object":"chat.completion.chunk","created":1757000030,"model":"qwen2.5-7b-instruct","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-local-streamtwo","object":"chat.completion.chunk","created":1757000030,"model":"qwen2.5-7b-instruct","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_local_first_0001","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-local-streamtwo","object":"chat.completion.chunk","created":1757000030,"model":"qwen2.5-7b-instruct","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"city\": \"Ber"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-local-streamtwo","object":"chat.completion.chunk","created":1757000030,"model":"qwen2.5-7b-instruct","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_local_second_0002","type":"function","function":{"name":"get_time","arguments":""}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-local-streamtwo","object":"chat.completion.chunk","created":1757000030,"model":"qwen2.5-7b-instruct","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"lin\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-local-streamtwo","object":"chat.completion.chunk","created":1757000030,"model":"qwen2.5-7b-instruct","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"arguments":"{\"zone\": \"Europe/Berlin\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-local-streamtwo","object":"chat.completion.chunk","created":1757000030,"model":"qwen2.5-7b-instruct","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: {"id":"chatcmpl-local-streamtwo","object":"chat.completion.chunk","created":1757000030,"model":"qwen2.5-7b-instruct","choices":[],"usage":{"prompt_tokens":528,"completion_tokens":91,"total_tokens":619}}
+
+data: [DONE]

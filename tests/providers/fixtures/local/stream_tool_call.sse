@@ -1,0 +1,18 @@
+: HAND-WRITTEN, not recorded (see stream_text.sse). Published OpenAI wire shape:
+: a tool call arrives as fragments of `delta.tool_calls[i].function.arguments`,
+: with `id` and `name` on the opening fragment only.
+data: {"id":"chatcmpl-local-streamtool","object":"chat.completion.chunk","created":1757000020,"model":"qwen2.5-7b-instruct","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-local-streamtool","object":"chat.completion.chunk","created":1757000020,"model":"qwen2.5-7b-instruct","choices":[{"index":0,"delta":{"content":"Checking the weather."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-local-streamtool","object":"chat.completion.chunk","created":1757000020,"model":"qwen2.5-7b-instruct","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_local_stream_0001","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-local-streamtool","object":"chat.completion.chunk","created":1757000020,"model":"qwen2.5-7b-instruct","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"city\": \"Ber"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-local-streamtool","object":"chat.completion.chunk","created":1757000020,"model":"qwen2.5-7b-instruct","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"lin\", \"units\": \"metric\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-local-streamtool","object":"chat.completion.chunk","created":1757000020,"model":"qwen2.5-7b-instruct","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: {"id":"chatcmpl-local-streamtool","object":"chat.completion.chunk","created":1757000020,"model":"qwen2.5-7b-instruct","choices":[],"usage":{"prompt_tokens":419,"completion_tokens":74,"total_tokens":493}}
+
+data: [DONE]

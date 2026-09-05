@@ -1,0 +1,14 @@
+{
+  "id": "chatcmpl-local-nocontent-0005",
+  "object": "chat.completion",
+  "created": 1757000005,
+  "model": "qwen2.5-7b-instruct",
+  "choices": [
+    {
+      "index": 0,
+      "message": {"role": "assistant", "content": null},
+      "finish_reason": "length"
+    }
+  ],
+  "usage": {"prompt_tokens": 77, "completion_tokens": 0, "total_tokens": 77}
+}

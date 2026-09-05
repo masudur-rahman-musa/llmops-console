@@ -25,6 +25,7 @@ import httpx
 import pytest
 
 from opsconsole.providers.anthropic import AnthropicAdapter
+from opsconsole.providers.openai_compatible import OpenAICompatibleAdapter
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "anthropic"
 
@@ -139,6 +140,73 @@ def make_adapter(
         name=name,
         api_key=TEST_API_KEY,
         base_url="https://api.anthropic.test",
+        transport=scripted.transport,
+        sleep=sleep if sleep is not None else SleepRecorder(),
+        jitter=FixedJitter(jitter),
+    )
+    return adapter, scripted
+
+
+# --- the OpenAI-compatible local provider -------------------------
+#
+# The same in-process arrangement as above, against a second fixture directory.
+# The `local` payloads are HAND-WRITTEN to the published OpenAI chat-completions
+# wire shape rather than recorded from a llama.cpp server, because no such server
+# runs in CI or in the environment these tests were written in; every `.sse` file
+# says so in its own leading comment lines.
+
+LOCAL_FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "local"
+
+# The policy provider name for the local adapter under test. Deliberately NOT
+# "local" and not "openai_compatible", so a `price_key`, a header or a factory
+# key built from the provider KIND rather than from the policy name is visible.
+LOCAL_PROVIDER_NAME = "local-cax21"
+
+# The base url the scripted local adapter is built with. It ends in `/v1` exactly
+# as the shipped policy's does, so a path built with `/v1` inside the adapter
+# would produce `/v1/v1/chat/completions` and fail the path assertions.
+LOCAL_BASE_URL = "http://llama.test:8082/v1"
+
+# Only for the auth cases: the shipped `local` provider declares no key at all.
+TEST_LOCAL_API_KEY = "sk-local-test-not-a-real-key"
+
+
+def load_local_fixture(name: str) -> dict[str, Any]:
+    """Read one hand-written OpenAI-shaped payload by file stem."""
+    path = LOCAL_FIXTURE_DIR / f"{name}.json"
+    payload: Any = json.loads(path.read_text(encoding="utf-8"))
+    assert isinstance(payload, dict), f"{path}: fixture must be a JSON object"
+    return payload
+
+
+def local_ok(name: str) -> Step:
+    """A 200 answering with the named local fixture."""
+    return (200, load_local_fixture(name))
+
+
+def local_fail(status: int, name: str) -> Step:
+    """A failure status answering with the named local error fixture."""
+    return (status, load_local_fixture(name))
+
+
+def make_local_adapter(
+    steps: Sequence[Step],
+    *,
+    name: str = LOCAL_PROVIDER_NAME,
+    api_key: str | None = None,
+    sleep: SleepRecorder | None = None,
+    jitter: float = 1.0,
+) -> tuple[OpenAICompatibleAdapter, ScriptedTransport]:
+    """A local adapter wired to a scripted transport, with no clock and no key by default.
+
+    `api_key=None` is the shipped `local` provider's configuration (an earlier change
+    decision B): it sits on a private network and declares no `key_env`.
+    """
+    scripted = ScriptedTransport(steps)
+    adapter = OpenAICompatibleAdapter(
+        name=name,
+        base_url=LOCAL_BASE_URL,
+        api_key=api_key,
         transport=scripted.transport,
         sleep=sleep if sleep is not None else SleepRecorder(),
         jitter=FixedJitter(jitter),

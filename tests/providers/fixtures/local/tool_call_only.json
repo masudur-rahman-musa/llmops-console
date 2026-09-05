@@ -1,0 +1,24 @@
+{
+  "id": "chatcmpl-local-toolonly-0004",
+  "object": "chat.completion",
+  "created": 1757000004,
+  "model": "qwen2.5-7b-instruct",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_local_ticket_0001",
+            "type": "function",
+            "function": {"name": "ticket_summary", "arguments": "{\"title\": \"Disk full\", \"severity\": 2}"}
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {"prompt_tokens": 210, "completion_tokens": 64, "total_tokens": 274}
+}

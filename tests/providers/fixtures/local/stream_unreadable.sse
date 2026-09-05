@@ -1,0 +1,5 @@
+: HAND-WRITTEN, not recorded (see stream_text.sse). A data line cut off mid-JSON,
+: which is what a proxy closing the body between two writes leaves behind.
+data: {"id":"chatcmpl-local-streambad","object":"chat.completion.chunk","created":1757000070,"model":"qwen2.5-7b-instruct","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-local-streambad","object":"chat.completion.chunk","created":175700

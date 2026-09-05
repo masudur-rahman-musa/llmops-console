@@ -1,0 +1,22 @@
+: HAND-WRITTEN, not recorded. No llama.cpp server was available when these tests
+: were written, so this file follows the published OpenAI chat-completions
+: streaming wire shape (an SSE comment line starts with a colon and is ignored).
+data: {"id":"chatcmpl-local-streamtext","object":"chat.completion.chunk","created":1757000010,"model":"qwen2.5-7b-instruct","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-local-streamtext","object":"chat.completion.chunk","created":1757000010,"model":"qwen2.5-7b-instruct","choices":[{"index":0,"delta":{"content":"Berlin"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-local-streamtext","object":"chat.completion.chunk","created":1757000010,"model":"qwen2.5-7b-instruct","choices":[{"index":0,"delta":{"content":" is the capital"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-local-streamtext","object":"chat.completion.chunk","created":1757000010,"model":"qwen2.5-7b-instruct","choices":[{"index":0,"delta":{"content":" of Germany."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-local-streamtext","object":"chat.completion.chunk","created":1757000010,"model":"qwen2.5-7b-instruct","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-local-streamtext","object":"chat.completion.chunk","created":1757000010,"model":"qwen2.5-7b-instruct","choices":[],"usage":{"prompt_tokens":613,"completion_tokens":57,"total_tokens":670}}
+
+data: [DONE]
+
+: HAND-WRITTEN, not recorded (see stream_text.sse). A trailer after the [DONE]
+: sentinel: llama.cpp sends nothing there, and this is what a proxy appending its
+: own bytes leaves behind. A reader that keeps parsing past the sentinel answers
+: a JSONDecodeError instead of a finished stream.
+data: {"truncated

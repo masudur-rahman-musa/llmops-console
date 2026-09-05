@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": 400,
+    "message": "upstream-detail-2f7c1a-do-not-leak: 'messages' must be a non-empty array",
+    "type": "invalid_request_error"
+  }
+}

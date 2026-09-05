@@ -1,0 +1,9 @@
+: HAND-WRITTEN, not recorded (see stream_text.sse). A stream that opens, finishes
+: and reports usage while rendering nothing: no content delta and no tool call.
+data: {"id":"chatcmpl-local-streamempty","object":"chat.completion.chunk","created":1757000060,"model":"qwen2.5-7b-instruct","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-local-streamempty","object":"chat.completion.chunk","created":1757000060,"model":"qwen2.5-7b-instruct","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-local-streamempty","object":"chat.completion.chunk","created":1757000060,"model":"qwen2.5-7b-instruct","choices":[],"usage":{"prompt_tokens":64,"completion_tokens":0,"total_tokens":64}}
+
+data: [DONE]

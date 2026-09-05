@@ -1,0 +1,7 @@
+: HAND-WRITTEN, not recorded (see stream_text.sse). The connection drops after
+: two text fragments: no finish_reason chunk, no usage chunk and no [DONE].
+data: {"id":"chatcmpl-local-streamcut","object":"chat.completion.chunk","created":1757000040,"model":"qwen2.5-7b-instruct","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-local-streamcut","object":"chat.completion.chunk","created":1757000040,"model":"qwen2.5-7b-instruct","choices":[{"index":0,"delta":{"content":"The connection"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-local-streamcut","object":"chat.completion.chunk","created":1757000040,"model":"qwen2.5-7b-instruct","choices":[{"index":0,"delta":{"content":" dropped before"},"finish_reason":null}]}

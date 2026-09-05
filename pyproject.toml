@@ -51,7 +51,11 @@ target-version = "py312"
 force-exclude = true
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM", "ANN", "RUF"]
+# `W` is here for W605 specifically: a docstring citing a regex or a `grep -E`
+# is a habit in this repo, and `\(` in a non-raw docstring passes both mypy and
+# every other rule while emitting a SyntaxWarning nothing reads - and it becomes
+# a SyntaxError in a later Python.
+select = ["E", "W", "F", "I", "UP", "B", "SIM", "ANN", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
 # Agent hooks keep long rule strings on one line so the pattern stays readable.

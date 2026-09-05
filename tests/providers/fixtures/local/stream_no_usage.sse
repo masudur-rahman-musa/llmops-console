@@ -1,0 +1,11 @@
+: HAND-WRITTEN, not recorded (see stream_text.sse). A COMPLETE stream - text, a
+: finish_reason and the [DONE] sentinel - that carries no usage chunk at all,
+: which is what a server started without `--metrics`-style usage reporting sends
+: when `stream_options.include_usage` was not asked for.
+data: {"id":"chatcmpl-local-streamnousage","object":"chat.completion.chunk","created":1757000050,"model":"qwen2.5-7b-instruct","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-local-streamnousage","object":"chat.completion.chunk","created":1757000050,"model":"qwen2.5-7b-instruct","choices":[{"index":0,"delta":{"content":"Billed but uncounted."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-local-streamnousage","object":"chat.completion.chunk","created":1757000050,"model":"qwen2.5-7b-instruct","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
