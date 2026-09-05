@@ -53,13 +53,23 @@ CRLF and a trailing space; the accepted set (uppercase included) is held by
 
 
 def checked_tool_name(value: str, field: str) -> str:
-    """Validate one caller-supplied tool name before it reaches a provider.
+    """Validate one caller-supplied identifier before it reaches a provider.
+
+    Named for its first caller and now used for every identifier in a tool loop.
+    `grep -rn checked_tool_name packages/` returns six CALL sites as of an earlier change,
+    all in `providers/anthropic.py` (the rest of its output is this definition,
+    that module's import, and the docstrings naming it): a tool call's id and its name, the
+    `tool_call_id` on a result turn, a `tools[].name`, a forced
+    `tool_choice.name` and a `response_format.name`. They share a cap and a
+    character set because they are the same kind of string - one the model calls
+    back by name - and one rule is one place to change it.
 
     Raises `IdentifierInvalid` (code VALIDATION, status 422) naming `field`, so a
-    bad name is the caller's error with a pointer to it rather than a provider
+    bad value is the caller's error with a pointer to it rather than a provider
     400 the caller cannot act on. Adapters call this before the outbound request
-    is built, which `test_bad_tool_name_raises_before_any_outbound_call` proves by
-    asserting no request was made.
+    is built, which `test_bad_tool_name_raises_before_any_outbound_call` and
+    `test_bad_tool_ids_raise_before_any_outbound_call` prove by asserting no
+    request was made.
     """
     if len(value) > MAX_TOOL_NAME_LENGTH:
         raise IdentifierInvalid(
@@ -76,11 +86,36 @@ class _Contract(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
-class ChatMessage(_Contract):
-    """One turn. `system` is a role here; adapters place it wherever their provider wants it."""
+class ToolCall(_Contract):
+    """A tool the model asked to call. `arguments` is a JSON string, as OpenAI publishes it.
 
-    role: Literal["system", "user", "assistant"]
-    content: str
+    Defined above `ChatMessage` because an assistant turn carries these when it is
+    replayed back to a provider: the request half of a tool loop.
+    """
+
+    id: str
+    name: str
+    arguments: str
+
+
+class ChatMessage(_Contract):
+    """One turn. `system` is a role here; adapters place it wherever their provider wants it.
+
+    Four roles, closed (`test_role_set_stays_closed`). `tool` is the result of a
+    call the model asked for, and it carries `tool_call_id` to say which call it
+    answers; an `assistant` turn carries `tool_calls` when the model's answer was
+    a call rather than words, so `content` defaults to empty rather than being
+    required (`test_a_tool_call_only_assistant_turn_needs_no_content`). Which
+    combinations are coherent is settled at the API boundary, in
+    `gateway/routes/chat.py`, where an incoherent one is a 422 the caller can
+    read; the ids themselves are checked by the adapter, before any outbound
+    call (`test_bad_tool_ids_raise_before_any_outbound_call`).
+    """
+
+    role: Literal["system", "user", "assistant", "tool"]
+    content: str = ""
+    tool_calls: tuple[ToolCall, ...] = ()
+    tool_call_id: str | None = None
 
 
 class ToolSpec(_Contract):
@@ -102,6 +137,28 @@ class ResponseFormat(_Contract):
     json_schema: Mapping[str, Any]
 
 
+class ToolChoice(_Contract):
+    """How freely the model may choose whether to call a tool.
+
+    Four modes, closed, in the gateway's own words
+    (`test_tool_choice_mode_set_stays_closed`): `auto` leaves it to the model,
+    `none` forbids a call, `required` demands one of the offered tools, and
+    `tool` demands the one `name` names. `required` is deliberately not spelled
+    the way any provider spells it - Anthropic calls it `any` - so that word
+    stays inside the adapter.
+
+    `name` is meaningful only with `mode="tool"` and is not required by the
+    model: it is caller-supplied and becomes an identifier on the outbound call,
+    so the adapter runs it through `checked_tool_name`
+    (`test_tool_choice_name_is_checked_before_any_outbound_call`). A `tool` mode
+    with no name at all fails the same check as a 422 before anything is sent
+    (`test_a_named_tool_choice_with_no_name_raises_before_any_outbound_call`).
+    """
+
+    mode: Literal["auto", "none", "required", "tool"]
+    name: str | None = None
+
+
 class ChatRequest(_Contract):
     """One completion request, already resolved to a provider model id.
 
@@ -112,17 +169,10 @@ class ChatRequest(_Contract):
     model: str
     messages: tuple[ChatMessage, ...]
     tools: tuple[ToolSpec, ...] = ()
+    tool_choice: ToolChoice | None = None
     max_tokens: int | None = None
     temperature: float | None = None
     response_format: ResponseFormat | None = None
-
-
-class ToolCall(_Contract):
-    """A tool the model asked to call. `arguments` is a JSON string, as OpenAI publishes it."""
-
-    id: str
-    name: str
-    arguments: str
 
 
 class Usage(_Contract):

@@ -20,7 +20,9 @@ from opsconsole.gateway.health import ProbeRegistry
 @pytest.fixture
 def app() -> FastAPI:
     """A freshly built app, so probe registrations never leak between tests."""
-    built: FastAPI = create_app()
+    # No provider key is read, whatever the shell exports (#66); see the note in
+    # `tests/gateway/conftest.py`.
+    built: FastAPI = create_app(environ={})
     return built
 
 

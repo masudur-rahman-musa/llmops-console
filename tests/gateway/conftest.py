@@ -22,6 +22,17 @@ real handlers and none shares state with another:
   exception reaching the test. Keeping it separate means an accidental crash in
   any other test still surfaces as the real exception rather than a masked 500.
 
+An earlier change adds a fourth client, `chat_client`, and the `StubAdapter` behind it;
+the block at the foot of this file explains why the adapter set is replaced after
+`create_app` rather than built from the environment.
+
+Every `create_app` call in this directory passes an explicit environment
+(`grep -rn "create_app(" tests/`), `NO_PROVIDER_KEYS` here. `create_app`
+otherwise reads `os.environ`, so a developer with a real `ANTHROPIC_API_KEY`
+exported would have every app in this directory holding a live-keyed client
+against `api.anthropic.com` - a suite that passes locally by making a real,
+billed call and fails in CI, which is the inversion #66 exists to prevent.
+
 The plaintext keys below are test data, not secrets: they are random-looking only
 by shape, are worth nothing, and match no provider's key format.
 """
@@ -31,7 +42,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Iterator, Mapping
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import pytest
 from fastapi import Depends, FastAPI, HTTPException
@@ -42,6 +53,7 @@ from opsconsole.core.settings import Settings
 from opsconsole.gateway.app import create_app
 from opsconsole.gateway.auth import MAX_KEY_LENGTH
 from opsconsole.gateway.context import RequestContext, request_context
+from opsconsole.providers.base import Adapter, ChatRequest, ChatResponse, ToolCall, Usage
 from opsconsole.routing.errors import ResidencyUnavailable, RoutingError
 from opsconsole.routing.policy import DataClass, Policy, load_policy
 from opsconsole.routing.resolver import MAX_IDENTIFIER_LENGTH, resolve
@@ -85,6 +97,10 @@ def key_entries(keys: Mapping[str, str]) -> str:
 
 
 API_KEYS = key_entries(TEST_KEYS)
+
+# The environment every app in this directory is built against: no provider key,
+# whatever the developer's shell exports. See the module docstring.
+NO_PROVIDER_KEYS: Mapping[str, str] = {}
 
 
 def auth_headers(
@@ -200,14 +216,14 @@ def settings() -> Settings:
 @pytest.fixture(scope="session")
 def gateway_client(settings: Settings) -> Iterator[TestClient]:
     """The shipped app, built once."""
-    with TestClient(create_app(settings)) as client:
+    with TestClient(create_app(settings, NO_PROVIDER_KEYS)) as client:
         yield client
 
 
 @pytest.fixture(scope="session")
 def harness_client(settings: Settings) -> Iterator[TestClient]:
     """The shipped app plus the `/_harness/` observation routes, built once."""
-    with TestClient(build_harness(create_app(settings))) as client:
+    with TestClient(build_harness(create_app(settings, NO_PROVIDER_KEYS))) as client:
         yield client
 
 
@@ -219,7 +235,9 @@ def crashing_client(settings: Settings) -> Iterator[TestClient]:
     every other test and would hide the very handler under test here: the client
     would see the `RuntimeError` instead of the 500 a real client gets.
     """
-    with TestClient(build_harness(create_app(settings)), raise_server_exceptions=False) as client:
+    with TestClient(
+        build_harness(create_app(settings, NO_PROVIDER_KEYS)), raise_server_exceptions=False
+    ) as client:
         yield client
 
 
@@ -227,3 +245,153 @@ def crashing_client(settings: Settings) -> Iterator[TestClient]:
 def policy() -> Policy:
     """The shipped routing policy, loaded once, for computing expectations."""
     return load_policy(SHIPPED_POLICY_PATH)
+
+
+# --- chat completions ---------------------------------------------
+#
+# `POST /v1/chat/completions` needs an adapter behind the resolver, and the real
+# one would need a provider key. `StubAdapter` stands in: it satisfies the
+# `Adapter` protocol (held by `test_stub_adapter_satisfies_the_protocol`), records
+# every `ChatRequest` the route hands it so the outbound shape can be asserted
+# exactly, and answers with a fixed response or raises a fixed error.
+#
+# It is keyed by the POLICY provider name, which is what `app.state.adapters` is
+# keyed by and what the resolver's health seam looks up. In the shipped
+# `routing.yaml` only `anthropic` gets a stub, so `local` and `openai` have no
+# adapter: that is what makes the 503 case reachable through `nordlicht`'s
+# `agent-default` override, without editing the policy.
+#
+# `chat_client` and its stub are session-scoped and shared. A case that needs a
+# differently-behaving adapter builds its own client with `build_chat_client`;
+# the app is in-process and there is no backing service, so that costs a YAML
+# parse.
+
+CHAT = "/v1/chat/completions"
+
+# The route's own numbers, chosen distinct from each other and from any fixture
+# so a zero-fill, a swap or a recomputed total is visible.
+STUB_USAGE = Usage(prompt_tokens=137, completion_tokens=29, total_tokens=166)
+
+STUB_CONTENT = "The stub answered."
+
+# What the adapter reports as the model it called. Deliberately neither the alias
+# nor the policy's provider model id, so a route that echoes the adapter's answer
+# into the response body, or into `X-Gateway-Model`, is caught rather than
+# accidentally right.
+STUB_RESPONSE_MODEL = "stub-model-neither-alias-nor-policy-id"
+
+STUB_TOOL_CALL = ToolCall(
+    id="toolu_01StubWeatherCall00000", name="get_weather", arguments='{"city": "Berlin"}'
+)
+
+
+def stub_response(
+    *,
+    content: str = STUB_CONTENT,
+    tool_calls: tuple[ToolCall, ...] = (),
+    finish_reason: str = "end_turn",
+    usage: Usage = STUB_USAGE,
+) -> ChatResponse:
+    """One neutral `ChatResponse` for a stub adapter to answer with."""
+    return ChatResponse(
+        model=STUB_RESPONSE_MODEL,
+        content=content,
+        tool_calls=tool_calls,
+        finish_reason=finish_reason,
+        usage=usage,
+    )
+
+
+class StubAdapter:
+    """An in-process stand-in for a provider adapter, holding the real protocol.
+
+    `requests` is the whole point: the route's outbound `ChatRequest` is compared
+    field by field, so a wire-to-neutral mapping that drops the tool result turn,
+    reorders the turns or sends the alias as the model is caught here rather than
+    by an assertion about the answer.
+    """
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        response: ChatResponse | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.name = name
+        self.requests: list[ChatRequest] = []
+        self._response = response if response is not None else stub_response()
+        self._error = error
+
+    def chat(self, request: ChatRequest) -> ChatResponse:
+        self.requests.append(request)
+        if self._error is not None:
+            raise self._error
+        return self._response
+
+    def healthcheck(self) -> bool:
+        return True
+
+    def price_key(self, model: str) -> str:
+        return f"{self.name}/{model}"
+
+
+def build_chat_client(settings: Settings, adapters: Mapping[str, Adapter]) -> TestClient:
+    """A real app whose adapter set is the given stubs, keyed by policy provider name.
+
+    `NO_PROVIDER_KEYS` means `create_app` builds nothing of its own, so no
+    provider key is read whatever the shell holds (#66); replacing the dict
+    afterwards is what keeps the route, the resolver and the error handlers real.
+    """
+    app = create_app(settings, NO_PROVIDER_KEYS)
+    app.state.adapters = dict(adapters)
+    return TestClient(app)
+
+
+def chat_body(**overrides: object) -> dict[str, Any]:
+    """The baseline OpenAI-shaped request body, with the given fields replaced."""
+    body: dict[str, Any] = {
+        "model": "agent-default",
+        "messages": [{"role": "user", "content": "Which city?"}],
+    }
+    body.update(overrides)
+    return body
+
+
+def post_chat(
+    client: TestClient,
+    body: Mapping[str, Any],
+    *,
+    key: str = TEST_KEYS["evals"],
+    tenant: str = "evals",
+    data_class: str | None = "internal",
+    traceparent: str | None = None,
+) -> Response:
+    """POST one chat completion as the `evals` tenant under `internal` by default.
+
+    That pair is the one the shipped policy lets reach the US `anthropic`
+    provider: `evals` has `residency: any`, and its `internal` rule allows `us`.
+    The default data class (`confidential`) allows only `eu` and `self`, so a
+    case that forgets the header would be a 451, not a success.
+    """
+    response: Response = client.post(
+        CHAT,
+        json=dict(body),
+        headers=auth_headers(
+            key=key, tenant=tenant, data_class=data_class, traceparent=traceparent
+        ),
+    )
+    return response
+
+
+@pytest.fixture(scope="session")
+def chat_stub() -> StubAdapter:
+    """The shared stub behind `chat_client`, answering a plain successful completion."""
+    return StubAdapter(name="anthropic")
+
+
+@pytest.fixture(scope="session")
+def chat_client(settings: Settings, chat_stub: StubAdapter) -> Iterator[TestClient]:
+    """The shipped app with one adapter, for the policy provider `anthropic`."""
+    with build_chat_client(settings, {chat_stub.name: chat_stub}) as client:
+        yield client

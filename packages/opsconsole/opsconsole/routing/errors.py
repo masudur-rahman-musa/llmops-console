@@ -61,13 +61,16 @@ class AllProvidersUnavailable(RoutingError):
 class IdentifierInvalid(RoutingError):
     """A client-supplied identifier failed its pre-check.
 
-    Four raisers, which is the whole list as of an earlier change (grep `IdentifierInvalid`
-    under `packages/`): the resolver, for a tenant or alias; `gateway.context`,
-    for the `X-Tenant`, `X-Session` and `X-Data-Class` headers;
-    `gateway.errors`, which mints one to render FastAPI's own
-    `RequestValidationError` into the wire contract; and
-    `providers.base.checked_tool_name`, for a tool name on its way to a provider.
-    One code covers every rejected input. It lives in this package rather than in
+    `grep -rn "raise IdentifierInvalid" packages/` returns four modules as of plan
+    05a, plus this docstring, which quotes the command:
+    `routing.resolver` (a tenant, an alias, a data class),
+    `gateway.context` (the `X-Tenant`, `X-Session` and `X-Data-Class` headers),
+    `providers.base` (inside `checked_tool_name`, for any identifier on its way
+    to a provider) and `providers.anthropic` (tool call `arguments` that will not
+    parse as JSON). A fifth module, `gateway.errors`, constructs one without
+    raising it, to render FastAPI's own `RequestValidationError` into the wire
+    contract - so it answers the grep for `IdentifierInvalid(` and not the one
+    above. One code covers every rejected input. It lives in this package rather than in
     `core` because the resolver was the first raiser; a later plan may well move
     it up, and the list above is what would have to move with it.
     """

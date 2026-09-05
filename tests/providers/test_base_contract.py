@@ -30,6 +30,7 @@ from opsconsole.providers.base import (
     ChatResponse,
     ResponseFormat,
     ToolCall,
+    ToolChoice,
     ToolSpec,
     Usage,
     checked_tool_name,
@@ -193,6 +194,7 @@ def test_base_contract_carries_no_provider_vocabulary(token: str) -> None:
         ResponseFormat,
         ChatRequest,
         ToolCall,
+        ToolChoice,
         Usage,
         ChatResponse,
     ):
@@ -212,6 +214,7 @@ MODEL_CASES: list[tuple[str, type[Any], dict[str, Any]]] = [
         {"model": "claude-haiku-4-5", "messages": (ChatMessage(role="user", content="hi"),)},
     ),
     ("ToolCall", ToolCall, {"id": "toolu_1", "name": "get_weather", "arguments": "{}"}),
+    ("ToolChoice", ToolChoice, {"mode": "auto"}),
     ("Usage", Usage, {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}),
     (
         "ChatResponse",
@@ -251,3 +254,116 @@ def test_contract_models_are_frozen(case: str, model: type[Any], kwargs: dict[st
 
     with pytest.raises(ValidationError, match=r"(?i)frozen|immutable"):
         setattr(instance, field, getattr(instance, field))
+
+
+# --- the tool loop the contract has to be able to express ---------
+#
+# A tool loop whose REQUEST half cannot be said in the neutral contract is not
+# tool support: the caller gets a `tool_calls` answer back and then has nowhere
+# to put the result. These cases pin the three field defaults that make the loop
+# expressible, and the two closed sets that keep it typed.
+
+
+def test_a_tool_call_only_assistant_turn_needs_no_content() -> None:
+    """Catches a `ChatMessage` that still requires `content`: an assistant turn whose
+    whole answer was a tool call has no text, so a required field would force the caller
+    to invent one and change what the model is shown of its own last turn."""
+    call = ToolCall(id="toolu_1", name="get_weather", arguments='{"city": "Berlin"}')
+
+    turn = ChatMessage(role="assistant", tool_calls=(call,))
+
+    assert turn.content == ""
+    assert turn.tool_calls == (call,)
+    assert turn.tool_call_id is None
+
+
+def test_a_plain_turn_carries_no_tool_fields() -> None:
+    """Catches defaults that make the new fields required, or that default `tool_calls` to
+    a shared mutable list: an ordinary user turn must construct from role and content
+    alone, exactly as every existing caller writes it."""
+    turn = ChatMessage(role="user", content="Which city?")
+
+    assert turn.tool_calls == ()
+    assert turn.tool_call_id is None
+
+
+def test_a_tool_result_turn_carries_the_id_it_answers() -> None:
+    """Catches a contract with no `tool_call_id`: with several calls in one assistant turn
+    there is no other way to say which result answers which call, and a provider would be
+    handed results it cannot pair up."""
+    turn = ChatMessage(role="tool", content="18C, clear", tool_call_id="toolu_1")
+
+    assert turn.role == "tool"
+    assert turn.tool_call_id == "toolu_1"
+
+
+ACCEPTED_ROLES: list[str] = ["system", "user", "assistant", "tool"]
+
+
+@pytest.mark.parametrize("role", ACCEPTED_ROLES)
+def test_role_set_accepts_the_four_turns(role: str) -> None:
+    """Catches a contract that adds `tool` to the response side only, leaving a tool result
+    inexpressible on the way in - the half of the loop an earlier change exists to close."""
+    assert ChatMessage(role=role, content="x").role == role
+
+
+REJECTED_ROLES: list[tuple[str, str]] = [
+    ("OpenAI's legacy function role", "function"),
+    ("OpenAI's developer role", "developer"),
+    ("a capitalised role", "Tool"),
+    ("a trailing newline", "tool\n"),
+    ("empty", ""),
+]
+
+
+@pytest.mark.parametrize(("case", "role"), REJECTED_ROLES, ids=[case for case, _ in REJECTED_ROLES])
+def test_role_set_stays_closed(case: str, role: str) -> None:
+    """Catches a `role: str` widened while `tool` was added: an unknown role would then be
+    forwarded to a provider that rejects it, turning a caller's typo into a provider 400
+    the caller cannot read."""
+    with pytest.raises(ValidationError):
+        ChatMessage(role=role, content="x")
+
+
+ACCEPTED_TOOL_CHOICE_MODES: list[str] = ["auto", "none", "required", "tool"]
+
+
+@pytest.mark.parametrize("mode", ACCEPTED_TOOL_CHOICE_MODES)
+def test_tool_choice_modes_are_the_four_neutral_ones(mode: str) -> None:
+    """Catches a `ToolChoice` that omits one of the four - dropping `required` would leave
+    a caller who demands a tool call no way to say so except through `response_format`,
+    which is a different request."""
+    assert ToolChoice(mode=mode).mode == mode
+    assert ToolChoice(mode=mode).name is None
+
+
+REJECTED_TOOL_CHOICE_MODES: list[tuple[str, str]] = [
+    ("Anthropic's own word for required", "any"),
+    ("OpenAI's object form as a string", "function"),
+    ("a trailing newline", "auto\n"),
+    ("empty", ""),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "mode"),
+    REJECTED_TOOL_CHOICE_MODES,
+    ids=[case for case, _ in REJECTED_TOOL_CHOICE_MODES],
+)
+def test_tool_choice_mode_set_stays_closed(case: str, mode: str) -> None:
+    """Catches a `mode: str`: `"any"` is Anthropic's spelling of `required`, and letting it
+    through the neutral contract would put one provider's vocabulary in the gateway's own
+    request type - the thing this module exists to prevent."""
+    with pytest.raises(ValidationError):
+        ToolChoice(mode=mode)
+
+
+def test_chat_request_tool_choice_defaults_to_unset() -> None:
+    """Catches a `ChatRequest` that defaults `tool_choice` to `auto`: every existing caller
+    would start sending an explicit choice, and a provider that treats "no field" and
+    "auto" differently would change its behaviour with no caller having asked."""
+    request = ChatRequest(
+        model="claude-haiku-4-5", messages=(ChatMessage(role="user", content="hi"),)
+    )
+
+    assert request.tool_choice is None

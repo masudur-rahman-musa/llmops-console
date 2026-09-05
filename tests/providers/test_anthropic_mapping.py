@@ -23,6 +23,8 @@ from opsconsole.providers.base import (
     ChatMessage,
     ChatRequest,
     ResponseFormat,
+    ToolCall,
+    ToolChoice,
     ToolSpec,
 )
 from opsconsole.routing.errors import IdentifierInvalid
@@ -401,3 +403,319 @@ def test_an_answer_with_no_readable_block_raises() -> None:
         from_anthropic(payload)
 
     assert raised.value.retryable is False
+
+
+# --- the tool loop, request side ----------------------------------
+#
+# Anthropic carries a tool RESULT in a `user` turn holding a `tool_result` block,
+# and a tool CALL in an `assistant` turn holding a `tool_use` block. Neither has
+# a role of its own, so this is the mapping that makes an OpenAI-shaped tool loop
+# expressible at all - and it is the one an implementation is most likely to get
+# right in the response direction and forget in the request direction.
+
+TOOL_CALL_ID = "toolu_01WeatherCall00000000"
+
+WEATHER_CALL = ToolCall(id=TOOL_CALL_ID, name="get_weather", arguments='{"city": "Berlin"}')
+
+TOOL_LOOP = (
+    ChatMessage(role="system", content="You are terse."),
+    ChatMessage(role="user", content="Weather in Berlin?"),
+    ChatMessage(role="assistant", tool_calls=(WEATHER_CALL,)),
+    ChatMessage(role="tool", content="18C, clear", tool_call_id=TOOL_CALL_ID),
+)
+
+
+def test_tool_result_turn_renders_as_a_user_turn_in_order() -> None:
+    """Catches a mapper that passes the `tool` role straight through (Anthropic has no such
+    role and 400s on it), or that appends the result somewhere other than immediately after
+    the assistant turn that asked for it, which breaks the pairing the model reads."""
+    body = to_anthropic(request_with({"messages": TOOL_LOOP}))
+
+    assert body["system"] == "You are terse."
+    assert body["messages"] == [
+        {"role": "user", "content": "Weather in Berlin?"},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": TOOL_CALL_ID,
+                    "name": "get_weather",
+                    "input": {"city": "Berlin"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": TOOL_CALL_ID, "content": "18C, clear"}
+            ],
+        },
+    ]
+
+
+def test_a_tool_call_only_assistant_turn_has_no_text_block() -> None:
+    """Catches a mapper that always prepends a text block: Anthropic rejects an empty
+    `text`, so an assistant turn whose only answer was a tool call would 400 on every
+    second request of a tool loop."""
+    body = to_anthropic(request_with({"messages": (TOOL_LOOP[2],)}))
+
+    assert body["messages"][0]["content"] == [
+        {"type": "tool_use", "id": TOOL_CALL_ID, "name": "get_weather", "input": {"city": "Berlin"}}
+    ]
+
+
+def test_an_assistant_turn_with_text_and_a_call_keeps_both_in_order() -> None:
+    """Catches a mapper that drops the assistant's text when tool calls are present, which
+    loses the model's own words from the transcript it is shown next turn."""
+    turn = ChatMessage(role="assistant", content="Checking.", tool_calls=(WEATHER_CALL,))
+
+    body = to_anthropic(request_with({"messages": (turn,)}))
+
+    assert [block["type"] for block in body["messages"][0]["content"]] == ["text", "tool_use"]
+    assert body["messages"][0]["content"][0] == {"type": "text", "text": "Checking."}
+
+
+def test_a_plain_assistant_turn_stays_a_plain_string() -> None:
+    """Catches a mapper that wraps every assistant turn in a block list once tool calls
+    exist: the existing multi-turn expectation is a string, and changing it would be a
+    silent change to what every non-tool request sends."""
+    body = to_anthropic(request_with({"messages": MULTI_TURN}))
+
+    assert body["messages"][1] == {"role": "assistant", "content": "Berlin."}
+
+
+# --- the ids on the way out -------------------------
+
+AT_CAP_ID = "a" * 128
+OVER_CAP_ID = "a" * 129
+
+
+def test_tool_call_id_at_128_is_accepted() -> None:
+    """Catches an exclusive boundary (`len(value) < 128`), which would refuse a tool call
+    id that is exactly at the documented cap: the id is not ours to shorten - it is the one
+    the provider issued and the client sent back."""
+    adapter, scripted = make_adapter([ok("plain")])
+    messages = (
+        ChatMessage(
+            role="assistant",
+            tool_calls=(ToolCall(id=AT_CAP_ID, name="get_weather", arguments="{}"),),
+        ),
+        ChatMessage(role="tool", content="18C", tool_call_id=AT_CAP_ID),
+    )
+
+    adapter.chat(request_with({"messages": messages}))
+
+    assert scripted.request_count == 1
+    sent = scripted.body()
+    assert sent["messages"][1]["content"][0]["tool_use_id"] == AT_CAP_ID
+
+
+def test_tool_call_id_at_129_is_rejected() -> None:
+    """Catches an id pre-check with no upper bound: a 129-character id would travel to the
+    provider and come back as its 400, and the id is a client-supplied string that becomes
+    an identifier on an outbound call."""
+    adapter, scripted = make_adapter([ok("plain")])
+    messages = (ChatMessage(role="tool", content="18C", tool_call_id=OVER_CAP_ID),)
+
+    with pytest.raises(IdentifierInvalid) as raised:
+        adapter.chat(request_with({"messages": messages}))
+
+    assert raised.value.http_status == 422
+    assert scripted.request_count == 0
+
+
+# Each row carries exactly one bad id, with every other id on the request valid,
+# so the row can only be rejected by the pre-check on the field it names. The
+# newline and CRLF rows are the ones `re.match` with `^...$` would let through.
+BAD_ID_CASES: list[tuple[str, tuple[ChatMessage, ...], str]] = [
+    (
+        "a tool_call_id with a trailing newline",
+        (ChatMessage(role="tool", content="18C", tool_call_id=f"{TOOL_CALL_ID}\n"),),
+        "tool_call_id",
+    ),
+    (
+        "a tool_call_id with a trailing CRLF",
+        (ChatMessage(role="tool", content="18C", tool_call_id=f"{TOOL_CALL_ID}\r\n"),),
+        "tool_call_id",
+    ),
+    (
+        "a tool_call_id with a trailing space",
+        (ChatMessage(role="tool", content="18C", tool_call_id=f"{TOOL_CALL_ID} "),),
+        "tool_call_id",
+    ),
+    (
+        "a tool_call_id with a slash",
+        (ChatMessage(role="tool", content="18C", tool_call_id="calls/1"),),
+        "tool_call_id",
+    ),
+    (
+        "a tool_call_id one over the cap",
+        (ChatMessage(role="tool", content="18C", tool_call_id=OVER_CAP_ID),),
+        "tool_call_id",
+    ),
+    (
+        "a tool call id with a trailing newline",
+        (
+            ChatMessage(
+                role="assistant",
+                tool_calls=(ToolCall(id=f"{TOOL_CALL_ID}\n", name="get_weather", arguments="{}"),),
+            ),
+        ),
+        "tool_calls",
+    ),
+    (
+        "a tool call name with a trailing space",
+        (
+            ChatMessage(
+                role="assistant",
+                tool_calls=(ToolCall(id=TOOL_CALL_ID, name="get_weather ", arguments="{}"),),
+            ),
+        ),
+        "tool_calls",
+    ),
+    (
+        "a tool call name one over the cap",
+        (
+            ChatMessage(
+                role="assistant",
+                tool_calls=(ToolCall(id=TOOL_CALL_ID, name=OVER_CAP_ID, arguments="{}"),),
+            ),
+        ),
+        "tool_calls",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "messages", "field"), BAD_ID_CASES, ids=[case for case, *_ in BAD_ID_CASES]
+)
+def test_bad_tool_ids_raise_before_any_outbound_call(
+    case: str, messages: tuple[ChatMessage, ...], field: str
+) -> None:
+    """Catches ids checked with `re.match` and `^...$`, checked after the request is built,
+    or not checked at all: the transport is scripted to answer 200, so the pre-check is the
+    only thing that can raise, and `request_count == 0` proves it ran first."""
+    adapter, scripted = make_adapter([ok("plain")])
+
+    with pytest.raises(IdentifierInvalid) as raised:
+        adapter.chat(request_with({"messages": messages}))
+
+    assert raised.value.http_status == 422, case
+    assert scripted.request_count == 0, f"{case}: the provider was called before validation"
+    named = f"{raised.value.message} {raised.value.param}"
+    assert field in named, f"{case}: the error does not name the offending field"
+
+
+def test_a_tool_turn_without_a_tool_call_id_raises() -> None:
+    """Catches a mapper that renders `tool_use_id: null` when the caller omitted the id:
+    Anthropic cannot pair the result with a call, and the failure would arrive as a
+    provider 400 rather than as the caller's own 422."""
+    adapter, scripted = make_adapter([ok("plain")])
+    messages = (ChatMessage(role="tool", content="18C"),)
+
+    with pytest.raises(IdentifierInvalid) as raised:
+        adapter.chat(request_with({"messages": messages}))
+
+    assert raised.value.http_status == 422
+    assert scripted.request_count == 0
+
+
+def test_tool_call_arguments_that_are_not_json_raise() -> None:
+    """Catches a mapper that passes the arguments string through as Anthropic's `input`:
+    `input` is an object, so a string would be rejected upstream - and a mapper that
+    swallowed the parse failure would send `{}` and change what the model is told it did."""
+    adapter, scripted = make_adapter([ok("plain")])
+    messages = (
+        ChatMessage(
+            role="assistant",
+            tool_calls=(ToolCall(id=TOOL_CALL_ID, name="get_weather", arguments="not json"),),
+        ),
+    )
+
+    with pytest.raises(IdentifierInvalid) as raised:
+        adapter.chat(request_with({"messages": messages}))
+
+    assert raised.value.http_status == 422
+    assert scripted.request_count == 0
+
+
+# --- tool_choice -------------------------------------------------------------
+
+TOOL_CHOICE_CASES: list[tuple[str, ToolChoice | None, dict[str, Any] | None]] = [
+    ("unset sends no tool_choice", None, None),
+    ("auto", ToolChoice(mode="auto"), {"type": "auto"}),
+    ("none", ToolChoice(mode="none"), {"type": "none"}),
+    # Anthropic spells "required" as "any". This row is the whole reason the
+    # neutral contract keeps its own word for it.
+    ("required becomes any", ToolChoice(mode="required"), {"type": "any"}),
+    (
+        "a named tool",
+        ToolChoice(mode="tool", name="get_weather"),
+        {"type": "tool", "name": "get_weather"},
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "choice", "expected"),
+    TOOL_CHOICE_CASES,
+    ids=[case for case, *_ in TOOL_CHOICE_CASES],
+)
+def test_tool_choice_maps_to_the_anthropic_table(
+    case: str, choice: ToolChoice | None, expected: dict[str, Any] | None
+) -> None:
+    """Catches a mapper that forwards our own mode strings: Anthropic has no `required`,
+    so a caller demanding a tool call would get a 400, or worse a free-form answer if the
+    field were dropped. The `unset` row catches a mapper that always sends one."""
+    body = to_anthropic(request_with({"tools": (WEATHER_TOOL,), "tool_choice": choice}))
+
+    assert body.get("tool_choice") == expected, case
+
+
+def test_tool_choice_name_is_checked_before_any_outbound_call() -> None:
+    """Catches a forced tool name reaching Anthropic unchecked: it is caller-supplied and
+    becomes an identifier on the outbound call, the same class of input as `tools[].name`
+    and `response_format.name`."""
+    adapter, scripted = make_adapter([ok("plain")])
+    choice = ToolChoice(mode="tool", name="get_weather\n")
+
+    with pytest.raises(IdentifierInvalid) as raised:
+        adapter.chat(request_with({"tools": (WEATHER_TOOL,), "tool_choice": choice}))
+
+    assert raised.value.http_status == 422
+    assert scripted.request_count == 0
+
+
+def test_a_named_tool_choice_with_no_name_raises_before_any_outbound_call() -> None:
+    """Catches a mapper that renders `{"type": "tool", "name": null}` when the mode demands
+    a named tool and no name was given: the contract allows the pair (`name` is optional,
+    because it is meaningless for the other three modes), so the adapter is the only place
+    it can be refused, and Anthropic would answer its own 400."""
+    adapter, scripted = make_adapter([ok("plain")])
+
+    with pytest.raises(IdentifierInvalid) as raised:
+        adapter.chat(
+            request_with({"tools": (WEATHER_TOOL,), "tool_choice": ToolChoice(mode="tool")})
+        )
+
+    assert raised.value.http_status == 422
+    assert scripted.request_count == 0
+
+
+def test_response_format_wins_over_tool_choice() -> None:
+    """Catches an adapter that lets a plain `tool_choice` override the schema demand: the
+    forced tool is what makes a JSON schema binding, and applying the caller's `auto` last
+    would leave the model free to answer in prose. The wire boundary refuses the pair
+    outright (`tests/gateway/test_chat_completions.py`); this is the adapter's tie-break."""
+    body = to_anthropic(
+        request_with(
+            {
+                "tools": (WEATHER_TOOL,),
+                "tool_choice": ToolChoice(mode="auto"),
+                "response_format": RESPONSE_FORMAT,
+            }
+        )
+    )
+
+    assert body["tool_choice"] == {"type": "tool", "name": "ticket_summary"}

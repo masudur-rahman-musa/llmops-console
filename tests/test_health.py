@@ -99,7 +99,7 @@ def test_registries_are_per_app(registry: ProbeRegistry, client: TestClient) -> 
     make the pod unready, never restart it.
     """
     registry.register("redis", failing)
-    other = create_app()
+    other = create_app(environ={})
 
     assert client.get("/readyz").status_code == 503
     assert client.get("/healthz").status_code == 200

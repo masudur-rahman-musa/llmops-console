@@ -11,10 +11,15 @@ it stops here, so no Anthropic field name reaches the rest of the gateway.
 Every PROVIDER failure that leaves this module is a `ProviderError` carrying
 `retryable`, including a timeout and a 200 whose body we cannot read, so plan
 10's fallback reads one flag instead of re-deriving a verdict from a status it
-can no longer see. The caller's own bad input is the deliberate exception: an
-invalid tool name leaves as `IdentifierInvalid` (422) before any call is made,
-because that is the caller's error to fix and not a provider outage to fall back
-from.
+can no longer see. The caller's own bad input is the deliberate exception: it
+leaves as `IdentifierInvalid` (422) before any call is made, because that is the
+caller's error to fix and not a provider outage to fall back from. Seven inputs
+reach that path: the six `checked_tool_name` call sites this module has
+(`grep -n checked_tool_name providers/anthropic.py`, which also returns the
+import and these two lines) - a
+tool call's id and name, a `tool_call_id` on a result turn, a `tools[].name`, a
+forced `tool_choice.name` and a `response_format.name` - and the one direct
+raise below, for tool call `arguments` that will not parse as JSON.
 """
 
 from __future__ import annotations
@@ -30,12 +35,14 @@ import httpx
 from opsconsole.core.errors import ProviderError
 from opsconsole.providers.base import (
     DEFAULT_MAX_TOKENS,
+    ChatMessage,
     ChatRequest,
     ChatResponse,
     ToolCall,
     Usage,
     checked_tool_name,
 )
+from opsconsole.routing.errors import IdentifierInvalid
 
 ANTHROPIC_BASE_URL = "https://api.anthropic.com"
 ANTHROPIC_VERSION = "2023-06-01"
@@ -59,6 +66,15 @@ because retrying a 400 bills the tenant three times for a request that cannot
 succeed. `test_retry_table_by_status` holds the whole table, request counts
 included, and `test_backoff_doubles_and_is_jittered` pins the two delays."""
 
+ANTHROPIC_TOOL_CHOICE_BY_MODE = {"auto": "auto", "none": "none", "required": "any"}
+"""The neutral `ToolChoice.mode` in Anthropic's own words.
+
+Anthropic spells `required` as `any`, and this table is the only place that
+translation happens (`grep -rn ANTHROPIC_TOOL_CHOICE_BY_MODE packages/`), which
+is the whole reason the neutral contract keeps its own word for it. The `tool`
+mode is absent from the table because it carries a name and is built separately.
+Pinned row by row by `test_tool_choice_maps_to_the_anthropic_table`."""
+
 PROVIDER_MESSAGE_LIMIT = 500
 """How much of a provider's error body is kept for the log, so a proxy answering
 with a megabyte of HTML cannot write a megabyte per failure. Pinned by
@@ -79,6 +95,74 @@ def _unreadable(exc: Exception) -> ProviderError:
         retryable=False,
         provider_message=f"{type(exc).__name__}: {exc}",
     )
+
+
+def _tool_use_block(call: ToolCall, field: str) -> dict[str, Any]:
+    """Render one tool call the model made, as the block Anthropic replays it as.
+
+    Both ids are checked here rather than at the contract, so an invalid one
+    raises before any outbound call is built
+    (`test_bad_tool_ids_raise_before_any_outbound_call`). `arguments` is the JSON
+    *string* the published API hands its clients, and Anthropic's `input` is an
+    object, so it is parsed rather than passed through; a string that will not
+    parse is the caller's error and not a provider outage, which is why it leaves
+    as `IdentifierInvalid` (`test_tool_call_arguments_that_are_not_json_raise`).
+    """
+    try:
+        arguments = json.loads(call.arguments)
+    except ValueError as exc:
+        raise IdentifierInvalid(
+            f"{field}.arguments: not valid JSON", param=f"{field}.arguments"
+        ) from exc
+    return {
+        "type": "tool_use",
+        "id": checked_tool_name(call.id, f"{field}.id"),
+        "name": checked_tool_name(call.name, f"{field}.name"),
+        "input": arguments,
+    }
+
+
+def _rendered_turn(index: int, message: ChatMessage) -> dict[str, Any]:
+    """Render one non-system turn as Anthropic carries it.
+
+    Anthropic has neither a `tool` role nor a `tool_calls` field: a tool RESULT is
+    a `tool_result` block inside a **user** turn, and a tool CALL is a `tool_use`
+    block inside an assistant turn. That asymmetry is the mapping this function
+    exists for (`test_tool_result_turn_renders_as_a_user_turn_in_order`).
+
+    An assistant turn stays a plain string unless it carries calls
+    (`test_a_plain_assistant_turn_stays_a_plain_string`), and a turn whose only
+    answer was a call gets no text block at all: Anthropic rejects an empty
+    `text` (`test_a_tool_call_only_assistant_turn_has_no_text_block`).
+    """
+    if message.role == "tool":
+        return {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    # `or ""` rather than a branch: an absent id fails the same
+                    # pre-check as a malformed one, with the same 422 naming the
+                    # same field (`test_a_tool_turn_without_a_tool_call_id_raises`).
+                    "tool_use_id": checked_tool_name(
+                        message.tool_call_id or "", f"messages[{index}].tool_call_id"
+                    ),
+                    "content": message.content,
+                }
+            ],
+        }
+
+    if message.tool_calls:
+        blocks: list[dict[str, Any]] = []
+        if message.content:
+            blocks.append({"type": "text", "text": message.content})
+        blocks.extend(
+            _tool_use_block(call, f"messages[{index}].tool_calls[{position}]")
+            for position, call in enumerate(message.tool_calls)
+        )
+        return {"role": message.role, "content": blocks}
+
+    return {"role": message.role, "content": message.content}
 
 
 def to_anthropic(request: ChatRequest) -> dict[str, Any]:
@@ -107,8 +191,8 @@ def to_anthropic(request: ChatRequest) -> dict[str, Any]:
         "model": request.model,
         "max_tokens": request.max_tokens if request.max_tokens is not None else DEFAULT_MAX_TOKENS,
         "messages": [
-            {"role": message.role, "content": message.content}
-            for message in request.messages
+            _rendered_turn(index, message)
+            for index, message in enumerate(request.messages)
             if message.role != "system"
         ],
     }
@@ -124,10 +208,27 @@ def to_anthropic(request: ChatRequest) -> dict[str, Any]:
         # setting an eval run depends on, and dropping it would change the answer.
         body["temperature"] = request.temperature
 
+    if request.tool_choice is not None:
+        choice = request.tool_choice
+        if choice.mode == "tool":
+            # `or ""` for the same reason as the tool result id above: a `tool`
+            # mode with no name fails the pre-check rather than sending `null`.
+            body["tool_choice"] = {
+                "type": "tool",
+                "name": checked_tool_name(choice.name or "", "tool_choice.name"),
+            }
+        else:
+            body["tool_choice"] = {"type": ANTHROPIC_TOOL_CHOICE_BY_MODE[choice.mode]}
+
     if request.response_format is not None:
         # A JSON schema becomes one forced tool. Anthropic has no response_format,
         # and a tool the model is required to call is the mechanism that makes the
         # schema binding rather than a suggestion the prose can ignore.
+        # Applied after `tool_choice` on purpose, so the schema demand wins if
+        # both are somehow set: the forced call is what makes a schema binding,
+        # and a plain `auto` overriding it would leave the model free to answer
+        # in prose (`test_response_format_wins_over_tool_choice`). The API
+        # boundary refuses the pair outright, so this is only the tie-break.
         forced = checked_tool_name(request.response_format.name, "response_format.name")
         tools.append(
             {
