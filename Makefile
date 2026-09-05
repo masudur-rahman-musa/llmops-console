@@ -1,4 +1,4 @@
-.PHONY: help setup run test lint typecheck format verify eval infra-check
+.PHONY: help setup run test select-tests test-adjacent lint typecheck format verify eval infra-check
 
 # The console arrives in a later milestone. Until then its checks are skipped
 # rather than deleted, so the intended gate stays visible in this file. The
@@ -21,9 +21,16 @@ run:        ## Run the project locally
 # flag overrides `[tool.coverage.run] source` and would silently unmeasure
 # everything outside the path.
 COVERED_100 = packages/opsconsole/opsconsole/routing/*
+# The per-test coverage map /adjacent-regression selects from. Written by the
+# same run that proves the suite green, so it can never be staler than it.
+COV_DB = .coverage-baseline
 test:       ## Run tests with the coverage gate
-	uv run pytest -q --cov --cov-fail-under=80
-	uv run coverage report --include='$(COVERED_100)' --fail-under=100
+	COVERAGE_FILE=$(COV_DB) uv run pytest -q --cov --cov-context=test --cov-fail-under=80
+	COVERAGE_FILE=$(COV_DB) uv run coverage report --include='$(COVERED_100)' --fail-under=100
+select-tests: ## Print the tests whose recorded coverage touches this change
+	@uv run python scripts/select_tests.py --explain
+test-adjacent: ## Run only the tests whose coverage touches this change
+	@uv run python scripts/select_tests.py | tr ' ' '\n' | xargs uv run pytest -q
 lint:       ## Lint
 	uv run ruff check .
 	$(call console,lint)
