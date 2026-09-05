@@ -1,0 +1,403 @@
+"""Both directions of the Anthropic mapping, against recorded payloads.
+
+`to_anthropic` and `from_anthropic` are pure, so every case here runs without a
+transport; the two that must prove an ordering ("no outbound call happened
+first") go through the adapter with a scripted transport that records requests.
+
+The usage cases exist because the ledger prices from these numbers: a response
+whose usage is missing must raise rather than book a zero-cost call.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Mapping
+from typing import Any
+
+import pytest
+
+from opsconsole.core.errors import ProviderError
+from opsconsole.providers.anthropic import from_anthropic, to_anthropic
+from opsconsole.providers.base import (
+    DEFAULT_MAX_TOKENS,
+    ChatMessage,
+    ChatRequest,
+    ResponseFormat,
+    ToolSpec,
+)
+from opsconsole.routing.errors import IdentifierInvalid
+
+from .conftest import load_fixture, make_adapter, ok
+
+MODEL = "claude-haiku-4-5"
+
+WEATHER_TOOL = ToolSpec(
+    name="get_weather",
+    description="Look up the weather in a city.",
+    parameters={
+        "type": "object",
+        "properties": {"city": {"type": "string"}, "units": {"type": "string"}},
+        "required": ["city"],
+    },
+)
+
+TICKET_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "severity": {"type": "integer"},
+        "tags": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["title", "severity"],
+}
+
+
+def request_with(overrides: Mapping[str, Any] | None = None) -> ChatRequest:
+    """The baseline single-turn request, with the given fields changed per case."""
+    fields: dict[str, Any] = {
+        "model": MODEL,
+        "messages": (ChatMessage(role="user", content="What is the capital of Germany?"),),
+    }
+    fields.update(overrides or {})
+    return ChatRequest(**fields)
+
+
+def test_system_message_is_lifted_to_the_top_level() -> None:
+    """Catches an implementation that passes the system message through inside `messages`,
+    which Anthropic rejects with a 400 because it has no `system` role."""
+    request = request_with(
+        {
+            "messages": (
+                ChatMessage(role="system", content="Answer in one word."),
+                ChatMessage(role="user", content="What is the capital of Germany?"),
+            )
+        }
+    )
+
+    body = to_anthropic(request)
+
+    assert body["system"] == "Answer in one word."
+    assert [message["role"] for message in body["messages"]] == ["user"]
+
+
+def test_no_system_message_omits_the_field_entirely() -> None:
+    """Catches an implementation that always emits `system`, sending `null` or `""` and
+    burning a field Anthropic validates rather than ignores."""
+    body = to_anthropic(request_with())
+
+    assert "system" not in body
+
+
+MULTI_TURN = (
+    ChatMessage(role="system", content="You are terse."),
+    ChatMessage(role="user", content="Which city?"),
+    ChatMessage(role="assistant", content="Berlin."),
+    ChatMessage(role="user", content="And the country?"),
+)
+
+
+def test_multi_turn_order_is_preserved_after_the_system_lift() -> None:
+    """Catches an implementation that groups messages by role or rebuilds the list from a
+    dict, which would reorder the turns and change what the model is answering."""
+    body = to_anthropic(request_with({"messages": MULTI_TURN}))
+
+    assert [(m["role"], m["content"]) for m in body["messages"]] == [
+        ("user", "Which city?"),
+        ("assistant", "Berlin."),
+        ("user", "And the country?"),
+    ]
+
+
+def test_model_and_defaults_are_carried_through() -> None:
+    """Catches a mapper that sends an alias instead of the resolved provider model id,
+    which would make Anthropic 404 on a name only our policy knows."""
+    body = to_anthropic(request_with())
+
+    assert body["model"] == MODEL
+
+
+MAX_TOKENS_CASES: list[tuple[str, int | None, int]] = [
+    ("omitted falls back to the default", None, DEFAULT_MAX_TOKENS),
+    ("the caller's value is honoured", 77, 77),
+    ("a caller value equal to the default", DEFAULT_MAX_TOKENS, DEFAULT_MAX_TOKENS),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "requested", "expected"),
+    MAX_TOKENS_CASES,
+    ids=[case for case, *_ in MAX_TOKENS_CASES],
+)
+def test_max_tokens_default_and_override(case: str, requested: int | None, expected: int) -> None:
+    """Catches both halves: a mapper that omits `max_tokens` (Anthropic requires it, so
+    every call 400s) and one that always sends 4096 and ignores the caller's ceiling."""
+    body = to_anthropic(request_with({"max_tokens": requested}))
+
+    assert body["max_tokens"] == expected, case
+
+
+TEMPERATURE_CASES: list[tuple[str, float | None, bool]] = [
+    ("unset is omitted", None, False),
+    ("zero is still sent", 0.0, True),
+    ("a set value is sent", 0.4, True),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "temperature", "present"),
+    TEMPERATURE_CASES,
+    ids=[case for case, *_ in TEMPERATURE_CASES],
+)
+def test_temperature_is_sent_only_when_the_caller_set_it(
+    case: str, temperature: float | None, present: bool
+) -> None:
+    """Catches a mapper testing `if request.temperature:` rather than `is not None`, which
+    silently drops an explicit temperature of 0 - the setting an eval run depends on."""
+    body = to_anthropic(request_with({"temperature": temperature}))
+
+    assert ("temperature" in body) is present, case
+    if present:
+        assert body["temperature"] == temperature
+
+
+def test_tools_render_in_the_anthropic_shape() -> None:
+    """Catches a mapper that forwards the OpenAI tool shape (`parameters`, or a
+    `{"type": "function", "function": {...}}` wrapper), which Anthropic rejects."""
+    body = to_anthropic(request_with({"tools": (WEATHER_TOOL,)}))
+
+    assert body["tools"] == [
+        {
+            "name": "get_weather",
+            "description": "Look up the weather in a city.",
+            "input_schema": dict(WEATHER_TOOL.parameters),
+        }
+    ]
+    assert "tool_choice" not in body, "plain tools must not force a tool"
+
+
+def test_tool_use_block_becomes_a_tool_call_with_json_string_arguments() -> None:
+    """Catches an implementation that returns the raw dict as `arguments`: the published
+    API is OpenAI-shaped, where `arguments` is a JSON *string* the client parses."""
+    payload = load_fixture("tool_use")
+    block = payload["content"][1]
+
+    response = from_anthropic(payload)
+
+    assert len(response.tool_calls) == 1
+    call = response.tool_calls[0]
+    assert call.id == block["id"]
+    assert call.name == block["name"]
+    assert isinstance(call.arguments, str), "arguments must be a JSON string, not a dict"
+    assert json.loads(call.arguments) == block["input"]
+
+
+def test_tools_round_trip_from_spec_to_call() -> None:
+    """Catches a name mismatch across the two directions: a mapper that renames or
+    namespaces the tool on the way out would return a `tool_calls` name the caller never
+    declared and cannot dispatch."""
+    body = to_anthropic(request_with({"tools": (WEATHER_TOOL,)}))
+    sent_names = [tool["name"] for tool in body["tools"]]
+
+    response = from_anthropic(load_fixture("tool_use"))
+
+    assert sent_names == [WEATHER_TOOL.name]
+    assert [call.name for call in response.tool_calls] == sent_names
+
+
+def test_text_blocks_are_concatenated_into_content() -> None:
+    """Catches an implementation that returns only the first text block, which truncates
+    every answer Anthropic happens to split across blocks."""
+    response = from_anthropic(load_fixture("multi_turn_system"))
+
+    assert response.content == "Berlin is the capital."
+
+
+def test_tool_use_answer_keeps_only_the_text_in_content() -> None:
+    """Catches a mapper that stringifies the tool_use block into `content`, leaking the
+    provider's block shape into the client-facing answer text."""
+    response = from_anthropic(load_fixture("tool_use"))
+
+    assert response.content == "Checking the weather."
+
+
+def test_a_tool_only_answer_has_empty_content() -> None:
+    """Catches a mapper that returns `None` for a tool-only answer, which would break the
+    `content: str` contract the response model declares."""
+    response = from_anthropic(load_fixture("json_schema_tool"))
+
+    assert response.content == ""
+
+
+def test_finish_reason_is_the_providers_stop_reason() -> None:
+    """Catches a mapper that hardcodes "stop", losing the `tool_use` signal the caller
+    needs to know an answer is a tool call rather than a final message."""
+    assert from_anthropic(load_fixture("plain")).finish_reason == "end_turn"
+    assert from_anthropic(load_fixture("tool_use")).finish_reason == "tool_use"
+
+
+RESPONSE_FORMAT = ResponseFormat(name="ticket_summary", json_schema=TICKET_SCHEMA)
+
+
+def test_response_format_renders_one_forced_tool() -> None:
+    """Catches a mapper that sends the OpenAI `response_format` object straight through,
+    or that adds the tool without `tool_choice`, leaving the model free to answer in prose
+    and the JSON contract unenforced."""
+    body = to_anthropic(request_with({"response_format": RESPONSE_FORMAT}))
+
+    assert body["tool_choice"] == {"type": "tool", "name": "ticket_summary"}
+    tools = body["tools"]
+    assert len(tools) == 1, "the forced tool is the only tool on this request"
+    assert tools[0]["name"] == "ticket_summary"
+    assert tools[0]["input_schema"] == TICKET_SCHEMA
+    assert "response_format" not in body, "our own field name must not travel to Anthropic"
+
+
+def test_response_format_is_added_alongside_caller_tools() -> None:
+    """Catches a mapper that overwrites `tools` with the forced tool, which would drop the
+    caller's own tools from a request that used both."""
+    body = to_anthropic(
+        request_with({"tools": (WEATHER_TOOL,), "response_format": RESPONSE_FORMAT})
+    )
+
+    assert [tool["name"] for tool in body["tools"]] == ["get_weather", "ticket_summary"]
+    assert body["tool_choice"] == {"type": "tool", "name": "ticket_summary"}
+
+
+def test_forced_tool_answer_maps_back_to_a_tool_call() -> None:
+    """Catches a mapper that special-cases the forced tool into `content` as text: the
+    recorded answer must come back as a tool call whose arguments parse to the object."""
+    payload = load_fixture("json_schema_tool")
+
+    response = from_anthropic(payload)
+
+    assert [call.name for call in response.tool_calls] == ["ticket_summary"]
+    assert json.loads(response.tool_calls[0].arguments) == payload["content"][0]["input"]
+
+
+USAGE_CASES: list[tuple[str, str, int, int]] = [
+    ("a plain answer", "plain", 41, 7),
+    ("a multi-turn answer", "multi_turn_system", 128, 19),
+    ("a tool_use answer", "tool_use", 88, 33),
+    ("a forced-tool answer", "json_schema_tool", 210, 64),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "fixture", "prompt", "completion"),
+    USAGE_CASES,
+    ids=[case for case, *_ in USAGE_CASES],
+)
+def test_usage_maps_with_total_as_the_sum(
+    case: str, fixture: str, prompt: int, completion: int
+) -> None:
+    """Catches a mapper that copies Anthropic's numbers into the wrong fields, or that
+    reports `total_tokens` as the input count alone - either way the ledger bills wrong."""
+    usage = from_anthropic(load_fixture(fixture)).usage
+
+    assert usage.prompt_tokens == prompt, case
+    assert usage.completion_tokens == completion, case
+    assert usage.total_tokens == prompt + completion, case
+
+
+def missing_usage_payloads() -> list[tuple[str, dict[str, Any]]]:
+    """The three ways usage can be unusable, built from the recorded payloads."""
+    without_input = load_fixture("plain")
+    del without_input["usage"]["input_tokens"]
+    without_output = load_fixture("plain")
+    del without_output["usage"]["output_tokens"]
+    return [
+        ("no usage block at all", load_fixture("no_usage")),
+        ("no input_tokens", without_input),
+        ("no output_tokens", without_output),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("case", "payload"),
+    missing_usage_payloads(),
+    ids=[case for case, _ in missing_usage_payloads()],
+)
+def test_a_response_without_usage_raises_provider_error(case: str, payload: dict[str, Any]) -> None:
+    """Catches the silent-zero implementation (`payload.get("usage", {}).get(...) or 0`),
+    which would book a real, billed call into the ledger at zero cost."""
+    with pytest.raises(ProviderError) as raised:
+        from_anthropic(payload)
+
+    assert raised.value.retryable is False, f"{case}: a malformed body is not worth a retry"
+
+
+BAD_TOOL_NAME_CASES: list[tuple[str, dict[str, Any]]] = [
+    (
+        "a caller tool with a trailing newline",
+        {"tools": (ToolSpec(name="get_weather\n"),)},
+    ),
+    (
+        "a caller tool with an interior space",
+        {"tools": (ToolSpec(name="get weather"),)},
+    ),
+    (
+        "a caller tool one over the length cap",
+        {"tools": (ToolSpec(name="a" * 129),)},
+    ),
+    (
+        # The forced tool name is caller-supplied too, and is the one an
+        # implementation that only walks `request.tools` forgets to check.
+        "a response_format name with a trailing space",
+        {"response_format": ResponseFormat(name="ticket summary ", json_schema=TICKET_SCHEMA)},
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "overrides"), BAD_TOOL_NAME_CASES, ids=[case for case, _ in BAD_TOOL_NAME_CASES]
+)
+def test_bad_tool_name_raises_before_any_outbound_call(
+    case: str, overrides: dict[str, Any]
+) -> None:
+    """Catches validation done after the request is sent (or not at all, leaving Anthropic
+    to 400): the transport is scripted to answer 200, so the only thing that can make this
+    raise is the pre-check, and `request_count == 0` proves it ran first."""
+    adapter, scripted = make_adapter([ok("plain")])
+
+    with pytest.raises(IdentifierInvalid) as raised:
+        adapter.chat(request_with(overrides))
+
+    assert raised.value.http_status == 422, case
+    assert scripted.request_count == 0, f"{case}: the provider was called before validation"
+
+
+def test_a_good_tool_name_still_reaches_the_provider() -> None:
+    """Catches a pre-check so strict it rejects everything: without this row the case
+    above would pass against `checked_tool_name` raising unconditionally."""
+    adapter, scripted = make_adapter([ok("tool_use")])
+
+    response = adapter.chat(request_with({"tools": (WEATHER_TOOL,)}))
+
+    assert scripted.request_count == 1
+    assert [call.name for call in response.tool_calls] == ["get_weather"]
+
+
+def test_an_unknown_block_type_is_ignored() -> None:
+    """Catches a mapper that raises on, or stringifies, a block type it does not know:
+    Anthropic adds block types over time (`thinking`), and an answer whose text we can
+    read must keep working when one appears beside it."""
+    payload = load_fixture("plain")
+    payload["content"].insert(0, {"type": "thinking", "thinking": "internal reasoning"})
+
+    response = from_anthropic(payload)
+
+    assert response.content == "Ship it."
+    assert response.tool_calls == ()
+
+
+def test_an_answer_with_no_readable_block_raises() -> None:
+    """Catches the silent empty answer: a response of only unknown blocks would otherwise
+    return `content=""` with real, billed usage, which is the zero-usage failure one field
+    over - the tenant pays for an answer the mapper dropped."""
+    payload = load_fixture("plain")
+    payload["content"] = [{"type": "thinking", "thinking": "internal reasoning"}]
+
+    with pytest.raises(ProviderError) as raised:
+        from_anthropic(payload)
+
+    assert raised.value.retryable is False

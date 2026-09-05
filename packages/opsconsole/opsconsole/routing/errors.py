@@ -61,9 +61,15 @@ class AllProvidersUnavailable(RoutingError):
 class IdentifierInvalid(RoutingError):
     """A client-supplied identifier failed its pre-check.
 
-    Raised by the resolver for a tenant or alias, and by
-    `opsconsole.gateway.context` for the `X-Tenant`, `X-Session` and
-    `X-Data-Class` headers, so one code covers every rejected input.
+    Four raisers, which is the whole list as of an earlier change (grep `IdentifierInvalid`
+    under `packages/`): the resolver, for a tenant or alias; `gateway.context`,
+    for the `X-Tenant`, `X-Session` and `X-Data-Class` headers;
+    `gateway.errors`, which mints one to render FastAPI's own
+    `RequestValidationError` into the wire contract; and
+    `providers.base.checked_tool_name`, for a tool name on its way to a provider.
+    One code covers every rejected input. It lives in this package rather than in
+    `core` because the resolver was the first raiser; a later plan may well move
+    it up, and the list above is what would have to move with it.
     """
 
     code: ClassVar[ErrorCode] = ErrorCode.VALIDATION

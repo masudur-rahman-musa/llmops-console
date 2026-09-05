@@ -1,0 +1,17 @@
+{
+  "id": "msg_01ForcedToolAnswer00000",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-haiku-4-5",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_01ForcedSchema0000000",
+      "name": "ticket_summary",
+      "input": { "title": "Card declined", "severity": 3, "tags": ["billing", "eu"] }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "usage": { "input_tokens": 210, "output_tokens": 64 }
+}

@@ -1,0 +1,11 @@
+{
+  "id": "msg_01NoUsageAnswer00000000",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-haiku-4-5",
+  "content": [
+    { "type": "text", "text": "An answer with no usage block." }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null
+}

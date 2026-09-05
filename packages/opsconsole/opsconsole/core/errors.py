@@ -91,7 +91,34 @@ class RateLimited(GatewayError):
 
 
 class ProviderError(GatewayError):
-    """A provider answered, and what it answered was a failure. Raised from a later plan."""
+    """A provider call failed: it answered with a failure, timed out, or answered
+    something we could not read.
+
+    Two attributes beyond the base. `retryable` is the whole point of the class:
+    an earlier change's fallback has to decide whether to try the next candidate without
+    re-parsing a status it can no longer see, so the adapter that knew the status
+    records the verdict here. It is true for 429, any 5xx and a timeout, false for
+    every other failure: `test_retry_table_by_status` pins the status rows and
+    `test_a_timeout_is_retried_and_raises_retryable` the timeout ones.
+
+    `provider_message` is where the provider's own words go, and they go nowhere
+    else: `message` is client-facing and carries the provider name and the status
+    only, so an upstream body cannot put request ids or quota wording in front of a
+    tenant. `test_provider_message_never_reaches_the_client_message` holds both
+    halves against a marker planted in the fixtures.
+    """
 
     code: ClassVar[ErrorCode] = ErrorCode.PROVIDER_ERROR
     http_status: ClassVar[int] = 502
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        param: str | None = None,
+        retryable: bool = False,
+        provider_message: str | None = None,
+    ) -> None:
+        super().__init__(message, param=param)
+        self.retryable = retryable
+        self.provider_message = provider_message

@@ -1,0 +1,146 @@
+"""Fixtures for the provider adapter tests: recorded JSON and a scripted transport.
+
+Everything here is in-process. The "recorded" Anthropic payloads are JSON files
+read from disk and replayed through `httpx.MockTransport`, so no test opens a
+socket and no test reads a provider key from the environment.
+There is no backing service, so a project rule (session-scoped fixtures with a
+per-test namespace) does not apply and function scope is the correct choice:
+building a transport costs a dict lookup.
+
+`PROVIDER_DETAIL_MARKER` is planted inside every error fixture's provider
+message. It exists so `test_provider_message_never_reaches_the_client_message` can prove
+the adapter keeps the provider's own text on `provider_message` and out of the
+client-facing `message`, rather than asserting on a substring that might not
+have been in the payload at all.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Mapping, Sequence
+from pathlib import Path
+from typing import Any
+
+import httpx
+import pytest
+
+from opsconsole.providers.anthropic import AnthropicAdapter
+
+FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "anthropic"
+
+# Present in the `error.message` of every error fixture, and nowhere else.
+PROVIDER_DETAIL_MARKER = "upstream-detail-2f7c1a-do-not-leak"
+
+# The key every adapter under test is constructed with, passed explicitly.
+TEST_API_KEY = "sk-ant-test-not-a-real-key"
+
+# The policy provider name used throughout: deliberately NOT the string
+# "anthropic", so a `price_key` or a factory key built from the provider kind
+# instead of the policy name is visible.
+TEST_PROVIDER_NAME = "anthropic-eu"
+
+
+def load_fixture(name: str) -> dict[str, Any]:
+    """Read one recorded Anthropic payload by file stem."""
+    path = FIXTURE_DIR / f"{name}.json"
+    payload: Any = json.loads(path.read_text(encoding="utf-8"))
+    assert isinstance(payload, dict), f"{path}: fixture must be a JSON object"
+    return payload
+
+
+# One scripted step: a (status, body) pair to answer with, or a transport-level
+# exception class to raise instead of answering.
+Step = tuple[int, Mapping[str, Any]] | type[httpx.RequestError]
+
+
+class ScriptedTransport:
+    """An `httpx.MockTransport` that plays a fixed script and records every request.
+
+    The last step repeats once the script runs out, so a retry loop that makes
+    more attempts than the plan allows gets a plausible answer rather than an
+    IndexError; the exact-request-count assertions are what catch it.
+    """
+
+    def __init__(self, steps: Sequence[Step]) -> None:
+        assert steps, "a scripted transport needs at least one step"
+        self._steps = list(steps)
+        self.requests: list[httpx.Request] = []
+        self.transport = httpx.MockTransport(self._handle)
+
+    def _handle(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        index = min(len(self.requests) - 1, len(self._steps) - 1)
+        step = self._steps[index]
+        if isinstance(step, type):
+            raise step(f"scripted {step.__name__}", request=request)
+        status, body = step
+        return httpx.Response(status, json=dict(body), request=request)
+
+    @property
+    def request_count(self) -> int:
+        return len(self.requests)
+
+    def body(self, index: int = 0) -> dict[str, Any]:
+        """The JSON the adapter sent on the request at `index`."""
+        sent: Any = json.loads(self.requests[index].content.decode("utf-8"))
+        assert isinstance(sent, dict), "the adapter must send a JSON object"
+        return sent
+
+
+def ok(name: str) -> Step:
+    """A 200 answering with the named recorded fixture."""
+    return (200, load_fixture(name))
+
+
+def fail(status: int, name: str) -> Step:
+    """A failure status answering with the named recorded error fixture."""
+    return (status, load_fixture(name))
+
+
+class SleepRecorder:
+    """The injected `sleep`: records the delays instead of spending them."""
+
+    def __init__(self) -> None:
+        self.calls: list[float] = []
+
+    def __call__(self, seconds: float) -> None:
+        self.calls.append(seconds)
+
+
+class FixedJitter:
+    """The injected `jitter`, so the backoff delays are exact numbers in a test."""
+
+    def __init__(self, value: float) -> None:
+        self.value = value
+
+    def __call__(self) -> float:
+        return self.value
+
+
+@pytest.fixture
+def sleeps() -> SleepRecorder:
+    return SleepRecorder()
+
+
+def make_adapter(
+    steps: Sequence[Step],
+    *,
+    name: str = TEST_PROVIDER_NAME,
+    sleep: SleepRecorder | None = None,
+    jitter: float = 1.0,
+) -> tuple[AnthropicAdapter, ScriptedTransport]:
+    """An adapter wired to a scripted transport, with an explicit key and no clock.
+
+    The key is passed in rather than read from the environment, and `sleep` and
+    `jitter` are injected, so the retry cases are instant and deterministic.
+    """
+    scripted = ScriptedTransport(steps)
+    adapter = AnthropicAdapter(
+        name=name,
+        api_key=TEST_API_KEY,
+        base_url="https://api.anthropic.test",
+        transport=scripted.transport,
+        sleep=sleep if sleep is not None else SleepRecorder(),
+        jitter=FixedJitter(jitter),
+    )
+    return adapter, scripted

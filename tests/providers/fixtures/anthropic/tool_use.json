@@ -1,0 +1,18 @@
+{
+  "id": "msg_01ToolUseAnswer00000000",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-haiku-4-5",
+  "content": [
+    { "type": "text", "text": "Checking the weather." },
+    {
+      "type": "tool_use",
+      "id": "toolu_01WeatherCall00000000",
+      "name": "get_weather",
+      "input": { "city": "Berlin", "units": "metric" }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "usage": { "input_tokens": 88, "output_tokens": 33 }
+}

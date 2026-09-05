@@ -9,13 +9,15 @@ dependencies = [
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
     "pyyaml>=6.0",
+    # Runtime, not dev: the provider adapters call out over it. The test suite
+    # uses its MockTransport, so the dev group needs no entry of its own.
+    "httpx>=0.28",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.3",
     "pytest-cov>=6.0",
-    "httpx>=0.28",
     "hypothesis>=6.115",
     "types-PyYAML>=6.0",
     # Pinned exactly, and to the same version as the ruff pre-commit hook: CI's

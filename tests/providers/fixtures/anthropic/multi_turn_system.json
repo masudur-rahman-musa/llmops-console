@@ -1,0 +1,13 @@
+{
+  "id": "msg_01MultiTurnSystem000000",
+  "type": "message",
+  "role": "assistant",
+  "model": "claude-haiku-4-5",
+  "content": [
+    { "type": "text", "text": "Berlin" },
+    { "type": "text", "text": " is the capital." }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": { "input_tokens": 128, "output_tokens": 19 }
+}

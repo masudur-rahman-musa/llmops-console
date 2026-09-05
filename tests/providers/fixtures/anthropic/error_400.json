@@ -1,0 +1,7 @@
+{
+  "type": "error",
+  "error": {
+    "type": "invalid_request_error",
+    "message": "tools.0.custom.name: does not match the expected pattern upstream-detail-2f7c1a-do-not-leak"
+  }
+}

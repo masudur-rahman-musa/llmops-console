@@ -1,0 +1,7 @@
+{
+  "type": "error",
+  "error": {
+    "type": "api_error",
+    "message": "Internal server error, request id req_011CQ upstream-detail-2f7c1a-do-not-leak"
+  }
+}
