@@ -7,14 +7,20 @@ tenant whose data class allows the box we run ourselves and nothing else has no
 other route, so this module is the residency-only path and its failures are
 final rather than something an earlier change can fall back from.
 
-The mapping and the transport are kept apart, as in the adapter next door.
-`to_openai`, `from_openai` and `from_openai_events` are pure - over dictionaries
-for the completion pair, over the decoded SSE lines for the stream - so both
-directions are tested against payloads on disk with no transport at all;
-`OpenAICompatibleAdapter` adds only the endpoint, the auth header and the
-streamed body, because the client, the fixed timeouts, the retry table and the
-provider-message truncation are `providers.transport`, shared with every other
-HTTP adapter (the design). No provider SDK is imported.
+The mapping and the transport are kept apart, as in the adapter next door. Every
+module-level mapping function here is pure. `grep -nE "^def [a-z]"` on this file
+returns five, in this order: `to_openai`, `from_openai`, `from_openai_events`,
+`to_openai_embedding`, `from_openai_embedding` - over dictionaries for the
+completion pair and the embedding pair, over the decoded SSE lines for the
+stream - so every direction is tested against payloads on disk with no transport
+at all. `OpenAICompatibleAdapter` adds only the endpoints, the auth header and
+the streamed body, because the client, the fixed timeouts, the retry table and
+the provider-message truncation are `providers.transport`, shared with every
+other HTTP adapter (the design). No provider SDK is imported.
+
+Two endpoints are served: `/chat/completions` and, since an earlier change, `/embeddings`.
+The second is what makes this the residency-only path for embeddings as well as
+for completions.
 
 This wire shape is the one the gateway itself publishes, so the mapping is close
 to an identity - and that is the trap. The adapter next door lifts the system
@@ -35,9 +41,10 @@ are a tool call's id and its name, the `tool_call_id` on a result turn, a
 from __future__ import annotations
 
 import json
+import math
 import random
 import time
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -49,6 +56,10 @@ from opsconsole.providers.base import (
     ChatMessage,
     ChatRequest,
     ChatResponse,
+    Embedding,
+    EmbeddingRequest,
+    EmbeddingResponse,
+    EmbeddingUsage,
     FinishReason,
     StreamEvent,
     StreamStart,
@@ -70,6 +81,34 @@ URL against a base url ending in `/v1`, mirroring the shipped policy's - it does
 not read `routing.yaml`, and nothing validates that suffix at load time, so a
 policy edited to drop the `/v1` 404s at request time with no config-time signal.
 An earlier change's admin reload is where that check belongs."""
+
+EMBEDDINGS_PATH = "/embeddings"
+"""Appended to the policy's `base_url`, which already ends in `/v1`.
+
+The same rule `CHAT_COMPLETIONS_PATH` follows and for the same reason: a path
+carrying its own `/v1` would send the request to `/v1/v1/embeddings`.
+`test_the_embeddings_path_is_appended_to_the_policy_base_url` asserts the whole
+URL against a base url ending in `/v1`, mirroring the shipped policy's."""
+
+FLOAT32_MAX = 3.4028234663852886e38
+"""The largest finite value a float32 can hold, and therefore the largest
+component a vector may carry.
+
+The gateway renders base64 by packing components as float32
+(`gateway/routes/embeddings.py`), and `struct.pack("<f", 1e300)` raises
+`OverflowError` - uncaught, that is a 500 with no code for what is really a
+provider defect. Pinned by `test_a_vector_component_out_of_float32_range_raises`."""
+
+OUTBOUND_ENCODING_FORMAT = "float"
+"""What this adapter always asks the provider for, whatever the caller asked the
+gateway for.
+
+The gateway renders base64 itself from the float vector, so forwarding a
+caller's `base64` would hand this reader a string where it expects numbers - and
+a reader that passed it through unchanged would return a DOUBLE-encoded blob,
+which decodes cleanly to nonsense. Pinned by
+`test_the_outbound_body_always_asks_for_floats`, and on the whole path by
+`test_base64_still_asks_the_provider_for_floats_on_the_wire`."""
 
 OPENAI_TOOL_CHOICE_BY_MODE = {"auto": "auto", "none": "none", "required": "required"}
 """The three nameless `ToolChoice` modes, in this wire's words.
@@ -430,6 +469,144 @@ def from_openai_events(lines: Iterable[str]) -> Iterator[StreamEvent]:
     yield UsageTotal(usage=usage)
 
 
+def to_openai_embedding(request: EmbeddingRequest) -> dict[str, Any]:
+    """Render a normalised embedding request as an OpenAI-compatible embeddings body.
+
+    Three fields, and only three: this endpoint validates what it is sent rather
+    than ignoring it, so a `max_tokens` or an invented `dimensions` copied in
+    from the chat body would make every embedding request a provider 400
+    (`test_the_outbound_body_is_exactly_three_fields`).
+
+    `input` is always a list, even for a single text. The wire accepts a bare
+    string, so a server would answer 200 either way and nothing downstream would
+    notice the shape differed by batch size
+    (`test_a_single_input_still_travels_as_a_list`).
+    """
+    return {
+        "model": request.model,
+        "input": list(request.input),
+        "encoding_format": OUTBOUND_ENCODING_FORMAT,
+    }
+
+
+def _embedding_usage(block: Mapping[str, Any]) -> EmbeddingUsage:
+    """Read an embedding usage block. `prompt_tokens` is required, the total is not.
+
+    The two counts are handled differently on purpose. A missing `prompt_tokens`
+    raises, because zero-filling it would book a real, billed call as free
+    (`test_a_response_without_usage_raises_rather_than_zero_filling`). A missing
+    `total_tokens` falls back to the prompt count rather than raising, because
+    some llama.cpp builds omit it and there is no second count on this wire to
+    add - the prompt count IS the whole total
+    (`test_an_absent_total_falls_back_to_the_prompt_count`).
+    """
+    prompt_tokens = block["prompt_tokens"]
+    total = block.get("total_tokens")
+    return EmbeddingUsage(
+        prompt_tokens=prompt_tokens,
+        total_tokens=prompt_tokens if total is None else total,
+    )
+
+
+def _checked_vector(vector: Sequence[float]) -> None:
+    """Refuse a vector whose NUMBERS are unusable, not merely a container that is.
+
+    Annotated `Sequence[float]` although the payload is `Any`: that is what a
+    vector on this wire is supposed to be, and anything else - a list of strings
+    is the shape a release change would produce - fails inside on a `TypeError`
+    that `from_openai_embedding` turns into the same `unreadable` 502 as any
+    other unparseable body
+    (`test_an_unreadable_payload_leaves_as_a_provider_error`, the vector-of-strings
+    row).
+
+    The other guards in this module read the envelope - is `data` empty, are the
+    indices `0..n-1`, is there a usage block. None of them looks inside a vector,
+    and all three failures below produce a well-formed envelope:
+
+    * an EMPTY vector renders as `[]`, or as the empty string on the base64 path,
+      and answers 200. The caller stores a zero-length vector against a real row
+      and every similarity computed from it afterwards is quietly wrong - the
+      same verdict `from_openai`'s no-readable-content guard reaches, for the
+      same reason (`test_an_empty_vector_raises`);
+    * a `NaN` or an infinity, which a badly quantised local model does produce,
+      cannot be serialised by the JSON renderer (it runs with `allow_nan=False`),
+      so it reaches the client as a 500 with no code rather than the 502 a retry
+      loop is written against (`test_a_non_finite_vector_component_raises`);
+    * a finite component beyond `FLOAT32_MAX` raises `OverflowError` inside the
+      base64 packer, with the same untyped 500 as the result
+      (`test_a_vector_component_out_of_float32_range_raises`).
+
+    Refusing all three here means the route can pack any vector it is handed.
+    """
+    if not vector:
+        raise ProviderError(
+            "the provider answered an embedding with no components",
+            retryable=False,
+            provider_message=f"vector={vector!r}",
+        )
+    for component in vector:
+        if not math.isfinite(component) or abs(component) > FLOAT32_MAX:
+            raise ProviderError(
+                "the provider answered an embedding this gateway cannot represent",
+                retryable=False,
+                provider_message=f"component={component!r}",
+            )
+
+
+def from_openai_embedding(payload: Mapping[str, Any]) -> EmbeddingResponse:
+    """Read an OpenAI-compatible embeddings answer into the normalised response.
+
+    The vectors are ordered by each item's OWN `index`, never by the order the
+    provider serialised them, and the sorted indices must be exactly `0..n-1`.
+    Both halves are load bearing, and neither is paranoia about a malicious
+    server: the caller matches vectors back to its own rows by index and by
+    nothing else, so a positional reader, or a sorted reader that accepts a
+    duplicated or a one-based numbering, returns real vectors attached to the
+    wrong texts - plausible numbers, no error anywhere
+    (`test_the_batch_is_ordered_by_each_items_own_index_not_by_file_order`,
+    `test_indices_that_are_not_zero_to_n_minus_one_raise`).
+
+    An empty `data` is refused rather than answered as an empty list, which is
+    the twin of `from_openai`'s no-choices guard and reaches the caller as a 502
+    an earlier change can fall back from (`test_a_response_with_no_data_raises`). The
+    vectors themselves are checked by `_checked_vector`, because every guard in
+    this function reads the ENVELOPE and a well-formed envelope can carry numbers
+    no client can use.
+    """
+    try:
+        data = payload["data"]
+        if not data:
+            raise ProviderError(
+                "the provider answered with no embeddings",
+                retryable=False,
+                provider_message=f"model={payload.get('model')!r}, data={data!r}",
+            )
+
+        for item in data:
+            _checked_vector(item["embedding"])
+
+        embeddings = tuple(
+            sorted(
+                (Embedding(index=item["index"], vector=tuple(item["embedding"])) for item in data),
+                key=lambda embedding: embedding.index,
+            )
+        )
+        if [embedding.index for embedding in embeddings] != list(range(len(embeddings))):
+            raise ProviderError(
+                "the provider numbered its embeddings in a way the caller cannot use",
+                retryable=False,
+                provider_message=f"indices={[item.index for item in embeddings]!r}",
+            )
+
+        return EmbeddingResponse(
+            model=payload["model"],
+            embeddings=embeddings,
+            usage=_embedding_usage(payload["usage"]),
+        )
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        raise unreadable(exc) from exc
+
+
 class OpenAICompatibleAdapter:
     """One OpenAI-compatible endpoint, addressed by its policy provider name.
 
@@ -489,6 +666,51 @@ class OpenAICompatibleAdapter:
             # a truncated body (`test_a_non_json_success_body_is_a_provider_error`).
             raise unreadable(exc) from exc
         return from_openai(payload)
+
+    def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
+        """Run one embedding call.
+
+        The same three lines `chat()` is, over the same `ProviderTransport`, so
+        the timeouts, the retry table and the provider-message truncation are the
+        shared ones rather than a second copy that would drift
+        (`test_the_retry_table_by_status`, `test_an_oversized_provider_body_is_truncated`).
+        A 200 that is not JSON - a reverse proxy's HTML error page - is the same
+        `unreadable` 502 here as there
+        (`tests/providers/test_local_embeddings.py::test_a_non_json_success_body_is_a_provider_error`).
+
+        The one thing this method does that `chat()` does not is COUNT. Nothing
+        `from_openai_embedding` can see settles whether the answer is complete:
+        a server that drops a slot answers 63 well-formed vectors numbered 0..62
+        to a 64-item request, which satisfies every guard that reads the payload
+        alone. Only here are both the request and the answer in hand, which is
+        why the completeness half of the protocol's guarantee is checked here and
+        the numbering half is checked there
+        (`test_an_answer_with_fewer_vectors_than_inputs_raises`).
+        """
+        body = to_openai_embedding(request)
+        response = self.http.send(EMBEDDINGS_PATH, body)
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise unreadable(exc) from exc
+
+        answer = from_openai_embedding(payload)
+        if len(answer.embeddings) != len(request.input):
+            # Not retryable, and deliberately not for the usual reason - a server
+            # that dropped a slot under load probably would answer completely on
+            # a second attempt. `retryable` is what an earlier change's fallback reads to
+            # decide whether to try a DIFFERENT provider, and for an embedding
+            # that is the one recovery that must never happen: another provider
+            # means another vector space, so the caller gets plausible numbers
+            # that do not compare against anything it has already stored
+            #. An error it can act on is the better answer.
+            raise ProviderError(
+                f"{self.http.name}: the provider answered "
+                f"{len(answer.embeddings)} embeddings for {len(request.input)} inputs",
+                retryable=False,
+                provider_message=f"model={answer.model!r}",
+            )
+        return answer
 
     def stream_chat(self, request: ChatRequest) -> Iterator[StreamEvent]:
         """Run one streamed completion, yielding neutral events as they arrive.

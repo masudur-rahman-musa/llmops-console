@@ -212,3 +212,32 @@ def make_local_adapter(
         jitter=FixedJitter(jitter),
     )
     return adapter, scripted
+
+
+# --- embeddings ---------------------------------------------------
+#
+# No `make_local_embedding_adapter` here on purpose: `embed()` lives on the same
+# `OpenAICompatibleAdapter` `make_local_adapter` already builds, so a second
+# builder would be a second place for the base url, the key and the injected
+# clock to drift from the chat one.
+#
+# The `embeddings_*.json` fixtures are HAND-WRITTEN to the published OpenAI
+# embeddings shape, like every other file in `fixtures/local/`, and each says so
+# in a `_comment` key. `load_local_fixture` reads whole objects, and every reader
+# under test looks its fields up by name, so the key is inert.
+
+# The provider model id the embedding fixtures answer with: the shipped policy's
+# `embed` candidate, and deliberately not the `embed` alias, so a mapper that
+# sends the alias is visible.
+EMBEDDING_MODEL = "bge-small-en-v1.5"
+
+# Every vector in the fixtures is exactly representable as a float32, so the
+# base64 round trip in tests/gateway/test_embeddings.py compares equal rather
+# than approximately equal, and a wrong byte order is the only thing that can
+# break it.
+SINGLE_VECTOR = (0.125, -0.375, 0.625, -0.875)
+BATCH_VECTORS = (
+    (0.5, -0.25, 0.75),
+    (-0.0625, 0.1875, -0.3125),
+    (0.4375, -0.5625, 0.6875),
+)

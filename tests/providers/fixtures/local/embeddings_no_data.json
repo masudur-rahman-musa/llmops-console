@@ -1,0 +1,7 @@
+{
+  "_comment": "HAND-WRITTEN, as embeddings_single.json. A 200 carrying an empty data array, which llama.cpp answers when every slot is dropped.",
+  "object": "list",
+  "data": [],
+  "model": "bge-small-en-v1.5",
+  "usage": {"prompt_tokens": 17, "total_tokens": 19}
+}

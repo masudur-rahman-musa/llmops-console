@@ -15,9 +15,11 @@ fields rejected because a misspelled `max_token` should be an error rather than
 a silently applied default. Both are pinned by
 `test_contract_models_are_frozen` and `test_contract_models_forbid_unknown_fields`.
 
-`embed()` is deliberately absent: Anthropic has no embeddings endpoint, and a
-method that exists only to raise is worse than a second protocol. An earlier change adds
-an embedding protocol next to this one.
+`embed()` is deliberately absent from `Adapter`: Anthropic has no embeddings
+endpoint, and a method that exists only to raise is worse than a second
+protocol. `EmbeddingAdapter` at the foot of this module is that second protocol,
+and the embeddings route turns it into a capability the resolver's health seam
+can test.
 """
 
 from __future__ import annotations
@@ -288,6 +290,125 @@ class Adapter(Protocol):
 
     def healthcheck(self) -> bool:
         """Whether this provider should be offered traffic."""
+        ...
+
+    def price_key(self, model: str) -> str:
+        """The stable `"<provider>/<model>"` string the ledger stores."""
+        ...
+
+
+# --- embeddings ---------------------------------------------------------------
+#
+# A contract of its own beside the chat one, for the same reason `EmbeddingAdapter`
+# is a protocol of its own: an embedding request shares no field with a completion
+# beyond the model id, and folding the two together would mean a `ChatRequest`
+# with a `messages` nobody fills.
+
+
+class EmbeddingRequest(_Contract):
+    """One embedding request, already resolved to a provider model id.
+
+    `model` is the provider's own id from the routing policy, never an alias, as
+    on `ChatRequest`: the resolver has already run by the time an adapter sees
+    this.
+
+    `input` is always a tuple, even for a caller who sent a bare string. The
+    published wire accepts either, and an adapter handed a `str` would iterate it
+    character by character somewhere below - one vector per letter, no error
+    (`tests/gateway/test_embeddings.py::test_a_bare_string_input_reaches_the_adapter_as_a_one_item_tuple`).
+
+    There is deliberately no `encoding_format` here. The gateway renders base64
+    itself from the float vector and always asks the provider for floats, so the field stops at the API boundary and this
+    contract gives it nowhere to go
+    (`test_the_neutral_embedding_request_carries_no_encoding_format`).
+    """
+
+    model: str
+    input: tuple[str, ...]
+
+
+class EmbeddingUsage(_Contract):
+    """What an embedding call consumed. Two counts, not the three of `Usage`.
+
+    An embedding has no completion tokens, on this wire or in the response this
+    product publishes, so reusing `Usage` could only mean writing a zero into a
+    field with no meaning - and a zero-filled count is exactly what the rule
+    against zero-filling usage exists to prevent, hidden behind a field that
+    always looks populated (an earlier change decision F,
+    `test_embedding_usage_has_exactly_two_counts`).
+    """
+
+    prompt_tokens: int
+    total_tokens: int
+
+
+class Embedding(_Contract):
+    """One vector, and the position of the input it was computed from.
+
+    `index` is carried rather than implied by tuple position because it is the
+    caller's only way back to its own rows: a provider that serialises its
+    answers out of order is reordered by this field, and one that numbers them in
+    any way other than `0..n-1` is refused
+    (`tests/providers/test_local_embeddings.py::test_indices_that_are_not_zero_to_n_minus_one_raise`).
+    """
+
+    index: int
+    vector: tuple[float, ...]
+
+
+class EmbeddingResponse(_Contract):
+    """One embedding call's answer. `embeddings` is ordered, `index` 0..n-1."""
+
+    model: str
+    embeddings: tuple[Embedding, ...]
+    usage: EmbeddingUsage
+
+
+@runtime_checkable
+class EmbeddingAdapter(Protocol):
+    """A provider that can embed. Separate from `Adapter`, and a capability, not a method.
+
+    Every provider in the policy can chat; not every one can embed, so this is
+    the thing the embeddings route asks `isinstance` about and hands to the
+    resolver as its health seam. An alias whose candidates are all chat-only is
+    then the resolver's typed 503 rather than an `AttributeError` served as a 500.
+    The two ends of that choice are pinned by
+    `test_the_openai_compatible_adapter_satisfies_the_embedding_protocol` and
+    `test_the_anthropic_adapter_does_not_satisfy_the_embedding_protocol`.
+
+    `name` is the policy provider name, for the same reason it is on `Adapter`.
+    """
+
+    name: str
+
+    def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
+        """Embed every input. Every failure is a `ProviderError`.
+
+        The guarantee the embeddings route relies on, in three parts, so an
+        implementation that keeps two of them has kept none:
+
+        1. `embeddings` carries exactly `len(request.input)` items;
+        2. their `index` values are exactly `0..n-1`;
+        3. every `vector` is non-empty and every component is a finite number
+           within float32 range, because the route packs them as float32 when the
+           caller asks for base64.
+
+        None of the three is implied by another. An answer numbered `0..62` for a
+        64-item request satisfies (2) and is still missing a row; an empty vector
+        satisfies (1) and (2) and renders as `[]` with a 200, which the caller
+        stores against a real row. The caller has no way to find any of this out
+        for itself - it matches vectors back to its own rows by index and by
+        nothing else.
+
+        The OpenAI-compatible implementation checks the numbering and the vectors
+        while reading the payload, and the count in `embed()`, where the request
+        is still in hand
+        (`test_indices_that_are_not_zero_to_n_minus_one_raise`,
+        `test_an_empty_vector_raises`,
+        `test_a_non_finite_vector_component_raises`,
+        `test_a_vector_component_out_of_float32_range_raises`,
+        `test_an_answer_with_fewer_vectors_than_inputs_raises`).
+        """
         ...
 
     def price_key(self, model: str) -> str:

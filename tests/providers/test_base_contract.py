@@ -28,6 +28,11 @@ from opsconsole.providers.base import (
     ChatMessage,
     ChatRequest,
     ChatResponse,
+    Embedding,
+    EmbeddingAdapter,
+    EmbeddingRequest,
+    EmbeddingResponse,
+    EmbeddingUsage,
     ResponseFormat,
     ToolCall,
     ToolChoice,
@@ -37,7 +42,7 @@ from opsconsole.providers.base import (
 )
 from opsconsole.routing.errors import IdentifierInvalid
 
-from .conftest import make_adapter, ok
+from .conftest import local_ok, make_adapter, make_local_adapter, ok
 
 
 def test_default_max_tokens_is_exactly_4096() -> None:
@@ -367,3 +372,97 @@ def test_chat_request_tool_choice_defaults_to_unset() -> None:
     )
 
     assert request.tool_choice is None
+
+
+# --- the embedding contract ---------------------------------------
+#
+# A separate protocol beside `Adapter`, not an `embed()` on it (decision B). The
+# two cases that matter are the two ends of that choice: the OpenAI-compatible
+# adapter satisfies `EmbeddingAdapter`, and the Anthropic one does not - which is
+# what the embeddings route turns into the resolver's health seam, so an alias
+# pointing at a chat-only provider is a typed 503 rather than an AttributeError
+# served as a 500.
+#
+# The models get their own `MODEL_CASES` table rather than rows on the existing
+# one, so the chat contract's cases are untouched.
+
+EMBEDDING_MODEL_CASES: list[tuple[str, type[Any], dict[str, Any]]] = [
+    ("EmbeddingRequest", EmbeddingRequest, {"model": "bge-small-en-v1.5", "input": ("Berlin",)}),
+    ("EmbeddingUsage", EmbeddingUsage, {"prompt_tokens": 11, "total_tokens": 13}),
+    ("Embedding", Embedding, {"index": 0, "vector": (0.125, -0.375)}),
+    (
+        "EmbeddingResponse",
+        EmbeddingResponse,
+        {
+            "model": "bge-small-en-v1.5",
+            "embeddings": (Embedding(index=0, vector=(0.125, -0.375)),),
+            "usage": EmbeddingUsage(prompt_tokens=11, total_tokens=13),
+        },
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "model", "kwargs"),
+    EMBEDDING_MODEL_CASES,
+    ids=[case for case, *_ in EMBEDDING_MODEL_CASES],
+)
+def test_embedding_contract_models_forbid_unknown_fields(
+    case: str, model: type[Any], kwargs: dict[str, Any]
+) -> None:
+    """Catches an embedding model left on Pydantic's default `extra="ignore"`, which would
+    swallow a `dimensions` or an `encoding_format` a caller set on the wrong model and
+    serve the request as though it had never been asked for."""
+    model(**kwargs)  # the same kwargs without the extra key must construct
+
+    with pytest.raises(ValidationError, match=r"(?i)extra"):
+        model(**kwargs, definitely_not_a_field="x")
+
+
+@pytest.mark.parametrize(
+    ("case", "model", "kwargs"),
+    EMBEDDING_MODEL_CASES,
+    ids=[case for case, *_ in EMBEDDING_MODEL_CASES],
+)
+def test_embedding_contract_models_are_frozen(
+    case: str, model: type[Any], kwargs: dict[str, Any]
+) -> None:
+    """Catches a mutable embedding request: an earlier change retries the same request against a
+    second provider, and an adapter that normalised the input list in place would send the
+    second provider something the caller never asked for."""
+    instance = model(**kwargs)
+    field = next(iter(model.model_fields))
+
+    with pytest.raises(ValidationError, match=r"(?i)frozen|immutable"):
+        setattr(instance, field, getattr(instance, field))
+
+
+def test_embedding_usage_has_exactly_two_counts() -> None:
+    """Catches an `EmbeddingUsage` that reused the chat contract's three-field `Usage`
+    (decision F): this wire has no completion tokens for an embedding, so the third field
+    could only ever be written as a zero - and a zero-filled count is exactly what the
+    "no usage raises" rule exists to prevent, hidden behind a field that always looks
+    populated."""
+    assert set(EmbeddingUsage.model_fields) == {"prompt_tokens", "total_tokens"}
+
+
+def test_the_openai_compatible_adapter_satisfies_the_embedding_protocol() -> None:
+    """Catches an `embed()` that drifted from the protocol - a `create_embeddings` name, or
+    a method on a helper rather than on the adapter - which the embeddings route's health
+    seam would read as "this provider cannot embed", turning the one provider that CAN into
+    a permanent 503."""
+    adapter, scripted = make_local_adapter([local_ok("embeddings_single")])
+
+    assert isinstance(adapter, EmbeddingAdapter)
+    assert scripted.request_count == 0, "a capability check must not call the provider"
+
+
+def test_the_anthropic_adapter_does_not_satisfy_the_embedding_protocol() -> None:
+    """Catches `embed()` being put on `Adapter` after all, or on a shared base class: the
+    Anthropic wire has no embeddings endpoint, so an `embed()` there could only raise - and
+    the route's health seam would then offer a chat-only provider an embedding request and
+    answer the caller a 500 instead of the resolver's 503 (decision B)."""
+    adapter, _ = make_adapter([ok("plain")])
+
+    assert isinstance(adapter, Adapter)
+    assert not isinstance(adapter, EmbeddingAdapter)

@@ -1,0 +1,10 @@
+{
+  "_comment": "HAND-WRITTEN, as embeddings_single.json. Two vectors numbered 0 and 2: the sorted indices are not 0..n-1, so the caller could not tell which of its rows the second vector belongs to.",
+  "object": "list",
+  "data": [
+    {"object": "embedding", "index": 0, "embedding": [0.0625, -0.1875]},
+    {"object": "embedding", "index": 2, "embedding": [0.3125, -0.4375]}
+  ],
+  "model": "bge-small-en-v1.5",
+  "usage": {"prompt_tokens": 31, "total_tokens": 37}
+}

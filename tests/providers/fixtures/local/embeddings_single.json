@@ -1,0 +1,9 @@
+{
+  "_comment": "HAND-WRITTEN to the published OpenAI embeddings shape, not recorded from a llama.cpp server: none was available when plan 06b was written. The loader reads by key and ignores this one.",
+  "object": "list",
+  "data": [
+    {"object": "embedding", "index": 0, "embedding": [0.125, -0.375, 0.625, -0.875]}
+  ],
+  "model": "bge-small-en-v1.5",
+  "usage": {"prompt_tokens": 11, "total_tokens": 13}
+}

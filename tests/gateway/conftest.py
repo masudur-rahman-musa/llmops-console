@@ -49,6 +49,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from httpx import Response
 
+from opsconsole.core.errors import ProviderError
 from opsconsole.core.settings import Settings
 from opsconsole.gateway.app import create_app
 from opsconsole.gateway.auth import MAX_KEY_LENGTH
@@ -57,6 +58,10 @@ from opsconsole.providers.base import (
     Adapter,
     ChatRequest,
     ChatResponse,
+    Embedding,
+    EmbeddingRequest,
+    EmbeddingResponse,
+    EmbeddingUsage,
     FinishReason,
     StreamEvent,
     StreamStart,
@@ -475,4 +480,147 @@ def chat_stub() -> StubAdapter:
 def chat_client(settings: Settings, chat_stub: StubAdapter) -> Iterator[TestClient]:
     """The shipped app with one adapter, for the policy provider `anthropic`."""
     with build_chat_client(settings, {chat_stub.name: chat_stub}) as client:
+        yield client
+
+
+# --- embeddings ---------------------------------------------------
+#
+# `EmbeddingStubAdapter` is the second stub, not a widened first one. The
+# EXISTING `StubAdapter` deliberately has no `embed`, and that absence is load
+# bearing: registering it under a policy provider is what makes "this alias's
+# only candidate cannot embed" reachable as the resolver's 503 without editing
+# `routing.yaml` (`test_a_candidate_without_an_embedding_adapter_is_503`).
+#
+# The shipped policy sends `embed` to the provider `local` alone, region `self`,
+# so every case here registers its stub under `local`.
+
+EMBEDDINGS = "/v1/embeddings"
+"""The published route path. `test_the_route_path_is_the_published_one` asserts
+this against the route module's own constant, so the two cannot drift."""
+
+EMBED_ALIAS = "embed"
+
+# Every component is exactly representable as a float32, so the base64 round trip
+# in `test_embeddings.py` compares EQUAL rather than approximately equal: a wrong
+# byte order is then the only thing that can break it, which is the whole point
+# of the case (the plan's silent-corruption risk).
+STUB_VECTORS: tuple[tuple[float, ...], ...] = (
+    (0.5, -1.5, 2.25),
+    (-0.75, 3.125, -0.0625),
+    (4.5, -0.375, 1.75),
+)
+
+# Distinct from every chat number and from every provider fixture number, and the
+# two counts differ from each other, so a swap or a zero-fill is visible.
+STUB_EMBEDDING_USAGE = EmbeddingUsage(prompt_tokens=97, total_tokens=113)
+
+# What the stub reports as the model it embedded with: neither the alias nor the
+# policy's provider model id, so a route that echoes the adapter's answer into
+# the response body or into `X-Gateway-Model` is caught rather than accidentally
+# right.
+STUB_EMBEDDING_MODEL = "stub-embedding-model-neither-alias-nor-policy-id"
+
+
+def embedding_stub_response(count: int = 1) -> EmbeddingResponse:
+    """A neutral `EmbeddingResponse` carrying `count` of the fixed vectors, numbered 0..n-1."""
+    return EmbeddingResponse(
+        model=STUB_EMBEDDING_MODEL,
+        embeddings=tuple(
+            Embedding(index=index, vector=vector)
+            for index, vector in enumerate(STUB_VECTORS[:count])
+        ),
+        usage=STUB_EMBEDDING_USAGE,
+    )
+
+
+class EmbeddingStubAdapter:
+    """An in-process stand-in for an embedding-capable adapter, holding the real protocol.
+
+    `requests` is the whole point, as on `StubAdapter`: the route's outbound
+    `EmbeddingRequest` is compared field by field, so a route that sends the
+    alias as the model, or that flattens a list input to its first item, is
+    caught here rather than by an assertion about the answer.
+
+    It satisfies `Adapter` too - `chat` and `stream_chat` raise - because
+    `app.state.adapters` is typed as a mapping of `Adapter` and the chat route
+    would otherwise be able to reach a provider that cannot serve it silently.
+    """
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        response: EmbeddingResponse | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.name = name
+        self.requests: list[EmbeddingRequest] = []
+        self._response = response if response is not None else embedding_stub_response()
+        self._error = error
+
+    def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
+        self.requests.append(request)
+        if self._error is not None:
+            raise self._error
+        return self._response
+
+    def chat(self, request: ChatRequest) -> ChatResponse:
+        raise ProviderError(f"{self.name}: this stub embeds and nothing else", retryable=False)
+
+    def stream_chat(self, request: ChatRequest) -> Iterator[StreamEvent]:
+        raise ProviderError(f"{self.name}: this stub embeds and nothing else", retryable=False)
+
+    def healthcheck(self) -> bool:
+        return True
+
+    def price_key(self, model: str) -> str:
+        return f"{self.name}/{model}"
+
+
+def embeddings_body(**overrides: object) -> dict[str, Any]:
+    """The baseline OpenAI-shaped embeddings body, with the given fields replaced."""
+    body: dict[str, Any] = {"model": EMBED_ALIAS, "input": "the capital of Germany"}
+    body.update(overrides)
+    return body
+
+
+def post_embeddings(
+    client: TestClient,
+    body: Mapping[str, Any],
+    *,
+    key: str = TEST_KEYS["evals"],
+    tenant: str = "evals",
+    data_class: str | None = "internal",
+    traceparent: str | None = None,
+) -> Response:
+    """POST one embeddings request as the `evals` tenant under `internal` by default.
+
+    The same default pair `post_chat` uses, and it reaches `local` for this alias:
+    `evals` has `residency: any` and its `internal` rule allows `self`. The
+    default data class (`confidential`) also allows `self`, so unlike the chat
+    helper this one would not be saved by a residency refusal if the header were
+    dropped - the header is sent explicitly for that reason.
+    """
+    response: Response = client.post(
+        EMBEDDINGS,
+        json=dict(body),
+        headers=auth_headers(
+            key=key, tenant=tenant, data_class=data_class, traceparent=traceparent
+        ),
+    )
+    return response
+
+
+@pytest.fixture(scope="session")
+def embedding_stub() -> EmbeddingStubAdapter:
+    """The shared stub behind `embeddings_client`, answering one fixed vector."""
+    return EmbeddingStubAdapter(name="local")
+
+
+@pytest.fixture(scope="session")
+def embeddings_client(
+    settings: Settings, embedding_stub: EmbeddingStubAdapter
+) -> Iterator[TestClient]:
+    """The shipped app with one embedding-capable adapter, for the policy provider `local`."""
+    with build_chat_client(settings, {embedding_stub.name: embedding_stub}) as client:
         yield client
