@@ -1,12 +1,14 @@
 """The Anthropic adapter: the Messages API behind the neutral contract.
 
-Three separable pieces, on purpose. `to_anthropic` and `from_anthropic` are pure
-functions over dictionaries, so both directions of the mapping are tested against
-recorded payloads without a transport; `AnthropicAdapter` adds the HTTP, the
-fixed timeouts and the retry loop around them, with `sleep` and `jitter` injected
-so the retry table costs microseconds to test and produces exact delays rather
-than a range. No provider SDK is imported: the mapping is the thing we own, and
-it stops here, so no Anthropic field name reaches the rest of the gateway.
+The mapping and the transport are kept apart, on purpose. `to_anthropic`,
+`from_anthropic` and `from_anthropic_events` are pure functions - over
+dictionaries for the completion pair, over the decoded SSE lines for the stream -
+so every direction is tested against recorded payloads without a transport;
+`AnthropicAdapter` adds the HTTP, the fixed timeouts and the retry loop around
+them, with `sleep` and `jitter` injected so the retry table costs microseconds to
+test and produces exact delays rather than a range. No provider SDK is imported:
+the mapping is the thing we own, and it stops here, so no Anthropic field name
+and no SSE event name reaches the rest of the gateway.
 
 Every PROVIDER failure that leaves this module is a `ProviderError` carrying
 `retryable`, including a timeout and a 200 whose body we cannot read, so plan
@@ -24,10 +26,12 @@ raise below, for tool call `arguments` that will not parse as JSON.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import random
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -38,8 +42,14 @@ from opsconsole.providers.base import (
     ChatMessage,
     ChatRequest,
     ChatResponse,
+    FinishReason,
+    StreamEvent,
+    StreamStart,
+    TextDelta,
     ToolCall,
+    ToolCallDelta,
     Usage,
+    UsageTotal,
     checked_tool_name,
 )
 from opsconsole.routing.errors import IdentifierInvalid
@@ -53,8 +63,17 @@ READ_TIMEOUT = 60.0
 """The fixed timeouts (the design). Not caller-settable: a caller able to raise the
 read timeout could hold a worker for as long as it liked. Pinned on the constants
 by `test_timeout_constants_are_exactly_the_spec_values` and on the built client by
-`test_client_timeouts_are_fixed_at_five_and_sixty`. The 120s stream timeout
-arrives with streaming in an earlier change."""
+`test_client_timeouts_are_fixed_at_five_and_sixty`."""
+
+STREAM_READ_TIMEOUT = 120.0
+"""The read timeout on a streamed call, longer because the gap being measured is
+the one between EVENTS rather than the whole answer (the design).
+
+Set per request rather than on the client, so an ordinary completion still gives
+up after 60s: raising the client's timeout to 120 would let every non-streaming
+call hold a worker twice as long. Both halves are pinned by
+`test_stream_read_timeout_is_exactly_120`, which asserts the streamed request's
+timeout and the client's own in the same test."""
 
 MAX_RETRIES = 2
 RETRY_BASE_DELAY = 0.5
@@ -317,6 +336,158 @@ def from_anthropic(payload: Mapping[str, Any]) -> ChatResponse:
         raise _unreadable(exc) from exc
 
 
+@dataclass
+class _OpenToolBlock:
+    """One `tool_use` block being assembled, held until its `content_block_stop`.
+
+    Kept in a dict keyed by the block's own index rather than in a single "the
+    open block" variable, because Anthropic may have more than one block open at
+    a time: a fragment names the index it belongs to, and matching on that is
+    what stops one call's JSON being appended to another's
+    (`test_interleaved_tool_fragments_stay_with_the_block_that_names_them`).
+    """
+
+    id: str
+    name: str
+    fragments: list[str]
+
+
+SSE_DATA_PREFIX = "data: "
+"""The only SSE field this reader looks at.
+
+An `event:` line names what the `data:` line beneath it already carries in its
+`type`, so reading both would be two sources for one fact; comments, `id:` lines
+and the blank separators are skipped for the same reason a `ping` is
+(`test_the_reader_yields_the_start_then_the_text_then_the_finish_and_usage_last`)."""
+
+
+def _sse_payload(line: str) -> dict[str, Any] | None:
+    """The JSON object on one `data:` line, or `None` for a line that carries none."""
+    if not line.startswith(SSE_DATA_PREFIX):
+        return None
+    payload: Any = json.loads(line[len(SSE_DATA_PREFIX) :])
+    if not isinstance(payload, dict):
+        raise TypeError(f"an SSE data line carried {type(payload).__name__}, not an object")
+    return payload
+
+
+def from_anthropic_events(lines: Iterable[str]) -> Iterator[StreamEvent]:
+    """Read Anthropic's Messages SSE lines into the neutral stream events.
+
+    Pure, and pure on purpose: it takes the decoded lines `iter_lines()` yields
+    and never touches a transport, so every shape it has to handle is a recorded
+    `.sse` fixture rather than a mocked socket. It is the streaming twin of
+    `from_anthropic`, and it draws the same boundary - no Anthropic event name
+    leaves this module.
+
+    Text arrives as `text_delta` fragments and is forwarded in the provider's
+    order. A `tool_use` block is ASSEMBLED: its `input_json_delta` fragments are
+    buffered and emitted as one whole `ToolCallDelta` when the block closes,
+    because `{"city": "Ber` is not JSON any client can parse (an earlier change decision
+    B, `test_the_reader_assembles_a_tool_use_block_from_its_json_fragments`).
+    The fragments are concatenated rather than parsed and re-serialised, so what
+    the model wrote is what the client is handed.
+
+    Usage is split across two events - `input_tokens` on `message_start`,
+    `output_tokens` on `message_delta` - and both are required, as is the stop
+    reason. A stream that ends without them raises rather than yielding a total
+    the ledger would price: `message_start` reports an `output_tokens` of its own
+    that is not the answer's, so zero-filling is not the only wrong number
+    available (`test_a_truncated_stream_raises_rather_than_zero_filling_usage`).
+    """
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    stop_reason: str | None = None
+    open_tools: dict[int, _OpenToolBlock] = {}
+    rendered = False
+    seen_blocks: set[str] = set()
+
+    try:
+        for line in lines:
+            payload = _sse_payload(line)
+            if payload is None:
+                continue
+            kind = payload.get("type")
+
+            if kind == "message_start":
+                prompt_tokens = payload["message"]["usage"]["input_tokens"]
+                yield StreamStart()
+            elif kind == "content_block_start":
+                block = payload["content_block"]
+                seen_blocks.add(block["type"])
+                if block["type"] == "tool_use":
+                    open_tools[payload["index"]] = _OpenToolBlock(
+                        id=block["id"], name=block["name"], fragments=[]
+                    )
+            elif kind == "content_block_delta":
+                delta = payload["delta"]
+                if delta["type"] == "text_delta":
+                    rendered = True
+                    yield TextDelta(text=delta["text"])
+                elif delta["type"] == "input_json_delta":
+                    fragment_of = open_tools.get(payload["index"])
+                    if fragment_of is not None:
+                        fragment_of.fragments.append(delta["partial_json"])
+            elif kind == "content_block_stop":
+                closed = open_tools.pop(payload["index"], None)
+                if closed is not None:
+                    rendered = True
+                    yield ToolCallDelta(
+                        index=payload["index"],
+                        call=ToolCall(
+                            id=closed.id,
+                            name=closed.name,
+                            arguments="".join(closed.fragments),
+                        ),
+                    )
+            elif kind == "message_delta":
+                stop_reason = payload["delta"]["stop_reason"]
+                completion_tokens = payload["usage"]["output_tokens"]
+            # Every other event - `ping`, `message_stop`, and whatever Anthropic
+            # adds next - is passed over. An event we do not know is not one we
+            # can claim is answer text, which is the same rule `from_anthropic`
+            # applies to an unknown content block.
+    except (KeyError, TypeError, ValueError) as exc:
+        raise _unreadable(exc) from exc
+
+    if stop_reason is None or prompt_tokens is None or completion_tokens is None:
+        raise ProviderError(
+            "the provider ended the stream before it finished",
+            retryable=False,
+            provider_message=(
+                f"stop_reason={stop_reason!r}, input_tokens={prompt_tokens!r}, "
+                f"output_tokens={completion_tokens!r}"
+            ),
+        )
+
+    if not rendered:
+        # The streaming twin of `from_anthropic`'s no-readable-block guard, and
+        # it exists for the same reason: a `thinking`-only answer renders nothing
+        # this adapter can hand a client, and finishing the stream with a usage
+        # chunk would bill the tenant for an empty answer. Refusing it on one
+        # path and serving it on the other would be two behaviours for one
+        # provider reply (`test_a_stream_with_no_readable_block_raises`).
+        #
+        # Second, not first: a stream cut off before its first text delta
+        # renders nothing EITHER, and reporting that as an empty answer would
+        # point an operator at a content bug instead of the dropped connection
+        # it was (`test_a_stream_cut_off_before_any_content_reports_the_truncation`).
+        raise ProviderError(
+            "the provider streamed no readable content block",
+            retryable=False,
+            provider_message=f"stop_reason={stop_reason!r}, block types={sorted(seen_blocks)}",
+        )
+
+    yield FinishReason(reason=stop_reason)
+    yield UsageTotal(
+        usage=Usage(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=prompt_tokens + completion_tokens,
+        )
+    )
+
+
 class AnthropicAdapter:
     """One Anthropic account, addressed by its policy provider name.
 
@@ -363,6 +534,30 @@ class AnthropicAdapter:
             raise _unreadable(exc) from exc
         return from_anthropic(payload)
 
+    def stream_chat(self, request: ChatRequest) -> Iterator[StreamEvent]:
+        """Run one streamed completion, yielding neutral events as they arrive.
+
+        The open and the read are deliberately separate. `_open_stream` owns the
+        retry loop, so the retry cannot reach around the iteration: once one
+        event has been yielded the client has already been shown part of an
+        answer, and nothing that cannot be un-sent is resent (an earlier change decision
+        C, `test_stream_open_retries_only_before_the_first_event`).
+
+        A transport failure part way through the body is wrapped here rather than
+        escaping raw, so the module's promise holds on this path too - every
+        provider failure that leaves it is a `ProviderError` carrying `retryable`
+        (`test_a_transport_failure_mid_stream_is_a_provider_error_and_is_not_retried`).
+        """
+        body = to_anthropic(request)
+        # Copied rather than mutated in place: `to_anthropic` is the shape the
+        # non-streaming path sends, and the one difference belongs to this call.
+        streamed = {**body, "stream": True}
+        with self._open_stream(streamed) as response:
+            try:
+                yield from from_anthropic_events(response.iter_lines())
+            except httpx.RequestError as exc:
+                raise self._transport_error(exc) from exc
+
     def healthcheck(self) -> bool:
         """Always true, and it calls nothing.
 
@@ -404,6 +599,39 @@ class AnthropicAdapter:
                 # asked, past the read timeout this adapter fixes. Two short
                 # jittered waits, then the caller is told; an earlier change's breaker is
                 # what a sustained 429 is supposed to trip.
+                self._sleep(RETRY_BASE_DELAY * (2**attempt) * (0.5 + 0.5 * self._jitter()))
+                attempt += 1
+                continue
+            raise error
+
+    @contextlib.contextmanager
+    def _open_stream(self, body: Mapping[str, Any]) -> Iterator[httpx.Response]:
+        """Open the streamed POST, retrying per the table, and yield the live response.
+
+        The read timeout is `STREAM_READ_TIMEOUT` on this request only, so the
+        client's 60s still applies to every ordinary completion. A failure status
+        is read to the end before it is turned into an error, because the
+        provider's body is what `provider_message` carries and an unread
+        streaming response has none (`test_a_failure_status_on_the_open_never_starts_a_stream`).
+        """
+        attempt = 0
+        while True:
+            try:
+                with self.client.stream(
+                    "POST",
+                    MESSAGES_PATH,
+                    json=dict(body),
+                    timeout=httpx.Timeout(STREAM_READ_TIMEOUT, connect=CONNECT_TIMEOUT),
+                ) as response:
+                    if response.status_code == httpx.codes.OK:
+                        yield response
+                        return
+                    response.read()
+                    error = self._status_error(response)
+            except httpx.RequestError as exc:
+                error = self._transport_error(exc)
+
+            if error.retryable and attempt < MAX_RETRIES:
                 self._sleep(RETRY_BASE_DELAY * (2**attempt) * (0.5 + 0.5 * self._jitter()))
                 attempt += 1
                 continue

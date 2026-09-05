@@ -12,8 +12,8 @@ Three things are under test here and they are kept apart on purpose.
   the whole path - a tool result reaching Anthropic in the caller's order - runs
   a real `AnthropicAdapter` over `httpx.MockTransport` and asserts the JSON that
   went out.
-* The REFUSALS: the coherence table on `messages`, `stream: true`, an unknown
-  body field, and the four routing failures. Each row is arranged so the control
+* The REFUSALS: the coherence table on `messages`, an unknown body field, and
+  the four routing failures. Each row is arranged so the control
   it names is the only thing that can reject it; a row rejected by two rules at
   once would stay green after its own rule was deleted.
 
@@ -473,19 +473,11 @@ def test_tool_result_turn_reaches_the_provider_in_order(settings: Settings) -> N
 # --- refusals: the request body ----------------------------------------------
 
 
-def test_stream_true_is_422_validation(chat_client: TestClient) -> None:
-    """Catches a route that ignores `stream`, answering one complete JSON body to a client
-    that is reading server-sent events and will hang or mis-parse. Streaming is an earlier change;
-    until it lands the field is refused rather than silently dropped."""
-    response = post_chat(chat_client, chat_body(stream=True))
-
-    assert_error_body(response, status=422, code="VALIDATION")
-
-
 def test_stream_false_is_accepted(chat_client: TestClient) -> None:
-    """The other half, so the row above cannot be passed by rejecting the field outright:
-    catches a route that refuses `stream` whatever its value, which would break every
-    OpenAI client that sends `stream: false` explicitly."""
+    """Catches a route that takes the streaming branch on any `stream` key at all: a
+    client sending `stream: false` explicitly, as the OpenAI SDK does, would be handed
+    server-sent events it is not reading. `stream: true` is served, and asserted, in
+    tests/gateway/test_chat_streaming.py."""
     ok_body(post_chat(chat_client, chat_body(stream=False)))
 
 

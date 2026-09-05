@@ -23,7 +23,7 @@ an embedding protocol next to this one.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from typing import Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
@@ -193,6 +193,71 @@ class ChatResponse(_Contract):
     usage: Usage
 
 
+class StreamStart(_Contract):
+    """The answer has begun. Carries the role and nothing else.
+
+    A separate event rather than a flag on the first text delta, because an
+    answer that is only a tool call has no first text delta and still has to
+    open. `test_first_chunk_carries_the_assistant_role` pins the role on an
+    ordinary text answer and `test_streamed_tool_call_is_one_whole_delta` pins it
+    on a tool-only one, which is the case a lazily emitted role would break.
+    """
+
+    role: Literal["assistant"] = "assistant"
+
+
+class TextDelta(_Contract):
+    """One fragment of the answer, in the order the provider produced it."""
+
+    text: str
+
+
+class ToolCallDelta(_Contract):
+    """One COMPLETE tool call, delivered whole rather than as argument fragments.
+
+    Partial JSON is unusable to a client until the call closes, and forwarding
+    fragments would mean owning a second incremental-arguments shape in the wire
+    mapping. The cost is recorded: a client cannot render
+    arguments as they are typed. `index` is the call's position in the answer,
+    which is what an OpenAI-compatible client assembles by
+    (`test_streamed_tool_call_is_one_whole_delta`).
+    """
+
+    index: int
+    call: ToolCall
+
+
+class FinishReason(_Contract):
+    """Why the answer ended, in the provider's own word.
+
+    Mapped into OpenAI's vocabulary at the API boundary, through the same table
+    the non-streaming path uses (`test_finish_reason_table_on_the_stream`), so a
+    provider's spelling stops at the adapter here as it does everywhere else.
+    """
+
+    reason: str
+
+
+class UsageTotal(_Contract):
+    """What the streamed call consumed. Always sent, and never zero-filled.
+
+    A stream carries usage exactly like a completion does (the design): the ledger
+    prices from these numbers, so an adapter that cannot read them raises rather
+    than defaulting to zero and booking a real, billed call as free
+    (`test_a_truncated_stream_raises_rather_than_zero_filling_usage`).
+    """
+
+    usage: Usage
+
+
+StreamEvent = StreamStart | TextDelta | ToolCallDelta | FinishReason | UsageTotal
+"""Everything a streamed answer is made of, in the gateway's own vocabulary.
+
+Five events, closed. No SSE and no provider event name reaches past an adapter,
+which is the same boundary `ChatResponse` draws for the non-streaming path.
+"""
+
+
 @runtime_checkable
 class Adapter(Protocol):
     """What every provider adapter offers the gateway.
@@ -208,6 +273,16 @@ class Adapter(Protocol):
 
     def chat(self, request: ChatRequest) -> ChatResponse:
         """Run one non-streaming completion. Every failure is a `ProviderError`."""
+        ...
+
+    def stream_chat(self, request: ChatRequest) -> Iterator[StreamEvent]:
+        """Run one streamed completion. Every failure is a `ProviderError`.
+
+        On the one protocol rather than a separate `StreamingAdapter` (an earlier change
+        decision A): every provider in the policy speaks SSE, so a second
+        protocol would buy a capability check on every request and a "this
+        provider cannot stream" path nothing would reach.
+        """
         ...
 
     def healthcheck(self) -> bool:

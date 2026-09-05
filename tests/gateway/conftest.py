@@ -40,7 +40,7 @@ by shape, are worth nothing, and match no provider's key format.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -53,7 +53,19 @@ from opsconsole.core.settings import Settings
 from opsconsole.gateway.app import create_app
 from opsconsole.gateway.auth import MAX_KEY_LENGTH
 from opsconsole.gateway.context import RequestContext, request_context
-from opsconsole.providers.base import Adapter, ChatRequest, ChatResponse, ToolCall, Usage
+from opsconsole.providers.base import (
+    Adapter,
+    ChatRequest,
+    ChatResponse,
+    FinishReason,
+    StreamEvent,
+    StreamStart,
+    TextDelta,
+    ToolCall,
+    ToolCallDelta,
+    Usage,
+    UsageTotal,
+)
 from opsconsole.routing.errors import ResidencyUnavailable, RoutingError
 from opsconsole.routing.policy import DataClass, Policy, load_policy
 from opsconsole.routing.resolver import MAX_IDENTIFIER_LENGTH, resolve
@@ -285,6 +297,49 @@ STUB_TOOL_CALL = ToolCall(
 )
 
 
+# --- streaming ----------------------------------------------------
+#
+# `stream_chat` answers a scripted list of neutral events. The numbers and the
+# strings below are deliberately different from the non-streaming ones above, so
+# a route that renders a stream out of the non-streaming path - or fills the
+# usage chunk from `STUB_USAGE` - is visible rather than accidentally right.
+#
+# `stream_error` with `stream_error_at` is what makes the mid-stream failure
+# reachable: at 0 the generator raises before yielding anything (the pre-stream
+# failure), above 0 it raises after that many events have already left.
+
+STREAM_FRAGMENTS = ("Berlin", " is the ", "capital of Germany.")
+STREAM_ANSWER = "Berlin is the capital of Germany."
+
+STREAM_USAGE = Usage(prompt_tokens=431, completion_tokens=52, total_tokens=483)
+
+STREAM_TOOL_CALL = ToolCall(
+    id="toolu_01StubStreamCall00000",
+    name="get_weather",
+    arguments='{"city": "Berlin", "units": "metric"}',
+)
+
+# Not 0: an implementation that hardcodes the tool call index would pass with 0.
+STREAM_TOOL_INDEX = 2
+
+
+def stream_events(
+    *,
+    fragments: tuple[str, ...] = STREAM_FRAGMENTS,
+    tool_calls: tuple[ToolCallDelta, ...] = (),
+    finish_reason: str = "end_turn",
+    usage: Usage | None = STREAM_USAGE,
+) -> tuple[StreamEvent, ...]:
+    """One scripted stream in the neutral vocabulary, in the order an adapter yields it."""
+    events: list[StreamEvent] = [StreamStart()]
+    events.extend(TextDelta(text=fragment) for fragment in fragments)
+    events.extend(tool_calls)
+    events.append(FinishReason(reason=finish_reason))
+    if usage is not None:
+        events.append(UsageTotal(usage=usage))
+    return tuple(events)
+
+
 def stub_response(
     *,
     content: str = STUB_CONTENT,
@@ -317,17 +372,43 @@ class StubAdapter:
         name: str,
         response: ChatResponse | None = None,
         error: Exception | None = None,
+        events: Sequence[StreamEvent] | None = None,
+        stream_error: Exception | None = None,
+        stream_error_at: int = 0,
     ) -> None:
         self.name = name
         self.requests: list[ChatRequest] = []
         self._response = response if response is not None else stub_response()
         self._error = error
+        self._events = tuple(events) if events is not None else stream_events()
+        self._stream_error = stream_error
+        self._stream_error_at = stream_error_at
+        self.stream_closed = False
 
     def chat(self, request: ChatRequest) -> ChatResponse:
         self.requests.append(request)
         if self._error is not None:
             raise self._error
         return self._response
+
+    def stream_chat(self, request: ChatRequest) -> Iterator[StreamEvent]:
+        """Yield the scripted events, raising the scripted error at its position.
+
+        `stream_closed` records that the route released this generator, which is
+        the only way a test can see the provider connection a real adapter holds
+        being given back
+        (`test_closing_the_frame_generator_releases_the_provider_stream`).
+        """
+        self.requests.append(request)
+        try:
+            for position, event in enumerate(self._events):
+                if self._stream_error is not None and position == self._stream_error_at:
+                    raise self._stream_error
+                yield event
+            if self._stream_error is not None and self._stream_error_at >= len(self._events):
+                raise self._stream_error
+        finally:
+            self.stream_closed = True
 
     def healthcheck(self) -> bool:
         return True

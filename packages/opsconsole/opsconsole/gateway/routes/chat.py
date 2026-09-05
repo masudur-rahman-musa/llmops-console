@@ -3,7 +3,7 @@
 An earlier change left three things that did not touch each other: a request could be
 authenticated, resolved to a provider and a model id, and a provider could be
 called. This module is that join and nothing else - no cache, no ledger, no
-redaction, no fallback, no streaming.
+redaction, no fallback.
 
 The OpenAI wire shape lives here and stops here. `providers/base.py` keeps the
 gateway's own vocabulary, so the two mappings - a wire request into a
@@ -19,9 +19,18 @@ Two published details worth knowing before reading the code:
   would hand back a name that cannot be sent again and disclose which provider
   served the request. The provider model id is an operator's fact and travels in
   `X-Gateway-Model` (`test_response_model_is_the_alias_the_caller_named`).
-* `stream: true` is refused with a 422 rather than ignored. Streaming is plan
-  05b; until it lands, a client that asked for events must not be handed one
-  complete JSON body it will mis-parse (`test_stream_true_is_422_validation`).
+* `stream: true` answers `text/event-stream`: the same resolution and the same
+  provider call, rendered as `chat.completion.chunk` frames and closed with
+  `data: [DONE]`. The stream is OPENED and its first event pulled inside the
+  route, before anything is returned, so a failure with nothing yet delivered is
+  still a typed HTTP error rather than a 200 carrying an error frame
+  (`test_a_provider_failure_before_the_first_event_is_502_with_no_stream`). Once
+  the status is sent it cannot be changed, so a later failure is one error frame
+  and no sentinel.
+
+Both shapes are built here, from one set of wire models: a `chat.completion` and
+the `chat.completion.chunk` frames are the same vocabulary rendered twice, so a
+tool call cannot be OpenAI-shaped on one path and flat on the other.
 
 Every rejection the wire models make is a 422 `VALIDATION` raised before any
 outbound call, by construction: FastAPI validates the body before the route body
@@ -32,24 +41,35 @@ handlers in `gateway/errors.py`.
 
 from __future__ import annotations
 
+import json
 import secrets
 import time
-from collections.abc import Mapping
-from typing import Any, Literal
+from collections.abc import Generator, Iterator, Mapping
+from itertools import chain
+from typing import Any, Literal, assert_never
 
 from fastapi import APIRouter, Request, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from opsconsole.core.errors import GatewayError, ProviderError
 from opsconsole.gateway.context import Context
+from opsconsole.gateway.errors import error_body
 from opsconsole.providers.base import (
     Adapter,
     ChatMessage,
     ChatRequest,
     ChatResponse,
+    FinishReason,
     ResponseFormat,
+    StreamEvent,
+    StreamStart,
+    TextDelta,
     ToolCall,
+    ToolCallDelta,
     ToolChoice,
     ToolSpec,
+    UsageTotal,
 )
 from opsconsole.routing.policy import PolicyStore
 from opsconsole.routing.resolver import Resolved, resolve
@@ -69,6 +89,30 @@ two tenants' calls into one row."""
 
 COMPLETION_OBJECT: Literal["chat.completion"] = "chat.completion"
 """The `object` discriminator an OpenAI-compatible client branches on."""
+
+CHUNK_OBJECT: Literal["chat.completion.chunk"] = "chat.completion.chunk"
+"""The same discriminator for a streamed frame. A client reads the answer out of
+`choices[].delta` rather than `choices[].message` when it sees this
+(`test_every_chunk_carries_the_alias_and_one_id`)."""
+
+SSE_MEDIA_TYPE = "text/event-stream"
+"""The content type of a streamed answer."""
+
+DONE_SENTINEL = "[DONE]"
+"""The payload of the frame that ends a complete stream, spelled as OpenAI
+publishes it. An SDK reads until it arrives, so its ABSENCE is what reports a
+truncated stream; `test_a_stream_ends_with_done` pins the
+whole final line and `test_a_failure_after_the_first_event_emits_an_error_chunk_and_no_done`
+pins the absence."""
+
+SSE_HEADERS: Mapping[str, str] = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+"""The two headers a streamed answer needs beyond the six of #9.
+
+Both exist to stop something between the gateway and the client holding the
+frames back and delivering them as one block, which turns a stream into a slow
+non-streaming answer: `Cache-Control` for caches, `X-Accel-Buffering` for nginx
+and the ingress controllers that read it. Pinned by
+`test_headers_on_a_streamed_success`."""
 
 FINISH_REASON_BY_STOP_REASON: Mapping[str, str] = {
     "end_turn": "stop",
@@ -183,6 +227,21 @@ class WireMessage(_Wire):
         return self
 
 
+class StreamOptions(_Wire):
+    """`stream_options: {"include_usage": bool}`, accepted so an ordinary SDK works.
+
+    The OpenAI SDK sends this field on every streamed request, so refusing it
+    outright through `extra="forbid"` would break a client that did nothing
+    wrong. `false` is refused instead, with a 422 that says why: usage is
+    returned on every stream (the design) because the ledger prices from it, so
+    honouring `false` would be a promise the gateway does not keep (an earlier change
+    decision D). Both halves are pinned - `test_include_usage_false_is_422` and
+    `test_include_usage_true_is_accepted`.
+    """
+
+    include_usage: bool = True
+
+
 class JsonSchemaSpec(_Wire):
     """The `json_schema` body of a `response_format`.
 
@@ -217,12 +276,13 @@ class ChatCompletionRequest(_Wire):
     max_tokens: int | None = None
     temperature: float | None = None
     stream: bool = False
+    stream_options: StreamOptions | None = None
 
     @model_validator(mode="after")
     def _supported(self) -> ChatCompletionRequest:
-        """Refuse the two requests this plan cannot serve honestly."""
-        if self.stream:
-            raise ValueError("stream: streaming is not supported yet")
+        """Refuse the two requests this gateway cannot serve honestly."""
+        if self.stream_options is not None and not self.stream_options.include_usage:
+            raise ValueError("stream_options.include_usage: usage is reported on every stream")
         if self.tool_choice is not None and self.response_format is not None:
             # Each demands a different forced call, so whichever is applied last
             # silently wins and the caller gets an answer shaped by the field it
@@ -276,6 +336,67 @@ class ChatCompletion(BaseModel):
     model: str
     choices: tuple[Choice, ...]
     usage: CompletionUsage
+
+
+class WireToolCallChunk(_Wire):
+    """One tool call inside a streamed delta: `WireToolCall` plus the position.
+
+    `index` is what an OpenAI client assembles a multi-call answer by, and it is
+    the provider's own position rather than this frame's: hardcoding 0 merges two
+    calls of one answer into one (`test_streamed_tool_call_is_one_whole_delta`).
+    """
+
+    index: int
+    id: str
+    type: Literal["function"] = "function"
+    function: WireToolCallFunction
+
+
+class ChunkDelta(BaseModel):
+    """What one frame adds to the message being assembled. Every field optional.
+
+    Optional because a frame carries exactly one kind of news: the opening role,
+    a fragment of text, a completed tool call, or - on the frame that closes the
+    answer - nothing at all beside the `finish_reason` above it. `role` rides the
+    first frame only; repeating it is read as a second message
+    (`test_first_chunk_carries_the_assistant_role`).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    role: Literal["assistant"] | None = None
+    content: str | None = None
+    tool_calls: tuple[WireToolCallChunk, ...] | None = None
+
+
+class ChunkChoice(BaseModel):
+    """The single choice a frame carries. `n > 1` is not offered, as on the completion."""
+
+    model_config = ConfigDict(frozen=True)
+
+    index: int = 0
+    delta: ChunkDelta
+    finish_reason: str | None = None
+
+
+class ChatCompletionChunk(BaseModel):
+    """One `chat.completion.chunk` frame. `model` is the alias, as on the completion.
+
+    `usage` is null on every frame but the last, which carries it with an EMPTY
+    `choices`: that is where an OpenAI-compatible client looks for it, and it is
+    the number the ledger will price from, so it is carried from the provider and
+    never zero-filled
+    (`test_usage_chunk_is_last_and_carries_the_fixture_numbers_exactly`).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    object: Literal["chat.completion.chunk"] = CHUNK_OBJECT
+    created: int
+    model: str
+    choices: tuple[ChunkChoice, ...]
+    usage: CompletionUsage | None = None
 
 
 def gateway_headers(resolved: Resolved, trace_id: str) -> dict[str, str]:
@@ -410,16 +531,168 @@ def to_wire(answer: ChatResponse, alias: str) -> ChatCompletion:
     )
 
 
+def _completion_id() -> str:
+    """One fresh completion id, shared by every frame of one streamed answer."""
+    return f"{COMPLETION_ID_PREFIX}{secrets.token_hex(COMPLETION_ID_BYTES)}"
+
+
+def _frame(payload: str) -> str:
+    """One SSE frame: `data: `, the payload, and the blank line that ends it.
+
+    The blank line is not decoration - it is what terminates an event, so a
+    client whose stream never carries one hands nothing to its parser and waits
+    until its read timeout. `test_every_frame_ends_with_a_blank_line` asserts the
+    raw bytes of a real response, because the helpers the other cases use split
+    on lines and cannot see a separator at all.
+    """
+    return f"data: {payload}\n\n"
+
+
+def to_chunk(
+    event: StreamEvent, *, completion_id: str, created: int, alias: str
+) -> ChatCompletionChunk:
+    """Map one neutral stream event into the frame that carries it.
+
+    The counterpart of `to_wire`, and it reuses the same wire models and the same
+    `FINISH_REASON_BY_STOP_REASON`, so a streamed tool call cannot be shaped
+    differently from a returned one and a streamed stop reason cannot be mapped
+    by a second table that drifts from the first
+    (`test_finish_reason_table_on_the_stream`).
+
+    `alias` is what every frame names, never the provider model id, for the
+    reason the module docstring gives
+    (`test_every_chunk_carries_the_alias_and_one_id`).
+    """
+    envelope: dict[str, Any] = {"id": completion_id, "created": created, "model": alias}
+
+    if isinstance(event, StreamStart):
+        return ChatCompletionChunk(
+            **envelope, choices=(ChunkChoice(delta=ChunkDelta(role=event.role)),)
+        )
+    if isinstance(event, TextDelta):
+        return ChatCompletionChunk(
+            **envelope, choices=(ChunkChoice(delta=ChunkDelta(content=event.text)),)
+        )
+    if isinstance(event, ToolCallDelta):
+        return ChatCompletionChunk(
+            **envelope,
+            choices=(
+                ChunkChoice(
+                    delta=ChunkDelta(
+                        tool_calls=(
+                            WireToolCallChunk(
+                                index=event.index,
+                                id=event.call.id,
+                                function=WireToolCallFunction(
+                                    name=event.call.name, arguments=event.call.arguments
+                                ),
+                            ),
+                        )
+                    )
+                ),
+            ),
+        )
+    if isinstance(event, FinishReason):
+        return ChatCompletionChunk(
+            **envelope,
+            choices=(
+                ChunkChoice(
+                    delta=ChunkDelta(),
+                    finish_reason=FINISH_REASON_BY_STOP_REASON.get(event.reason, event.reason),
+                ),
+            ),
+        )
+    if isinstance(event, UsageTotal):
+        return ChatCompletionChunk(
+            **envelope,
+            choices=(),
+            usage=CompletionUsage(
+                prompt_tokens=event.usage.prompt_tokens,
+                completion_tokens=event.usage.completion_tokens,
+                total_tokens=event.usage.total_tokens,
+            ),
+        )
+    # Spelled out rather than left as a fall-through: `assert_never` makes mypy
+    # fail this function the day `StreamEvent` grows a sixth member, instead of
+    # letting the new event be rendered as whatever the last branch happened to
+    # build. No request can reach it - the union is closed and every member is
+    # handled above.
+    assert_never(event)
+
+
+def sse_frames(
+    first: StreamEvent, events: Iterator[StreamEvent], alias: str, completion_id: str
+) -> Generator[str, None, None]:
+    """Render the neutral events as SSE frames, ending with `[DONE]` if they finish.
+
+    A `GatewayError` raised part way through becomes ONE frame carrying the same
+    `{"error": {...}}` body every non-streaming failure uses, and the stream then
+    ends with no sentinel: the status is already 200 and cannot be changed, so
+    the frame says what went wrong and the missing `[DONE]` is what lets a client
+    tell a truncated answer from a finished one (an earlier change decision E,
+    `test_a_failure_after_the_first_event_emits_an_error_chunk_and_no_done`).
+
+    Only a TYPED failure is rendered, and the limit is deliberate rather than an
+    oversight. An untyped one is a bug, and there is nothing safe to say about a
+    bug in a frame; it reaches the client as a cut stream with no sentinel, which
+    is the same "truncated" report decision E gives a typed failure, minus the
+    explanation. Nothing in this gateway turns it into a body: the `Exception`
+    handler registered in `gateway/errors.py` is served by Starlette's
+    `ServerErrorMiddleware`, which re-raises unchanged once a response has
+    started, so for a crash inside this generator that handler never runs and the
+    traceback is logged by the ASGI server rather than by us
+    (`test_an_untyped_failure_mid_stream_is_not_rendered_as_a_frame`).
+
+    The provider's connection is released in a `finally` rather than left to the
+    garbage collector. A client that navigates away mid-answer leaves this
+    generator suspended, and the streamed `httpx` response underneath it stays
+    checked out of the pool until it is closed
+    (`test_closing_the_frame_generator_releases_the_provider_stream`).
+
+    Typed as a `Generator` rather than an `Iterator` because a caller has to be
+    able to `close()` it: that is what releases the provider stream when the
+    client goes away, and an `Iterator` does not promise the method.
+
+    A sync generator, deliberately: FastAPI iterates it in a worker thread, so a
+    provider that pauses between events holds a thread rather than the event
+    loop, exactly as the non-streaming path is already handled.
+    """
+    created = int(time.time())
+    try:
+        for event in chain((first,), events):
+            chunk = to_chunk(event, completion_id=completion_id, created=created, alias=alias)
+            yield _frame(chunk.model_dump_json())
+    except GatewayError as error:
+        yield _frame(
+            json.dumps(
+                error_body(
+                    message=error.message,
+                    code=error.code,
+                    http_status=error.http_status,
+                    param=error.param,
+                )
+            )
+        )
+        return
+    finally:
+        if isinstance(events, Generator):
+            # `itertools.chain` has no `close`, so the adapter's own generator is
+            # what has to be closed; `_streamed` passes it separately for that
+            # reason rather than chaining the first event onto it here.
+            events.close()
+    yield _frame(DONE_SENTINEL)
+
+
 router = APIRouter()
 
 
-@router.post("/v1/chat/completions")
+@router.post("/v1/chat/completions", response_model=None)
 def create_chat_completion(
     request: Request,
     context: Context,
     body: ChatCompletionRequest,
     response: Response,
-) -> ChatCompletion:
+) -> ChatCompletion | StreamingResponse:
     """Resolve the alias, call the first allowed healthy provider, answer OpenAI-shaped.
 
     A provider with no adapter - its key unset, or its kind not yet built - is
@@ -434,9 +707,20 @@ def create_chat_completion(
     read, and until then a provider failure is one 502
     (`test_provider_failure_is_502_without_the_provider_message`).
 
+    A streamed request takes the same path to the same provider and differs only
+    in what it is handed back. The resolution happens first either way, so an
+    unknown alias, a residency refusal and a candidate with no adapter are the
+    ordinary typed errors on both
+    (`test_a_routing_failure_on_a_stream_is_the_ordinary_typed_error`).
+
+    `response_model=None` because the return type is a union: FastAPI would
+    otherwise try to validate a `StreamingResponse` against `ChatCompletion`. The
+    non-streaming body is a built model either way, so nothing is left unchecked.
+
     Declared `def` rather than `async def` on purpose. The adapters are
     synchronous `httpx` clients, so FastAPI runs this in a worker thread; an
-    `async def` would block the event loop for the whole provider call.
+    `async def` would block the event loop for the whole provider call, and would
+    hold it for the whole length of a stream.
     """
     store: PolicyStore = request.app.state.policy
     adapters: Mapping[str, Adapter] = request.app.state.adapters
@@ -449,8 +733,47 @@ def create_chat_completion(
         is_healthy=lambda provider: provider in adapters,
     )
     chosen = candidates[0]
+    adapter = adapters[chosen.provider]
+    headers = gateway_headers(chosen, context.trace_id)
 
-    answer = adapters[chosen.provider].chat(to_neutral(body, chosen.model))
+    if body.stream:
+        return _streamed(adapter, body, chosen, headers)
 
-    response.headers.update(gateway_headers(chosen, context.trace_id))
+    answer = adapter.chat(to_neutral(body, chosen.model))
+
+    response.headers.update(headers)
     return to_wire(answer, body.model)
+
+
+def _streamed(
+    adapter: Adapter,
+    body: ChatCompletionRequest,
+    chosen: Resolved,
+    headers: dict[str, str],
+) -> StreamingResponse:
+    """Open the stream, pull its first event, and only then answer 200.
+
+    The eager first event is the whole point. `StreamingResponse` sends the
+    status the moment it is returned, so anything the adapter raises after that
+    can only be an error frame inside a 200 - which an SDK reports to its caller
+    as a parse failure rather than as the provider outage it was. Pulling one
+    event here keeps every pre-stream failure a typed HTTP error the existing
+    handlers render (`test_a_provider_failure_before_the_first_event_is_502_with_no_stream`).
+
+    A stream that opens and ends without a single event is a provider failure
+    too, not a `StopIteration` for the last-resort handler to turn into a 500
+    with no code (`test_a_stream_that_opens_and_yields_nothing_is_502`).
+    """
+    events = adapter.stream_chat(to_neutral(body, chosen.model))
+    first = next(events, None)
+    if first is None:
+        raise ProviderError(
+            f"{chosen.provider}: the provider opened a stream and sent nothing",
+            retryable=False,
+        )
+
+    return StreamingResponse(
+        sse_frames(first, events, body.model, _completion_id()),
+        media_type=SSE_MEDIA_TYPE,
+        headers={**headers, **SSE_HEADERS},
+    )
