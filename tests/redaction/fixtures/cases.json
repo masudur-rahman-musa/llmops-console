@@ -1,0 +1,624 @@
+{
+  "cases": [
+    {
+      "id": "pos-email-plain",
+      "text": "Contact alice@example.com for access.",
+      "spans": [
+        {
+          "kind": "EMAIL",
+          "start": 8,
+          "end": 25,
+          "value": "alice@example.com"
+        }
+      ]
+    },
+    {
+      "id": "pos-email-plus-tag",
+      "text": "Send the report to ops.team+alerts@example.org today.",
+      "spans": [
+        {
+          "kind": "EMAIL",
+          "start": 19,
+          "end": 46,
+          "value": "ops.team+alerts@example.org"
+        }
+      ]
+    },
+    {
+      "id": "pos-email-angle-brackets",
+      "text": "From: Bob Meyer <bob.meyer@example.net>",
+      "spans": [
+        {
+          "kind": "EMAIL",
+          "start": 17,
+          "end": 38,
+          "value": "bob.meyer@example.net"
+        }
+      ]
+    },
+    {
+      "id": "pos-email-subdomain",
+      "text": "Please mail a.b@mail.example.co.uk before the cutover.",
+      "spans": [
+        {
+          "kind": "EMAIL",
+          "start": 12,
+          "end": 34,
+          "value": "a.b@mail.example.co.uk"
+        }
+      ]
+    },
+    {
+      "id": "pos-email-repeated-value",
+      "text": "carol@example.com asked, so reply to carol@example.com.",
+      "spans": [
+        {
+          "kind": "EMAIL",
+          "start": 0,
+          "end": 17,
+          "value": "carol@example.com"
+        },
+        {
+          "kind": "EMAIL",
+          "start": 37,
+          "end": 54,
+          "value": "carol@example.com"
+        }
+      ]
+    },
+    {
+      "id": "pos-phone-e164-de",
+      "text": "Call +4930123456789 after ten.",
+      "spans": [
+        {
+          "kind": "PHONE",
+          "start": 5,
+          "end": 19,
+          "value": "+4930123456789"
+        }
+      ]
+    },
+    {
+      "id": "pos-phone-ie-spaced",
+      "text": "Ring +353 1 234 5678 for support.",
+      "spans": [
+        {
+          "kind": "PHONE",
+          "start": 5,
+          "end": 20,
+          "value": "+353 1 234 5678"
+        }
+      ]
+    },
+    {
+      "id": "pos-phone-fr-spaced",
+      "text": "The backup line is +33 1 23 45 67 89.",
+      "spans": [
+        {
+          "kind": "PHONE",
+          "start": 19,
+          "end": 36,
+          "value": "+33 1 23 45 67 89"
+        }
+      ]
+    },
+    {
+      "id": "pos-phone-de-national",
+      "text": "Reach the desk on 030 12345678 during office hours.",
+      "spans": [
+        {
+          "kind": "PHONE",
+          "start": 18,
+          "end": 30,
+          "value": "030 12345678"
+        }
+      ]
+    },
+    {
+      "id": "pos-phone-repeated-value",
+      "text": "+4915112345678 is the mobile; text +4915112345678 instead.",
+      "spans": [
+        {
+          "kind": "PHONE",
+          "start": 0,
+          "end": 14,
+          "value": "+4915112345678"
+        },
+        {
+          "kind": "PHONE",
+          "start": 35,
+          "end": 49,
+          "value": "+4915112345678"
+        }
+      ]
+    },
+    {
+      "id": "pos-iban-de",
+      "text": "Transfer to DE12500105170648489890 by Friday.",
+      "spans": [
+        {
+          "kind": "IBAN",
+          "start": 12,
+          "end": 34,
+          "value": "DE12500105170648489890"
+        }
+      ]
+    },
+    {
+      "id": "pos-iban-ie",
+      "text": "Account IE29AIBK93115212345678 is closed.",
+      "spans": [
+        {
+          "kind": "IBAN",
+          "start": 8,
+          "end": 30,
+          "value": "IE29AIBK93115212345678"
+        }
+      ]
+    },
+    {
+      "id": "pos-iban-fr-alphanumeric",
+      "text": "The FR1420041010050500013M02606 mandate lapsed.",
+      "spans": [
+        {
+          "kind": "IBAN",
+          "start": 4,
+          "end": 31,
+          "value": "FR1420041010050500013M02606"
+        }
+      ]
+    },
+    {
+      "id": "pos-iban-nl",
+      "text": "Vendor NL91ABNA0417164300 was paid.",
+      "spans": [
+        {
+          "kind": "IBAN",
+          "start": 7,
+          "end": 25,
+          "value": "NL91ABNA0417164300"
+        }
+      ]
+    },
+    {
+      "id": "pos-iban-de-space-grouped",
+      "text": "Transfer to DE12 5001 0517 0648 4898 90 by Friday.",
+      "spans": [
+        {
+          "kind": "IBAN",
+          "start": 12,
+          "end": 39,
+          "value": "DE12 5001 0517 0648 4898 90"
+        }
+      ]
+    },
+    {
+      "id": "pos-card-visa-16",
+      "text": "Card 4111111111111111 was declined.",
+      "spans": [
+        {
+          "kind": "CARD",
+          "start": 5,
+          "end": 21,
+          "value": "4111111111111111"
+        }
+      ]
+    },
+    {
+      "id": "pos-card-visa-16-alt",
+      "text": "Charge 4242424242424242 for the renewal.",
+      "spans": [
+        {
+          "kind": "CARD",
+          "start": 7,
+          "end": 23,
+          "value": "4242424242424242"
+        }
+      ]
+    },
+    {
+      "id": "pos-card-mastercard-16",
+      "text": "5555555555554444 expires next month.",
+      "spans": [
+        {
+          "kind": "CARD",
+          "start": 0,
+          "end": 16,
+          "value": "5555555555554444"
+        }
+      ]
+    },
+    {
+      "id": "pos-card-amex-15",
+      "text": "Amex 378282246310005 is on file.",
+      "spans": [
+        {
+          "kind": "CARD",
+          "start": 5,
+          "end": 20,
+          "value": "378282246310005"
+        }
+      ]
+    },
+    {
+      "id": "pos-steuer-id-hyphenated-cue",
+      "text": "Steuer-ID 26869543017 on the form.",
+      "spans": [
+        {
+          "kind": "STEUER_ID",
+          "start": 10,
+          "end": 21,
+          "value": "26869543017"
+        }
+      ]
+    },
+    {
+      "id": "pos-steuer-id-plain-cue",
+      "text": "His Steuer ID is 12345678903.",
+      "spans": [
+        {
+          "kind": "STEUER_ID",
+          "start": 17,
+          "end": 28,
+          "value": "12345678903"
+        }
+      ]
+    },
+    {
+      "id": "pos-steuer-id-english-cue",
+      "text": "Tax number 86523996324 was filed.",
+      "spans": [
+        {
+          "kind": "STEUER_ID",
+          "start": 11,
+          "end": 22,
+          "value": "86523996324"
+        }
+      ]
+    },
+    {
+      "id": "pos-ppsn-single-letter",
+      "text": "PPSN 1234567T recorded.",
+      "spans": [
+        {
+          "kind": "PPSN",
+          "start": 5,
+          "end": 13,
+          "value": "1234567T"
+        }
+      ]
+    },
+    {
+      "id": "pos-ppsn-two-letters",
+      "text": "The PPS number 7654321PA is on file.",
+      "spans": [
+        {
+          "kind": "PPSN",
+          "start": 15,
+          "end": 24,
+          "value": "7654321PA"
+        }
+      ]
+    },
+    {
+      "id": "pos-ppsn-w-suffix",
+      "text": "PPSN 2345678IW for the claim.",
+      "spans": [
+        {
+          "kind": "PPSN",
+          "start": 5,
+          "end": 14,
+          "value": "2345678IW"
+        }
+      ]
+    },
+    {
+      "id": "pos-ipv4-doc-range-1",
+      "text": "The host 192.0.2.1 refused the connection.",
+      "spans": [
+        {
+          "kind": "IPV4",
+          "start": 9,
+          "end": 18,
+          "value": "192.0.2.1"
+        }
+      ]
+    },
+    {
+      "id": "pos-ipv4-doc-range-2",
+      "text": "Blocked 198.51.100.23 at the edge.",
+      "spans": [
+        {
+          "kind": "IPV4",
+          "start": 8,
+          "end": 21,
+          "value": "198.51.100.23"
+        }
+      ]
+    },
+    {
+      "id": "pos-ipv4-doc-range-3",
+      "text": "Route to 203.0.113.255 failed twice.",
+      "spans": [
+        {
+          "kind": "IPV4",
+          "start": 9,
+          "end": 22,
+          "value": "203.0.113.255"
+        }
+      ]
+    },
+    {
+      "id": "pos-ipv6-compressed",
+      "text": "Peer 2001:db8::1 dropped.",
+      "spans": [
+        {
+          "kind": "IPV6",
+          "start": 5,
+          "end": 16,
+          "value": "2001:db8::1"
+        }
+      ]
+    },
+    {
+      "id": "pos-ipv6-mixed-compressed",
+      "text": "Bound to 2001:db8:85a3::8a2e:370:7334 on boot.",
+      "spans": [
+        {
+          "kind": "IPV6",
+          "start": 9,
+          "end": 37,
+          "value": "2001:db8:85a3::8a2e:370:7334"
+        }
+      ]
+    },
+    {
+      "id": "pos-ipv6-full-form",
+      "text": "Origin 2001:db8:0:0:0:0:0:42 timed out.",
+      "spans": [
+        {
+          "kind": "IPV6",
+          "start": 7,
+          "end": 28,
+          "value": "2001:db8:0:0:0:0:0:42"
+        }
+      ]
+    },
+    {
+      "id": "pos-ipv6-ipv4-mapped",
+      "text": "Peer ::ffff:192.0.2.1 dropped the session.",
+      "spans": [
+        {
+          "kind": "IPV6",
+          "start": 5,
+          "end": 21,
+          "value": "::ffff:192.0.2.1"
+        }
+      ]
+    },
+    {
+      "id": "pos-dob-cue-born-iso",
+      "text": "Patient born 1985-04-12 in Cork.",
+      "spans": [
+        {
+          "kind": "DOB",
+          "start": 13,
+          "end": 23,
+          "value": "1985-04-12"
+        }
+      ]
+    },
+    {
+      "id": "pos-dob-cue-abbrev-slashes",
+      "text": "DOB: 12/04/1985 per the passport.",
+      "spans": [
+        {
+          "kind": "DOB",
+          "start": 5,
+          "end": 15,
+          "value": "12/04/1985"
+        }
+      ]
+    },
+    {
+      "id": "pos-dob-cue-phrase-iso",
+      "text": "Her date of birth is 1990-03-03 on record.",
+      "spans": [
+        {
+          "kind": "DOB",
+          "start": 21,
+          "end": 31,
+          "value": "1990-03-03"
+        }
+      ]
+    },
+    {
+      "id": "pos-dob-cue-born-dotted",
+      "text": "Born 01.07.1978, retired in 2043.",
+      "spans": [
+        {
+          "kind": "DOB",
+          "start": 5,
+          "end": 15,
+          "value": "01.07.1978"
+        }
+      ]
+    },
+    {
+      "id": "pos-multi-email-phone",
+      "text": "Email alice@example.com or call +4930123456789.",
+      "spans": [
+        {
+          "kind": "EMAIL",
+          "start": 6,
+          "end": 23,
+          "value": "alice@example.com"
+        },
+        {
+          "kind": "PHONE",
+          "start": 32,
+          "end": 46,
+          "value": "+4930123456789"
+        }
+      ]
+    },
+    {
+      "id": "pos-multi-ipv4-card",
+      "text": "Ship to 192.0.2.1; billing card 4242424242424242.",
+      "spans": [
+        {
+          "kind": "IPV4",
+          "start": 8,
+          "end": 17,
+          "value": "192.0.2.1"
+        },
+        {
+          "kind": "CARD",
+          "start": 32,
+          "end": 48,
+          "value": "4242424242424242"
+        }
+      ]
+    },
+    {
+      "id": "pos-multi-iban-steuer",
+      "text": "IBAN DE12500105170648489890 for tax number 26869543017.",
+      "spans": [
+        {
+          "kind": "IBAN",
+          "start": 5,
+          "end": 27,
+          "value": "DE12500105170648489890"
+        },
+        {
+          "kind": "STEUER_ID",
+          "start": 43,
+          "end": 54,
+          "value": "26869543017"
+        }
+      ]
+    },
+    {
+      "id": "pos-multi-ppsn-dob-ipv6",
+      "text": "PPSN 1234567T, born 1985-04-12, host 2001:db8::1.",
+      "spans": [
+        {
+          "kind": "PPSN",
+          "start": 5,
+          "end": 13,
+          "value": "1234567T"
+        },
+        {
+          "kind": "DOB",
+          "start": 20,
+          "end": 30,
+          "value": "1985-04-12"
+        },
+        {
+          "kind": "IPV6",
+          "start": 37,
+          "end": 48,
+          "value": "2001:db8::1"
+        }
+      ]
+    },
+    {
+      "id": "pos-multi-email-phone-ipv4",
+      "text": "Contact dave@example.com at +353 1 234 5678 from 198.51.100.23.",
+      "spans": [
+        {
+          "kind": "EMAIL",
+          "start": 8,
+          "end": 24,
+          "value": "dave@example.com"
+        },
+        {
+          "kind": "PHONE",
+          "start": 28,
+          "end": 43,
+          "value": "+353 1 234 5678"
+        },
+        {
+          "kind": "IPV4",
+          "start": 49,
+          "end": 62,
+          "value": "198.51.100.23"
+        }
+      ]
+    },
+    {
+      "id": "pos-repeat-and-distinct-emails",
+      "text": "Both alice@example.com and alice@example.com plus bob@example.net.",
+      "spans": [
+        {
+          "kind": "EMAIL",
+          "start": 5,
+          "end": 22,
+          "value": "alice@example.com"
+        },
+        {
+          "kind": "EMAIL",
+          "start": 27,
+          "end": 44,
+          "value": "alice@example.com"
+        },
+        {
+          "kind": "EMAIL",
+          "start": 50,
+          "end": 65,
+          "value": "bob@example.net"
+        }
+      ]
+    },
+    {
+      "id": "neg-bare-number",
+      "text": "The queue held 42 items.",
+      "spans": []
+    },
+    {
+      "id": "neg-semantic-version",
+      "text": "Upgrade to version 3.10.2 before Friday.",
+      "spans": []
+    },
+    {
+      "id": "neg-order-id",
+      "text": "Order ORD-2024-88213 shipped yesterday.",
+      "spans": []
+    },
+    {
+      "id": "neg-sixteen-digits-fail-luhn",
+      "text": "Reference 4111111111111112 was rejected.",
+      "spans": []
+    },
+    {
+      "id": "neg-date-without-cue",
+      "text": "The audit is scheduled for 1985-04-12.",
+      "spans": []
+    },
+    {
+      "id": "neg-time-of-day",
+      "text": "Standup moves to 14:32 tomorrow.",
+      "spans": []
+    },
+    {
+      "id": "neg-short-numeric-run",
+      "text": "Use gate 1234 at the depot.",
+      "spans": []
+    },
+    {
+      "id": "neg-decimal-amount",
+      "text": "Invoice total 1050.75 EUR outstanding.",
+      "spans": []
+    },
+    {
+      "id": "neg-long-digit-run",
+      "text": "Batch 00112233445566778899 finished.",
+      "spans": []
+    },
+    {
+      "id": "neg-ticket-reference",
+      "text": "Ticket #4815162342 is still open.",
+      "spans": []
+    }
+  ]
+}
