@@ -27,7 +27,10 @@ from opsconsole.redaction.detectors import (
     compact_separators,
     detect_all,
 )
-from opsconsole.redaction.errors import RedactionInputTooLong
+from opsconsole.redaction.errors import (
+    RedactionInputTooLong,
+    RedactionMapStoreUnavailable,
+)
 from opsconsole.redaction.redactor import (
     MAX_REDACTION_INPUT_CHARS,
     RedactionResult,
@@ -36,25 +39,32 @@ from opsconsole.redaction.redactor import (
     taken_placeholders,
 )
 from opsconsole.redaction.store import (
+    MAP_ID_PATTERN,
     REDACTION_MAP_ID_BYTES,
+    REDACTION_MAP_KEY_PREFIX,
     REDACTION_MAP_TTL_SECONDS,
     InProcessRedactionMapStore,
     RedactionMapStore,
+    RedisRedactionMapStore,
 )
 
 __all__ = [
     "DOB_CUES",
     "DOB_CUE_DISTANCE",
     "KIND_PRECEDENCE",
+    "MAP_ID_PATTERN",
     "MAX_REDACTION_INPUT_CHARS",
     "REDACTION_MAP_ID_BYTES",
+    "REDACTION_MAP_KEY_PREFIX",
     "REDACTION_MAP_TTL_SECONDS",
     "Detection",
     "InProcessRedactionMapStore",
     "Kind",
     "RedactionInputTooLong",
     "RedactionMapStore",
+    "RedactionMapStoreUnavailable",
     "RedactionResult",
+    "RedisRedactionMapStore",
     "compact_separators",
     "detect_all",
     "redact",

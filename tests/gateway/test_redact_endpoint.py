@@ -48,6 +48,7 @@ from opsconsole.redaction import (
     REDACTION_MAP_ID_BYTES,
     RedactionInputTooLong,
     RedactionMapStore,
+    RedactionMapStoreUnavailable,
 )
 from opsconsole.routing.policy import DataClass, Policy
 
@@ -599,3 +600,65 @@ def test_redaction_applies_is_false_for_a_tenant_the_policy_does_not_define(
     500 with no typed code; the resolver has already denied such a request, so the
     honest answer here is False rather than an exception."""
     assert redaction_applies(policy, "no-such-tenant", DataClass.PII) is False
+
+
+# --- an unreachable map store --------------------------
+#
+# The store is an outbound dependency like a provider, so a Redis that cannot be
+# reached is 502 PROVIDER_ERROR rather than a 500 with no code. Asserted through
+# `TestClient` against the built app: the conversion the route
+# performs is invisible to a test that reads the handler, because FastAPI has
+# handlers nobody in this repo registered.
+
+REDIS_FAILURE_TEXT = "Error 111 connecting to redis:6379. Connection refused."
+"""The client's own words, planted as a marker: they describe internal topology
+(a host name and a port) and must not travel to a caller."""
+
+
+class UnavailableStore:
+    """A `RedactionMapStore` whose `put` fails the way an unreachable Redis does."""
+
+    def put(self, tenant: str, mapping: Mapping[str, str]) -> str:
+        raise RedactionMapStoreUnavailable(REDIS_FAILURE_TEXT)
+
+    def get(self, tenant: str, map_id: str) -> Mapping[str, str] | None:
+        return None
+
+
+@pytest.fixture
+def unavailable_store_client(settings: Settings) -> Iterator[TestClient]:
+    """A second app whose map store cannot be reached.
+
+    Its own app rather than the module's: the store swap is what the case is
+    about, and doing it on `redact_client` would leave every later test in this
+    file talking to a store that refuses every write.
+    """
+    with build_chat_client(settings, NO_ADAPTERS) as client:
+        app = cast(FastAPI, client.app)
+        setattr(app.state, store_attribute(app), UnavailableStore())
+        yield client
+
+
+def test_a_store_that_cannot_be_reached_is_502_with_a_typed_code(
+    unavailable_store_client: TestClient,
+) -> None:
+    """Catches a route that lets the store's failure escape: `RedactionMapStoreUnavailable`
+    is not a `GatewayError`, so an uncaught one is a 500 whose body carries no `code` at
+    all, and a client cannot tell a retryable dependency outage from a bug in its own
+    request."""
+    response = post_redact(unavailable_store_client, {"text": f"mail {EMAIL_A} today"})
+
+    assert_error_body(response, status=502, code="PROVIDER_ERROR")
+
+
+def test_a_store_failure_does_not_put_the_clients_words_in_front_of_a_caller(
+    unavailable_store_client: TestClient,
+) -> None:
+    """Catches a conversion that pastes the Redis error into the client-facing message:
+    that string names an internal host and port, and the same rule already holds on the
+    provider path (`test_provider_message_never_reaches_the_client_message`)."""
+    response = post_redact(unavailable_store_client, {"text": f"mail {EMAIL_A} today"})
+
+    assert REDIS_FAILURE_TEXT not in response.text
+    assert "6379" not in response.text
+    assert "Connection refused" not in response.text

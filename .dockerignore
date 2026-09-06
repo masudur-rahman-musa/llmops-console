@@ -35,9 +35,18 @@ docs
 README.md
 LICENSE
 
-# ADAPT: language artifacts that must be built inside the image, not copied in
-# __pycache__/ .venv/ .pytest_cache/ .ruff_cache/ .mypy_cache/
-# node_modules/ .next/ dist/ build/ coverage/
+# Language artifacts: the image builds its own, and a host .venv is the wrong
+# platform's.
+__pycache__/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+node_modules/
+.next/
+dist/
+build/
+coverage/
 
 # scripts: keep only if a script must run on the server (migrations, seed)
 # scripts

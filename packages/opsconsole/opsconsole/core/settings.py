@@ -48,6 +48,33 @@ class Settings(BaseSettings):
     lives in `.env` locally and in a SOPS-encrypted secret in the cluster, never
     in this repository."""
 
+    redis_url: str | None = None
+    """Where the shared Redis lives, or `None` for a gateway that keeps its
+    redaction maps in process memory and registers no Redis readiness probe.
+
+    Two things read it, and both read absence as "not configured" rather than as
+    a default: `gateway/probes.py` registers the `redis` probe only when it is
+    set, and `create_app` picks `RedisRedactionMapStore`
+    over `InProcessRedactionMapStore` when it is (decision B). Absent by default
+    so the suite and a bare local run need no backing service; pinned by
+    `test_a_backing_service_url_is_absent_until_the_environment_sets_it`,
+    `test_create_app_keeps_the_in_process_store_without_a_redis_url` and
+    `test_create_app_uses_the_redis_store_when_a_redis_url_is_configured`."""
+
+    database_url: str | None = None
+    """Where PostgreSQL lives, or `None` for no `postgres` readiness probe.
+
+    Nothing else reads it yet: the ledger that will is an earlier change. A probe for a
+    store nothing writes to is still worth having, because #5 names Postgres and
+    a readiness endpoint that silently omits a configured dependency is a
+    readiness endpoint that lies."""
+
+    qdrant_url: str | None = None
+    """Where Qdrant lives, or `None` for no `qdrant` readiness probe.
+
+    Probed over `httpx` rather than through a client library (an earlier change decision
+    A): a probe is one GET against `QDRANT_READY_PATH`."""
+
     otel_service_name: str = "opsconsole-gateway"
     """What this process is called in a trace viewer. One trace carries spans from
     the Helpdesk and from the gateway, so the two need different names to be

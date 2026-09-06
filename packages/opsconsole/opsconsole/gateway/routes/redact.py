@@ -41,6 +41,7 @@ from dataclasses import dataclass, field
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from opsconsole.core.errors import ProviderError
 from opsconsole.core.metrics import record_redactions
 from opsconsole.core.tracing import SpanAttributes, annotate, stage_span
 from opsconsole.gateway.context import Context
@@ -49,6 +50,7 @@ from opsconsole.redaction import (
     Kind,
     RedactionInputTooLong,
     RedactionMapStore,
+    RedactionMapStoreUnavailable,
     redact,
     taken_placeholders,
 )
@@ -289,6 +291,32 @@ class RedactResponse(BaseModel):
     redaction_map_id: str
 
 
+def filed_map_id(store: RedactionMapStore, tenant: str, mapping: Mapping[str, str]) -> str:
+    """File one map, with an unreachable store rendered as the 502 a client can act on.
+
+    `RedactionMapStoreUnavailable` is a plain exception, not a `GatewayError`
+    (`ErrorCode.PROVIDER_ERROR` already belongs to `ProviderError` and
+    `test_error_code_set_is_exhaustive` allows one concrete class per code), so a
+    route that let it escape would answer a 500 with no code at all and a caller
+    could not tell a dependency outage from a bug in its own request. The map
+    store is an outbound dependency like a provider, which is why it lands on
+    `PROVIDER_ERROR` rather than on a new code.
+
+    The message is this route's own words. The client's carry an internal host
+    and port, and they stay in the chained cause where the log line reads them
+    (`test_a_store_that_cannot_be_reached_is_502_with_a_typed_code`,
+    `test_a_store_failure_does_not_put_the_clients_words_in_front_of_a_caller`).
+
+    `retryable=True`: an unreachable Redis is the transient class, and an earlier change
+    reads that flag rather than re-deriving the verdict from a status it can no
+    longer see.
+    """
+    try:
+        return store.put(tenant, mapping)
+    except RedactionMapStoreUnavailable as exc:
+        raise ProviderError("the redaction map store is unavailable", retryable=True) from exc
+
+
 router = APIRouter()
 
 
@@ -338,5 +366,5 @@ def create_redaction(
         text=text,
         messages=messages,
         data_class=data_class,
-        redaction_map_id=maps.put(context.tenant, batch.mapping),
+        redaction_map_id=filed_map_id(maps, context.tenant, batch.mapping),
     )

@@ -26,6 +26,7 @@ from opsconsole.gateway.context import parsed_traceparent
 from opsconsole.gateway.errors import register_error_handlers
 from opsconsole.gateway.health import ProbeRegistry
 from opsconsole.gateway.health import router as health_router
+from opsconsole.gateway.probes import build_redis_client, register_probes
 from opsconsole.gateway.routes.chat import router as chat_router
 from opsconsole.gateway.routes.embeddings import router as embeddings_router
 from opsconsole.gateway.routes.metrics import router as metrics_router
@@ -33,7 +34,11 @@ from opsconsole.gateway.routes.models import router as models_router
 from opsconsole.gateway.routes.redact import router as redact_router
 from opsconsole.providers.base import Adapter
 from opsconsole.providers.factory import build_adapters
-from opsconsole.redaction import InProcessRedactionMapStore
+from opsconsole.redaction import (
+    InProcessRedactionMapStore,
+    RedactionMapStore,
+    RedisRedactionMapStore,
+)
 from opsconsole.routing.policy import PolicyStore
 
 
@@ -182,10 +187,18 @@ def create_app(
     suite that would make a real billed call cannot pass locally and fail in CI.
     Pinned by `test_create_app_reads_keys_only_from_the_given_environ`.
 
-    The redaction map store is built here too, and it is the one piece of
-    per-process STATE the app owns: `InProcessRedactionMapStore` keeps the
-    placeholder maps `/v1/redact` files, so two replicas do not share them. Nothing reads a map before an earlier change, and an earlier change
-    replaces this with a Redis implementation of the same protocol.
+    The redaction map store is settings-driven:
+    `OPSCONSOLE_REDIS_URL` set gives every replica the same maps through
+    `RedisRedactionMapStore`, and absent keeps `InProcessRedactionMapStore`, which
+    files them in this process only and is what lets the
+    suite and a bare local run need no backing service. Pinned by
+    `test_create_app_keeps_the_in_process_store_without_a_redis_url` and
+    `test_create_app_uses_the_redis_store_when_a_redis_url_is_configured`.
+
+    `register_probes` runs last of the state-building steps, because the probes it
+    registers close over the adapter mapping and the settings built above; what it
+    registers is decided by which backing services are configured
+    (`test_create_app_registers_the_probes_its_settings_configure`).
     """
     resolved = settings or Settings()
     app = FastAPI(title="AI Operations Console gateway", lifespan=lifespan)
@@ -194,7 +207,13 @@ def create_app(
     app.state.key_store = SettingsKeyStore(resolved.api_keys)
     app.state.policy = PolicyStore(resolved.routing_policy_path)
     app.state.adapters = build_adapters(app.state.policy.policy, environ)
-    app.state.redaction_map_store = InProcessRedactionMapStore()
+    store: RedactionMapStore = (
+        RedisRedactionMapStore(build_redis_client(resolved.redis_url))
+        if resolved.redis_url is not None
+        else InProcessRedactionMapStore()
+    )
+    app.state.redaction_map_store = store
+    register_probes(app)
     register_error_handlers(app)
     install_exporter(resolved)
     app.add_middleware(TracingMiddleware)

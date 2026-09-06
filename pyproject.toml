@@ -27,6 +27,13 @@ dependencies = [
     # one, so a second create_app in one process registers no duplicate and the
     # process, GC and platform collectors nobody chose never appear.
     "prometheus-client>=0.21",
+    # Backing services. `redis` is both the readiness
+    # probe's client and the store behind `RedisRedactionMapStore`; `psycopg` is
+    # the Postgres probe's, with the binary wheel so a build toolchain is not a
+    # prerequisite for `uv sync`. Qdrant is probed over the `httpx` already here
+    # rather than through a client library, because a probe is one GET.
+    "redis>=5",
+    "psycopg[binary]>=3.2",
 ]
 
 [dependency-groups]

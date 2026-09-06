@@ -1,15 +1,61 @@
-# ADAPT to the stack. Multi-stage: build in a fat image, ship a slim one.
-# Copy src/ and the dependency manifest only; .dockerignore keeps the rest out.
-# Run as a non-root user. Expose the port. Define a HEALTHCHECK against /healthz.
-FROM ADAPT:base AS build
+# The gateway image. Two stages: dependencies resolved in one, the runtime
+# carrying only what serves traffic.
+#
+# Nothing secret is baked in. Every credential - provider keys, the Langfuse
+# pair, the tenant key digests - arrives as an environment variable at run time,
+# from `.env` locally and from a SOPS-encrypted secret in the cluster (hard
+# rule 5).
+FROM python:3.12-slim AS build
+
+# uv from its own published image rather than pip-installed: one pinned binary,
+# and the lockfile is the thing being honoured here.
+COPY --from=ghcr.io/astral-sh/uv:0.9.7 /uv /usr/local/bin/uv
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never
+
 WORKDIR /app
+
+# The dependency layer, cached until the lockfile changes: the project's own
+# source is copied afterwards so a code edit does not re-resolve anything.
 COPY pyproject.toml uv.lock ./
-RUN echo "ADAPT: install dependencies" && exit 1
-COPY src/ ./src/
-FROM ADAPT:slim
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-install-project --no-dev
+
+COPY packages/ ./packages/
+COPY services/ ./services/
+COPY routing.yaml ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-dev
+
+
+FROM python:3.12-slim
+
+# curl is here for the compose and Kubernetes healthchecks and for nothing else.
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# A non-root account that owns nothing it does not need: the code is read-only
+# to it, and the process writes no files at all.
+RUN useradd --create-home --uid 1000 opsconsole
+
 WORKDIR /app
-COPY --from=build /app /app
+COPY --from=build --chown=root:root /app /app
+
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    # The image does not carry the repository layout, so the default computed
+    # from `core/settings.py`'s file position would point outside /app.
+    OPSCONSOLE_ROUTING_POLICY_PATH=/app/routing.yaml
+
 USER 1000
-EXPOSE 8000
-HEALTHCHECK CMD echo "ADAPT: curl -f http://localhost:8000/healthz" || exit 1
-CMD ["echo", "ADAPT: the run command"]
+EXPOSE 8080
+
+# Liveness, not readiness: a dependency outage must leave the container running
+# and let `/readyz` take it out of rotation instead (`gateway/health.py`).
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
+    CMD curl -fsS http://localhost:8080/healthz || exit 1
+
+CMD ["uvicorn", "services.gateway.main:app", "--host", "0.0.0.0", "--port", "8080"]

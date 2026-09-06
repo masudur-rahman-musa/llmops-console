@@ -30,6 +30,7 @@ from fastapi.testclient import TestClient
 from opsconsole.core.settings import Settings
 from opsconsole.gateway.app import close_adapters, create_app
 from opsconsole.providers.base import Adapter
+from opsconsole.redaction import InProcessRedactionMapStore, RedisRedactionMapStore
 from opsconsole.routing.errors import PolicyInvalid
 
 from .conftest import API_KEYS, NO_PROVIDER_KEYS, SHIPPED_POLICY_PATH, StubAdapter
@@ -137,3 +138,48 @@ def test_close_adapters_skips_an_adapter_with_nothing_to_close() -> None:
     plain = StubAdapter(name="anthropic")
 
     close_adapters({plain.name: plain})
+
+
+# --- the redaction map store ---------------------------
+#
+# The store `create_app` picks is settings-driven: no `OPSCONSOLE_REDIS_URL`
+# keeps the in-process default, so the suite and a bare local run need no Redis;
+# one set switches to Redis for the whole process. Both rows are asserted,
+# because a factory that always built one of them would satisfy the other row's
+# test alone.
+
+# A Redis nothing listens on. `redis.Redis` connects lazily, so building the
+# store costs no connection and this URL is never dialled by these two cases.
+UNCONNECTED_REDIS_URL = "redis://127.0.0.1:1/0"
+
+
+def store_settings(*, redis_url: str | None) -> Settings:
+    """`wiring_settings()` with the Redis URL stated either way.
+
+    Stated rather than left to default: `Settings` reads `OPSCONSOLE_REDIS_URL`
+    from the process environment, which the Redis suite asks a developer to
+    export, and the unconfigured row would then assert the opposite of what it
+    says.
+    """
+    return Settings(api_keys=API_KEYS, routing_policy_path=SHIPPED_POLICY_PATH, redis_url=redis_url)
+
+
+def test_create_app_keeps_the_in_process_store_without_a_redis_url() -> None:
+    """Catches a factory that requires Redis to start: the whole existing suite, `make
+    verify` and a bare `uvicorn` run configure no `redis_url`, so a Redis-only factory
+    turns every one of them into a connection error at import time rather than a 503."""
+    app = create_app(store_settings(redis_url=None), NO_PROVIDER_KEYS)
+
+    assert isinstance(app.state.redaction_map_store, InProcessRedactionMapStore)
+    close_adapters(app.state.adapters)
+
+
+def test_create_app_uses_the_redis_store_when_a_redis_url_is_configured() -> None:
+    """Catches a factory that reads the setting for the probe and still files maps in
+    process memory: two gateway replicas would then each hold half the maps, and a caller
+    would get "no such map" for an id the other replica issued - a failure no test with
+    one replica can see except at the wiring."""
+    app = create_app(store_settings(redis_url=UNCONNECTED_REDIS_URL), NO_PROVIDER_KEYS)
+
+    assert isinstance(app.state.redaction_map_store, RedisRedactionMapStore)
+    close_adapters(app.state.adapters)

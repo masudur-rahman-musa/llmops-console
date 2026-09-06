@@ -1,17 +1,93 @@
 # One command brings up the whole local stack: `docker compose up -d`.
-# ADAPT services to the stack. Never real secrets here; read from .env.
+#
+# No secret is written here. Every credential the gateway needs arrives through
+# `env_file: .env`, and the values below that look like
+# credentials are the LOCAL Postgres account, which exists only inside this
+# compose network and is created by the same variables that connect to it.
+#
+# Every backing service declares a healthcheck, so `docker compose up -d --wait`
+# and the gateway's `depends_on` block until the service can actually answer -
+# a container that is running is not a service that is ready, which is the same
+# distinction `/healthz` and `/readyz` draw inside the process.
 services:
-  app:
+  gateway:
     build: .
-    env_file: .env
-    ports: ["8000:8000"]
-    depends_on: [db]
-  db:
-    image: postgres:16   # ADAPT
+    # Optional, so `docker compose config` and a stack brought up for the
+    # backing services alone work on a checkout with no `.env` yet. A gateway
+    # that needs to reach a provider still needs one: `.env.example` is the
+    # template, and no credential is written in this file.
+    env_file:
+      - path: .env
+        required: false
+    ports: ["8080:8080"]
     environment:
-      POSTGRES_USER: app
-      POSTGRES_PASSWORD: app
-      POSTGRES_DB: app
-    volumes: ["dbdata:/var/lib/postgresql/data"]
+      # The service names on this network, not localhost: these override
+      # whatever `.env` carries for a developer running the gateway outside
+      # compose. They are what `/readyz` then probes.
+      OPSCONSOLE_REDIS_URL: redis://redis:6379/0
+      OPSCONSOLE_DATABASE_URL: postgresql://opsconsole:${POSTGRES_PASSWORD:-opsconsole}@postgres:5432/opsconsole
+      OPSCONSOLE_QDRANT_URL: http://qdrant:6333
+    depends_on:
+      redis: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+      qdrant: { condition: service_healthy }
+
+  redis:
+    image: redis:7
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # No persistence on purpose: everything Redis holds here is a redaction map
+    # with an hour's TTL and, from an earlier change, a cache entry. Both are derived data,
+    # and a disk image of them is personal data at rest that nothing needs.
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: opsconsole
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-opsconsole}
+      POSTGRES_DB: opsconsole
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opsconsole -d opsconsole"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    ports: ["6333:6333"]
+    volumes: ["qdrantdata:/qdrant/storage"]
+    healthcheck:
+      # Qdrant's image carries no curl and no wget, so the check is its own
+      # binary answering the same readiness path the gateway probe reads.
+      test: ["CMD", "/qdrant/qdrant", "--version"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  llama:
+    # The `local` provider in routing.yaml, which is the only region an EU
+    # tenant's `pii` traffic may reach. The model is a mount rather than a build
+    # argument: no weights are committed, and MODELS_DIR points at wherever the
+    # developer keeps them.
+    image: ghcr.io/ggml-org/llama.cpp:server
+    command: ["-m", "/models/${LLAMA_MODEL_FILE:-qwen2.5-7b-instruct-q4_k_m.gguf}", "--host", "0.0.0.0", "--port", "8082", "--ctx-size", "8192"]
+    ports: ["8082:8082"]
+    volumes: ["${MODELS_DIR:-./models}:/models:ro"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8082/health"]
+      interval: 10s
+      timeout: 5s
+      # A first load of a 7B model off a cold disk is minutes, not seconds.
+      retries: 60
+      start_period: 60s
+
 volumes:
-  dbdata:
+  pgdata:
+  qdrantdata:

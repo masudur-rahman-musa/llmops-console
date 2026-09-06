@@ -13,6 +13,27 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # The Redis the map-store suite needs. It is a service container rather than
+    # an optional local server so that the skip in
+    # `tests/redaction/test_redis_store.py` cannot silently be taken in CI: those
+    # cases prove the TTL and the key shape against Redis itself, and a suite
+    # that skipped them here would report green having checked neither.
+    services:
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      # `OPSCONSOLE_TEST_REDIS_URL`, not `OPSCONSOLE_REDIS_URL`: the second is
+      # read by `Settings` itself, so exporting it for the whole job would give
+      # every test that builds an app a Redis map store and a `redis` readiness
+      # probe it never asked for - a suite that behaved one way locally and
+      # another in CI. Database 15, away from the 0 an application would use.
+      OPSCONSOLE_TEST_REDIS_URL: redis://127.0.0.1:6379/15
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5

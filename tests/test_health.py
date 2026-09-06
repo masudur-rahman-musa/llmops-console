@@ -2,6 +2,15 @@
 
 Values are pinned exactly: 200 with `{"status": "ok"}` for
 liveness, 200 for readiness while every probe passes, 503 the moment one fails.
+
+These cases are about the REGISTRY: what an app does with the probes it is
+given. Since an earlier change, `create_app` registers probes of its own - `provider`
+always, and one per configured backing service (none here, because the root
+conftest clears those variables for the whole suite) - so every case measures
+what it registered against `baseline_names`, the set the factory put there
+first. Asserting an empty registry instead would pin the factory's probe set in
+a file that is not about the factory, and `tests/gateway/test_probes.py` is
+where that set belongs.
 """
 
 from __future__ import annotations
@@ -27,6 +36,11 @@ def raising() -> bool:
     raise RuntimeError("probe blew up")
 
 
+def baseline_names(registry: ProbeRegistry) -> list[str]:
+    """The probes `create_app` registered, in order, before a case adds its own."""
+    return [name for name, _ in registry]
+
+
 def test_healthz_ok(client: TestClient) -> None:
     response = client.get("/healthz")
 
@@ -50,6 +64,7 @@ def test_readyz_ok_when_all_probes_pass(
     registry: ProbeRegistry,
     client: TestClient,
 ) -> None:
+    baseline = baseline_names(registry)
     for name, probe in probes:
         registry.register(name, probe)
 
@@ -58,7 +73,7 @@ def test_readyz_ok_when_all_probes_pass(
     assert response.status_code == 200
     body = response.json()
     assert isinstance(body["checks"], dict)
-    assert list(body["checks"]) == [name for name, _ in probes]
+    assert list(body["checks"]) == [*baseline, *(name for name, _ in probes)]
     assert all(body["checks"].values())
 
 
@@ -107,13 +122,17 @@ def test_registries_are_per_app(registry: ProbeRegistry, client: TestClient) -> 
         response = other_client.get("/readyz")
 
     assert response.status_code == 200
-    assert response.json() == {"checks": {}}
+    # The second app carries the factory's own probes and NOT the failing one
+    # registered above, which is the leak this case exists to catch.
+    assert "redis" not in response.json()["checks"]
+    assert list(response.json()["checks"]) == baseline_names(other.state.probes)
 
 
 def test_registering_the_same_name_replaces_the_probe(
     registry: ProbeRegistry, client: TestClient
 ) -> None:
     """The second registration wins, and the name keeps its original position."""
+    baseline = baseline_names(registry)
     registry.register("redis", passing)
     registry.register("postgres", passing)
     registry.register("redis", failing)
@@ -121,5 +140,9 @@ def test_registering_the_same_name_replaces_the_probe(
     response = client.get("/readyz")
 
     assert response.status_code == 503
-    assert response.json()["checks"] == {"redis": False, "postgres": True}
-    assert list(response.json()["checks"]) == ["redis", "postgres"]
+    checks = response.json()["checks"]
+    assert checks["redis"] is False
+    assert checks["postgres"] is True
+    # Registered once, under its first position: a second registration that
+    # appended would put "redis" after "postgres" here.
+    assert list(checks) == [*baseline, "redis", "postgres"]

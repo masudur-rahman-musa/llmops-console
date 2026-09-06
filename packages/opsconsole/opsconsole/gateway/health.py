@@ -4,8 +4,19 @@
 outage never takes the container down (pinned by `test_registries_are_per_app`,
 which asserts 200 from `/healthz` while `/readyz` is 503). `/readyz` runs the registered probes and
 returns 503 the moment one of them fails, which is what takes the pod out of
-the load balancer. The registry is empty in this plan; the Redis, Postgres,
-Qdrant and provider probes are registered by a later plan.
+the load balancer.
+
+What goes into the registry is `gateway/probes.py`'s business: this module owns
+the registry, the endpoints and the rule that a probe which raises has failed,
+and knows nothing about Redis, Postgres, Qdrant or the adapters. `register_probes`
+files the configured ones during `create_app`, so an app built with no backing
+service configured carries exactly one probe, `provider`
+(`test_register_probes_registers_the_configured_stores_and_always_the_provider`).
+
+The body names every probe that RAN, which is the half of the contract an empty
+registry makes visible: `{"checks": {}}` is a readiness that checked nothing, and
+an operator can see that rather than having to infer it from a green 200
+(`test_a_refused_redis_makes_readyz_503_naming_every_probe`).
 """
 
 from __future__ import annotations
