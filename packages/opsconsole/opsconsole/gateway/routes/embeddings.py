@@ -32,6 +32,21 @@ Three things here that the chat route does not have to think about:
 The six `X-Gateway-*` headers come from `gateway.routes.chat.gateway_headers`,
 imported rather than rebuilt: two header sets would drift the first time either
 changed (`test_the_header_set_is_exactly_six`).
+
+Inline redaction applies here for the same reason it applies to a completion, and
+the reason is this route specifically: `confidential` allows region `eu`, so an
+embedding input can leave the box, and this is the route whose batches are
+largest (an earlier change decision B,
+`test_the_embedding_adapter_receives_only_what_the_class_allows`). Every input in
+one request shares one map and one numbering, so two batch rows holding the same
+address embed the same placeholder.
+
+Two caps now stand in front of this route and they are not the same cap. The
+8192-character one above is the wire shape's, applies to every request, and is
+refused by the request model. `MAX_REDACTION_INPUT_CHARS` (16384) belongs to the
+redaction engine and applies only to a class that is redacted - and since 8192 is
+the smaller, the wire cap always answers first here
+(`test_an_embedding_input_over_the_routes_own_cap_is_422_first`).
 """
 
 from __future__ import annotations
@@ -46,6 +61,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from opsconsole.gateway.context import Context
 from opsconsole.gateway.routes.chat import gateway_headers
+from opsconsole.gateway.routes.redact import redact_or_reject, redaction_applies
 from opsconsole.providers.base import Adapter, EmbeddingAdapter, EmbeddingRequest
 from opsconsole.routing.policy import PolicyStore
 from opsconsole.routing.resolver import resolve
@@ -225,6 +241,11 @@ def create_embeddings(
     allows is a 451 and not a 503
     (`test_an_eu_tenant_on_a_us_only_alias_is_451_with_no_call`).
 
+    Redaction happens between the resolution and the outbound call, so the adapter
+    is handed placeholders and never the raw inputs - the tests read the stub's
+    recorded `EmbeddingRequest` rather than the answer, because a route that
+    redacted its response and sent the raw text would look identical from the body.
+
     Declared `def` rather than `async def` for the same reason the chat route is:
     the adapters are synchronous `httpx` clients, so FastAPI runs this in a
     worker thread instead of blocking the event loop for the whole provider call.
@@ -244,9 +265,15 @@ def create_embeddings(
     # providers whose adapter satisfies the protocol.
     adapter = cast(EmbeddingAdapter, adapters[chosen.provider])
 
-    answer = adapter.embed(EmbeddingRequest(model=chosen.model, input=body.texts))
+    texts = body.texts
+    redacted = False
+    if redaction_applies(store.policy, context.tenant, context.data_class):
+        batch = redact_or_reject(texts, param="input")
+        texts, redacted = batch.texts, batch.redacted
 
-    response.headers.update(gateway_headers(chosen, context.trace_id))
+    answer = adapter.embed(EmbeddingRequest(model=chosen.model, input=texts))
+
+    response.headers.update(gateway_headers(chosen, context.trace_id, redacted=redacted))
     return EmbeddingsResponse(
         data=tuple(
             WireEmbedding(

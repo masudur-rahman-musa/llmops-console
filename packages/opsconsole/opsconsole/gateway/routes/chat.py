@@ -2,8 +2,8 @@
 
 An earlier change left three things that did not touch each other: a request could be
 authenticated, resolved to a provider and a model id, and a provider could be
-called. This module is that join and nothing else - no cache, no ledger, no
-redaction, no fallback.
+called. This module is that join, plus the one control that has to happen before
+the outbound call: inline redaction. No cache, no ledger, no fallback.
 
 The OpenAI wire shape lives here and stops here. `providers/base.py` keeps the
 gateway's own vocabulary, so the two mappings - a wire request into a
@@ -27,6 +27,12 @@ Two published details worth knowing before reading the code:
   (`test_a_provider_failure_before_the_first_event_is_502_with_no_stream`). Once
   the status is sent it cannot be changed, so a later failure is one error frame
   and no sentinel.
+* When the tenant's rule for the request's data class carries `redact: true`,
+  every message `content` is redacted before the wire request becomes a
+  `ChatRequest`, so the adapter can only ever be handed placeholders
+  (`test_the_chat_adapter_receives_only_what_the_class_allows`). Tool call
+  ARGUMENTS are left alone: they are a machine payload the caller's own tool
+  parses, and a placeholder inside that JSON is a value the tool cannot act on.
 
 Both shapes are built here, from one set of wire models: a `chat.completion` and
 the `chat.completion.chunk` frames are the same vocabulary rendered twice, so a
@@ -53,8 +59,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from opsconsole.core.errors import GatewayError, ProviderError
-from opsconsole.gateway.context import Context
+from opsconsole.gateway.context import Context, RequestContext
 from opsconsole.gateway.errors import error_body
+from opsconsole.gateway.routes.redact import redact_or_reject, redaction_applies
 from opsconsole.providers.base import (
     Adapter,
     ChatMessage,
@@ -71,7 +78,7 @@ from opsconsole.providers.base import (
     ToolSpec,
     UsageTotal,
 )
-from opsconsole.routing.policy import PolicyStore
+from opsconsole.routing.policy import Policy, PolicyStore
 from opsconsole.routing.resolver import Resolved, resolve
 
 COMPLETION_ID_PREFIX = "chatcmpl-"
@@ -133,9 +140,15 @@ CACHE_STATUS_MISS = "miss"
 """`X-Gateway-Cache` on every response here. Nothing is cached yet, and `miss` is
 the truthful value for a call that went to the provider."""
 
+REDACTED_TRUE = "true"
 REDACTED_FALSE = "false"
-"""`X-Gateway-Redacted` on every response here. Redaction lands in an earlier change; until
-then nothing is redacted and the header says so."""
+"""The two words `X-Gateway-Redacted` is written with. Lowercase, because a
+console sums this string and `True` would count as neither
+(`test_the_two_header_values_are_the_published_words`).
+
+Which one a response carries is decided per REQUEST, not per route: the header is
+`true` exactly when at least one value was actually replaced (an earlier change decision
+C), so a redact class carrying no personal data answers `false`."""
 
 
 class _Wire(BaseModel):
@@ -399,8 +412,13 @@ class ChatCompletionChunk(BaseModel):
     usage: CompletionUsage | None = None
 
 
-def gateway_headers(resolved: Resolved, trace_id: str) -> dict[str, str]:
+def gateway_headers(resolved: Resolved, trace_id: str, *, redacted: bool) -> dict[str, str]:
     """The six `X-Gateway-*` headers describing one served request (#9).
+
+    `redacted` is keyword-only and has no default on purpose. A default would let
+    a route report "nothing was redacted" for a request it did redact simply by
+    forgetting the argument, and that is the one value here a caller might act on
+    (`test_the_redaction_outcome_is_keyword_only_and_required`).
 
     Six, and only six: `X-Gateway-Cost-USD` is deliberately absent until the
     ledger can price a call, because a header reading
@@ -417,7 +435,7 @@ def gateway_headers(resolved: Resolved, trace_id: str) -> dict[str, str]:
         "X-Gateway-Region": resolved.region,
         "X-Gateway-Model": resolved.model,
         "X-Gateway-Cache": CACHE_STATUS_MISS,
-        "X-Gateway-Redacted": REDACTED_FALSE,
+        "X-Gateway-Redacted": REDACTED_TRUE if redacted else REDACTED_FALSE,
         "X-Gateway-Trace-Id": trace_id,
     }
 
@@ -734,15 +752,50 @@ def create_chat_completion(
     )
     chosen = candidates[0]
     adapter = adapters[chosen.provider]
-    headers = gateway_headers(chosen, context.trace_id)
+
+    outbound, redacted = _redacted(store.policy, context, body)
+    headers = gateway_headers(chosen, context.trace_id, redacted=redacted)
 
     if body.stream:
-        return _streamed(adapter, body, chosen, headers)
+        return _streamed(adapter, outbound, chosen, headers)
 
-    answer = adapter.chat(to_neutral(body, chosen.model))
+    answer = adapter.chat(to_neutral(outbound, chosen.model))
 
     response.headers.update(headers)
     return to_wire(answer, body.model)
+
+
+def _redacted(
+    policy: Policy, context: RequestContext, body: ChatCompletionRequest
+) -> tuple[ChatCompletionRequest, bool]:
+    """The request the adapter should see, and whether anything was actually replaced.
+
+    Returns the body unchanged and `False` when the tenant's rule for this data
+    class does not ask for redaction, which is what keeps a `public` caller from
+    getting placeholders it never asked for and keeps the 16384-character cap off
+    a route that had none (`test_the_redaction_cap_does_not_apply_on_a_non_redact_class`).
+
+    Every turn goes through ONE `redact_or_reject` call, so the numbering is
+    shared across the conversation: the same address in turn 0 and turn 2 is one
+    placeholder, which is what #19 means by stable within a request
+    (`test_every_chat_message_is_redacted_under_one_numbering`).
+
+    A turn with no `content` (an assistant turn that is only tool calls) keeps its
+    `None` rather than becoming an empty string: `_neutral_messages` reads the two
+    the same way, but a body rebuilt with the wrong one would be a silent shape
+    change on the way to an earlier change's admin surface.
+    """
+    if not redaction_applies(policy, context.tenant, context.data_class):
+        return body, False
+
+    batch = redact_or_reject(
+        tuple(message.content or "" for message in body.messages), param="messages"
+    )
+    rebuilt = tuple(
+        message.model_copy(update={"content": content if message.content is not None else None})
+        for message, content in zip(body.messages, batch.texts, strict=True)
+    )
+    return body.model_copy(update={"messages": rebuilt}), batch.redacted
 
 
 def _streamed(

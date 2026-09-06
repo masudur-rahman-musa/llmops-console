@@ -1,9 +1,11 @@
 """Regex redaction: find personal data in free text, replace it with stable placeholders.
 
-A pure library. It reads one string and returns another plus a map; it has no
-HTTP surface, no store and no dependency on the routing policy. An earlier change adds
-`POST /v1/redact`, the map store and the inline path for a data class marked
-`redact` around this package.
+The engine is a pure library: it reads one string and returns another plus a
+map, with no HTTP surface and no dependency on the routing policy. Alongside it,
+`store.py` holds the placeholder maps a call produced, keyed by tenant and
+expiring after an hour, so an earlier change can rehydrate from one. The gateway's
+`POST /v1/redact` and its inline call site live in `opsconsole.gateway.routes`,
+not here.
 
 Nine kinds are detected (`Kind`), each with its own pattern and, where the shape
 alone is not enough, its own check: Luhn for cards, mod-97 for IBANs, ISO 7064
@@ -31,6 +33,13 @@ from opsconsole.redaction.redactor import (
     RedactionResult,
     redact,
     resolve_overlaps,
+    taken_placeholders,
+)
+from opsconsole.redaction.store import (
+    REDACTION_MAP_ID_BYTES,
+    REDACTION_MAP_TTL_SECONDS,
+    InProcessRedactionMapStore,
+    RedactionMapStore,
 )
 
 __all__ = [
@@ -38,12 +47,17 @@ __all__ = [
     "DOB_CUE_DISTANCE",
     "KIND_PRECEDENCE",
     "MAX_REDACTION_INPUT_CHARS",
+    "REDACTION_MAP_ID_BYTES",
+    "REDACTION_MAP_TTL_SECONDS",
     "Detection",
+    "InProcessRedactionMapStore",
     "Kind",
     "RedactionInputTooLong",
+    "RedactionMapStore",
     "RedactionResult",
     "compact_separators",
     "detect_all",
     "redact",
     "resolve_overlaps",
+    "taken_placeholders",
 ]

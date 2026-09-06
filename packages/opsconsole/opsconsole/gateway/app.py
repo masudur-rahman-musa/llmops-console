@@ -15,8 +15,10 @@ from opsconsole.gateway.health import router as health_router
 from opsconsole.gateway.routes.chat import router as chat_router
 from opsconsole.gateway.routes.embeddings import router as embeddings_router
 from opsconsole.gateway.routes.models import router as models_router
+from opsconsole.gateway.routes.redact import router as redact_router
 from opsconsole.providers.base import Adapter
 from opsconsole.providers.factory import build_adapters
+from opsconsole.redaction import InProcessRedactionMapStore
 from opsconsole.routing.policy import PolicyStore
 
 
@@ -78,6 +80,11 @@ def create_app(
     built from a key that happens to be exported in the developer's shell, so a
     suite that would make a real billed call cannot pass locally and fail in CI.
     Pinned by `test_create_app_reads_keys_only_from_the_given_environ`.
+
+    The redaction map store is built here too, and it is the one piece of
+    per-process STATE the app owns: `InProcessRedactionMapStore` keeps the
+    placeholder maps `/v1/redact` files, so two replicas do not share them. Nothing reads a map before an earlier change, and an earlier change
+    replaces this with a Redis implementation of the same protocol.
     """
     resolved = settings or Settings()
     app = FastAPI(title="AI Operations Console gateway", lifespan=lifespan)
@@ -86,9 +93,11 @@ def create_app(
     app.state.key_store = SettingsKeyStore(resolved.api_keys)
     app.state.policy = PolicyStore(resolved.routing_policy_path)
     app.state.adapters = build_adapters(app.state.policy.policy, environ)
+    app.state.redaction_map_store = InProcessRedactionMapStore()
     register_error_handlers(app)
     app.include_router(health_router)
     app.include_router(models_router)
     app.include_router(chat_router)
     app.include_router(embeddings_router)
+    app.include_router(redact_router)
     return app

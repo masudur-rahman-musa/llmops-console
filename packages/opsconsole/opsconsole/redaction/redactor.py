@@ -40,7 +40,7 @@ _PRECEDENCE_INDEX: Final[dict[Kind, int]] = {kind: i for i, kind in enumerate(KI
 # this product hands redacted text back to people, so a caller pasting our own
 # output in is an ordinary case rather than an attack. Any number already spoken
 # for is skipped when allocating, or the map would stop being an inverse: see
-# `_taken_placeholders` and `test_a_placeholder_already_in_the_input_is_not_reused`.
+# `taken_placeholders` and `test_a_placeholder_already_in_the_input_is_not_reused`.
 _LITERAL_PLACEHOLDER: Final[re.Pattern[str]] = re.compile(
     r"<(?:" + "|".join(kind.value for kind in Kind) + r")_[0-9]+>"
 )
@@ -87,11 +87,18 @@ def resolve_overlaps(candidates: Iterable[Detection]) -> list[Detection]:
     return sorted(accepted, key=lambda d: d.start)
 
 
-def _taken_placeholders(text: str) -> set[str]:
+def taken_placeholders(text: str) -> set[str]:
     """Every `<KIND_N>` token written literally in `text`.
 
     Scanned over the whole input, detections included: a value that happens to
     look like a placeholder is still a token a reader would confuse with ours.
+
+    Public because `redact` is per-string and an earlier change redacts a whole request
+    under ONE numbering: `gateway.routes.redact.redact_batch` has to skip a token
+    literal in ANY of the call's strings, not only in the one being written, and
+    a second copy of `_LITERAL_PLACEHOLDER` there is how the two definitions
+    would drift. It reads `text` and nothing else, so exporting it changes no
+    behaviour of the engine.
     """
     return {match.group(0) for match in _LITERAL_PLACEHOLDER.finditer(text)}
 
@@ -116,7 +123,7 @@ def redact(text: str) -> RedactionResult:
         raise RedactionInputTooLong(len(text), MAX_REDACTION_INPUT_CHARS)
 
     detections = tuple(resolve_overlaps(detect_all(text)))
-    taken = _taken_placeholders(text)
+    taken = taken_placeholders(text)
     mapping: dict[str, str] = {}
     assigned: dict[tuple[Kind, str], str] = {}
     counters: dict[Kind, int] = {}

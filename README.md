@@ -42,11 +42,18 @@ lands this endpoint answers 502 - the provider is configured and unreachable.
 ## Redaction
 
 Free text is scanned for personal data and every value found is replaced with a
-stable placeholder such as `<EMAIL_1>`. What exists today is the engine: a library
-that takes a string and returns the redacted string plus the map back to the
-originals. Nothing on the request path calls it yet - a completion still reports
-`X-Gateway-Redacted: false` - and the redaction endpoint and the inline path for
-data classes that require it land with the next milestone.
+stable placeholder such as `<EMAIL_1>`.
+
+It runs in two places. `POST /v1/redact` takes a string or a list of messages and
+answers the redacted version plus a `redaction_map_id`, which is the ingestion
+path: redact once on the way in and keep the id. The map behind it is held for an
+hour and scoped to the tenant that made the call; the endpoint that spends the id
+to put the original values back lands with the next milestone. And it runs
+inline: when a tenant's rule for the request's data class says `redact`, every
+chat message and every embedding input is redacted before the request leaves for
+a provider, so the provider is only ever handed placeholders. Either way,
+`X-Gateway-Redacted` on the response says whether a value was actually replaced -
+it reports the payload, not the setting.
 
 Nine kinds are detected: email addresses, phone numbers, IBANs, card numbers, German
 tax identification numbers, Irish PPS numbers, IPv4 and IPv6 addresses, and dates
@@ -58,7 +65,9 @@ enough in front of it.
 
 Placeholders are stable within a request: the same value appearing twice gets the
 same placeholder, and two different values never share one, so the redacted text
-can be turned back into the original from the map the engine returns. Text that
+can be turned back into the original from the map the call returns - one map and
+one numbering per request, so `<EMAIL_1>` names the same person in the first
+message and the fourth. Text that
 already contains a placeholder-shaped token is handled rather than ignored - the
 engine skips any number the input has already used, so turning the text back is
 exact even when someone pastes redacted output straight back in.
