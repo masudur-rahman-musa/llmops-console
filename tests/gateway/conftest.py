@@ -48,9 +48,12 @@ import pytest
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from httpx import Response
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from opsconsole.core.errors import ProviderError
 from opsconsole.core.settings import Settings
+from opsconsole.core.tracing import tracer_provider
 from opsconsole.gateway.app import create_app
 from opsconsole.gateway.auth import MAX_KEY_LENGTH
 from opsconsole.gateway.context import RequestContext, request_context
@@ -624,3 +627,40 @@ def embeddings_client(
     """The shipped app with one embedding-capable adapter, for the policy provider `local`."""
     with build_chat_client(settings, {embedding_stub.name: embedding_stub}) as client:
         yield client
+
+
+# --- tracing ------------------------------------------------------
+#
+# One `InMemorySpanExporter`, attached once to the process-wide tracer provider
+# `opsconsole.core.tracing.tracer_provider()` owns. a project rule: the
+# exporter and its span processor are session-scoped and built once, and
+# per-test isolation comes from `clear()` on the buffer rather than from a new
+# provider, a new exporter or a new app - none of which OpenTelemetry lets you
+# take back, since a span processor can be added to a provider but never
+# removed.
+#
+# `SimpleSpanProcessor` rather than the batching one on purpose: it exports on
+# `on_end`, so a finished span is readable the moment the request returns and no
+# test has to flush or wait. The shipped exporter switch is a different question
+# and is tested directly (`test_no_exporter_is_installed_without_an_endpoint`).
+
+
+@pytest.fixture(scope="session")
+def span_exporter() -> Iterator[InMemorySpanExporter]:
+    """The one in-memory exporter every tracing test reads, attached once."""
+    exporter = InMemorySpanExporter()
+    tracer_provider().add_span_processor(SimpleSpanProcessor(exporter))
+    yield exporter
+    exporter.shutdown()
+
+
+@pytest.fixture
+def spans(span_exporter: InMemorySpanExporter) -> Iterator[InMemorySpanExporter]:
+    """The exporter, emptied before the test's own request runs.
+
+    Emptied at the START rather than at the end, so spans left by a test that
+    never asked for this fixture - every other file in this directory makes
+    requests through the same provider - cannot be read as this test's.
+    """
+    span_exporter.clear()
+    yield span_exporter

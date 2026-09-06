@@ -34,3 +34,21 @@ class Settings(BaseSettings):
     running gateway that authorises nobody."""
 
     routing_policy_path: Path = DEFAULT_ROUTING_POLICY_PATH
+
+    otlp_endpoint: str | None = None
+    """Where traces are sent, or `None` for a gateway that builds spans and drops
+    them. Langfuse EU is an OTLP/HTTP endpoint, so this is a
+    full traces URL rather than a host. Absent by default so a developer, a test
+    run and a CI job export nothing without saying so; pinned by
+    `test_no_exporter_is_installed_without_an_endpoint`."""
+
+    otlp_headers: str | None = None
+    """`key=value,key=value`, the auth the endpoint needs. Langfuse wants a basic
+    `Authorization` header built from a project key pair, which is a secret: it
+    lives in `.env` locally and in a SOPS-encrypted secret in the cluster, never
+    in this repository."""
+
+    otel_service_name: str = "opsconsole-gateway"
+    """What this process is called in a trace viewer. One trace carries spans from
+    the Helpdesk and from the gateway, so the two need different names to be
+    told apart at all."""

@@ -57,11 +57,17 @@ from typing import Any, Literal, assert_never
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from starlette.types import Scope
 
 from opsconsole.core.errors import GatewayError, ProviderError
+from opsconsole.core.tracing import SpanAttributes, annotate, stage_span
 from opsconsole.gateway.context import Context, RequestContext
 from opsconsole.gateway.errors import error_body
-from opsconsole.gateway.routes.redact import redact_or_reject, redaction_applies
+from opsconsole.gateway.routes.redact import (
+    REDACT_SPAN,
+    redact_or_reject,
+    redaction_applies,
+)
 from opsconsole.providers.base import (
     Adapter,
     ChatMessage,
@@ -412,6 +418,35 @@ class ChatCompletionChunk(BaseModel):
     usage: CompletionUsage | None = None
 
 
+ROUTE_SPAN = "route"
+"""The stage span around `resolve()`. Shared with the embeddings route, which
+imports it from here for the same reason it imports `gateway_headers`: one name
+in one place, so two routes cannot disagree about what a stage is called. Pinned
+by `test_the_emitted_span_names_are_exactly_the_stages_that_exist`."""
+
+PROVIDER_SPAN_PREFIX = "provider:"
+"""What a provider span's name starts with. The suffix is the RESOLVED provider,
+never the alias the caller sent: an alias names a policy entry and a provider
+names what actually served the request, which is the one question this span
+exists to answer (`test_the_provider_span_names_the_resolved_provider`)."""
+
+
+def provider_span_name(provider: str) -> str:
+    """The stage span name for one resolved provider."""
+    return f"{PROVIDER_SPAN_PREFIX}{provider}"
+
+
+def resolution_attributes(alias: str, resolved: Resolved) -> SpanAttributes:
+    """What the resolver decided, as span labels.
+
+    Set only AFTER `resolve()` returns, which is what keeps a refused request's
+    alias off its trace: a 451 names the alias and the regions a tenant may not
+    reach, and a residency refusal is not the place to write either down
+    (`test_a_residency_refusal_records_the_code_on_the_span`).
+    """
+    return SpanAttributes(alias=alias, provider=resolved.provider, region=resolved.region)
+
+
 def gateway_headers(resolved: Resolved, trace_id: str, *, redacted: bool) -> dict[str, str]:
     """The six `X-Gateway-*` headers describing one served request (#9).
 
@@ -742,31 +777,35 @@ def create_chat_completion(
     """
     store: PolicyStore = request.app.state.policy
     adapters: Mapping[str, Adapter] = request.app.state.adapters
+    scope = request.scope
 
-    candidates = resolve(
-        store.policy,
-        context.tenant,
-        body.model,
-        context.data_class.value,
-        is_healthy=lambda provider: provider in adapters,
-    )
-    chosen = candidates[0]
+    with stage_span(scope, ROUTE_SPAN):
+        candidates = resolve(
+            store.policy,
+            context.tenant,
+            body.model,
+            context.data_class.value,
+            is_healthy=lambda provider: provider in adapters,
+        )
+        chosen = candidates[0]
+    annotate(scope, resolution_attributes(body.model, chosen))
     adapter = adapters[chosen.provider]
 
-    outbound, redacted = _redacted(store.policy, context, body)
+    outbound, redacted = _redacted(scope, store.policy, context, body)
+    annotate(scope, SpanAttributes(redacted=redacted))
     headers = gateway_headers(chosen, context.trace_id, redacted=redacted)
 
-    if body.stream:
-        return _streamed(adapter, outbound, chosen, headers)
-
-    answer = adapter.chat(to_neutral(outbound, chosen.model))
+    with stage_span(scope, provider_span_name(chosen.provider)):
+        if body.stream:
+            return _streamed(adapter, outbound, chosen, headers)
+        answer = adapter.chat(to_neutral(outbound, chosen.model))
 
     response.headers.update(headers)
     return to_wire(answer, body.model)
 
 
 def _redacted(
-    policy: Policy, context: RequestContext, body: ChatCompletionRequest
+    scope: Scope, policy: Policy, context: RequestContext, body: ChatCompletionRequest
 ) -> tuple[ChatCompletionRequest, bool]:
     """The request the adapter should see, and whether anything was actually replaced.
 
@@ -788,9 +827,10 @@ def _redacted(
     if not redaction_applies(policy, context.tenant, context.data_class):
         return body, False
 
-    batch = redact_or_reject(
-        tuple(message.content or "" for message in body.messages), param="messages"
-    )
+    with stage_span(scope, REDACT_SPAN):
+        batch = redact_or_reject(
+            tuple(message.content or "" for message in body.messages), param="messages"
+        )
     rebuilt = tuple(
         message.model_copy(update={"content": content if message.content is not None else None})
         for message, content in zip(body.messages, batch.texts, strict=True)

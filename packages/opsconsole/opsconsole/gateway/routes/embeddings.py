@@ -59,9 +59,15 @@ from typing import Literal, cast
 from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from opsconsole.core.tracing import SpanAttributes, annotate, stage_span
 from opsconsole.gateway.context import Context
-from opsconsole.gateway.routes.chat import gateway_headers
-from opsconsole.gateway.routes.redact import redact_or_reject, redaction_applies
+from opsconsole.gateway.routes.chat import (
+    ROUTE_SPAN,
+    gateway_headers,
+    provider_span_name,
+    resolution_attributes,
+)
+from opsconsole.gateway.routes.redact import REDACT_SPAN, redact_or_reject, redaction_applies
 from opsconsole.providers.base import Adapter, EmbeddingAdapter, EmbeddingRequest
 from opsconsole.routing.policy import PolicyStore
 from opsconsole.routing.resolver import resolve
@@ -252,15 +258,18 @@ def create_embeddings(
     """
     store: PolicyStore = request.app.state.policy
     adapters: Mapping[str, Adapter] = request.app.state.adapters
+    scope = request.scope
 
-    candidates = resolve(
-        store.policy,
-        context.tenant,
-        body.model,
-        context.data_class.value,
-        is_healthy=lambda provider: isinstance(adapters.get(provider), EmbeddingAdapter),
-    )
-    chosen = candidates[0]
+    with stage_span(scope, ROUTE_SPAN):
+        candidates = resolve(
+            store.policy,
+            context.tenant,
+            body.model,
+            context.data_class.value,
+            is_healthy=lambda provider: isinstance(adapters.get(provider), EmbeddingAdapter),
+        )
+        chosen = candidates[0]
+    annotate(scope, resolution_attributes(body.model, chosen))
     # The seam above is what makes this cast safe: the resolver only returned
     # providers whose adapter satisfies the protocol.
     adapter = cast(EmbeddingAdapter, adapters[chosen.provider])
@@ -268,10 +277,13 @@ def create_embeddings(
     texts = body.texts
     redacted = False
     if redaction_applies(store.policy, context.tenant, context.data_class):
-        batch = redact_or_reject(texts, param="input")
+        with stage_span(scope, REDACT_SPAN):
+            batch = redact_or_reject(texts, param="input")
         texts, redacted = batch.texts, batch.redacted
+    annotate(scope, SpanAttributes(redacted=redacted))
 
-    answer = adapter.embed(EmbeddingRequest(model=chosen.model, input=texts))
+    with stage_span(scope, provider_span_name(chosen.provider)):
+        answer = adapter.embed(EmbeddingRequest(model=chosen.model, input=texts))
 
     response.headers.update(gateway_headers(chosen, context.trace_id, redacted=redacted))
     return EmbeddingsResponse(

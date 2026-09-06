@@ -12,6 +12,14 @@ dependencies = [
     # Runtime, not dev: the provider adapters call out over it. The test suite
     # uses its MockTransport, so the dev group needs no entry of its own.
     "httpx>=0.28",
+    # Tracing. The SDK builds the spans; the OTLP/HTTP
+    # exporter ships them to Langfuse EU, which is an OTLP endpoint with a
+    # basic-auth header rather than a service needing its own SDK. No
+    # `opentelemetry-instrumentation-*`: every span in a trace here is a line
+    # someone wrote. The tests use the SDK's own InMemorySpanExporter, so the
+    # dev group needs no entry for this.
+    "opentelemetry-sdk>=1.29",
+    "opentelemetry-exporter-otlp-proto-http>=1.29",
 ]
 
 [dependency-groups]

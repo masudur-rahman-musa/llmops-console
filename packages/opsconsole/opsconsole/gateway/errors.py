@@ -15,7 +15,10 @@ Starlette no path to answer in their own `{"detail": ...}` shape or in the
   (`test_starlette_failures_use_the_error_contract`);
 * `Exception` for a bug: anything a route raises that is not typed becomes a 500
   in the same shape, with the traceback logged and never sent
-  (`test_unhandled_exception_uses_the_error_contract`).
+  (`test_unhandled_exception_uses_the_error_contract`). It is also the only
+  handler a MIDDLEWARE's raise can reach, so it recognises a `GatewayError` and
+  renders it properly rather than as a 500 (an earlier change decision F,
+  `test_a_gateway_error_raised_in_middleware_keeps_its_status_and_code`).
 
 The last two carry `code: null`. `ErrorCode` is the closed set of failures the
 gateway classifies; an unrouted URL and a crash are not among them, and inventing
@@ -39,6 +42,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from opsconsole.core.errors import ErrorCode, GatewayError
+from opsconsole.core.tracing import record_error_code
 from opsconsole.routing.errors import IdentifierInvalid
 
 logger = logging.getLogger(__name__)
@@ -98,13 +102,22 @@ def error_response(error: GatewayError) -> JSONResponse:
 
 
 async def handle_gateway_error(request: Request, exc: Exception) -> JSONResponse:
-    """Turn a raised `GatewayError` into the wire contract.
+    """Turn a raised `GatewayError` into the wire contract, and onto the trace.
 
     Typed as `Exception` because that is the signature Starlette's handler
     registry declares; dispatch has already matched the class, so the cast
     narrows without adding a branch that no request can take.
+
+    This is also where the root span learns WHY a request failed. The tracing
+    middleware sees only a status, and a status is not a reason: 502 is every
+    provider outage and 451 is every residency refusal, so the typed code is
+    recorded here, where it exists, and read there. Only the code travels - never
+    the message, which for a `ProviderError` carries the provider's own words
+    (`test_a_provider_failure_records_the_code_on_the_span`).
     """
-    return error_response(cast(GatewayError, exc))
+    error = cast(GatewayError, exc)
+    record_error_code(request.scope, error.code.value if error.code is not None else None)
+    return error_response(error)
 
 
 async def handle_request_validation_error(request: Request, exc: Exception) -> JSONResponse:
@@ -161,13 +174,28 @@ async def handle_unhandled_exception(request: Request, exc: Exception) -> JSONRe
     place an internal detail must not reach
     (`test_unhandled_exception_uses_the_error_contract`).
 
+    A typed failure is the exception, and it is why this handler branches. Starlette
+    lifts the `Exception` entry out of `ExceptionMiddleware` into
+    `ServerErrorMiddleware` at the very outside of the stack, so a `GatewayError`
+    raised by a MIDDLEWARE - which is anything installed above the router,
+    `TracingMiddleware` included - never reaches `handle_gateway_error` at all.
+    Without the branch it would answer 500 with `code: null`, and a client's retry
+    logic would read a gateway bug where the gateway meant 451. An earlier change installs
+    the first middleware, so an earlier change owes the fix
+    (`test_a_gateway_error_raised_in_middleware_keeps_its_status_and_code`).
+
     Two boundaries worth knowing before this is read as a total guarantee.
     `ServerErrorMiddleware` re-raises after the response is sent, so a real
-    deployment logs each crash twice: once here and once from the ASGI server.
+    deployment logs each crash twice: once here and once from the ASGI server -
+    and a typed failure rendered through this branch is re-raised too, which is a
+    traceback in the log for a request that was answered correctly.
     And it only sends a body when the response has not started, so a crash part
     way through a streamed response still reaches the
     client as a truncated stream with no JSON at all.
     """
+    if isinstance(exc, GatewayError):
+        return await handle_gateway_error(request, exc)
+
     logger.exception("unhandled exception serving %s %s", request.method, request.url.path)
     return JSONResponse(
         status_code=INTERNAL_ERROR_STATUS,
@@ -188,9 +216,10 @@ def register_error_handlers(app: FastAPI) -> None:
     class's MRO, and lifts the `Exception` entry out into `ServerErrorMiddleware`
     at the very outside of the stack. So the last handler catches what the other
     three do not match, and also anything raised outside `ExceptionMiddleware` -
-    which includes any middleware added later. A middleware that raises a
-    `GatewayError` gets a 500 with no code rather than its own status, so a plan
-    that adds one has to answer inside the contract itself.
+    which includes every middleware. That is why `handle_unhandled_exception`
+    checks for a `GatewayError` before treating a failure as a bug: it is the only
+    handler positioned to render a middleware's typed raise, and an earlier change's
+    `TracingMiddleware` made that position occupied.
     """
     app.add_exception_handler(GatewayError, handle_gateway_error)
     app.add_exception_handler(RequestValidationError, handle_request_validation_error)

@@ -6,9 +6,21 @@ from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from opentelemetry.context import Context
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from opsconsole.core.settings import Settings
+from opsconsole.core.tracing import (
+    ERROR_STATUS_FLOOR,
+    TRACE_SCOPE_KEY,
+    end_root_span,
+    flush_tracing,
+    install_exporter,
+    parent_context,
+    start_root_span,
+)
 from opsconsole.gateway.auth import SettingsKeyStore
+from opsconsole.gateway.context import parsed_traceparent
 from opsconsole.gateway.errors import register_error_handlers
 from opsconsole.gateway.health import ProbeRegistry
 from opsconsole.gateway.health import router as health_router
@@ -51,6 +63,70 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         close_adapters(app.state.adapters)
+        flush_tracing()
+
+
+def incoming_parent(scope: Scope) -> Context | None:
+    """The remote parent this request's `traceparent` names, when it names a usable one.
+
+    Parsed with `gateway.context.parsed_traceparent` rather than with
+    OpenTelemetry's own propagator, because the propagator accepts headers this
+    gateway has already decided to reject. One parser means the trace a request
+    JOINS and the header contract `X-Gateway-Trace-Id` answers under can never
+    disagree about what a valid upstream trace is; the rejection table is
+    `test_a_malformed_traceparent_starts_a_new_trace`.
+    """
+    for name, value in scope.get("headers", ()):
+        if name.lower() == b"traceparent":
+            parsed = parsed_traceparent(value.decode("latin-1"))
+            return parent_context(*parsed) if parsed is not None else None
+    return None
+
+
+class TracingMiddleware:
+    """The root span of every request: opened before routing, closed after the last byte.
+
+    Pure ASGI rather than `BaseHTTPMiddleware`, for two reasons that both decide
+    an acceptance criterion. It runs OUTSIDE `ExceptionMiddleware`, so a request
+    that fails before any route - an unauthenticated one, which never builds a
+    `RequestContext` at all - still has a span to record the failure on
+    (`test_an_unauthorized_request_still_emits_a_trace`). And it ends the span
+    only once the response body is fully sent, which for a streamed completion is
+    after the last frame rather than when the route returned
+    (`test_a_streamed_requests_root_span_covers_the_frames`).
+
+    The outcome is read off the wire rather than guessed: `send` is wrapped so the
+    response's own status decides whether the root span failed, and the typed code
+    comes from whatever the handlers in `gateway/errors.py` recorded on the scope.
+    A crash that never produces a response start is a failure too, which is why
+    the initial status is 500 rather than 200.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Trace one HTTP request; pass lifespan and websocket scopes straight through."""
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        record = start_root_span(incoming_parent(scope))
+        scope[TRACE_SCOPE_KEY] = record
+        status = 500
+
+        async def send_wrapper(message: Message) -> None:
+            nonlocal status
+            if message["type"] == "http.response.start":
+                status = int(message["status"])
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        except BaseException:
+            end_root_span(record, failed=True)
+            raise
+        end_root_span(record, failed=status >= ERROR_STATUS_FLOOR)
 
 
 def create_app(
@@ -95,6 +171,8 @@ def create_app(
     app.state.adapters = build_adapters(app.state.policy.policy, environ)
     app.state.redaction_map_store = InProcessRedactionMapStore()
     register_error_handlers(app)
+    install_exporter(resolved)
+    app.add_middleware(TracingMiddleware)
     app.include_router(health_router)
     app.include_router(models_router)
     app.include_router(chat_router)

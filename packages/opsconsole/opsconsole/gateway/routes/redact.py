@@ -41,6 +41,7 @@ from dataclasses import dataclass
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from opsconsole.core.tracing import SpanAttributes, annotate, stage_span
 from opsconsole.gateway.context import Context
 from opsconsole.redaction import (
     MAX_REDACTION_INPUT_CHARS,
@@ -80,6 +81,14 @@ class RedactedBatch:
         (`test_the_batch_reports_redaction_only_when_a_value_was_replaced`).
         """
         return bool(self.mapping)
+
+
+REDACT_SPAN = "redact"
+"""The stage span around a redaction pass. Emitted only where redaction actually
+runs, which on the model routes is inside the `redaction_applies` branch and not
+around the check: a `redact` span on an `internal` request would tell an auditor
+that something was redacted when nothing touched it
+(`test_redact_span_is_absent_on_a_non_redact_class`)."""
 
 
 def redact_batch(texts: Sequence[str]) -> RedactedBatch:
@@ -299,18 +308,20 @@ def create_redaction(
     maps: RedactionMapStore = request.app.state.redaction_map_store
     data_class = body.data_class if body.data_class is not None else context.data_class
 
-    if body.text is not None:
-        batch = redact_batch((body.text,))
-        text: str | None = batch.texts[0]
-        messages: tuple[RedactMessage, ...] | None = None
-    else:
-        turns = body.messages or ()
-        batch = redact_batch(tuple(turn.content for turn in turns))
-        text = None
-        messages = tuple(
-            turn.model_copy(update={"content": content})
-            for turn, content in zip(turns, batch.texts, strict=True)
-        )
+    with stage_span(request.scope, REDACT_SPAN):
+        if body.text is not None:
+            batch = redact_batch((body.text,))
+            text: str | None = batch.texts[0]
+            messages: tuple[RedactMessage, ...] | None = None
+        else:
+            turns = body.messages or ()
+            batch = redact_batch(tuple(turn.content for turn in turns))
+            text = None
+            messages = tuple(
+                turn.model_copy(update={"content": content})
+                for turn, content in zip(turns, batch.texts, strict=True)
+            )
+    annotate(request.scope, SpanAttributes(redacted=batch.redacted, data_class=data_class.value))
 
     return RedactResponse(
         text=text,
