@@ -50,8 +50,10 @@ from fastapi.testclient import TestClient
 from httpx import Response
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from prometheus_client import CollectorRegistry
 
 from opsconsole.core.errors import ProviderError
+from opsconsole.core.metrics import registry
 from opsconsole.core.settings import Settings
 from opsconsole.core.tracing import tracer_provider
 from opsconsole.gateway.app import create_app
@@ -664,3 +666,103 @@ def spans(span_exporter: InMemorySpanExporter) -> Iterator[InMemorySpanExporter]
     """
     span_exporter.clear()
     yield span_exporter
+
+
+# --- metrics ------------------------------------------------------
+#
+# One `CollectorRegistry`, the module-owned one `opsconsole.core.metrics` holds,
+# read through `MetricDelta`. a project rule in its shape for a registry: a
+# family can be added to a registry and never taken back, and every app in this
+# session feeds the same one, so per-test isolation is a DELTA rather than a new
+# registry - every sample is read before the test's own requests and again after,
+# and the tests assert the difference.
+#
+# The `_created` series prometheus_client mints beside every counter child are
+# dropped on the way in. They are timestamps, not counts, and they would make a
+# "one new time series" assertion count two.
+
+
+SampleKey = tuple[str, tuple[tuple[str, str], ...]]
+"""One time series: its sample name, and its labels as sorted pairs."""
+
+
+def _sample_key(name: str, labels: Mapping[str, str]) -> SampleKey:
+    """The key a sample is filed under, with the labels in a comparable order."""
+    return (name, tuple(sorted(labels.items())))
+
+
+class MetricDelta:
+    """What one test changed in the shared registry: per series, and per family.
+
+    Built at the start of a test, so `before` is whatever the session has already
+    accumulated. Every method answers the change since then, which is what makes a
+    process-wide registry safe to assert against without rebuilding it.
+    """
+
+    def __init__(self, collector_registry: CollectorRegistry) -> None:
+        self._registry = collector_registry
+        self._before = self._read()
+
+    def _read(self) -> dict[SampleKey, float]:
+        """Every series in the registry now, `_created` timestamps excluded."""
+        samples: dict[SampleKey, float] = {}
+        for family in self._registry.collect():
+            for sample in family.samples:
+                if sample.name.endswith("_created"):
+                    continue
+                samples[_sample_key(sample.name, sample.labels)] = sample.value
+        return samples
+
+    def delta(self, name: str, **labels: str) -> float:
+        """How much one exactly-labelled series moved during this test.
+
+        A series that did not exist before counts from zero, so an emission that
+        creates its child during the test is measured rather than missed.
+        """
+        key = _sample_key(name, labels)
+        now = self._read()
+        return now.get(key, 0.0) - self._before.get(key, 0.0)
+
+    def total(self, name: str) -> float:
+        """The same, summed over every label tuple of one sample name.
+
+        This is the "counted exactly once" reading: a request counted twice under
+        two different label sets moves no single series by two, but moves this by
+        two.
+        """
+        now = self._read()
+        keys = set(now) | set(self._before)
+        return sum(now.get(key, 0.0) - self._before.get(key, 0.0) for key in keys if key[0] == name)
+
+    def series(self, name: str) -> set[tuple[tuple[str, str], ...]]:
+        """The label tuples one sample name carries right now."""
+        return {key[1] for key in self._read() if key[0] == name}
+
+    def moved_series(self, name: str) -> set[tuple[tuple[str, str], ...]]:
+        """The label tuples of one sample name whose value changed during this test.
+
+        The cardinality reading, and the reason it is "moved" rather than "new":
+        a series another test already created is still one row in Prometheus's
+        index, so what a test measures is how many rows its own requests touched.
+        Fifty requests that touch one series added one row; fifty that touch fifty
+        added fifty, whether or not any of them existed beforehand.
+        """
+        now = self._read()
+        keys = set(now) | set(self._before)
+        return {
+            key[1]
+            for key in keys
+            if key[0] == name and now.get(key, 0.0) != self._before.get(key, 0.0)
+        }
+
+
+@pytest.fixture(scope="session")
+def metrics_registry() -> CollectorRegistry:
+    """The one registry every metrics test reads, built once by the module."""
+    return registry()
+
+
+@pytest.fixture
+def metrics(metrics_registry: CollectorRegistry) -> MetricDelta:
+    """The registry snapshotted at the start of this test, for reading deltas."""
+    return MetricDelta(metrics_registry)

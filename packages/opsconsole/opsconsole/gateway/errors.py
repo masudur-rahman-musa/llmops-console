@@ -42,6 +42,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from opsconsole.core.errors import ErrorCode, GatewayError
+from opsconsole.core.metrics import record_failure
 from opsconsole.core.tracing import record_error_code
 from opsconsole.routing.errors import IdentifierInvalid
 
@@ -114,9 +115,18 @@ async def handle_gateway_error(request: Request, exc: Exception) -> JSONResponse
     recorded here, where it exists, and read there. Only the code travels - never
     the message, which for a `ProviderError` carries the provider's own words
     (`test_a_provider_failure_records_the_code_on_the_span`).
+
+    `record_failure` is the metrics half of the same fact, and it is here for the
+    same reason: this is where a raised `GatewayError` arrives with its typed code
+    still attached. It moves the two failure families that have an operator
+    response of their own and nothing else - which of them, and on what, is
+    `core/metrics.py`'s decision rather than this file's
+    (`test_a_provider_failure_increments_the_provider_error_counter`,
+    `test_a_residency_refusal_increments_the_violation_counter`).
     """
     error = cast(GatewayError, exc)
     record_error_code(request.scope, error.code.value if error.code is not None else None)
+    record_failure(request.scope, error)
     return error_response(error)
 
 

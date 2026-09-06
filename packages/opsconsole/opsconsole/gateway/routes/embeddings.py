@@ -59,9 +59,11 @@ from typing import Literal, cast
 from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from opsconsole.core.metrics import label_resolution, record_redactions, record_tokens
 from opsconsole.core.tracing import SpanAttributes, annotate, stage_span
 from opsconsole.gateway.context import Context
 from opsconsole.gateway.routes.chat import (
+    CACHE_STATUS_MISS,
     ROUTE_SPAN,
     gateway_headers,
     provider_span_name,
@@ -270,6 +272,13 @@ def create_embeddings(
         )
         chosen = candidates[0]
     annotate(scope, resolution_attributes(body.model, chosen))
+    label_resolution(
+        scope,
+        alias=body.model,
+        provider=chosen.provider,
+        region=chosen.region,
+        cache=CACHE_STATUS_MISS,
+    )
     # The seam above is what makes this cast safe: the resolver only returned
     # providers whose adapter satisfies the protocol.
     adapter = cast(EmbeddingAdapter, adapters[chosen.provider])
@@ -280,11 +289,18 @@ def create_embeddings(
         with stage_span(scope, REDACT_SPAN):
             batch = redact_or_reject(texts, param="input")
         texts, redacted = batch.texts, batch.redacted
+        record_redactions(tenant=context.tenant, counts=batch.counts)
     annotate(scope, SpanAttributes(redacted=redacted))
 
     with stage_span(scope, provider_span_name(chosen.provider)):
         answer = adapter.embed(EmbeddingRequest(model=chosen.model, input=texts))
 
+    record_tokens(
+        tenant=context.tenant,
+        provider=chosen.provider,
+        model=chosen.model,
+        prompt_tokens=answer.usage.prompt_tokens,
+    )
     response.headers.update(gateway_headers(chosen, context.trace_id, redacted=redacted))
     return EmbeddingsResponse(
         data=tuple(

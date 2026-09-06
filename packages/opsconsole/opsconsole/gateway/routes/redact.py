@@ -36,11 +36,12 @@ restated, so a body and the engine cannot disagree about what is too long.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from opsconsole.core.metrics import record_redactions
 from opsconsole.core.tracing import SpanAttributes, annotate, stage_span
 from opsconsole.gateway.context import Context
 from opsconsole.redaction import (
@@ -71,6 +72,13 @@ class RedactedBatch:
 
     texts: tuple[str, ...]
     mapping: Mapping[str, str]
+    counts: Mapping[str, int] = field(default_factory=dict)
+    """How many placeholders were minted, per detector kind, keyed by `Kind.value`.
+
+    Derived from the same walk that mints them rather than by parsing `mapping`'s
+    keys, so the count and the map can never disagree about what a placeholder is.
+    One entry is one redacted VALUE, which is what makes the same address in three
+    turns count once (`test_a_repeated_value_across_turns_counts_once`)."""
 
     @property
     def redacted(self) -> bool:
@@ -119,6 +127,7 @@ def redact_batch(texts: Sequence[str]) -> RedactedBatch:
     mapping: dict[str, str] = {}
     assigned: dict[tuple[Kind, str], str] = {}
     counters: dict[Kind, int] = {}
+    minted: dict[str, int] = {}
     rewritten: list[str] = []
 
     for original, detections in zip(originals, detected, strict=True):
@@ -135,13 +144,14 @@ def redact_batch(texts: Sequence[str]) -> RedactedBatch:
                 placeholder = f"<{found.kind.value}_{number}>"
                 assigned[key] = placeholder
                 mapping[placeholder] = found.value
+                minted[found.kind.value] = minted.get(found.kind.value, 0) + 1
             pieces.append(original[cursor : found.start])
             pieces.append(placeholder)
             cursor = found.end
         pieces.append(original[cursor:])
         rewritten.append("".join(pieces))
 
-    return RedactedBatch(texts=tuple(rewritten), mapping=mapping)
+    return RedactedBatch(texts=tuple(rewritten), mapping=mapping, counts=minted)
 
 
 def redact_or_reject(texts: Sequence[str], *, param: str) -> RedactedBatch:
@@ -322,6 +332,7 @@ def create_redaction(
                 for turn, content in zip(turns, batch.texts, strict=True)
             )
     annotate(request.scope, SpanAttributes(redacted=batch.redacted, data_class=data_class.value))
+    record_redactions(tenant=context.tenant, counts=batch.counts)
 
     return RedactResponse(
         text=text,

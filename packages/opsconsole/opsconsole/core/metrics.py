@@ -1,0 +1,388 @@
+"""One registry per process: what this gateway may measure, and how a request is counted.
+
+This module mirrors `core/tracing.py` deliberately, so that someone who has read
+one file can read the other. There is a module-owned `CollectorRegistry` the way
+there is a module-owned `TracerProvider`; there is one table of everything that
+may be emitted the way `SpanAttributes` is the table of everything a span may
+say; and one request's labels ride in the ASGI scope the way `RequestTrace` does.
+The middleware that observes a finished request lives in `gateway/app.py`,
+because a request boundary is a gateway concern and `core/` does not import from
+`gateway/`.
+
+**Why the registry is ours.** prometheus_client's global `REGISTRY` is write-once
+per family name, so a second `create_app` in one process raises `Duplicated
+timeseries` - which turns a whole test session red at once and makes a second app
+impossible in a worker that hosts one. It also arrives carrying process, GC and
+platform collectors nobody chose. Both halves are pinned by
+`test_a_second_app_registers_no_duplicate_family` and
+`test_the_exposed_family_names_are_exactly_the_declared_set`.
+
+**Why eleven families exist when six carry data.** `gateway_cache_hits_total`,
+`gateway_cost_usd_total`, `gateway_fallbacks_total`, `gateway_circuit_state` and
+`gateway_budget_ratio` are the design names whose subsystems are later plans (the
+breaker in an earlier change, the cache and the ledger in an earlier change, budgets in an earlier change).
+Declaring them now means those plans add a VALUE rather than a family, exactly as
+an earlier change declared `cache`, `cost_usd` and `fallback_count` on `SpanAttributes`
+without setting them. They are registered and empty, not registered and zeroed: a
+zero cost booked on every request would draw a confident flat line on a dashboard
+for a subsystem that does not exist. Pinned by
+`test_the_unfed_families_are_registered_and_carry_no_samples`.
+
+`gateway_eval_*` is deliberately not here. the design has the nightly job PUSH
+those gauges to a Pushgateway, so they are not this process's to declare.
+
+**Why no client string becomes a label without passing a check first.** A
+registry has no cap of its own: one distinct label tuple is one time series, in
+process memory and in Prometheus's index, forever. So `alias`, `provider`,
+`region` and `model` are only ever the RESOLVER's answer, `tenant` is only ever
+the identifier `gateway/context.py` already checked against `IDENTIFIER_PATTERN`
+and `MAX_IDENTIFIER_LENGTH`, `kind` is only ever a `Kind` member and `code` only
+ever an `ErrorCode` member. Everything else is the empty string. That is standing
+rule 1 applied to a store with no backstop, and its inclusive boundary is
+`test_unknown_aliases_create_exactly_one_time_series`.
+
+The session is deliberately not a label anywhere below, though it is on the
+trace. A session is a conversation, so one tenant's traffic would mint a time
+series per conversation and grow the index without limit - which is the same
+reason it is useful on a span, where a trace is discarded on a retention policy
+and a series is not.
+
+**Why every emission is guarded.** An emission that raises must change no status,
+no body and no header: a counter is how an outage is reported, never how one is
+caused. Every function here that touches a family does its work inside
+`_guarded`; the three that only read or build a record - `registry`,
+`request_metrics` and `start_request` - touch none. Told by
+`test_a_failing_emission_changes_no_response`.
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass
+
+from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram
+from starlette.types import Scope
+
+from opsconsole.core.errors import ErrorCode, GatewayError
+
+logger = logging.getLogger(__name__)
+
+METRICS_SCOPE_KEY = "opsconsole.metrics"
+"""The ASGI scope key holding this request's `RequestMetrics`.
+
+A vendor-prefixed key of our own rather than `scope["state"]`, which is shared
+with whatever else a deployment mounts and would make a name collision someone
+else's bug. The same reasoning, and the same shape, as `TRACE_SCOPE_KEY`."""
+
+COUNTED_PATH_PREFIX = "/v1/"
+"""The only traffic this gateway counts.
+
+A scrape every fifteen seconds and a kubelet probe are not traffic: counted, they
+put a constant floor under every RPS panel and an unmovable denominator under
+every error ratio in the design's dashboard 1, so a real outage barely moves the
+line. Pinned by `test_the_probe_and_scrape_paths_are_not_counted`."""
+
+LATENCY_BUCKETS = (0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 60.0, 120.0)
+"""The histogram bounds, in seconds (decision H). prometheus_client's default set
+tops out at 10s, which puts every ordinary streamed completion in `+Inf` and
+makes a p95 panel unreadable exactly where it matters. Pinned exactly, standing
+rule 2, by `test_latency_buckets_are_the_declared_eleven`."""
+
+DIRECTION_IN = "in"
+DIRECTION_OUT = "out"
+"""The two values of the `direction` label: prompt tokens and completion tokens.
+An embedding has no completion, so it records `in` alone rather than an invented
+zero (`test_tokens_are_recorded_on_an_embeddings_request`)."""
+
+UNSET_LABEL = ""
+"""A label this request never got (decision F).
+
+Not a `none` sentinel and not a dropped request: every `/v1/*` request is counted
+exactly once so the counter reconciles with the access log, and the empty string
+is what Prometheus itself means by an unset label. Pinned by
+`test_an_unauthorized_request_is_counted_with_empty_labels`."""
+
+PROVIDER_FAILURE_CODES = frozenset({ErrorCode.PROVIDER_ERROR})
+"""The typed codes that name a provider, and therefore move
+`gateway_provider_errors_total`.
+
+One member today because one failure today knows which provider it came from.
+`ALL_PROVIDERS_FAILED` is raised by the resolver before any provider is chosen,
+so it has no provider to label with; an earlier change's breaker is what gives it one, and
+it joins this set there. A refusal is deliberately not here: a 451 is a residency
+decision, not a provider outage, and counting it as one would fire the design's
+provider panel on a request no provider ever saw
+(`test_a_residency_refusal_increments_the_violation_counter`)."""
+
+_registry = CollectorRegistry()
+
+REQUESTS = Counter(
+    "gateway_requests_total",
+    "Requests served, by tenant, alias, resolved provider and region, status and cache outcome.",
+    ("tenant", "alias", "provider", "region", "status", "cache"),
+    registry=_registry,
+)
+
+LATENCY = Histogram(
+    "gateway_request_latency_seconds",
+    "End-to-end request duration, measured until the last byte of the response is sent.",
+    ("alias", "provider"),
+    buckets=LATENCY_BUCKETS,
+    registry=_registry,
+)
+
+TOKENS = Counter(
+    "gateway_tokens_total",
+    "Tokens billed, by tenant, provider, resolved provider model and direction.",
+    ("tenant", "provider", "model", "direction"),
+    registry=_registry,
+)
+
+REDACTIONS = Counter(
+    "gateway_redactions_total",
+    "Placeholders minted, by tenant and detector kind. One placeholder is one redacted value.",
+    ("tenant", "kind"),
+    registry=_registry,
+)
+
+PROVIDER_ERRORS = Counter(
+    "gateway_provider_errors_total",
+    "Provider call failures, by provider and typed error code.",
+    ("provider", "code"),
+    registry=_registry,
+)
+
+RESIDENCY_VIOLATIONS = Counter(
+    "gateway_residency_violations_total",
+    "Requests refused because no allowed provider could serve the tenant's regions.",
+    ("tenant",),
+    registry=_registry,
+)
+
+CACHE_HITS = Counter(
+    "gateway_cache_hits_total",
+    "Responses served from a cache, by tenant and cache tier. Fed by plan 14.",
+    ("tenant", "tier"),
+    registry=_registry,
+)
+
+COST_USD = Counter(
+    "gateway_cost_usd_total",
+    "Spend booked to the ledger, by tenant, provider and model. Fed by plan 14.",
+    ("tenant", "provider", "model"),
+    registry=_registry,
+)
+
+FALLBACKS = Counter(
+    "gateway_fallbacks_total",
+    "Requests served by a candidate after an earlier one failed. Fed by plan 10.",
+    ("tenant", "alias", "provider"),
+    registry=_registry,
+)
+
+CIRCUIT_STATE = Gauge(
+    "gateway_circuit_state",
+    "Breaker state per provider: 0 closed, 1 half-open, 2 open. Fed by plan 10.",
+    ("provider",),
+    registry=_registry,
+)
+
+BUDGET_RATIO = Gauge(
+    "gateway_budget_ratio",
+    "Fraction of a tenant's period budget consumed. Fed by plan 15.",
+    ("tenant",),
+    registry=_registry,
+)
+
+
+def registry() -> CollectorRegistry:
+    """The one registry this process exposes, holding this gateway's families only."""
+    return _registry
+
+
+@contextmanager
+def _guarded(what: str) -> Iterator[None]:
+    """Run one emission, and let nothing it raises reach the request.
+
+    The traceback is logged rather than swallowed silently, because an emission
+    that cannot render its own labels is a bug someone has to see; the request it
+    belongs to has already been answered correctly by then
+    (`test_a_failing_emission_changes_no_response`).
+    """
+    try:
+        yield
+    except Exception:
+        logger.exception("metrics emission failed: %s", what)
+
+
+@dataclass
+class RequestMetrics:
+    """The labels one request's counter needs, filled as they become known.
+
+    Mutable and scope-carried, which is the whole of decision E. The six labels
+    `gateway_requests_total` takes are known at four different points in a
+    request, and none of them is the point where the request ENDS - so they are
+    collected here, at exactly the call sites that already call `annotate`, and
+    read once by `TracingMiddleware` after the last byte. That is also the only
+    place a streamed request's real duration exists
+    (`test_a_streamed_requests_latency_covers_the_frames`).
+
+    Every field defaults to `UNSET_LABEL`, so a request that failed before
+    resolution - or before authentication - is still counted, with the labels it
+    never got left empty rather than invented
+    (`test_an_unauthorized_request_is_counted_with_empty_labels`).
+    """
+
+    tenant: str = UNSET_LABEL
+    alias: str = UNSET_LABEL
+    provider: str = UNSET_LABEL
+    region: str = UNSET_LABEL
+    cache: str = UNSET_LABEL
+
+
+def request_metrics(scope: Scope) -> RequestMetrics | None:
+    """This request's label record, or `None` when nothing started one.
+
+    `None` is the ordinary answer on a path this gateway does not count and on an
+    app built without the middleware, which is what keeps every call site a plain
+    call rather than a conditional."""
+    record = scope.get(METRICS_SCOPE_KEY)
+    return record if isinstance(record, RequestMetrics) else None
+
+
+def start_request(scope: Scope) -> RequestMetrics | None:
+    """Open a label record for a counted path, and answer `None` for every other.
+
+    This is the single place decision G is enforced: a path outside
+    `COUNTED_PATH_PREFIX` gets no record, so every later emission finds nothing
+    and no probe or scrape can reach a counter
+    (`test_the_probe_and_scrape_paths_are_not_counted`).
+    """
+    if not str(scope.get("path", "")).startswith(COUNTED_PATH_PREFIX):
+        return None
+    record = RequestMetrics()
+    scope[METRICS_SCOPE_KEY] = record
+    return record
+
+
+def label_tenant(scope: Scope, tenant: str) -> None:
+    """Note the authenticated tenant, once the key has resolved to one.
+
+    Called after authentication succeeds and never before, so an unauthenticated
+    caller's own `X-Tenant` header cannot mint a time series
+    (`test_an_unauthorized_request_is_counted_with_empty_labels`).
+    """
+    with _guarded("tenant label"):
+        record = request_metrics(scope)
+        if record is not None:
+            record.tenant = tenant
+
+
+def label_resolution(scope: Scope, *, alias: str, provider: str, region: str, cache: str) -> None:
+    """Note what the resolver decided, and the cache outcome this request had.
+
+    Called only AFTER `resolve()` returns, which is what bounds the cardinality of
+    `alias`: an unknown alias never reaches here, so fifty distinct unknown ones
+    are fifty requests against ONE time series rather than fifty permanent rows in
+    Prometheus's index (`test_unknown_aliases_create_exactly_one_time_series`).
+    """
+    with _guarded("resolution labels"):
+        record = request_metrics(scope)
+        if record is not None:
+            record.alias = alias
+            record.provider = provider
+            record.region = region
+            record.cache = cache
+
+
+def observe_request(scope: Scope, *, status: int, seconds: float) -> None:
+    """Count one finished request and observe how long it took.
+
+    Called once, by the middleware, after the response is fully sent. Both halves
+    are pinned: exactly one count per request including a streamed one
+    (`test_a_streamed_request_is_counted_once`), and a duration that covers the
+    frames rather than ending where the route returned
+    (`test_a_streamed_requests_latency_covers_the_frames`).
+    """
+    with _guarded("request observation"):
+        record = request_metrics(scope)
+        if record is None:
+            return
+        REQUESTS.labels(
+            tenant=record.tenant,
+            alias=record.alias,
+            provider=record.provider,
+            region=record.region,
+            status=str(status),
+            cache=record.cache,
+        ).inc()
+        LATENCY.labels(alias=record.alias, provider=record.provider).observe(seconds)
+
+
+def record_tokens(
+    *,
+    tenant: str,
+    provider: str,
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int | None = None,
+) -> None:
+    """Book one call's tokens, `in` and - where the call has an output - `out`.
+
+    `model` is the RESOLVED provider model, never the alias and never the name the
+    provider answered with: an alias covers several provider models, so cost per
+    model would be unattributable at the grain an earlier change's ledger prices at, and the
+    two systems could never be reconciled
+    (`test_the_token_model_label_is_the_resolved_model_not_the_alias`).
+
+    `completion_tokens` is omitted rather than passed as zero by a caller with no
+    output direction. An embedding has no completion, and a zero `out` sample is an
+    invented number a dashboard would sum
+    (`test_tokens_are_recorded_on_an_embeddings_request`).
+    """
+    with _guarded("token counts"):
+        TOKENS.labels(tenant=tenant, provider=provider, model=model, direction=DIRECTION_IN).inc(
+            prompt_tokens
+        )
+        if completion_tokens is not None:
+            TOKENS.labels(
+                tenant=tenant, provider=provider, model=model, direction=DIRECTION_OUT
+            ).inc(completion_tokens)
+
+
+def record_redactions(*, tenant: str, counts: Mapping[str, int]) -> None:
+    """Count the placeholders one redaction pass minted, per detector kind.
+
+    Placeholders, not detections: the same address in three turns is one redacted
+    value under one placeholder, so counting detections
+    would make a tenant's redaction rate a function of how often someone repeats
+    themselves (`test_a_repeated_value_across_turns_counts_once`).
+    """
+    with _guarded("redaction counts"):
+        for kind, count in counts.items():
+            REDACTIONS.labels(tenant=tenant, kind=kind).inc(count)
+
+
+def record_failure(scope: Scope, error: GatewayError) -> None:
+    """Move whichever failure counter this typed error belongs on, if any.
+
+    Two failures have a panel of their own because two failures have an operator
+    response of their own. A provider outage is answered by looking at the
+    provider, so it is labelled with the one that failed and with the typed code -
+    `test_a_provider_failure_increments_the_provider_error_counter`. A residency
+    refusal is alerted at greater than zero (the design), so it needs a counter that
+    a 502 cannot move and that a 451 cannot leave still -
+    `test_a_residency_refusal_increments_the_violation_counter`. Every other typed
+    failure is already counted by `gateway_requests_total`'s `status` label and
+    gets no second family.
+    """
+    with _guarded("failure counters"):
+        record = request_metrics(scope)
+        if record is None or error.code is None:
+            return
+        if error.code in PROVIDER_FAILURE_CODES and record.provider != UNSET_LABEL:
+            PROVIDER_ERRORS.labels(provider=record.provider, code=error.code.value).inc()
+        elif error.code is ErrorCode.RESIDENCY_UNAVAILABLE:
+            RESIDENCY_VIOLATIONS.labels(tenant=record.tenant).inc()

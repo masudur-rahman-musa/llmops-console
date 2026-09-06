@@ -23,9 +23,15 @@ metric label.
 
 This dependency is also the `auth` stage span, and it is where the request's
 tenant, session and data class are put on the root span. Those three are the only
-labels this file contributes, and they go through `SpanAttributes`, so a field
-that is not on an earlier change's allowlist cannot be added here without failing to
+SPAN labels this file contributes, and they go through `SpanAttributes`, so a
+field that is not on an earlier change's allowlist cannot be added here without failing to
 validate (`test_the_attribute_key_set_is_exactly_the_allowlist`).
+
+The one metric label it contributes is the tenant, and it is set here for the
+same reason the span attributes are: this is the first line at which a tenant is
+a fact rather than a claim. Setting it any earlier would let an unauthenticated
+caller's own `X-Tenant` header mint a time series in a registry that has no cap
+(`test_an_unauthorized_request_is_counted_with_empty_labels`).
 """
 
 from __future__ import annotations
@@ -39,6 +45,7 @@ from pydantic import BaseModel, ConfigDict
 from starlette.types import Scope
 
 from opsconsole.core.errors import TenantMismatch, Unauthorized
+from opsconsole.core.metrics import label_tenant
 from opsconsole.core.tracing import (
     SpanAttributes,
     annotate,
@@ -199,6 +206,7 @@ def request_context(
             data_class=context.data_class.value,
         ),
     )
+    label_tenant(request.scope, context.tenant)
     return context
 
 

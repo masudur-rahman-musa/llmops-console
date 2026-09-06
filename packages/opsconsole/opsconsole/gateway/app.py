@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 
@@ -9,6 +10,7 @@ from fastapi import FastAPI
 from opentelemetry.context import Context
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from opsconsole.core.metrics import observe_request, start_request
 from opsconsole.core.settings import Settings
 from opsconsole.core.tracing import (
     ERROR_STATUS_FLOOR,
@@ -26,6 +28,7 @@ from opsconsole.gateway.health import ProbeRegistry
 from opsconsole.gateway.health import router as health_router
 from opsconsole.gateway.routes.chat import router as chat_router
 from opsconsole.gateway.routes.embeddings import router as embeddings_router
+from opsconsole.gateway.routes.metrics import router as metrics_router
 from opsconsole.gateway.routes.models import router as models_router
 from opsconsole.gateway.routes.redact import router as redact_router
 from opsconsole.providers.base import Adapter
@@ -84,35 +87,55 @@ def incoming_parent(scope: Scope) -> Context | None:
 
 
 class TracingMiddleware:
-    """The root span of every request: opened before routing, closed after the last byte.
+    """The boundary of every request: opened before routing, closed after the last byte.
+
+    It owns two records, and it owns them for the same reason. The root span, and
+    the `RequestMetrics` labels an earlier change counts a request with: both describe a
+    whole request, and both can only be closed at a point no route can see. The
+    name is the tracing one it was born with, because the seam is the same seam.
 
     Pure ASGI rather than `BaseHTTPMiddleware`, for two reasons that both decide
     an acceptance criterion. It runs OUTSIDE `ExceptionMiddleware`, so a request
     that fails before any route - an unauthenticated one, which never builds a
-    `RequestContext` at all - still has a span to record the failure on
-    (`test_an_unauthorized_request_still_emits_a_trace`). And it ends the span
-    only once the response body is fully sent, which for a streamed completion is
-    after the last frame rather than when the route returned
-    (`test_a_streamed_requests_root_span_covers_the_frames`).
+    `RequestContext` at all - still has a span to record the failure on and is
+    still counted (`test_an_unauthorized_request_still_emits_a_trace`,
+    `test_an_unauthorized_request_is_counted_with_empty_labels`). And it ends the
+    span, and takes the latency observation, only once the response body is fully
+    sent - which for a streamed completion is after the last frame rather than
+    when the route returned (`test_a_streamed_requests_root_span_covers_the_frames`,
+    `test_a_streamed_requests_latency_covers_the_frames`).
 
     The outcome is read off the wire rather than guessed: `send` is wrapped so the
-    response's own status decides whether the root span failed, and the typed code
-    comes from whatever the handlers in `gateway/errors.py` recorded on the scope.
-    A crash that never produces a response start is a failure too, which is why
-    the initial status is 500 rather than 200.
+    response's own status decides whether the root span failed and what the
+    counter's `status` label says, and the typed code comes from whatever the
+    handlers in `gateway/errors.py` recorded on the scope. A crash that never
+    produces a response start is a failure too, which is why the initial status is
+    500 rather than 200.
+
+    Not every request gets a metrics record: `start_request` opens one for the
+    counted paths only, so a probe and a scrape pass through traced and uncounted
+    (`test_the_probe_and_scrape_paths_are_not_counted`).
+
+    The clock is `perf_counter`, which is monotonic: a wall clock stepped by NTP
+    mid-request would otherwise book a negative or a wildly long duration into a
+    latency histogram that has no way to take it back. That one is a choice
+    recorded rather than pinned - no test can tell the two clocks apart without
+    stepping the system clock underneath a running suite.
     """
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        """Trace one HTTP request; pass lifespan and websocket scopes straight through."""
+        """Trace and count one HTTP request; pass lifespan and websocket scopes through."""
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
 
         record = start_root_span(incoming_parent(scope))
         scope[TRACE_SCOPE_KEY] = record
+        start_request(scope)
+        started = time.perf_counter()
         status = 500
 
         async def send_wrapper(message: Message) -> None:
@@ -125,8 +148,10 @@ class TracingMiddleware:
             await self.app(scope, receive, send_wrapper)
         except BaseException:
             end_root_span(record, failed=True)
+            observe_request(scope, status=status, seconds=time.perf_counter() - started)
             raise
         end_root_span(record, failed=status >= ERROR_STATUS_FLOOR)
+        observe_request(scope, status=status, seconds=time.perf_counter() - started)
 
 
 def create_app(
@@ -174,6 +199,7 @@ def create_app(
     install_exporter(resolved)
     app.add_middleware(TracingMiddleware)
     app.include_router(health_router)
+    app.include_router(metrics_router)
     app.include_router(models_router)
     app.include_router(chat_router)
     app.include_router(embeddings_router)

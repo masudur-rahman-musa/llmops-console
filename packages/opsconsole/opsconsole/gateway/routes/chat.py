@@ -50,7 +50,7 @@ from __future__ import annotations
 import json
 import secrets
 import time
-from collections.abc import Generator, Iterator, Mapping
+from collections.abc import Callable, Generator, Iterator, Mapping
 from itertools import chain
 from typing import Any, Literal, assert_never
 
@@ -60,6 +60,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.types import Scope
 
 from opsconsole.core.errors import GatewayError, ProviderError
+from opsconsole.core.metrics import label_resolution, record_redactions, record_tokens
 from opsconsole.core.tracing import SpanAttributes, annotate, stage_span
 from opsconsole.gateway.context import Context, RequestContext
 from opsconsole.gateway.errors import error_body
@@ -82,6 +83,7 @@ from opsconsole.providers.base import (
     ToolCallDelta,
     ToolChoice,
     ToolSpec,
+    Usage,
     UsageTotal,
 )
 from opsconsole.routing.policy import Policy, PolicyStore
@@ -674,7 +676,11 @@ def to_chunk(
 
 
 def sse_frames(
-    first: StreamEvent, events: Iterator[StreamEvent], alias: str, completion_id: str
+    first: StreamEvent,
+    events: Iterator[StreamEvent],
+    alias: str,
+    completion_id: str,
+    on_usage: Callable[[Usage], None] | None = None,
 ) -> Generator[str, None, None]:
     """Render the neutral events as SSE frames, ending with `[DONE]` if they finish.
 
@@ -713,6 +719,8 @@ def sse_frames(
     created = int(time.time())
     try:
         for event in chain((first,), events):
+            if isinstance(event, UsageTotal) and on_usage is not None:
+                on_usage(event.usage)
             chunk = to_chunk(event, completion_id=completion_id, created=created, alias=alias)
             yield _frame(chunk.model_dump_json())
     except GatewayError as error:
@@ -789,6 +797,13 @@ def create_chat_completion(
         )
         chosen = candidates[0]
     annotate(scope, resolution_attributes(body.model, chosen))
+    label_resolution(
+        scope,
+        alias=body.model,
+        provider=chosen.provider,
+        region=chosen.region,
+        cache=CACHE_STATUS_MISS,
+    )
     adapter = adapters[chosen.provider]
 
     outbound, redacted = _redacted(scope, store.policy, context, body)
@@ -797,11 +812,45 @@ def create_chat_completion(
 
     with stage_span(scope, provider_span_name(chosen.provider)):
         if body.stream:
-            return _streamed(adapter, outbound, chosen, headers)
+            return _streamed(
+                adapter, outbound, chosen, headers, _token_sink(context.tenant, chosen)
+            )
         answer = adapter.chat(to_neutral(outbound, chosen.model))
 
+    record_tokens(
+        tenant=context.tenant,
+        provider=chosen.provider,
+        model=chosen.model,
+        prompt_tokens=answer.usage.prompt_tokens,
+        completion_tokens=answer.usage.completion_tokens,
+    )
     response.headers.update(headers)
     return to_wire(answer, body.model)
+
+
+def _token_sink(tenant: str, chosen: Resolved) -> Callable[[Usage], None]:
+    """The callback a stream books its tokens through when the usage chunk arrives.
+
+    A stream reports its usage in a `UsageTotal` event, delivered from inside the
+    frame generator long after this route returned - so the labels the counter
+    needs have to be captured here, where they are known, rather than looked up
+    there. It is a closure over the resolver's answer for the same reason the
+    non-streamed call above passes `chosen.model`: the model label is the resolved
+    id, never the alias and never what the provider called it
+    (`test_tokens_are_recorded_from_the_streams_usage_chunk`,
+    `test_the_token_model_label_is_the_resolved_model_not_the_alias`).
+    """
+
+    def sink(usage: Usage) -> None:
+        record_tokens(
+            tenant=tenant,
+            provider=chosen.provider,
+            model=chosen.model,
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+        )
+
+    return sink
 
 
 def _redacted(
@@ -831,6 +880,7 @@ def _redacted(
         batch = redact_or_reject(
             tuple(message.content or "" for message in body.messages), param="messages"
         )
+    record_redactions(tenant=context.tenant, counts=batch.counts)
     rebuilt = tuple(
         message.model_copy(update={"content": content if message.content is not None else None})
         for message, content in zip(body.messages, batch.texts, strict=True)
@@ -843,6 +893,7 @@ def _streamed(
     body: ChatCompletionRequest,
     chosen: Resolved,
     headers: dict[str, str],
+    on_usage: Callable[[Usage], None],
 ) -> StreamingResponse:
     """Open the stream, pull its first event, and only then answer 200.
 
@@ -866,7 +917,7 @@ def _streamed(
         )
 
     return StreamingResponse(
-        sse_frames(first, events, body.model, _completion_id()),
+        sse_frames(first, events, body.model, _completion_id(), on_usage=on_usage),
         media_type=SSE_MEDIA_TYPE,
         headers={**headers, **SSE_HEADERS},
     )
