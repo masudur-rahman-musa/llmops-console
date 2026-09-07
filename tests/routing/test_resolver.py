@@ -140,7 +140,7 @@ def test_is_healthy_filters_a_subset_and_keeps_order(policy: Policy) -> None:
 
 
 def test_default_is_healthy_keeps_every_candidate(policy: Policy) -> None:
-    """The seam an earlier change fills defaults to always-true."""
+    """The seam the routes fill with the breaker defaults to always-true for callers without one."""
     healthy: Callable[[str], bool] = always_healthy
 
     assert resolve(policy, "acme", "ordered", "public") == resolve(

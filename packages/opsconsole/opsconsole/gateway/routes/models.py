@@ -13,9 +13,11 @@ define resolves nothing and gets an empty list, which is deny-by-default rather
 than an error (`test_models_for_a_tenant_the_policy_does_not_define_is_empty`).
 
 Only the two errors that mean "this alias is not for you" are swallowed, not the
-`RoutingError` base. Once the circuit breaker lands, `AllProvidersUnavailable`
-means a provider incident, and a catalogue that quietly shrinks during one would
-read to an operator as an alias that had been deleted.
+`RoutingError` base. `AllProvidersUnavailable` now means a provider incident -
+every candidate's adapter missing, or every candidate's breaker open - and a
+catalogue that quietly shrank during one would read to an operator as an alias
+that had been deleted. This route resolves without the health seam for the same
+reason: a breaker must not make a catalogue flicker.
 """
 
 from __future__ import annotations

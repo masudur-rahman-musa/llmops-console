@@ -307,7 +307,7 @@ def test_an_answer_with_more_vectors_than_inputs_raises() -> None:
 def test_a_response_with_no_data_raises() -> None:
     """Catches an `IndexError` escaping the reader as a 500 with a traceback: a server that
     answers 200 with an empty `data` (llama.cpp does, when every slot is dropped) must
-    leave as the `ProviderError` an earlier change's fallback can read. The twin of
+    leave as the `ProviderError` the routes' fallback loop reads. The twin of
     `test_a_response_with_no_choices_raises` on the chat side."""
     with pytest.raises(ProviderError) as raised:
         from_openai_embedding(load_local_fixture("embeddings_no_data"))
@@ -380,7 +380,7 @@ def test_an_unreadable_payload_leaves_as_a_provider_error(
 ) -> None:
     """Catches a reader with no `except (KeyError, IndexError, TypeError, ValueError)`
     around it: a `KeyError` or a Pydantic `ValidationError` reaching the route is a 500
-    with a traceback instead of the 502 an earlier change's fallback can act on, and a shape change
+    with a traceback instead of the 502 the routes' fallback loop acts on, and a shape change
     in a llama.cpp release is the likeliest way each of these three arrives."""
     with pytest.raises(ProviderError) as raised:
         from_openai_embedding(payload)
@@ -529,7 +529,7 @@ def test_a_retry_resends_the_same_body(sleeps: SleepRecorder) -> None:
 def test_a_non_json_success_body_is_a_provider_error(sleeps: SleepRecorder) -> None:
     """Catches the path a reverse proxy takes: a 200 carrying an HTML error page would
     otherwise raise `json.JSONDecodeError` out of `embed()`, reaching the route as a 500
-    with a traceback instead of the 502 an earlier change can fall back from. This is the sibling
+    with a traceback instead of the 502 the routes' fallback loop can move past. This is the sibling
     case the chat side shipped covered and `embed()` would ship without."""
     transport = httpx.MockTransport(
         lambda request: httpx.Response(200, text="<html>bad gateway</html>")

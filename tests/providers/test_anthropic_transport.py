@@ -189,8 +189,8 @@ def test_a_timeout_is_retried_and_raises_retryable(
     case: str, exception: type[httpx.RequestError], sleeps: SleepRecorder
 ) -> None:
     """Catches an adapter that only handles HTTP statuses: an unwrapped `httpx.ReadTimeout`
-    escaping to the route is a 500 with a traceback instead of a 502 an earlier change can fall back
-    from."""
+    escaping to the route is a 500 with a traceback instead of a 502 the routes' fallback
+    loop can move past."""
     steps: list[Step] = [exception]
     adapter, scripted = make_adapter(steps, sleep=sleeps)
 
@@ -343,7 +343,7 @@ def test_an_oversized_provider_body_is_truncated(sleeps: SleepRecorder) -> None:
 def test_a_non_json_success_body_is_a_provider_error(sleeps: SleepRecorder) -> None:
     """Catches the path a proxy takes: a 200 carrying an HTML error page would otherwise
     raise `json.JSONDecodeError` out of the adapter, reaching the route as a 500 with a
-    traceback instead of the 502 an earlier change can fall back from."""
+    traceback instead of the 502 the routes' fallback loop can move past."""
     transport = httpx.MockTransport(
         lambda request: httpx.Response(200, text="<html>gateway timeout</html>")
     )

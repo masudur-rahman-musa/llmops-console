@@ -45,6 +45,7 @@ from opsconsole.routing.resolver import Resolved, resolve
 
 from .conftest import (
     EmbeddingStubAdapter,
+    MetricDelta,
     StubAdapter,
     assert_error_body,
     build_chat_client,
@@ -336,6 +337,33 @@ def test_a_chat_message_over_the_cap_is_422_with_no_outbound_call(
 
     assert_error_body(response, status=422, code="VALIDATION")
     assert inline_chat_stub.requests == []
+
+
+def test_a_refused_request_is_still_attributed_to_its_resolved_candidate(
+    inline_chat_client: TestClient, metrics: MetricDelta
+) -> None:
+    """Catches the resolution labelling being done only inside the fallback loop, which
+    sits after redaction. Redaction can REFUSE a request - the case above is the 422 - and
+    such a request would then be counted under an empty alias, provider and region while
+    the resolver had already decided all three: the design's per-alias error panel would
+    show nothing during a redaction-side incident, and a trace search by alias would miss
+    every refused request. The resolution happens before redaction either way, so an
+    unlabelled row here is a label LOST rather than one that was never known."""
+    over_cap = "a" * (MAX_REDACTION_INPUT_CHARS + 1)
+
+    response = post_chat(
+        inline_chat_client,
+        chat_body(messages=[{"role": "user", "content": over_cap}]),
+        data_class="confidential",
+    )
+    assert_error_body(response, status=422, code="VALIDATION")
+
+    moved = [dict(labels) for labels in metrics.moved_series("gateway_requests_total")]
+    assert len(moved) == 1, moved
+    assert moved[0]["status"] == "422"
+    assert moved[0]["alias"] != ""
+    assert moved[0]["provider"] != ""
+    assert moved[0]["region"] != ""
 
 
 def test_the_redaction_cap_does_not_apply_on_a_non_redact_class(

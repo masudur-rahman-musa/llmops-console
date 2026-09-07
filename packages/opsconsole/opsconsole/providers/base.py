@@ -9,8 +9,8 @@ adapters of an earlier change are meant to do the same. `test_base_contract_carr
 holds that by walking this module's names and every model's fields.
 
 The models are frozen and reject unknown fields. Frozen because an adapter must
-not mutate the caller's request while mapping it - an earlier change retries the same
-request against a second provider, and it has to be the same request; unknown
+not mutate the caller's request while mapping it - the routes' fallback loop
+sends the same request to a second provider, and it has to be the SAME request; unknown
 fields rejected because a misspelled `max_token` should be an error rather than
 a silently applied default. Both are pinned by
 `test_contract_models_are_frozen` and `test_contract_models_forbid_unknown_fields`.

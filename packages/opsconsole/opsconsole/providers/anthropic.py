@@ -556,9 +556,13 @@ class AnthropicAdapter:
     def healthcheck(self) -> bool:
         """Always true, and it calls nothing.
 
-        The seam exists so an earlier change's circuit breaker has somewhere to answer
-        from. Probing the provider here would put a network call - and a live key
-        in CI - on the readiness path, which
+        The seam is still unfilled, and naming what filled it elsewhere would be
+        wrong: `providers/breaker.py` learns from the outcomes of REAL requests,
+        through the routes' `is_healthy`, and calls this method nowhere. So the
+        `provider` readiness probe still proves only that an adapter was built.
+
+        Probing the provider here would put a network call - and a live key in
+        CI - on the readiness path, which
         `test_healthcheck_is_true_without_calling_the_provider` forbids.
         """
         return True

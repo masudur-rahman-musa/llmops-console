@@ -158,7 +158,7 @@ def test_price_key_is_provider_name_slash_model(
 
 def test_adapter_satisfies_the_runtime_protocol() -> None:
     """Catches an adapter that drops or renames a protocol member (`complete` instead of
-    `chat`), which an earlier change's fallback would only discover at runtime."""
+    `chat`), which the routes' fallback loop would only discover at runtime."""
     adapter, _ = make_adapter([ok("plain")])
 
     assert isinstance(adapter, Adapter)
@@ -167,7 +167,9 @@ def test_adapter_satisfies_the_runtime_protocol() -> None:
 
 def test_healthcheck_is_true_without_calling_the_provider() -> None:
     """Catches a healthcheck that pings the provider: it would need a live key in CI and
-    would put a network call on a code path an earlier change replaces with a breaker."""
+    would put a network call on the readiness path. The breaker did NOT replace this seam:
+    it learns from the outcomes of real requests through the routes' `is_healthy` and
+    calls `healthcheck()` nowhere, so this method is still always-true by design."""
     adapter, scripted = make_adapter([ok("plain")])
 
     assert adapter.healthcheck() is True
@@ -253,7 +255,7 @@ def test_contract_models_forbid_unknown_fields(
 )
 def test_contract_models_are_frozen(case: str, model: type[Any], kwargs: dict[str, Any]) -> None:
     """Catches a mutable request model: the adapter mutating the caller's request during
-    mapping would make a an earlier change retry against a second provider send a different body."""
+    mapping would make a fallback to a second provider send a different body."""
     instance = model(**kwargs)
     field = next(iter(model.model_fields))
 
@@ -427,7 +429,7 @@ def test_embedding_contract_models_forbid_unknown_fields(
 def test_embedding_contract_models_are_frozen(
     case: str, model: type[Any], kwargs: dict[str, Any]
 ) -> None:
-    """Catches a mutable embedding request: an earlier change retries the same request against a
+    """Catches a mutable embedding request: a fallback sends the same request to a
     second provider, and an adapter that normalised the input list in place would send the
     second provider something the caller never asked for."""
     instance = model(**kwargs)

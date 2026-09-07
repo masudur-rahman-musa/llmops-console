@@ -129,11 +129,13 @@ class SpanAttributes(BaseModel):
     conversation, not a person, and it is what an operator needs to follow one
     caller's traffic through the gateway.
 
-    `cache`, `cost_usd` and `fallback_count` are named by the design and nothing
-    sets them yet - the cache is a later plan, the ledger a later one, the
-    fallback an earlier change. They are declared here so those plans add a value rather
-    than a field, and the absence of the two spans that would carry them is
-    pinned by `test_no_cache_or_ledger_span_is_emitted`.
+    `cache` and `cost_usd` are named by the design and nothing sets them yet -
+    the cache is a later plan, the ledger a later one. They are declared here so
+    those plans add a value rather than a field, and the absence of the two spans
+    that would carry them is pinned by `test_no_cache_or_ledger_span_is_emitted`.
+    `fallback_count` was the third and is now set, by the routes' fallback loop
+    and only on a request that actually fell back
+    (`test_a_fallback_is_recorded_on_the_trace_as_a_count`).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

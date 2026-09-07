@@ -149,9 +149,10 @@ def test_models_propagates_a_health_failure(
     """An outage is a 503, not an alias quietly missing from the catalogue.
 
     The route swallows only the two errors that mean "this alias is not for you".
-    Once the circuit breaker lands, `AllProvidersUnavailable` means a provider
-    incident, and a catalogue that shrank during one would read to an operator as
-    an alias that had been deleted. Widening the catch back to `RoutingError`
+    `AllProvidersUnavailable` now means a provider incident - every candidate's
+    adapter missing, or every candidate's breaker open - and a catalogue that
+    shrank during one would read to an operator as an alias that had been
+    deleted. Widening the catch back to `RoutingError`
     fails here.
     """
 

@@ -76,6 +76,7 @@ from opsconsole.providers.base import (
     Usage,
     UsageTotal,
 )
+from opsconsole.providers.breaker import CircuitBreaker
 from opsconsole.routing.errors import ResidencyUnavailable, RoutingError
 from opsconsole.routing.policy import DataClass, Policy, load_policy
 from opsconsole.routing.resolver import MAX_IDENTIFIER_LENGTH, resolve
@@ -818,3 +819,307 @@ def no_admin_key_client() -> Iterator[TestClient]:
     settings = Settings(api_keys=API_KEYS, routing_policy_path=SHIPPED_POLICY_PATH)
     with TestClient(create_app(settings, NO_PROVIDER_KEYS)) as client:
         yield client
+
+
+# --- fallback and the breaker -------------------------------------
+#
+# Two things the earlier stubs cannot give this plan: a SECOND adapter, and a
+# failure that can be changed between cases. `StubAdapter` is built with its
+# error and answers with it forever, so a file whose nine cases each want a
+# different first-candidate failure would build nine apps.
+#
+# `FallbackStubAdapter` is that stub with its script made public and resettable,
+# and it satisfies BOTH provider protocols, so one app serves the chat cases and
+# the embeddings cases. Every case reaches it through `fallback_client`, which is
+# the session app with two per-test resets: the stubs' recorded
+# requests and scripted failures, and a FRESH breaker on `app.state`. Rebuilding
+# the app per test would be the thing rule 7 forbids; a breaker is a dict and a
+# lock, and it is the only state a case has to start clean.
+#
+# The alias is `agent-default` and the tenant `evals` under `internal`, which the
+# shipped policy resolves to exactly two candidates in this order: `anthropic`
+# (us) then `local` (self). `anthropic_eu` sits between them in `routing.yaml`
+# and is disabled, so the pair is also proof the loop walks the RESOLVER's tuple
+# rather than the policy file's.
+
+FALLBACK_ALIAS = "agent-default"
+FALLBACK_TENANT = "evals"
+FALLBACK_CLASS = "internal"
+
+FIRST_PROVIDER = "anthropic"
+SECOND_PROVIDER = "local"
+FIRST_REGION = "us"
+SECOND_REGION = "self"
+
+FALLBACK_CANDIDATES = (FIRST_PROVIDER, SECOND_PROVIDER)
+"""What `resolve()` answers for the triple above, best first. Asserted against the
+resolver itself by `test_the_fallback_alias_resolves_to_the_two_expected_candidates`,
+so a policy edit that changed the order fails there rather than silently making
+every case in tests/gateway/test_fallback.py test one provider twice."""
+
+PROVIDER_MESSAGE_SENTINEL = "upstream req_zqx_10a quota exhausted"
+"""The provider's own words on every scripted failure here. A client never sees
+them, so a case that asserts a body carries no provider message has
+something real to look for."""
+
+
+def retryable_error(provider: str) -> ProviderError:
+    """The failure a fallback is allowed to act on: a 5xx, a 429 or a timeout (#16)."""
+    return ProviderError(
+        f"{provider}: the provider answered 503",
+        retryable=True,
+        provider_message=PROVIDER_MESSAGE_SENTINEL,
+    )
+
+
+def non_retryable_error(provider: str) -> ProviderError:
+    """The failure a fallback must NOT act on: a 4xx, or a body we could not read."""
+    return ProviderError(
+        f"{provider}: the provider answered 400",
+        retryable=False,
+        provider_message=PROVIDER_MESSAGE_SENTINEL,
+    )
+
+
+def answer_of(provider: str) -> str:
+    """The completion content one stub answers with, naming itself.
+
+    Distinct per provider on purpose: "the body came from the SECOND candidate" is
+    then a fact about the body rather than an inference from a header.
+    """
+    return f"the stub {provider} answered"
+
+
+def fragment_of(provider: str) -> str:
+    """The single text delta one stub streams, naming itself, for the same reason."""
+    return f"streamed by {provider}"
+
+
+class FallbackStubAdapter:
+    """A stub that can chat, stream and embed, and whose failures are set per test.
+
+    It satisfies `Adapter` and `EmbeddingAdapter` both, which is what lets one app
+    serve the chat cases and the embeddings cases: the chat route's health seam
+    asks whether an adapter exists and the embeddings route's asks `isinstance`,
+    so a chat-only stub under `anthropic` would make the embeddings fallback
+    unreachable for a reason that has nothing to do with the breaker.
+
+    `requests` and `embed_requests` are the point: "the second adapter received
+    nothing" is the assertion that separates a route which returned a
+    non-retryable failure from one which tried the next candidate first and
+    happened to return the same status.
+    """
+
+    def __init__(self, *, name: str) -> None:
+        self.name = name
+        self.requests: list[ChatRequest] = []
+        self.embed_requests: list[EmbeddingRequest] = []
+        self.chat_error: Exception | None = None
+        self.embed_error: Exception | None = None
+        self.stream_error: Exception | None = None
+        self.stream_error_at = 0
+        self.reset()
+
+    def reset(self) -> None:
+        """Forget every recorded call and every scripted failure.
+
+        The per-test isolation this file's fixtures use instead of a new app.
+        """
+        self.requests = []
+        self.embed_requests = []
+        self.chat_error = None
+        self.embed_error = None
+        self.stream_error = None
+        self.stream_error_at = 0
+
+    @property
+    def call_count(self) -> int:
+        """How many times a route handed this adapter a request, of either kind."""
+        return len(self.requests) + len(self.embed_requests)
+
+    @property
+    def events(self) -> tuple[StreamEvent, ...]:
+        """The scripted stream, carrying one text delta that names this stub."""
+        return stream_events(fragments=(fragment_of(self.name),))
+
+    def chat(self, request: ChatRequest) -> ChatResponse:
+        self.requests.append(request)
+        if self.chat_error is not None:
+            raise self.chat_error
+        return stub_response(content=answer_of(self.name))
+
+    def stream_chat(self, request: ChatRequest) -> Iterator[StreamEvent]:
+        """Yield the scripted events, raising the scripted error at its position.
+
+        Position 0 is the failure the route can still turn into a typed status,
+        because it happens while the first event is being pulled; anything above 0
+        is a failure with a 200 already on the wire.
+        """
+        self.requests.append(request)
+        for position, event in enumerate(self.events):
+            if self.stream_error is not None and position == self.stream_error_at:
+                raise self.stream_error
+            yield event
+
+    def embed(self, request: EmbeddingRequest) -> EmbeddingResponse:
+        self.embed_requests.append(request)
+        if self.embed_error is not None:
+            raise self.embed_error
+        return embedding_stub_response(len(request.input))
+
+    def healthcheck(self) -> bool:
+        return True
+
+    def price_key(self, model: str) -> str:
+        return f"{self.name}/{model}"
+
+
+def app_of(client: TestClient) -> FastAPI:
+    """The `FastAPI` behind a test client, with the `ASGIApp` typing narrowed."""
+    app = client.app
+    assert isinstance(app, FastAPI)
+    return app
+
+
+def fresh_breaker(client: TestClient) -> CircuitBreaker:
+    """Put a new breaker on the app this client talks to, and hand it back.
+
+    The per-test isolation for the breaker (a project rule again): the app, its
+    policy and its adapters are built once for the session, and what is replaced
+    per test is the one object that accumulates state.
+    """
+    breaker = CircuitBreaker()
+    app_of(client).state.breaker = breaker
+    return breaker
+
+
+@pytest.fixture(scope="session")
+def fallback_adapters() -> dict[str, FallbackStubAdapter]:
+    """One stub per candidate of `FALLBACK_ALIAS`, keyed by policy provider name."""
+    return {name: FallbackStubAdapter(name=name) for name in FALLBACK_CANDIDATES}
+
+
+@pytest.fixture(scope="session")
+def fallback_app(
+    settings: Settings, fallback_adapters: dict[str, FallbackStubAdapter]
+) -> Iterator[TestClient]:
+    """The shipped app with both candidates' adapters, built once."""
+    with build_chat_client(settings, fallback_adapters) as client:
+        yield client
+
+
+@pytest.fixture
+def fallback_client(
+    fallback_app: TestClient, fallback_adapters: dict[str, FallbackStubAdapter]
+) -> TestClient:
+    """The session app with the stubs reset and a fresh breaker on `app.state`."""
+    for adapter in fallback_adapters.values():
+        adapter.reset()
+    fresh_breaker(fallback_app)
+    return fallback_app
+
+
+@pytest.fixture
+def fallback_breaker(fallback_client: TestClient) -> CircuitBreaker:
+    """This test's breaker, the one the routes behind `fallback_client` read."""
+    breaker = app_of(fallback_client).state.breaker
+    assert isinstance(breaker, CircuitBreaker)
+    return breaker
+
+
+# --- the residency case -------------------------------------------
+#
+# The shipped policy gives an EU tenant exactly ONE permitted candidate for every
+# alias, because `anthropic_eu` is disabled - so it cannot express a fallback
+# that has to stay inside `eu_regions`. This policy can: `EU_TENANT` is an EU
+# tenant whose data class rule allows `us` explicitly, and whose alias lists a US
+# provider BETWEEN two EU ones. The US provider is excluded by the residency
+# clamp alone, it has an adapter registered like the others, and a fallback that
+# re-resolved, widened or walked the adapter set instead of the resolver's tuple
+# would reach it.
+#
+# Written once into a session `tmp_path`, and the app built from it once: the
+# per-test reset is the same stub reset and fresh breaker as above.
+
+EU_TENANT = "cuan"
+EU_ALIAS = "agent-default"
+EU_CLASS = "internal"
+
+EU_FIRST_PROVIDER = "eu_first"
+EU_SECOND_PROVIDER = "eu_second"
+EU_EXCLUDED_PROVIDER = "us_only"
+
+EU_REGION = "eu"
+EU_ALLOWED_REGIONS = ("eu", "self")
+
+EU_POLICY = f"""
+providers:
+  {EU_FIRST_PROVIDER}:
+    kind: anthropic
+    region: {EU_REGION}
+    base_url: https://eu-first.invalid
+  {EU_SECOND_PROVIDER}:
+    kind: openai_compatible
+    region: {EU_REGION}
+    base_url: https://eu-second.invalid
+  {EU_EXCLUDED_PROVIDER}:
+    kind: openai
+    region: us
+    base_url: https://us-only.invalid
+
+eu_regions: [{", ".join(EU_ALLOWED_REGIONS)}]
+
+aliases:
+  {EU_ALIAS}:
+    candidates:
+      - {{ provider: {EU_FIRST_PROVIDER}, model: model-eu-first }}
+      - {{ provider: {EU_EXCLUDED_PROVIDER}, model: model-us-only }}
+      - {{ provider: {EU_SECOND_PROVIDER}, model: model-eu-second }}
+
+tenants:
+  {EU_TENANT}:
+    residency: eu
+    data_class_rules:
+      {EU_CLASS}: {{ allow_regions: [us, eu, self] }}
+    budget_usd_month: "15.00"
+    rate_limit: {{ rpm: 60, tpm: 60000 }}
+"""
+"""A policy an EU tenant can fall back INSIDE. The `us` in `allow_regions` is
+deliberate: it makes the residency clamp the only thing keeping
+`EU_EXCLUDED_PROVIDER` out of the candidate tuple."""
+
+
+@pytest.fixture(scope="session")
+def eu_policy_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """`EU_POLICY` on disk, written once."""
+    path = tmp_path_factory.mktemp("eu-policy") / "routing.yaml"
+    path.write_text(EU_POLICY, encoding="utf-8")
+    return path
+
+
+@pytest.fixture(scope="session")
+def eu_adapters() -> dict[str, FallbackStubAdapter]:
+    """A stub for all three providers, the excluded one included."""
+    return {
+        name: FallbackStubAdapter(name=name)
+        for name in (EU_FIRST_PROVIDER, EU_SECOND_PROVIDER, EU_EXCLUDED_PROVIDER)
+    }
+
+
+@pytest.fixture(scope="session")
+def eu_app(
+    eu_policy_path: Path, eu_adapters: dict[str, FallbackStubAdapter]
+) -> Iterator[TestClient]:
+    """An app on the EU policy with all three adapters, built once."""
+    settings = Settings(api_keys=API_KEYS, routing_policy_path=eu_policy_path)
+    with build_chat_client(settings, eu_adapters) as client:
+        yield client
+
+
+@pytest.fixture
+def eu_client(eu_app: TestClient, eu_adapters: dict[str, FallbackStubAdapter]) -> TestClient:
+    """The EU app with its stubs reset and a fresh breaker on `app.state`."""
+    for adapter in eu_adapters.values():
+        adapter.reset()
+    fresh_breaker(eu_app)
+    return eu_app

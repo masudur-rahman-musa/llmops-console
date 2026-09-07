@@ -43,6 +43,7 @@ from opsconsole.gateway.routes.embeddings import router as embeddings_router
 from opsconsole.gateway.routes.metrics import router as metrics_router
 from opsconsole.gateway.routes.models import router as models_router
 from opsconsole.gateway.routes.redact import router as redact_router
+from opsconsole.providers.breaker import CircuitBreaker
 from opsconsole.providers.factory import build_adapters
 from opsconsole.providers.factory import close_adapters as close_adapters
 from opsconsole.redaction import (
@@ -175,6 +176,14 @@ def create_app(
     resolver's health seam. Pinned by `test_create_app_builds_the_adapter_set`
     and `test_adapters_are_closed_on_shutdown`.
 
+    The circuit breaker is built here for the same reason and is the other half of
+    that seam: one per app, so state accumulated against one app cannot decide
+    another app's routing, and per process rather than shared through Redis. `POST /admin/routing/reload` rebuilds it alongside the adapter set
+    it rebuilds, because the state it holds is keyed by provider names out of the
+    policy that has just been replaced - a reload that renamed or repointed a
+    provider would otherwise leave a breaker open against a name that no longer
+    means what it meant (`test_a_policy_reload_rebuilds_the_breaker`).
+
     `environ` is where the provider keys are read from, injectable for the same
     reason `build_adapters` takes it (#66): a test passes `{}` and no adapter is
     built from a key that happens to be exported in the developer's shell, so a
@@ -202,6 +211,7 @@ def create_app(
     app.state.policy = PolicyStore(resolved.routing_policy_path)
     app.state.provider_environ = os.environ if environ is None else environ
     app.state.adapters = build_adapters(app.state.policy.policy, app.state.provider_environ)
+    app.state.breaker = CircuitBreaker()
     store: RedactionMapStore = (
         RedisRedactionMapStore(build_redis_client(resolved.redis_url))
         if resolved.redis_url is not None

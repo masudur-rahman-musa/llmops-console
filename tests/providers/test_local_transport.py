@@ -146,7 +146,7 @@ def test_the_retry_table_by_status(
 def test_a_read_timeout_is_retried_twice_and_then_raises_retryable(sleeps: SleepRecorder) -> None:
     """Catches an adapter that only handles HTTP statuses: an unwrapped
     `httpx.ReadTimeout` reaching the route is a 500 with a traceback instead of the 502
-    an earlier change's fallback can act on - and a local model that is merely slow is the single
+    the routes' fallback loop can act on - and a local model that is merely slow is the single
     likeliest failure this provider has."""
     steps: list[Step] = [httpx.ReadTimeout]
     adapter, scripted = make_local_adapter(steps, sleep=sleeps)
@@ -297,7 +297,7 @@ def test_an_oversized_provider_body_is_truncated(sleeps: SleepRecorder) -> None:
 def test_a_non_json_success_body_is_a_provider_error(sleeps: SleepRecorder) -> None:
     """Catches the path a reverse proxy takes: a 200 carrying an HTML error page would
     otherwise raise `json.JSONDecodeError` out of the adapter, reaching the route as a 500
-    with a traceback instead of the 502 an earlier change can fall back from."""
+    with a traceback instead of the 502 the routes' fallback loop can move past."""
     transport = httpx.MockTransport(
         lambda request: httpx.Response(200, text="<html>bad gateway</html>")
     )

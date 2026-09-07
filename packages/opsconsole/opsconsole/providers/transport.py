@@ -210,7 +210,9 @@ class ProviderTransport:
         A 429's `retry-after` is deliberately not read: honouring it would let a
         provider hold a gateway worker for as long as it asked, past the read
         timeout this transport fixes. Two short jittered waits, then the caller
-        is told; an earlier change's breaker is what a sustained 429 is supposed to trip. The two delays are pinned exactly by
+        is told; a sustained 429 is what trips `providers/breaker.py`, which
+        counts what this transport gives up on and changes nothing about what it
+        retries. The two delays are pinned exactly by
         `test_backoff_doubles_and_is_jittered`.
         """
         self._sleep(RETRY_BASE_DELAY * (2**attempt) * (0.5 + 0.5 * self._jitter()))

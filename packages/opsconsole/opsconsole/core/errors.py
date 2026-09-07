@@ -95,9 +95,9 @@ class ProviderError(GatewayError):
     something we could not read.
 
     Two attributes beyond the base. `retryable` is the whole point of the class:
-    an earlier change's fallback has to decide whether to try the next candidate without
-    re-parsing a status it can no longer see, so the adapter that knew the status
-    records the verdict here. It is true for 429, any 5xx and a timeout, false for
+    the routes' fallback loop has to decide whether to try the next candidate
+    without re-parsing a status it can no longer see, so the adapter that knew the
+    status records the verdict here. It is true for 429, any 5xx and a timeout, false for
     every other failure: `test_retry_table_by_status` pins the status rows and
     `test_a_timeout_is_retried_and_raises_retryable` the timeout ones.
 

@@ -485,7 +485,7 @@ def test_an_answer_with_usage_but_nothing_to_render_raises() -> None:
 def test_a_response_with_no_choices_raises() -> None:
     """Catches an `IndexError` escaping the mapper as a 500 with a traceback: a server
     that answers 200 with an empty `choices` (llama.cpp does, when every slot is dropped)
-    must leave as the `ProviderError` an earlier change's fallback can read."""
+    must leave as the `ProviderError` the routes' fallback loop reads."""
     payload = load_local_fixture("plain")
     payload["choices"] = []
 

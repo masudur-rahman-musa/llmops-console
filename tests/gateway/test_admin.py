@@ -45,6 +45,7 @@ from opsconsole.core.settings import Settings
 from opsconsole.gateway.app import create_app
 from opsconsole.gateway.routes import admin
 from opsconsole.providers.base import Adapter
+from opsconsole.providers.breaker import MAX_FAILURES, CircuitState
 from opsconsole.routing.errors import AliasUnknown, ResidencyUnavailable
 from opsconsole.routing.policy import DataClass, Policy
 from opsconsole.routing.resolver import MAX_IDENTIFIER_LENGTH, resolve
@@ -514,6 +515,28 @@ def test_a_reload_rebuilds_the_adapter_set_for_the_new_policy(tmp_path: Path) ->
         assert response.json()["providers"] == ["local"]
         assert set(built.app.state.adapters) == {"local"}
         assert "anthropic" not in built.app.state.adapters
+
+
+def test_a_policy_reload_rebuilds_the_breaker(tmp_path: Path) -> None:
+    """Catches a reload that rebuilds the adapter set and leaves the breaker behind.
+    Both are keyed by the provider names of the policy that was just replaced, so a
+    reload that renamed or repointed a provider would leave a breaker open against a
+    name that no longer means what it meant - a provider the operator has just fixed
+    by editing the file, refused for the next thirty seconds by state about the old
+    one. The breaker is opened here first, so a kept breaker reads OPEN afterwards
+    and only a rebuilt one reads CLOSED."""
+    with admin_app_on(tmp_path, WITH_ANTHROPIC_KEY) as built:
+        breaker = built.app.state.breaker
+        for _ in range(MAX_FAILURES):
+            breaker.record_failure("anthropic")
+        assert breaker.state("anthropic") is CircuitState.OPEN
+
+        response = built.client.post(ADMIN_ROUTING_RELOAD, headers=ADMIN_HEADERS)
+        assert response.status_code == 200, response.text
+
+        rebuilt = built.app.state.breaker
+        assert rebuilt is not breaker
+        assert rebuilt.state("anthropic") is CircuitState.CLOSED
 
 
 def test_a_reload_leaves_the_new_adapter_set_callable(tmp_path: Path) -> None:

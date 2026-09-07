@@ -59,18 +59,23 @@ from typing import Literal, cast
 from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from opsconsole.core.metrics import label_resolution, record_redactions, record_tokens
+from opsconsole.core.errors import ProviderError
+from opsconsole.core.metrics import record_redactions, record_tokens
 from opsconsole.core.tracing import SpanAttributes, annotate, stage_span
 from opsconsole.gateway.context import Context
 from opsconsole.gateway.routes.chat import (
-    CACHE_STATUS_MISS,
     ROUTE_SPAN,
+    absorb_failure,
     gateway_headers,
+    health_seam,
+    label_candidate,
     provider_span_name,
-    resolution_attributes,
+    record_served,
 )
 from opsconsole.gateway.routes.redact import REDACT_SPAN, redact_or_reject, redaction_applies
 from opsconsole.providers.base import Adapter, EmbeddingAdapter, EmbeddingRequest
+from opsconsole.providers.breaker import CircuitBreaker
+from opsconsole.routing.errors import AllProvidersUnavailable
 from opsconsole.routing.policy import PolicyStore
 from opsconsole.routing.resolver import resolve
 
@@ -237,17 +242,27 @@ def create_embeddings(
     body: EmbeddingsRequest,
     response: Response,
 ) -> EmbeddingsResponse:
-    """Resolve the alias, embed on the first allowed provider that can, answer OpenAI-shaped.
+    """Resolve the alias, then walk the allowed providers that can embed until one does.
 
-    The health seam is "this provider has an embedding adapter", not "this
-    provider has an adapter": every provider in the policy can chat and only some
-    can embed, so an alias whose candidates are all chat-only has to be the
-    resolver's typed 503 `ALL_PROVIDERS_FAILED` rather than an `AttributeError`
-    served as a 500 with no code (an earlier change decision B,
-    `test_a_candidate_without_an_embedding_adapter_is_503`). Residency is decided
-    inside `resolve()` and therefore BEFORE that seam, so a request no region
-    allows is a 451 and not a 503
+    The health seam is "this provider has an embedding adapter AND its breaker
+    allows it", not "this provider has an adapter": every provider in the policy
+    can chat and only some can embed, so an alias whose candidates are all
+    chat-only has to be the resolver's typed 503 `ALL_PROVIDERS_FAILED` rather
+    than an `AttributeError` served as a 500 with no code (an earlier change decision B,
+    `test_a_candidate_without_an_embedding_adapter_is_503`). The breaker half is
+    the same one the chat route uses, built by the same `health_seam`, so a
+    provider taken out of rotation is out of rotation on both
+    (`test_the_embeddings_route_skips_a_provider_whose_breaker_is_open`).
+    Residency is decided inside `resolve()` and therefore BEFORE that seam, so a
+    request no region allows is a 451 and not a 503
     (`test_an_eu_tenant_on_a_us_only_alias_is_451_with_no_call`).
+
+    The fallback loop is the chat route's, over the tuple `resolve()` answered and
+    never a second resolution: a retryable failure moves to the next candidate,
+    anything else is returned from the one that raised it
+    (`test_the_embeddings_route_falls_back_on_a_retryable_failure`). Redaction
+    happens once, before the loop, so a fallback sends the second provider the
+    same placeholders and not a second numbering.
 
     Redaction happens between the resolution and the outbound call, so the adapter
     is handed placeholders and never the raw inputs - the tests read the stub's
@@ -260,6 +275,7 @@ def create_embeddings(
     """
     store: PolicyStore = request.app.state.policy
     adapters: Mapping[str, Adapter] = request.app.state.adapters
+    breaker: CircuitBreaker = request.app.state.breaker
     scope = request.scope
 
     with stage_span(scope, ROUTE_SPAN):
@@ -268,20 +284,12 @@ def create_embeddings(
             context.tenant,
             body.model,
             context.data_class.value,
-            is_healthy=lambda provider: isinstance(adapters.get(provider), EmbeddingAdapter),
+            is_healthy=health_seam(
+                breaker,
+                lambda provider: isinstance(adapters.get(provider), EmbeddingAdapter),
+            ),
         )
-        chosen = candidates[0]
-    annotate(scope, resolution_attributes(body.model, chosen))
-    label_resolution(
-        scope,
-        alias=body.model,
-        provider=chosen.provider,
-        region=chosen.region,
-        cache=CACHE_STATUS_MISS,
-    )
-    # The seam above is what makes this cast safe: the resolver only returned
-    # providers whose adapter satisfies the protocol.
-    adapter = cast(EmbeddingAdapter, adapters[chosen.provider])
+    label_candidate(scope, body.model, candidates[0])
 
     texts = body.texts
     redacted = False
@@ -292,9 +300,37 @@ def create_embeddings(
         record_redactions(tenant=context.tenant, counts=batch.counts)
     annotate(scope, SpanAttributes(redacted=redacted))
 
-    with stage_span(scope, provider_span_name(chosen.provider)):
-        answer = adapter.embed(EmbeddingRequest(model=chosen.model, input=texts))
+    last = len(candidates) - 1
+    for attempt, chosen in enumerate(candidates):
+        label_candidate(scope, body.model, chosen)
+        # The seam above is what makes this cast safe: the resolver only returned
+        # providers whose adapter satisfies the protocol.
+        adapter = cast(EmbeddingAdapter, adapters[chosen.provider])
+        try:
+            with stage_span(scope, provider_span_name(chosen.provider)):
+                answer = adapter.embed(EmbeddingRequest(model=chosen.model, input=texts))
+        except ProviderError as exc:
+            absorb_failure(breaker, chosen.provider, exc)
+            if not exc.retryable or attempt == last:
+                raise
+            continue
+        break
+    else:
+        # Unreachable while `resolve()` keeps its contract, and stated as its own
+        # typed error for the reason the chat route states it: a resolver that
+        # one day answered an empty tuple is a 503, never a 500 with no code.
+        raise AllProvidersUnavailable(
+            f"no candidate was tried for tenant {context.tenant!r}, alias {body.model!r}"
+        )
 
+    record_served(
+        scope,
+        breaker,
+        tenant=context.tenant,
+        alias=body.model,
+        chosen=chosen,
+        failed=attempt,
+    )
     record_tokens(
         tenant=context.tenant,
         provider=chosen.provider,

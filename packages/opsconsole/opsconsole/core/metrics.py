@@ -17,16 +17,17 @@ platform collectors nobody chose. Both halves are pinned by
 `test_a_second_app_registers_no_duplicate_family` and
 `test_the_exposed_family_names_are_exactly_the_declared_set`.
 
-**Why eleven families exist when six carry data.** `gateway_cache_hits_total`,
-`gateway_cost_usd_total`, `gateway_fallbacks_total`, `gateway_circuit_state` and
-`gateway_budget_ratio` are the design names whose subsystems are later plans (the
-breaker in an earlier change, the cache and the ledger in an earlier change, budgets in an earlier change).
-Declaring them now means those plans add a VALUE rather than a family, exactly as
-an earlier change declared `cache`, `cost_usd` and `fallback_count` on `SpanAttributes`
-without setting them. They are registered and empty, not registered and zeroed: a
-zero cost booked on every request would draw a confident flat line on a dashboard
-for a subsystem that does not exist. Pinned by
-`test_the_unfed_families_are_registered_and_carry_no_samples`.
+**Why eleven families exist when eight carry data.** `gateway_cache_hits_total`,
+`gateway_cost_usd_total` and `gateway_budget_ratio` are the design names whose
+subsystems are later plans (the cache and the ledger in an earlier change, budgets in plan
+15). Declaring them now means those plans add a VALUE rather than a family,
+exactly as an earlier change declared `cache`, `cost_usd` and `fallback_count` on
+`SpanAttributes` without setting them. They are registered and empty, not
+registered and zeroed: a zero cost booked on every request would draw a confident
+flat line on a dashboard for a subsystem that does not exist. Pinned by
+`test_the_unfed_families_are_registered_and_carry_no_samples`, which is where the
+list lives - an earlier change moved `gateway_fallbacks_total` and `gateway_circuit_state`
+out of it by filling them, and each later plan moves its own.
 
 `gateway_eval_*` is deliberately not here. the design has the nightly job PUSH
 those gauges to a Pushgateway, so they are not this process's to declare.
@@ -108,10 +109,11 @@ PROVIDER_FAILURE_CODES = frozenset({ErrorCode.PROVIDER_ERROR})
 """The typed codes that name a provider, and therefore move
 `gateway_provider_errors_total`.
 
-One member today because one failure today knows which provider it came from.
-`ALL_PROVIDERS_FAILED` is raised by the resolver before any provider is chosen,
-so it has no provider to label with; an earlier change's breaker is what gives it one, and
-it joins this set there. A refusal is deliberately not here: a 451 is a residency
+One member, and it stays one. `ALL_PROVIDERS_FAILED` is raised by the resolver
+BEFORE any provider is chosen - the breaker's contribution is to make the seam
+refuse more often, not to name a provider - so it has no provider to label with
+and would need the empty one, which is a series nobody can act on (an earlier change
+decision E). A refusal is deliberately not here: a 451 is a residency
 decision, not a provider outage, and counting it as one would fire the design's
 provider panel on a request no provider ever saw
 (`test_a_residency_refusal_increments_the_violation_counter`)."""
@@ -177,14 +179,15 @@ COST_USD = Counter(
 
 FALLBACKS = Counter(
     "gateway_fallbacks_total",
-    "Requests served by a candidate after an earlier one failed. Fed by plan 10.",
+    "Requests served by a candidate after an earlier one failed, by tenant, alias and "
+    "the provider that actually served.",
     ("tenant", "alias", "provider"),
     registry=_registry,
 )
 
 CIRCUIT_STATE = Gauge(
     "gateway_circuit_state",
-    "Breaker state per provider: 0 closed, 1 half-open, 2 open. Fed by plan 10.",
+    "Breaker state per provider: 0 closed, 1 half-open, 2 open.",
     ("provider",),
     registry=_registry,
 )
@@ -350,6 +353,54 @@ def record_tokens(
             TOKENS.labels(
                 tenant=tenant, provider=provider, model=model, direction=DIRECTION_OUT
             ).inc(completion_tokens)
+
+
+def record_fallback(*, tenant: str, alias: str, provider: str) -> None:
+    """Count one request that an earlier candidate failed to serve.
+
+    Once per REQUEST, not once per attempt: a request that walked three
+    candidates is one fallback, so the counter answers "how many requests did not
+    get their first choice" rather than "how many provider calls were made"
+    (`test_a_fallback_is_counted_once_against_the_serving_provider`). A request
+    that needed none moves nothing at all, which is what keeps the panel from
+    showing a permanent 100%
+    (`test_a_request_that_needed_no_fallback_counts_none`).
+
+    `provider` is the one that SERVED, not the one that failed, which is a
+    deliberate deviation from the design's `(from, to)` labels recorded in
+    a design note. What this family is for is attributing the traffic that actually
+    left, per tenant, which is what the console and an earlier change's budgets read.
+
+    Where the FAILED provider shows up, precisely, because the obvious answer is
+    wrong: on the trace, as its own `provider:{name}` stage span on a request
+    whose `provider` attribute names a different one
+    (`test_the_failed_candidate_keeps_its_own_provider_span`), and on
+    `gateway_circuit_state`, which opens for it after five failures in the window.
+    NOT on `gateway_provider_errors_total` - that is moved by `record_failure`
+    from the error handler, and a fallback that succeeds returns 200 and reaches
+    no handler at all. So a provider shedding 100% of its traffic behind a working
+    fallback moves this counter and the gauge, and leaves the provider-error
+    counter flat.
+    """
+    with _guarded("fallback counts"):
+        FALLBACKS.labels(tenant=tenant, alias=alias, provider=provider).inc()
+
+
+def record_circuit_state(*, provider: str, state: int) -> None:
+    """Publish one provider's breaker state, 0 closed, 1 half-open, 2 open.
+
+    Called for every provider a route CONSULTS, not only for one that opens. A
+    gauge that appeared when a breaker opened would leave an alert on
+    `gateway_circuit_state != 0` blind to every provider until the moment it
+    broke, and a dashboard with no series to draw
+    (`test_the_circuit_gauge_reads_open_for_the_failed_provider_and_closed_for_the_other`).
+
+    The values are `CircuitState`'s own, passed as the int the enum already is:
+    the names live in `providers/breaker.py`, and importing them here would point
+    `core/` at a provider module it otherwise knows nothing about.
+    """
+    with _guarded("circuit state"):
+        CIRCUIT_STATE.labels(provider=provider).set(state)
 
 
 def record_redactions(*, tenant: str, counts: Mapping[str, int]) -> None:

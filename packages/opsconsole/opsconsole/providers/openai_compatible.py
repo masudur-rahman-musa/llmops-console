@@ -5,7 +5,8 @@ One class serves every provider whose `kind` is `openai_compatible`, because
 this adapter worth having is not a second vendor: it is the `self` region. A
 tenant whose data class allows the box we run ourselves and nothing else has no
 other route, so this module is the residency-only path and its failures are
-final rather than something an earlier change can fall back from.
+final: the routes' fallback loop walks the resolver's own tuple, and for such a
+tenant that tuple has one entry.
 
 The mapping and the transport are kept apart, as in the adapter next door. Every
 module-level mapping function here is pure. `grep -nE "^def [a-z]"` on this file
@@ -568,7 +569,7 @@ def from_openai_embedding(payload: Mapping[str, Any]) -> EmbeddingResponse:
 
     An empty `data` is refused rather than answered as an empty list, which is
     the twin of `from_openai`'s no-choices guard and reaches the caller as a 502
-    an earlier change can fall back from (`test_a_response_with_no_data_raises`). The
+    the routes' fallback loop can move past (`test_a_response_with_no_data_raises`). The
     vectors themselves are checked by `_checked_vector`, because every guard in
     this function reads the ENVELOPE and a well-formed envelope can carry numbers
     no client can use.
@@ -698,8 +699,8 @@ class OpenAICompatibleAdapter:
         if len(answer.embeddings) != len(request.input):
             # Not retryable, and deliberately not for the usual reason - a server
             # that dropped a slot under load probably would answer completely on
-            # a second attempt. `retryable` is what an earlier change's fallback reads to
-            # decide whether to try a DIFFERENT provider, and for an embedding
+            # a second attempt. `retryable` is what the routes' fallback loop
+            # reads to decide whether to try a DIFFERENT provider, and for an embedding
             # that is the one recovery that must never happen: another provider
             # means another vector space, so the caller gets plausible numbers
             # that do not compare against anything it has already stored
@@ -739,9 +740,13 @@ class OpenAICompatibleAdapter:
     def healthcheck(self) -> bool:
         """Always true, and it calls nothing.
 
-        The seam exists so an earlier change's circuit breaker has somewhere to answer
-        from. Probing here would load a slot on a CPU box for every readiness
-        probe (`test_healthcheck_is_true_without_calling_the_provider`).
+        The seam is still unfilled, and naming what filled it elsewhere would be
+        wrong: `providers/breaker.py` learns from the outcomes of REAL requests,
+        through the routes' `is_healthy`, and calls this method nowhere. So the
+        `provider` readiness probe still proves only that an adapter was built.
+
+        Probing here would load a slot on a CPU box for every readiness probe
+        (`test_healthcheck_is_true_without_calling_the_provider`).
         """
         return True
 

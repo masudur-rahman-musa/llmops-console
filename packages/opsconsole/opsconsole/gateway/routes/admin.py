@@ -50,6 +50,7 @@ from opsconsole.core.errors import Unauthorized
 from opsconsole.core.settings import Settings
 from opsconsole.gateway.auth import bearer_key
 from opsconsole.providers.base import Adapter
+from opsconsole.providers.breaker import CircuitBreaker
 from opsconsole.providers.factory import build_adapters, close_adapters
 from opsconsole.routing.errors import (
     AliasUnknown,
@@ -235,6 +236,14 @@ def reload_routing(request: Request) -> ReloadResult:
     to escape as a 500: the file is this endpoint's input, so a bad one is a
     request-level validation failure rather than a gateway fault (an earlier change
     decision D, `test_an_invalid_policy_on_reload_is_422_naming_the_field`).
+
+    The circuit breaker is rebuilt with the adapter set, and for the same reason:
+    both are keyed by the provider names of the policy that has just been
+    replaced, so a reload that renamed or repointed a provider would otherwise
+    leave a breaker open against a name that no longer means what it meant
+    (`test_a_policy_reload_rebuilds_the_breaker`). The cost is that a reload
+    forgets a genuinely failing provider and the seam re-learns it over the next
+    five requests, which is the cheaper of the two mistakes.
     """
     store: PolicyStore = request.app.state.policy
     try:
@@ -244,5 +253,6 @@ def reload_routing(request: Request) -> ReloadResult:
 
     previous: dict[str, Adapter] = request.app.state.adapters
     request.app.state.adapters = build_adapters(store.policy, request.app.state.provider_environ)
+    request.app.state.breaker = CircuitBreaker()
     close_adapters(previous)
     return ReloadResult(reloaded=True, providers=tuple(sorted(request.app.state.adapters)))

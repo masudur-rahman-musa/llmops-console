@@ -60,7 +60,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.types import Scope
 
 from opsconsole.core.errors import GatewayError, ProviderError
-from opsconsole.core.metrics import label_resolution, record_redactions, record_tokens
+from opsconsole.core.metrics import (
+    label_resolution,
+    record_circuit_state,
+    record_fallback,
+    record_redactions,
+    record_tokens,
+)
 from opsconsole.core.tracing import SpanAttributes, annotate, stage_span
 from opsconsole.gateway.context import Context, RequestContext
 from opsconsole.gateway.errors import error_body
@@ -86,6 +92,8 @@ from opsconsole.providers.base import (
     Usage,
     UsageTotal,
 )
+from opsconsole.providers.breaker import CircuitBreaker
+from opsconsole.routing.errors import AllProvidersUnavailable
 from opsconsole.routing.policy import Policy, PolicyStore
 from opsconsole.routing.resolver import Resolved, resolve
 
@@ -438,6 +446,111 @@ def provider_span_name(provider: str) -> str:
     return f"{PROVIDER_SPAN_PREFIX}{provider}"
 
 
+def health_seam(
+    breaker: CircuitBreaker, has_adapter: Callable[[str], bool]
+) -> Callable[[str], bool]:
+    """The `is_healthy` the routes hand `resolve()`: an adapter exists AND it is allowed.
+
+    Both routes build it here rather than each writing the conjunction, because a
+    route that asked only its own half would be the bug this seam exists to
+    prevent: an embeddings route still dialling an open provider while the chat
+    route respected it (`test_the_embeddings_route_skips_a_provider_whose_breaker_is_open`).
+    `has_adapter` is the half that differs - "an adapter exists" for a completion,
+    "an EMBEDDING adapter exists" for an embedding.
+
+    "May we dial this" is asked as `breaker.allows`, never as a state comparison
+    written out here, so there is exactly one definition of it and a future
+    refinement of `allows` reaches the routes rather than only the breaker's own
+    tests.
+
+    A breaker consulted HERE, and not inside the fallback loop, is what makes a
+    request whose every candidate is open the resolver's 503 with no provider
+    dialled at all
+    (`test_every_breaker_open_is_the_resolvers_503_with_no_provider_called`).
+
+    Publishing the gauge from here is what gives every provider in rotation a
+    series rather than only the ones that have broken
+    (`test_the_circuit_gauge_reads_open_for_the_failed_provider_and_closed_for_the_other`).
+    The seam is called once per permitted candidate by `resolve()`, so the cost is
+    one gauge set per candidate and the label is a policy provider name.
+    """
+
+    def healthy(provider: str) -> bool:
+        record_circuit_state(provider=provider, state=int(breaker.state(provider)))
+        return has_adapter(provider) and breaker.allows(provider)
+
+    return healthy
+
+
+def absorb_failure(breaker: CircuitBreaker, provider: str, error: ProviderError) -> None:
+    """Book one candidate's failure against its breaker, for a RETRYABLE failure only.
+
+    A 4xx and an unreadable body are not evidence about the provider - they are
+    evidence about the request - so counting them would take a healthy provider out
+    of rotation over a caller's own mistake
+    (`test_a_non_retryable_failure_stops_at_the_first_candidate`). The caller
+    re-raises a non-retryable one; this only decides what the breaker learns.
+    """
+    if not error.retryable:
+        return
+    breaker.record_failure(provider)
+    record_circuit_state(provider=provider, state=int(breaker.state(provider)))
+
+
+def record_served(
+    scope: Scope, breaker: CircuitBreaker, *, tenant: str, alias: str, chosen: Resolved, failed: int
+) -> None:
+    """Close the loop on the candidate that served: the breaker, the counter, the span.
+
+    On a STREAM this runs when the first event arrives, not when the last one does,
+    because that is where the route hands the response back. The consequence is
+    narrow and worth naming: a half-open provider that opens a stream and then dies
+    mid-answer has its trial recorded as a success and its breaker closed. Decision
+    C is what makes that the honest reading - a failure after the first frame is
+    not a fallback and not this loop's to absorb - and a closed breaker costs one
+    more request before the next five failures re-open it.
+
+    `failed` is how many candidates were tried and failed before this one, so it is
+    the fallback count the design names and zero on an ordinary request. Both the
+    counter and the attribute move once per REQUEST rather than once per attempt
+    (`test_a_fallback_is_counted_once_against_the_serving_provider`,
+    `test_a_fallback_is_recorded_on_the_trace_as_a_count`), and neither is touched
+    at all when nothing fell back
+    (`test_a_request_that_needed_no_fallback_counts_none`).
+    """
+    breaker.record_success(chosen.provider)
+    record_circuit_state(provider=chosen.provider, state=int(breaker.state(chosen.provider)))
+    if failed == 0:
+        return
+    record_fallback(tenant=tenant, alias=alias, provider=chosen.provider)
+    annotate(scope, SpanAttributes(fallback_count=failed))
+
+
+def label_candidate(scope: Scope, alias: str, chosen: Resolved) -> None:
+    """Attribute this request to one candidate, on the span and on the counter.
+
+    Called for `candidates[0]` as soon as `resolve()` answers, and again for each
+    candidate the fallback loop moves to, so the labels a finished request carries
+    name the provider that actually served it. Both writes overwrite rather than
+    accumulate.
+
+    The FIRST call has to happen before redaction, not inside the loop, and that is
+    the whole reason this is a function. Redaction can refuse a request - a message
+    over `MAX_REDACTION_INPUT_CHARS` is a 422 - and labelling only inside the loop
+    would book every such refusal under an empty `alias`, `provider` and `region`,
+    so the design's per-alias error panel would show nothing during a redaction-side
+    incident (`test_a_refused_request_is_still_attributed_to_its_resolved_candidate`).
+    """
+    annotate(scope, resolution_attributes(alias, chosen))
+    label_resolution(
+        scope,
+        alias=alias,
+        provider=chosen.provider,
+        region=chosen.region,
+        cache=CACHE_STATUS_MISS,
+    )
+
+
 def resolution_attributes(alias: str, resolved: Resolved) -> SpanAttributes:
     """What the resolver decided, as span labels.
 
@@ -754,24 +867,39 @@ def create_chat_completion(
     body: ChatCompletionRequest,
     response: Response,
 ) -> ChatCompletion | StreamingResponse:
-    """Resolve the alias, call the first allowed healthy provider, answer OpenAI-shaped.
+    """Resolve the alias, then walk the allowed candidates until one answers.
 
-    A provider with no adapter - its key unset, or its kind not yet built - is
-    invisible here, through the resolver's own health seam rather than a second
-    unavailability path. So a request whose only allowed
-    candidate has no adapter is the resolver's 503 `ALL_PROVIDERS_FAILED`
-    (`test_no_adapter_for_any_candidate_is_503`), which is the path an earlier change's
-    circuit breaker fills in.
+    A provider with no adapter - its key unset, or its kind not yet built - and a
+    provider whose breaker is open are both invisible here, through the resolver's
+    own health seam rather than through a second unavailability path (an earlier change
+    decision E). So a request with no usable candidate at all is the resolver's
+    503 `ALL_PROVIDERS_FAILED` with nothing dialled
+    (`test_no_adapter_for_any_candidate_is_503`,
+    `test_every_breaker_open_is_the_resolvers_503_with_no_provider_called`).
 
-    The first candidate is called and its failure is returned. There is no
-    fallback in this plan: `ProviderError` carries `retryable` for an earlier change to
-    read, and until then a provider failure is one 502
-    (`test_provider_failure_is_502_without_the_provider_message`).
+    The loop walks the tuple `resolve()` ANSWERED, in order, and never resolves
+    again. That is the whole residency argument: the list was filtered by region,
+    by data class and by `enabled` before this function saw it, so there is no
+    path on which a fallback reaches a provider residency excluded
+    (`test_an_eu_tenants_fallback_stays_inside_the_eu_regions`).
 
-    A streamed request takes the same path to the same provider and differs only
-    in what it is handed back. The resolution happens first either way, so an
-    unknown alias, a residency refusal and a candidate with no adapter are the
-    ordinary typed errors on both
+    It moves to the next candidate on a RETRYABLE `ProviderError` and on nothing
+    else. A 4xx cannot succeed anywhere, so it is returned from the first
+    candidate and books nothing against its breaker
+    (`test_a_non_retryable_failure_stops_at_the_first_candidate`); when every
+    candidate fails retryably the caller gets the LAST one's 502, because that is
+    the provider an operator would go and look at
+    (`test_every_candidate_failing_retryably_is_the_last_ones_502`).
+
+    A streamed request takes the same loop and differs only in where the window
+    closes. `_streamed` pulls the first event before this route returns, so a
+    failure up to that point is still un-sent and falls back like any other
+    (`test_a_stream_failing_before_its_first_event_falls_back`); after it the 200
+    and the first frames are on the wire, and the existing error frame is the only
+    honest answer (an earlier change decision C,
+    `test_a_stream_failing_after_its_first_event_is_one_error_frame_and_no_fallback`).
+    The resolution happens first either way, so an unknown alias, a residency
+    refusal and a candidate with no adapter are the ordinary typed errors on both
     (`test_a_routing_failure_on_a_stream_is_the_ordinary_typed_error`).
 
     `response_model=None` because the return type is a union: FastAPI would
@@ -785,6 +913,7 @@ def create_chat_completion(
     """
     store: PolicyStore = request.app.state.policy
     adapters: Mapping[str, Adapter] = request.app.state.adapters
+    breaker: CircuitBreaker = request.app.state.breaker
     scope = request.scope
 
     with stage_span(scope, ROUTE_SPAN):
@@ -793,39 +922,63 @@ def create_chat_completion(
             context.tenant,
             body.model,
             context.data_class.value,
-            is_healthy=lambda provider: provider in adapters,
+            is_healthy=health_seam(breaker, lambda provider: provider in adapters),
         )
-        chosen = candidates[0]
-    annotate(scope, resolution_attributes(body.model, chosen))
-    label_resolution(
-        scope,
-        alias=body.model,
-        provider=chosen.provider,
-        region=chosen.region,
-        cache=CACHE_STATUS_MISS,
-    )
-    adapter = adapters[chosen.provider]
+    label_candidate(scope, body.model, candidates[0])
 
     outbound, redacted = _redacted(scope, store.policy, context, body)
     annotate(scope, SpanAttributes(redacted=redacted))
-    headers = gateway_headers(chosen, context.trace_id, redacted=redacted)
 
-    with stage_span(scope, provider_span_name(chosen.provider)):
+    last = len(candidates) - 1
+    for attempt, chosen in enumerate(candidates):
+        label_candidate(scope, body.model, chosen)
+        headers = gateway_headers(chosen, context.trace_id, redacted=redacted)
+        try:
+            with stage_span(scope, provider_span_name(chosen.provider)):
+                if body.stream:
+                    streamed = _streamed(
+                        adapters[chosen.provider],
+                        outbound,
+                        chosen,
+                        headers,
+                        _token_sink(context.tenant, chosen),
+                    )
+                else:
+                    answer = adapters[chosen.provider].chat(to_neutral(outbound, chosen.model))
+        except ProviderError as exc:
+            absorb_failure(breaker, chosen.provider, exc)
+            if not exc.retryable or attempt == last:
+                raise
+            continue
+
+        record_served(
+            scope,
+            breaker,
+            tenant=context.tenant,
+            alias=body.model,
+            chosen=chosen,
+            failed=attempt,
+        )
         if body.stream:
-            return _streamed(
-                adapter, outbound, chosen, headers, _token_sink(context.tenant, chosen)
-            )
-        answer = adapter.chat(to_neutral(outbound, chosen.model))
+            return streamed
+        record_tokens(
+            tenant=context.tenant,
+            provider=chosen.provider,
+            model=chosen.model,
+            prompt_tokens=answer.usage.prompt_tokens,
+            completion_tokens=answer.usage.completion_tokens,
+        )
+        response.headers.update(headers)
+        return to_wire(answer, body.model)
 
-    record_tokens(
-        tenant=context.tenant,
-        provider=chosen.provider,
-        model=chosen.model,
-        prompt_tokens=answer.usage.prompt_tokens,
-        completion_tokens=answer.usage.completion_tokens,
+    # Unreachable while `resolve()` keeps its contract: it raises rather than
+    # answering an empty tuple, and the last candidate's failure is re-raised
+    # above. Stated as the resolver's own typed error rather than as an
+    # assertion, so a future resolver that did answer empty is a 503 and not a
+    # 500 with no code.
+    raise AllProvidersUnavailable(
+        f"no candidate was tried for tenant {context.tenant!r}, alias {body.model!r}"
     )
-    response.headers.update(headers)
-    return to_wire(answer, body.model)
 
 
 def _token_sink(tenant: str, chosen: Resolved) -> Callable[[Usage], None]:

@@ -1,7 +1,10 @@
 """Turning (tenant, alias, data class) into an ordered candidate list.
 
 A pure function over a policy snapshot: no I/O, no provider calls, no state. The
-one seam is `is_healthy`, which the circuit breaker fills in a later plan.
+one seam is `is_healthy`, which the routes fill with "an adapter exists AND
+`providers/breaker.py` allows it". The breaker stays out of this module on
+purpose: mutable state inside this function is what would stop the residency
+property test being a proof.
 
 Residency is deny by default and the filter only ever narrows. There is no
 branch that adds a region back, which is what makes
@@ -49,7 +52,12 @@ class Resolved(BaseModel):
 
 
 def _always_healthy(provider: str) -> bool:
-    """The default health seam. The circuit breaker replaces it in a later plan."""
+    """The default health seam, for a caller that has no health to report.
+
+    The routes replace it with `gateway.routes.chat.health_seam`; the admin view
+    and `/v1/models` deliberately keep this one, so an operator's catalogue does
+    not flicker with a breaker.
+    """
     return True
 
 

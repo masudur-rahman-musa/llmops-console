@@ -30,8 +30,10 @@ The provider probe is the exception to that last rule, and it is honest about it
 here rather than in a plan file: `Adapter.healthcheck()` currently answers True
 without calling out, so today this probe proves only that at least one adapter
 was BUILT - which is what tells an operator that no provider key reached the
-process. An earlier change's circuit breaker is what gives it teeth; until then, read a
-green `provider` as "the gateway has somewhere to send a request", not as "a
+process. The circuit breaker did NOT change that: it learns from the outcomes of
+real requests through the routes' `is_healthy` seam and calls `healthcheck()`
+nowhere, so a provider it has taken out of rotation still reads green here. Read
+a green `provider` as "the gateway has somewhere to send a request", not as "a
 provider answered".
 
 Registration is configured-only: a store probe exists when

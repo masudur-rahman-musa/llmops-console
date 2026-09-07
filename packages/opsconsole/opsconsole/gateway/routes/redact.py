@@ -307,9 +307,10 @@ def filed_map_id(store: RedactionMapStore, tenant: str, mapping: Mapping[str, st
     (`test_a_store_that_cannot_be_reached_is_502_with_a_typed_code`,
     `test_a_store_failure_does_not_put_the_clients_words_in_front_of_a_caller`).
 
-    `retryable=True`: an unreachable Redis is the transient class, and an earlier change
-    reads that flag rather than re-deriving the verdict from a status it can no
-    longer see.
+    `retryable=True` classifies the failure rather than asking for anything: an
+    unreachable Redis is the transient class. Nothing acts on it here - this route
+    has one store and no second candidate to move to - and the routes' fallback
+    loop reads the flag on a PROVIDER call, which this is not.
     """
     try:
         return store.put(tenant, mapping)

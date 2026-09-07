@@ -58,16 +58,23 @@ from opsconsole.providers.base import (
     TextDelta,
     UsageTotal,
 )
+from opsconsole.providers.breaker import MAX_FAILURES as BREAKER_MAX_FAILURES
 from opsconsole.routing.resolver import MAX_IDENTIFIER_LENGTH
 
 from .conftest import (
     CHAT,
+    FALLBACK_ALIAS,
+    FALLBACK_CLASS,
+    FALLBACK_TENANT,
+    FIRST_PROVIDER,
     NO_PROVIDER_KEYS,
+    SECOND_PROVIDER,
     STREAM_FRAGMENTS,
     STREAM_USAGE,
     STUB_EMBEDDING_USAGE,
     STUB_USAGE,
     TEST_KEYS,
+    FallbackStubAdapter,
     MetricDelta,
     StubAdapter,
     assert_error_body,
@@ -77,6 +84,7 @@ from .conftest import (
     embeddings_body,
     post_chat,
     post_embeddings,
+    retryable_error,
     stub_response,
 )
 
@@ -92,6 +100,8 @@ TOKENS = "gateway_tokens_total"
 REDACTIONS = "gateway_redactions_total"
 PROVIDER_ERRORS = "gateway_provider_errors_total"
 RESIDENCY_VIOLATIONS = "gateway_residency_violations_total"
+FALLBACKS = "gateway_fallbacks_total"
+CIRCUIT_STATE = "gateway_circuit_state"
 
 LATENCY_BUCKET = f"{LATENCY}_bucket"
 LATENCY_COUNT = f"{LATENCY}_count"
@@ -104,20 +114,24 @@ FED_FAMILIES = (
     REDACTIONS,
     PROVIDER_ERRORS,
     RESIDENCY_VIOLATIONS,
+    FALLBACKS,
+    CIRCUIT_STATE,
 )
 
 UNFED_FAMILIES = (
     "gateway_cache_hits_total",
     "gateway_cost_usd_total",
-    "gateway_fallbacks_total",
-    "gateway_circuit_state",
     "gateway_budget_ratio",
 )
+"""The families still DECLARED AND EMPTY, which shrinks by one plan's worth each
+time a subsystem lands: an earlier change filled `gateway_fallbacks_total` and
+`gateway_circuit_state` and moved both above. The count below
+does not change - a plan here adds a value, never a family."""
 
 DECLARED_FAMILIES = frozenset(FED_FAMILIES) | frozenset(UNFED_FAMILIES)
 
 DECLARED_FAMILY_COUNT = 11
-"""Six fed with data plus five declared and empty. The plan's own number, so a
+"""Eight fed with data plus three declared and empty. The plan's own number, so a
 family added or dropped fails here as well as in the set comparison."""
 
 # The `le` values decision H fixes, in the order and the spelling
@@ -419,13 +433,13 @@ def test_the_exposed_family_names_are_exactly_the_declared_set(
 def test_the_unfed_families_are_registered_and_carry_no_samples(
     gateway_client: TestClient, chat_client: TestClient, metrics: MetricDelta
 ) -> None:
-    """Names the five families an earlier change fill in, and asserts both halves.
+    """Names the three families an earlier change fill in, and asserts both halves.
     Catches a plan that has to ADD the family rather than a value (the half a set
     comparison already sees), and catches a placeholder emission - a zero cost booked on
     every request, a `hit`/`miss` counter incremented before any cache exists - which
     would draw a confident flat line on a dashboard for a subsystem that does not exist
     yet. The served request is what makes the second half mean something: samples were
-    being written while these five stayed empty."""
+    being written while these three stayed empty."""
     assert post_chat(chat_client, chat_body(model=ALIAS)).status_code == 200
 
     body = scrape(gateway_client).text
@@ -882,3 +896,94 @@ def test_a_second_app_registers_no_duplicate_family(
     assert family_names(metrics_registry) == before
     assert type_names(first_body) == set(DECLARED_FAMILIES)
     assert type_names(second_body) == set(DECLARED_FAMILIES)
+
+
+# --------------------------------------------------------------------------
+# the fallback counter and the circuit gauge
+# --------------------------------------------------------------------------
+#
+# The two families an earlier change declared empty and this plan fills are fed from here
+# on, which is why they moved out of `UNFED_FAMILIES` above. They are
+# read the same way everything else in this file is - through the session
+# registry - but the gauge is read ABSOLUTELY rather than as a delta: a gauge
+# carries a level, not an increment, and "0 for a provider nothing failed on" is
+# a claim about the value a scraper sees rather than about how far it moved.
+# `get_sample_value` answers `None` for a series that does not exist, which is
+# what separates "publishes 0" from "publishes nothing".
+
+CIRCUIT_OPEN = 2.0
+CIRCUIT_CLOSED = 0.0
+"""The two gauge levels this file can produce, spelled as the exposition renders
+them. The state enum's own members are pinned in tests/providers/test_breaker.py;
+these are the numbers a dashboard query and an alert rule are written against."""
+
+
+def send_fallback(client: TestClient) -> HttpxResponse:
+    """One chat request as the tenant whose alias has two candidates."""
+    return post_chat(
+        client,
+        chat_body(model=FALLBACK_ALIAS),
+        key=TEST_KEYS[FALLBACK_TENANT],
+        tenant=FALLBACK_TENANT,
+        data_class=FALLBACK_CLASS,
+    )
+
+
+def gauge_value(collector_registry: CollectorRegistry, name: str, **labels: str) -> float | None:
+    """One gauge series' current level, or `None` when the series does not exist."""
+    return collector_registry.get_sample_value(name, labels)
+
+
+def test_a_fallback_is_counted_once_against_the_serving_provider(
+    fallback_client: TestClient,
+    fallback_adapters: dict[str, FallbackStubAdapter],
+    metrics: MetricDelta,
+) -> None:
+    """Catches the counter labelled with the provider that FAILED, which is the natural
+    mistake when the failure is the thing being handled: the design's panel would then
+    report fallbacks onto a provider that served nothing, and the tenant's traffic would be
+    attributed to the wrong region. The total pins "once per request" as well, so a loop
+    that counted each candidate it tried is caught by the same case."""
+    fallback_adapters[FIRST_PROVIDER].chat_error = retryable_error(FIRST_PROVIDER)
+
+    response = send_fallback(fallback_client)
+    assert response.status_code == 200, response.text
+    assert response.headers["x-gateway-provider"] == SECOND_PROVIDER
+
+    labels = {"tenant": FALLBACK_TENANT, "alias": FALLBACK_ALIAS}
+    assert metrics.delta(FALLBACKS, provider=SECOND_PROVIDER, **labels) == 1
+    assert metrics.delta(FALLBACKS, provider=FIRST_PROVIDER, **labels) == 0
+    assert metrics.total(FALLBACKS) == 1
+
+
+def test_a_request_that_needed_no_fallback_counts_none(
+    fallback_client: TestClient, metrics: MetricDelta
+) -> None:
+    """Catches a counter incremented once per served request rather than once per request
+    that actually fell back - every panel would then show a permanent 100% fallback rate,
+    and the alert that says a provider is degrading could never fire on anything. Nothing
+    is scripted to fail here, so the first candidate serves."""
+    response = send_fallback(fallback_client)
+    assert response.status_code == 200, response.text
+    assert response.headers["x-gateway-provider"] == FIRST_PROVIDER
+
+    assert metrics.total(FALLBACKS) == 0
+
+
+def test_the_circuit_gauge_reads_open_for_the_failed_provider_and_closed_for_the_other(
+    fallback_client: TestClient,
+    fallback_adapters: dict[str, FallbackStubAdapter],
+    metrics_registry: CollectorRegistry,
+) -> None:
+    """Catches a gauge published only when a breaker OPENS - the healthy provider's series
+    would be missing, so an alert on `gateway_circuit_state != 0` would be blind to every
+    provider until the moment it broke - and catches the two levels swapped or spelled as
+    a 1/0 up-down gauge, which is what an operator's rule is written against. The serving
+    provider is the control: it takes the same traffic and must read closed."""
+    fallback_adapters[FIRST_PROVIDER].chat_error = retryable_error(FIRST_PROVIDER)
+
+    for _ in range(BREAKER_MAX_FAILURES):
+        assert send_fallback(fallback_client).status_code == 200
+
+    assert gauge_value(metrics_registry, CIRCUIT_STATE, provider=FIRST_PROVIDER) == CIRCUIT_OPEN
+    assert gauge_value(metrics_registry, CIRCUIT_STATE, provider=SECOND_PROVIDER) == CIRCUIT_CLOSED

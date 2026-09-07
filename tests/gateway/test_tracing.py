@@ -72,12 +72,18 @@ from opsconsole.routing.errors import ResidencyUnavailable
 from .conftest import (
     API_KEYS,
     CHAT,
+    FALLBACK_ALIAS,
+    FALLBACK_CLASS,
+    FALLBACK_TENANT,
+    FIRST_PROVIDER,
     NO_PROVIDER_KEYS,
+    SECOND_PROVIDER,
     SHIPPED_POLICY_PATH,
     STREAM_FRAGMENTS,
     STREAM_USAGE,
     STUB_CONTENT,
     TEST_KEYS,
+    FallbackStubAdapter,
     StubAdapter,
     assert_error_body,
     auth_headers,
@@ -86,6 +92,7 @@ from .conftest import (
     embeddings_body,
     post_chat,
     post_embeddings,
+    retryable_error,
     stub_response,
 )
 
@@ -950,3 +957,80 @@ def test_the_otlp_header_setting_is_parsed_into_pairs(
     say so, because export failures are deliberately silent. The malformed rows catch a
     setting that yields a header with an empty name, which some exporters send anyway."""
     assert otlp_headers(raw) == expected
+
+
+# --------------------------------------------------------------------------
+# fallback_count
+# --------------------------------------------------------------------------
+#
+# The last of the three attributes an earlier change declared and left unset. It is
+# asserted as a VALUE on whichever span carries it rather than on a span chosen
+# by name: `annotate` puts every label on the root span by design (stage spans
+# take none), and pinning the carrier here would pin that choice twice.
+
+
+def test_the_failed_candidate_keeps_its_own_provider_span(
+    fallback_client: TestClient,
+    fallback_adapters: dict[str, FallbackStubAdapter],
+    spans: InMemorySpanExporter,
+) -> None:
+    """The only way an operator identifies a provider shedding its traffic behind a
+    WORKING fallback, and the claim `core/metrics.py` and a design note both make in place of
+    the provider-error counter - which a 200 never moves, because it reaches no error
+    handler. Catches a loop wrapped in one provider span, or the span moved outside the
+    `try` so a failed attempt leaves none: either way both passages become false and
+    nothing else in the suite would notice. The request's own `provider` attribute names
+    the OTHER one, which is what makes the pair readable as "anthropic shed, local served"
+    rather than as two providers that were both used."""
+    fallback_adapters[FIRST_PROVIDER].chat_error = retryable_error(FIRST_PROVIDER)
+
+    response = post_chat(
+        fallback_client,
+        chat_body(model=FALLBACK_ALIAS),
+        key=TEST_KEYS[FALLBACK_TENANT],
+        tenant=FALLBACK_TENANT,
+        data_class=FALLBACK_CLASS,
+    )
+    assert response.status_code == 200, response.text
+
+    recorded = finished(spans)
+    names = stage_names(recorded)
+    assert f"provider:{FIRST_PROVIDER}" in names
+    assert f"provider:{SECOND_PROVIDER}" in names
+
+    served = [
+        attributes_of(span)["provider"] for span in recorded if "provider" in attributes_of(span)
+    ]
+    assert served == [SECOND_PROVIDER]
+
+
+def test_a_fallback_is_recorded_on_the_trace_as_a_count(
+    fallback_client: TestClient,
+    fallback_adapters: dict[str, FallbackStubAdapter],
+    spans: InMemorySpanExporter,
+) -> None:
+    """Catches the two ways this attribute goes wrong once something finally sets it. A
+    count of ATTEMPTS rather than of fallbacks reads 2 for one fallback, so every trace
+    search for "requests that fell back" would match every request; and an attribute set
+    on more than one span double-counts under any aggregation a backend does over a trace.
+    The request is a real fallback, confirmed by the header, so a 0 here means the
+    attribute was never written rather than that nothing happened."""
+    fallback_adapters[FIRST_PROVIDER].chat_error = retryable_error(FIRST_PROVIDER)
+
+    response = post_chat(
+        fallback_client,
+        chat_body(model=FALLBACK_ALIAS),
+        key=TEST_KEYS[FALLBACK_TENANT],
+        tenant=FALLBACK_TENANT,
+        data_class=FALLBACK_CLASS,
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["x-gateway-provider"] == SECOND_PROVIDER
+
+    carriers = [
+        attributes_of(span)["fallback_count"]
+        for span in finished(spans)
+        if "fallback_count" in attributes_of(span)
+    ]
+
+    assert carriers == [1]
