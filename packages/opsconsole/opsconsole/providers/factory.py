@@ -25,14 +25,31 @@ What "usable" means is per kind, and the difference is the point:
   key belongs to (`OPENAI_BASE_URL`,
   `test_an_openai_provider_without_a_base_url_uses_the_vendor_default`).
 
+* an `azure_openai` provider needs BOTH, and neither has a default. The key is
+  mandatory for the same reason as above; the endpoint comes from `endpoint_env`
+  and from nowhere else, because it is per-resource and a guessed one would send
+  a real key to a host we do not own
+  (`test_an_azure_provider_without_a_usable_key_is_dropped_with_a_warning`,
+  `test_an_azure_provider_without_a_usable_endpoint_is_dropped_with_a_warning`).
+  A row naming an `endpoint_env` AND a `base_url` is dropped rather than resolved
+  in favour of either: two candidate hosts with one quietly winning is how a
+  vendor key reaches the wrong one (an earlier change decision C,
+  `test_an_azure_provider_naming_both_an_endpoint_env_and_a_base_url_is_dropped_with_a_warning`).
+  `AZURE_OPENAI_API_VERSION` in the same environment overrides the pinned default,
+  so a resource on another api-version is a config change and not a diff
+  (`test_a_configured_api_version_overrides_the_default`).
+
 A provider that DECLARES a `key_env` which is unset is dropped whatever its kind:
 that is a half-configured deployment, not a configured one. A disabled provider
 is dropped without a warning either way: that is an operator's decision, and
 warning about it trains people to ignore the warning that matters
 (`test_disabled_provider_is_omitted_without_a_warning`).
 
-`ProviderKind.AZURE_OPENAI` is still absent and silent, until an earlier change adds its
-adapter; a missing provider is a case the resolver's health seam already handles.
+The shipped `azure_eu` row is `enabled: false`, so this builds no azure adapter
+even with both variables set, and says nothing about it either - a disabled
+provider is an operator's decision
+(`test_the_shipped_azure_provider_is_disabled_and_builds_nothing`). Turning that
+row on is the whole of enabling Azure; no code changes with it.
 
 The `openai` kind is served by `OpenAICompatibleAdapter` and not by a class of its
 own: OpenAI is the wire shape that class implements, and an
@@ -50,6 +67,11 @@ import os
 from collections.abc import Mapping
 
 from opsconsole.providers.anthropic import ANTHROPIC_BASE_URL, AnthropicAdapter
+from opsconsole.providers.azure_openai import (
+    AZURE_API_VERSION,
+    AZURE_API_VERSION_ENV,
+    AzureOpenAIAdapter,
+)
 from opsconsole.providers.base import Adapter
 from opsconsole.providers.openai_compatible import OPENAI_BASE_URL, OpenAICompatibleAdapter
 from opsconsole.routing.policy import Policy, Provider, ProviderKind
@@ -123,7 +145,37 @@ def build_adapters(policy: Policy, environ: Mapping[str, str] | None = None) -> 
                 api_key=api_key,
             )
 
-        # `azure_openai` is absent and silent until an earlier change adds its adapter.
+        elif provider.kind is ProviderKind.AZURE_OPENAI:
+            if not api_key:
+                _warn_unusable_key(name, provider)
+                continue
+            if provider.endpoint_env is not None and provider.base_url is not None:
+                logger.warning(
+                    "provider %r is enabled and names both endpoint_env %s and a base_url: "
+                    "no adapter was built for it (two candidate hosts with one quietly "
+                    "winning is how a key reaches the wrong one - delete one of the lines)",
+                    name,
+                    provider.endpoint_env,
+                )
+                continue
+            endpoint = source.get(provider.endpoint_env) if provider.endpoint_env else None
+            if not endpoint:
+                logger.warning(
+                    "provider %r is enabled but its endpoint is not set: no adapter was "
+                    "built for it (expected in %s; an azure_openai provider has no vendor "
+                    "default, and guessing one would send its key to a host we do not own)",
+                    name,
+                    provider.endpoint_env
+                    if provider.endpoint_env is not None
+                    else "an unset endpoint_env",
+                )
+                continue
+            adapters[name] = AzureOpenAIAdapter(
+                name=name,
+                endpoint=endpoint,
+                api_key=api_key,
+                api_version=source.get(AZURE_API_VERSION_ENV) or AZURE_API_VERSION,
+            )
 
     return adapters
 

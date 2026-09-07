@@ -637,6 +637,16 @@ class OpenAICompatibleAdapter:
     (`test_no_api_key_sends_no_authorization_header`). A key given travels only
     in that header (`test_an_api_key_travels_only_as_a_bearer_header`).
 
+    Two methods are SEAMS rather than behaviour: `_auth_headers` and `_path`,
+    added by an earlier change for `providers/azure_openai.py`, whose adapter differs from
+    this one in the auth header and the request URL and in nothing else. Both
+    defaults are identity here, so the two kinds this class serves directly -
+    `openai_compatible` and, since an earlier change, `openai` - send exactly what they
+    sent before (`test_the_completions_path_is_appended_to_the_policy_base_url`,
+    `test_the_embeddings_path_is_appended_to_the_policy_base_url`,
+    `test_no_api_key_sends_no_authorization_header`,
+    `test_an_api_key_travels_only_as_a_bearer_header`).
+
     This module logs nothing. What reaches a log on a failure is
     `ProviderError.provider_message`, which holds the provider's answer or the
     transport's own exception text, never the request body or its headers.
@@ -656,11 +666,35 @@ class OpenAICompatibleAdapter:
         self.http = ProviderTransport(
             name=name,
             base_url=base_url,
-            headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
+            headers=self._auth_headers(api_key),
             transport=transport,
             sleep=sleep,
             jitter=jitter,
         )
+
+    def _auth_headers(self, api_key: str | None) -> dict[str, str]:
+        """The headers that carry the key on this wire: a bearer token, or none.
+
+        A seam. Called once, from `__init__`, so the key is set on the client and
+        never rebuilt per request. Overridden by `AzureOpenAIAdapter`, which sends
+        an `api-key` header instead (`test_the_key_travels_only_as_an_api_key_header`).
+
+        Empty rather than an empty bearer when there is no key, which is decision B
+        of an earlier change: the shipped `local` and `vllm` sit on a private network and
+        declare no `key_env` (`test_no_api_key_sends_no_authorization_header`).
+        """
+        return {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+    def _path(self, leaf: str, model: str) -> str:
+        """Where `leaf` is addressed on this wire, given the model being called.
+
+        A seam, and on this wire the identity: `model` travels in the BODY here,
+        so the path is the leaf unchanged and the argument is unused
+        (`test_the_completions_path_is_appended_to_the_policy_base_url`).
+        Overridden by `AzureOpenAIAdapter`, where the model names a deployment in
+        the URL path and an `api-version` query is mandatory.
+        """
+        return leaf
 
     @property
     def client(self) -> httpx.Client:
@@ -674,7 +708,7 @@ class OpenAICompatibleAdapter:
     def chat(self, request: ChatRequest) -> ChatResponse:
         """Run one non-streaming completion."""
         body = to_openai(request)
-        response = self.http.send(CHAT_COMPLETIONS_PATH, body)
+        response = self.http.send(self._path(CHAT_COMPLETIONS_PATH, request.model), body)
         try:
             payload = response.json()
         except ValueError as exc:
@@ -704,7 +738,7 @@ class OpenAICompatibleAdapter:
         (`test_an_answer_with_fewer_vectors_than_inputs_raises`).
         """
         body = to_openai_embedding(request)
-        response = self.http.send(EMBEDDINGS_PATH, body)
+        response = self.http.send(self._path(EMBEDDINGS_PATH, request.model), body)
         try:
             payload = response.json()
         except ValueError as exc:
@@ -746,7 +780,8 @@ class OpenAICompatibleAdapter:
         # Copied rather than mutated in place: `to_openai` is the shape the
         # non-streaming path sends, and the two extra fields belong to this call.
         streamed = {**body, "stream": True, "stream_options": {"include_usage": True}}
-        with self.http.open_stream(CHAT_COMPLETIONS_PATH, streamed) as response:
+        path = self._path(CHAT_COMPLETIONS_PATH, request.model)
+        with self.http.open_stream(path, streamed) as response:
             try:
                 yield from from_openai_events(response.iter_lines())
             except httpx.RequestError as exc:
