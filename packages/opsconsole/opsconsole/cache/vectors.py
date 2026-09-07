@@ -1,7 +1,7 @@
 """Where a semantic answer waits, and what counts as near enough to serve it.
 
 The shape mirrors `cache/store.py` on purpose - a Protocol, an in-process
-implementation and a real one, picked in `create_app` - so
+implementation and a real one, picked in `create_app` by `OPSCONSOLE_QDRANT_URL` - so
 someone who has read the exact tier can read this one. Three things about it
 follow from what a VECTOR cache is, and each is what its tests are arranged
 around.
@@ -43,7 +43,9 @@ is an unsized store and there is no backstop behind that check.
 
 Nothing here embeds anything. The vector arrives as an argument, because an
 embedding is a provider call with a residency regime and a failure mode of its
-own, and those belong to the route.
+own, and those belong to the route, where `embedded_probe` in
+`gateway/routes/chat.py` makes the call and swallows its every failure into a
+miss.
 """
 
 from __future__ import annotations
@@ -156,7 +158,8 @@ class InProcessSemanticCache:
     Two replicas do not share it, and nothing expires: for a cache that costs a
     hit rate rather than correctness, and a process that has been up long enough
     for the memory to matter is a process the semantic tier was not sized for.
-    An earlier change's wiring is what decides which implementation a deployment gets.
+    Which implementation a deployment gets is decided by `create_app`
+    (`test_create_app_keeps_the_in_process_semantic_cache_without_a_qdrant_url`).
 
     The arithmetic is deliberately plain Python and not a library: the whole
     contents of one tenant's entries are scanned per search, which is the wrong

@@ -421,12 +421,18 @@ def record_redactions(*, tenant: str, counts: Mapping[str, int]) -> None:
 
 
 EXACT_CACHE_KIND: Final[str] = "exact"
-"""The `kind` an exact-match hit is counted under.
+SEMANTIC_CACHE_KIND: Final[str] = "semantic"
+"""The two `kind` values a cache hit is counted under, one per tier the design describes.
 
-One of the two tiers the design describes. The semantic one (#23) has its layer in
-`opsconsole.cache.vectors` and reaches this family when an earlier change wires it into
-the route, adding a second VALUE rather than a second family, which is the whole
-reason this label exists. Pinned by `test_a_hit_counts_a_cache_hit_and_labels_the_request_hit`."""
+Both tiers are wired into the chat route, and they are a second VALUE on one
+family rather than a second family, which is the whole reason this label exists:
+a dashboard sums them for the hit rate and splits them for the two consistency
+regimes. Pinned by `test_a_hit_counts_a_cache_hit_and_labels_the_request_hit`
+and `test_a_semantic_hit_counts_its_own_kind_and_labels_the_request_semantic`.
+
+The semantic value is the same word the header and the `cache` label answer
+(`CACHE_STATUS_SEMANTIC` in `opsconsole.gateway.routes.chat`), so a hit rate per
+tier is one query rather than a join."""
 
 
 def record_cache_hit(*, tenant: str, kind: str) -> None:

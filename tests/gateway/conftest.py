@@ -1008,14 +1008,56 @@ def fallback_app(
         yield client
 
 
+class SilentSemanticCache:
+    """A `SemanticCache` that stores nothing and finds nothing, ever.
+
+    An earlier change wires the semantic tier into the chat route, and `agent-default` -
+    the alias every case in the fallback family sends - carries
+    `semantic_cache: true`. This app registers an adapter under `local`, which is
+    the shipped `embed` alias's only candidate, so the tier is fully live here:
+    a second identical chat request would be served from it, and the loop, the
+    breaker and the residency log would stop seeing the calls those families
+    exist to count.
+
+    So the tier is silenced where it is not the subject, exactly as
+    `fresh_breaker` replaces the one object that accumulates state - and nothing
+    is weakened by it, because the tier's own behaviour is settled end to end in
+    `tests/gateway/test_semantic_cache.py`.
+    """
+
+    def search(
+        self,
+        tenant: str,
+        vector: Sequence[float],
+        *,
+        alias: str,
+        system_hash: str,
+        tools_hash: str,
+    ) -> ChatResponse | None:
+        return None
+
+    def put(
+        self,
+        tenant: str,
+        vector: Sequence[float],
+        answer: ChatResponse,
+        *,
+        alias: str,
+        system_hash: str,
+        tools_hash: str,
+    ) -> None:
+        return None
+
+
 @pytest.fixture
 def fallback_client(
     fallback_app: TestClient, fallback_adapters: dict[str, FallbackStubAdapter]
 ) -> TestClient:
-    """The session app with the stubs reset and a fresh breaker on `app.state`."""
+    """The session app with the stubs reset, a fresh breaker and no semantic tier."""
     for adapter in fallback_adapters.values():
         adapter.reset()
     fresh_breaker(fallback_app)
+    app_of(fallback_app).state.semantic_cache = SilentSemanticCache()
     return fallback_app
 
 

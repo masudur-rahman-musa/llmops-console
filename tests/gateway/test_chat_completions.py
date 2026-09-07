@@ -706,16 +706,25 @@ def test_an_eu_pii_request_is_served_by_the_local_provider(
     denied = post_chat(chat_client, body, key=NORDLICHT_KEY, tenant="nordlicht", data_class="pii")
     assert_error_body(denied, status=503, code="ALL_PROVIDERS_FAILED")
 
-    adapter, scripted = make_local_adapter([local_ok("plain")], name="local")
+    adapter, scripted = make_local_adapter(
+        [local_ok("embeddings_single"), local_ok("plain")], name="local"
+    )
     with build_chat_client(settings, {"local": adapter}) as client:
         served = post_chat(client, body, key=NORDLICHT_KEY, tenant="nordlicht", data_class="pii")
 
     assert served.status_code == 200, served.text
-    assert scripted.request_count == 1, "the local provider was not actually called"
+    # TWO calls to the one adapter, in this order, and the reason is an earlier change: on
+    # this app `local` is both the chat candidate and the `embed` alias's only
+    # candidate, so an `agent-default` request first embeds its semantic probe
+    # and then asks for the completion. The chat call is therefore index 1, and
+    # the count is asserted exactly so that a tier which embedded twice, or a
+    # loop which called the provider twice, still fails here.
+    assert scripted.request_count == 2, "the local provider was not called for both"
+    assert scripted.requests[0].url.path.endswith("/embeddings")
     assert served.headers["x-gateway-provider"] == "local"
     assert served.headers["x-gateway-region"] == "self"
     assert served.headers["x-gateway-model"] == "qwen2.5-7b-instruct"
     assert served.json()["choices"][0]["message"]["content"] == "Ship it."
-    assert scripted.body()["model"] == "qwen2.5-7b-instruct", (
+    assert scripted.body(1)["model"] == "qwen2.5-7b-instruct", (
         "the provider model id, never the alias, goes on the wire"
     )

@@ -15,8 +15,8 @@ predicate - over `vectors.py`, a `SemanticCache` Protocol with an in-process
 implementation and a Qdrant one, holding the same neutral `ChatResponse` in one
 collection per tenant. Nothing in it embeds anything: the vector arrives as an
 argument, because an embedding is a provider call with a residency regime and a
-failure mode of its own. Wiring both into the chat route - the lookup, the
-embedding call, the headers and the `kind="semantic"` metric - is an earlier change.
+failure mode of its own: the chat route embeds the probe, and the lookup, the
+headers and the `kind="semantic"` metric are its too.
 
 The gateway's use of all four lives in `opsconsole.gateway.routes.chat`, not
 here: this package never reads a header, resolves an alias or renders a wire

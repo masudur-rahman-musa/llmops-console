@@ -16,11 +16,19 @@ import time
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI
 from opentelemetry.context import Context
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from opsconsole.cache import InProcessResponseCache, RedisResponseCache, ResponseCache
+from opsconsole.cache import (
+    InProcessResponseCache,
+    InProcessSemanticCache,
+    QdrantSemanticCache,
+    RedisResponseCache,
+    ResponseCache,
+    SemanticCache,
+)
 from opsconsole.core.metrics import observe_request, start_request
 from opsconsole.core.settings import Settings
 from opsconsole.core.tracing import (
@@ -37,7 +45,7 @@ from opsconsole.gateway.context import parsed_traceparent
 from opsconsole.gateway.errors import register_error_handlers
 from opsconsole.gateway.health import ProbeRegistry
 from opsconsole.gateway.health import router as health_router
-from opsconsole.gateway.probes import build_redis_client, register_probes
+from opsconsole.gateway.probes import PROBE_TIMEOUT_SECONDS, build_redis_client, register_probes
 from opsconsole.gateway.routes.admin import router as admin_router
 from opsconsole.gateway.routes.chat import router as chat_router
 from opsconsole.gateway.routes.directory import router as directory_router
@@ -63,6 +71,23 @@ from opsconsole.redaction import (
     RedisRedactionMapStore,
 )
 from opsconsole.routing.policy import PolicyStore
+
+
+def build_qdrant_data_client(base_url: str) -> httpx.Client:
+    """The `httpx.Client` the semantic cache sends its searches and writes over.
+
+    Carries the base URL, because `QdrantSemanticCache` sends relative paths and
+    holds no endpoint of its own; that is why this is not
+    `probes.build_qdrant_client`, which is handed a whole URL per call.
+
+    Bounded on every phase by `PROBE_TIMEOUT_SECONDS`, the same two seconds the
+    readiness probe uses, and reused rather than given a number of its own: this
+    client sits in front of a chat request, so an unbounded read here is the
+    whole request hanging on a cache that has nothing to say. Two seconds is a
+    generous bound for a vector search and a miss is free
+    (`test_the_semantic_cache_client_bounds_every_phase_of_the_call`).
+    """
+    return httpx.Client(base_url=base_url, timeout=httpx.Timeout(PROBE_TIMEOUT_SECONDS))
 
 
 @asynccontextmanager
@@ -225,6 +250,15 @@ def create_app(
     the third reader of one connection pool, and unlike the two stores above it
     never raises: a Redis outage is a miss on this seam, not a failed request.
 
+    The semantic cache is settings-driven on its OWN switch, `OPSCONSOLE_QDRANT_URL`: configured builds `QdrantSemanticCache` over a bounded `httpx`
+    client, absent builds `InProcessSemanticCache`, so the suite and a bare local
+    run take the semantic path with no Qdrant anywhere
+    (`test_create_app_keeps_the_in_process_semantic_cache_without_a_qdrant_url`,
+    `test_create_app_uses_the_qdrant_semantic_cache_when_a_qdrant_url_is_configured`).
+    A different switch from the three Redis readers above because it is a
+    different service; like the response cache and unlike the two stores, it never
+    raises, so an unreachable Qdrant is a miss and not a failed request.
+
     The residency log writer is settings-driven for the same reason and by the
     same rule: `OPSCONSOLE_DATABASE_URL` set builds `PostgresResidencyLogWriter`
     over a pool, absent builds `InMemoryResidencyLogWriter`, which files rows in
@@ -265,6 +299,12 @@ def create_app(
         RedisResponseCache(redis_client) if redis_client is not None else InProcessResponseCache()
     )
     app.state.response_cache = response_cache
+    semantic_cache: SemanticCache = (
+        QdrantSemanticCache(build_qdrant_data_client(resolved.qdrant_url))
+        if resolved.qdrant_url is not None
+        else InProcessSemanticCache()
+    )
+    app.state.semantic_cache = semantic_cache
     residency_log: ResidencyLogWriter = (
         PostgresResidencyLogWriter(build_pool(resolved.database_url))
         if resolved.database_url is not None

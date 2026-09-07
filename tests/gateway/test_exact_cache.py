@@ -95,7 +95,8 @@ CACHE_HITS = "gateway_cache_hits_total"
 
 EXACT_TIER = "exact"
 """The value of `gateway_cache_hits_total`'s `kind` label for this tier (SPEC
-§13.2). An earlier change adds the semantic one when it wires that tier into the route,
+§13.2). The semantic one is `SEMANTIC_CACHE_KIND`, counted by
+`tests/gateway/test_semantic_cache.py::test_a_semantic_hit_counts_its_own_kind_and_labels_the_request_semantic`,
 and the label NAME is `kind` rather than `tier`, which is what the family was
 declared with while it carried no samples."""
 

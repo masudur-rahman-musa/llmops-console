@@ -3,8 +3,9 @@
 An earlier change left three things that did not touch each other: a request could be
 authenticated, resolved to a provider and a model id, and a provider could be
 called. This module is that join, plus the two things that have to happen around
-the outbound call: inline redaction before it, and the exact-match cache that can
-replace it entirely. No ledger.
+the outbound call: inline redaction before it, and the two response cache tiers
+that can replace it entirely - the exact one before redaction and the semantic
+one after it. No ledger.
 
 The OpenAI wire shape lives here and stops here. `providers/base.py` keeps the
 gateway's own vocabulary, so the two mappings - a wire request into a
@@ -53,7 +54,7 @@ import secrets
 import time
 from collections.abc import Callable, Generator, Iterator, Mapping
 from itertools import chain
-from typing import Any, Literal, assert_never
+from typing import Any, Literal, assert_never, cast
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import StreamingResponse
@@ -64,12 +65,18 @@ from opsconsole.cache import (
     CACHE_ALLOW,
     CACHE_HEADER,
     ResponseCache,
+    SemanticCache,
     cache_key,
     is_cacheable,
+    probe_text,
+    semantic_eligible,
+    system_hash,
+    tools_hash,
 )
 from opsconsole.core.errors import GatewayError, ProviderError
 from opsconsole.core.metrics import (
     EXACT_CACHE_KIND,
+    SEMANTIC_CACHE_KIND,
     label_resolution,
     record_cache_hit,
     record_circuit_state,
@@ -92,6 +99,8 @@ from opsconsole.providers.base import (
     ChatMessage,
     ChatRequest,
     ChatResponse,
+    EmbeddingAdapter,
+    EmbeddingRequest,
     FinishReason,
     ResponseFormat,
     StreamEvent,
@@ -174,20 +183,29 @@ is the one wrong answer that looks right.
 
 CACHE_STATUS_MISS = "miss"
 CACHE_STATUS_HIT = "hit"
-"""The two words `X-Gateway-Cache` answers with, and the two values the `cache`
-label of `gateway_requests_total` carries.
+CACHE_STATUS_SEMANTIC = "semantic"
+"""The three words `X-Gateway-Cache` answers with, and the three values the
+`cache` label of `gateway_requests_total` carries.
 
 `hit` means no adapter was called: the answer came out of the exact-match cache
-under the design's key, and the caller was charged nothing for it. `miss` covers
-both a request that was looked up and not found and one that was never eligible
-to be looked up at all - a caller cannot tell those apart, and there is nothing
-it would do differently if it could. Which one a response carries is asserted
-against the ADAPTER's call count rather than against itself
-(`test_a_second_identical_eligible_request_calls_no_adapter`), because a route
-could serve a fresh completion and label it `hit`.
+under the design's key, and the caller was charged nothing for it. `semantic` means
+no CHAT adapter was called: the answer was stored against a question merely
+SIMILAR to this one (#23), which is a different consistency regime and therefore
+a different word rather than a second spelling of `hit` -
+a caller is entitled to know which one it got, and a hit rate per tier is then
+one query. `miss` covers both a request that was looked up and not found and one
+that was never eligible to be looked up at all - a caller cannot tell those
+apart, and there is nothing it would do differently if it could.
+
+Which one a response carries is asserted against the ADAPTER's call count rather
+than against itself (`test_a_second_identical_eligible_request_calls_no_adapter`,
+`test_a_differently_worded_second_request_is_served_from_the_semantic_tier`),
+because a route could serve a fresh completion and label it `hit`.
 
 The same header name carries the caller's opt-in on the way IN, where the only
-accepted value is `CACHE_ALLOW` (decision D)."""
+accepted value is `CACHE_ALLOW` (13a decision D). That opt-in is the EXACT tier's
+alone: the semantic tier opts in per ALIAS, in `routing.yaml`, and reads no
+header at all."""
 
 REDACTED_TRUE = "true"
 REDACTED_FALSE = "false"
@@ -198,6 +216,18 @@ console sums this string and `True` would count as neither
 Which one a response carries is decided per REQUEST, not per route: the header is
 `true` exactly when at least one value was actually replaced (an earlier change decision
 C), so a redact class carrying no personal data answers `false`."""
+
+
+EMBED_ALIAS = "embed"
+"""The alias a semantic probe is embedded through: the design's own word, a constant
+and not a setting.
+
+Settable, it would be a way to point the tier at a model whose vectors no stored
+entry shares - every search silently returning nothing, with no failure anywhere
+to see. It is resolved per request like any other alias, so residency, health and
+the tenant's data class apply to the embedding exactly as they apply to a
+completion (`test_the_semantic_words_are_the_published_ones`,
+`test_an_embed_alias_refused_by_residency_is_a_miss`)."""
 
 
 REHYDRATE_HEADER = "X-Gateway-Rehydrate"
@@ -492,6 +522,21 @@ a span present only on hits would make every trace that carries one a hit by
 construction, and an operator could not see how long a lookup that found nothing
 took. It wraps the LOOKUP and not the write, because the write happens after the
 answer is on its way and its latency is not the caller's."""
+
+SEMANTIC_SPAN = "semantic"
+"""The stage span around the embedding call AND the vector search, on this route
+only, and only on a request the semantic tier is eligible for.
+
+Its own stage rather than part of `CACHE_SPAN`: the
+embedding is a network call to a provider, and hidden inside the cache stage a
+slow embedder reads as a slow cache, which is the wrong thing to page on.
+
+Emitted on an eligible HIT and an eligible MISS alike, and on no ineligible
+request - so its mere presence in a trace says the tier ran, not that it found
+something (`test_the_semantic_span_is_emitted_on_an_eligible_miss_and_on_an_eligible_hit`,
+`test_no_semantic_span_is_emitted_on_an_ineligible_request`). It wraps the
+lookup and not the write, exactly as `CACHE_SPAN` does, because the write
+happens after the answer is on its way."""
 
 PROVIDER_SPAN_PREFIX = "provider:"
 """What a provider span's name starts with. The suffix is the RESOLVED provider,
@@ -1174,6 +1219,157 @@ def requested_key(
     )
 
 
+def embedded_probe(
+    text: str | None,
+    *,
+    policy: Policy,
+    adapters: Mapping[str, Adapter],
+    breaker: CircuitBreaker,
+    tenant: str,
+    data_class: DataClass,
+) -> tuple[float, ...] | None:
+    """The probe text as a vector, or `None` - for any reason at all (#23).
+
+    The one place this route spends money on the semantic tier, and the one place
+    it can fail. Every outcome that is not a vector is `None`, which the two
+    helpers below turn into a miss and a write that does not happen: no probe
+    text, a probe over the cap, an `embed` alias that does not exist, one refused
+    by residency, one with no healthy embedding candidate, an adapter that raises
+    and an answer carrying no embedding are the same nothing here (an earlier change
+    decision B). A cache tier must never change the status code of a request a
+    provider would have served, and `test_an_embedding_adapter_that_raises_is_a_miss`
+    injects an adapter raising a plain `RuntimeError`, which no typed guard would
+    catch.
+
+    The cap is `MAX_EMBEDDING_INPUT_CHARS`, imported from the embeddings route
+    and never restated (decision F). A longer probe is not truncated: truncating
+    changes the question, and two different long prompts sharing a prefix would
+    become one question (`test_the_probe_length_boundary_is_inclusive_and_never_a_422`,
+    `test_a_probe_at_the_cap_is_embedded_whole_and_not_truncated`). The import is
+    made HERE rather than at module scope because `routes/embeddings.py` imports
+    this module at module scope, so the pair would be an import cycle (standing
+    rule 32: the direction between two modules is already fixed by which one
+    imports which).
+
+    The health seam is the embeddings route's, not the chat route's - "this
+    provider has an EMBEDDING adapter and its breaker allows it" - so a candidate
+    that can only chat is invisible to the resolver rather than an
+    `AttributeError`.
+
+    Failures are absorbed into the breaker exactly as the embeddings route
+    absorbs them, because they are real provider failures and that route would
+    count them too, and the tokens are booked with `record_tokens` under the EMBED
+    provider and model (decision G): they were really bought, and a tier that
+    spends tokens invisibly is how a cache ends up costing more than it saves
+    (`test_the_embedding_tokens_are_booked_under_the_embed_provider_and_model`).
+    `record_served` is deliberately NOT called - that would write a second
+    residency-log row for one client request and relabel the scope with the
+    embedding provider (`test_the_embedding_writes_no_second_residency_row`,
+    `test_the_embedding_does_not_relabel_the_requests_candidate`).
+    """
+    from opsconsole.gateway.routes.embeddings import MAX_EMBEDDING_INPUT_CHARS
+
+    if text is None or len(text) > MAX_EMBEDDING_INPUT_CHARS:
+        return None
+    try:
+        candidates = resolve(
+            policy,
+            tenant,
+            EMBED_ALIAS,
+            data_class.value,
+            is_healthy=health_seam(
+                breaker,
+                lambda provider: isinstance(adapters.get(provider), EmbeddingAdapter),
+            ),
+        )
+    except Exception:
+        return None
+
+    for chosen in candidates:
+        adapter = cast(EmbeddingAdapter, adapters[chosen.provider])
+        try:
+            answer = adapter.embed(EmbeddingRequest(model=chosen.model, input=(text,)))
+        except ProviderError as exc:
+            absorb_failure(breaker, chosen.provider, exc)
+            if not exc.retryable:
+                return None
+            continue
+        except Exception:
+            return None
+        record_tokens(
+            tenant=tenant,
+            provider=chosen.provider,
+            model=chosen.model,
+            prompt_tokens=answer.usage.prompt_tokens,
+        )
+        if not answer.embeddings:
+            return None
+        return answer.embeddings[0].vector
+    return None
+
+
+def semantic_answer(
+    cache: SemanticCache,
+    tenant: str,
+    vector: tuple[float, ...] | None,
+    *,
+    alias: str,
+    system_hash: str,
+    tools_hash: str,
+) -> ChatResponse | None:
+    """The stored answer to a question near enough to this one, or `None`.
+
+    `vector` is `None` for a request that was never eligible and for one whose
+    embedding did not happen, which is a miss without a lookup - the same shape
+    `cached_answer` has for a `None` key, and the reason the route needs no
+    second eligibility test at the write.
+
+    The `except Exception` is the route's own backstop rather than a duplicate of
+    the store's, for the reason `cached_answer` states: `opsconsole.cache`
+    guarantees neither implementation raises, but this seam is a Protocol and the
+    wiring is settings-driven (`test_a_store_that_raises_on_search_is_a_miss`).
+    """
+    if vector is None:
+        return None
+    try:
+        return cache.search(
+            tenant, vector, alias=alias, system_hash=system_hash, tools_hash=tools_hash
+        )
+    except Exception:
+        return None
+
+
+def store_probe(
+    cache: SemanticCache,
+    tenant: str,
+    vector: tuple[float, ...] | None,
+    answer: ChatResponse,
+    *,
+    alias: str,
+    system_hash: str,
+    tools_hash: str,
+) -> None:
+    """File this answer under the vector the lookup already paid for, or do nothing.
+
+    The vector is the LOOKUP's, reused rather than embedded a second time (plan
+    13c decision H): two calls double the cost of every miss and can disagree if
+    the model behind the `embed` alias changes between them.
+
+    Guarded for the reason `store_answer` is guarded, and it is the sharper one:
+    this runs after a provider has answered and been paid, so an escaping failure
+    would lose a request that was completely served
+    (`test_a_store_that_raises_on_put_is_swallowed_after_the_caller_is_served`).
+    """
+    if vector is None:
+        return
+    try:
+        cache.put(
+            tenant, vector, answer, alias=alias, system_hash=system_hash, tools_hash=tools_hash
+        )
+    except Exception:
+        return
+
+
 def rehydrated(answer: ChatResponse, mapping: Mapping[str, str] | None) -> ChatResponse:
     """The answer with the map's placeholders restored, or the answer itself.
 
@@ -1262,8 +1458,21 @@ def create_chat_completion(
 
     Only an eligible request is looked up or stored: `temperature == 0` stated in
     the body or `X-Gateway-Cache: allow`, never streamed, never with live tools
-    (decisions G and H). Everything else answers `X-Gateway-Cache: miss` without
-    touching the store at all.
+    (13a decisions G and H). Everything else answers `X-Gateway-Cache: miss`
+    without touching the store at all.
+
+    The semantic tier (#23) sits AFTER `_redacted` and not beside the exact one, which is the whole of its residency argument: the probe
+    it embeds is the final USER message of the OUTBOUND body, so what reaches an
+    embedding provider is what may legally leave the box, and the query and the
+    stored entry are in one vocabulary
+    (`test_the_embedded_probe_is_the_redacted_text_and_not_the_raw_one`). It is
+    eligible only when the resolved alias carries `semantic_cache: true` and the
+    request is neither streamed nor carrying live tools, so an exact hit returns
+    before anything is embedded and an ineligible request embeds nothing at all
+    (`test_only_an_eligible_request_embeds_anything`,
+    `test_an_exact_hit_returns_before_anything_is_embedded`). ONE embedding per
+    request, reused for the lookup and the write (decision H), and every failure
+    in it is a miss served by an ordinary provider call (decision B).
 
     `response_model=None` because the return type is a union: FastAPI would
     otherwise try to validate a `StreamingResponse` against `ChatCompletion`. The
@@ -1280,6 +1489,7 @@ def create_chat_completion(
     scope = request.scope
 
     cache: ResponseCache = request.app.state.response_cache
+    semantic_cache: SemanticCache = request.app.state.semantic_cache
 
     allowed = allowed_by_header(request.headers.get(CACHE_HEADER))
     mapping = requested_mapping(
@@ -1313,6 +1523,38 @@ def create_chat_completion(
         scope, store.policy, context, body, request.app.state.directory_store
     )
     annotate(scope, SpanAttributes(redacted=redacted))
+
+    vector: tuple[float, ...] | None = None
+    if semantic_eligible(body, alias=store.policy.aliases[body.model]):
+        with stage_span(scope, SEMANTIC_SPAN):
+            vector = embedded_probe(
+                probe_text(outbound),
+                policy=store.policy,
+                adapters=adapters,
+                breaker=breaker,
+                tenant=context.tenant,
+                data_class=context.data_class,
+            )
+            near = semantic_answer(
+                semantic_cache,
+                context.tenant,
+                vector,
+                alias=body.model,
+                system_hash=system_hash(outbound),
+                tools_hash=tools_hash(outbound),
+            )
+        if near is not None:
+            label_candidate(scope, body.model, candidates[0], cache=CACHE_STATUS_SEMANTIC)
+            record_cache_hit(tenant=context.tenant, kind=SEMANTIC_CACHE_KIND)
+            response.headers.update(
+                gateway_headers(
+                    candidates[0],
+                    context.trace_id,
+                    redacted=redacted,
+                    cache=CACHE_STATUS_SEMANTIC,
+                )
+            )
+            return to_wire(rehydrated(near, mapping), body.model)
 
     last = len(candidates) - 1
     for attempt, chosen in enumerate(candidates):
@@ -1362,6 +1604,15 @@ def create_chat_completion(
             context.tenant,
             requested_key(body, context.tenant, chosen, allow_header=allowed),
             answer,
+        )
+        store_probe(
+            semantic_cache,
+            context.tenant,
+            vector,
+            answer,
+            alias=body.model,
+            system_hash=system_hash(outbound),
+            tools_hash=tools_hash(outbound),
         )
         response.headers.update(headers)
         return to_wire(rehydrated(answer, mapping), body.model)

@@ -90,10 +90,15 @@ class Settings(BaseSettings):
     readiness endpoint that lies."""
 
     qdrant_url: str | None = None
-    """Where Qdrant lives, or `None` for no `qdrant` readiness probe.
+    """Where Qdrant lives, or `None` for the in-process semantic cache and no probe.
 
-    Probed over `httpx` rather than through a client library (an earlier change decision
-    A): a probe is one GET against `QDRANT_READY_PATH`."""
+    Two modules read it now (`grep -rn "\\.qdrant_url" packages/ services/`,
+    excluding this file, answers `gateway/app.py` and `gateway/probes.py`).
+    Probed over `httpx` rather than through a client library: a probe is one GET against `QDRANT_READY_PATH`. Set,
+    it also builds `QdrantSemanticCache` for `app.state.semantic_cache`, so every
+    replica searches the same vectors; absent leaves `InProcessSemanticCache`,
+    which is what lets the suite and a bare local run take the semantic path with
+    no Qdrant anywhere."""
 
     otel_service_name: str = "opsconsole-gateway"
     """What this process is called in a trace viewer. One trace carries spans from

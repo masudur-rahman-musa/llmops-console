@@ -147,11 +147,18 @@ SESSION = "session-1"
 AUTH_SPAN = "auth"
 ROUTE_SPAN = "route"
 CACHE_SPAN = "cache"
+SEMANTIC_SPAN = "semantic"
 REDACT_SPAN = "redact"
 UNEMITTED_SPAN_NAMES = frozenset({"ledger"})
 """`cache` left this set in an earlier change, which emits it on every chat request; the
 positive claim is `test_the_cache_span_is_emitted_on_a_miss_and_on_a_hit` in
-tests/gateway/test_exact_cache.py. `ledger` stays until a call can be priced."""
+tests/gateway/test_exact_cache.py. `semantic` left it in an earlier change, which emits it
+on every ELIGIBLE chat request - the alias must carry `semantic_cache: true`, so
+the embeddings row and the redact-endpoint row below still carry none; its
+positive and negative claims are
+`test_the_semantic_span_is_emitted_on_an_eligible_miss_and_on_an_eligible_hit`
+and `test_no_semantic_span_is_emitted_on_an_ineligible_request` in
+tests/gateway/test_semantic_cache.py. `ledger` stays until a call can be priced."""
 
 ALLOWED_ATTRIBUTE_KEYS = frozenset(
     {
@@ -547,7 +554,14 @@ SPAN_NAME_ROWS: list[tuple[str, str, str, Callable[[TestClient], Response], set[
             chat_body(model=ALIAS, messages=[{"role": "user", "content": TEXT_WITH_PII}]),
             data_class=REDACT_CLASS,
         ),
-        {AUTH_SPAN, ROUTE_SPAN, CACHE_SPAN, REDACT_SPAN, f"provider:{LOCAL_PROVIDER}"},
+        {
+            AUTH_SPAN,
+            ROUTE_SPAN,
+            CACHE_SPAN,
+            SEMANTIC_SPAN,
+            REDACT_SPAN,
+            f"provider:{LOCAL_PROVIDER}",
+        },
     ),
     (
         "embeddings-plain-class",
@@ -628,7 +642,7 @@ def test_the_stage_spans_share_the_roots_trace_id(
     recorded = finished(spans)
     root = root_of(recorded)
 
-    assert len(recorded) == 6, [span.name for span in recorded]
+    assert len(recorded) == 7, [span.name for span in recorded]
     assert {trace_id_of(span) for span in recorded} == {trace_id_of(root)}
     for span in recorded:
         if span is root:

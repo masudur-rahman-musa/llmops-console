@@ -451,7 +451,7 @@ def test_a_tenant_one_character_over_the_cap_is_rejected() -> None:
 def test_both_implementations_are_held_by_the_protocol() -> None:
     """Catches a signature that drifts between the two implementations - a positional
     `alias`, a `put` taking the answer first - which would make the pair impossible to hold
-    behind the one name the route resolves at startup.
+    behind the one name `create_app` resolves at startup.
 
     Untestable at runtime by design: `SemanticCache` is a Protocol with no
     `runtime_checkable`, so there is no `isinstance` to assert and the kill is
