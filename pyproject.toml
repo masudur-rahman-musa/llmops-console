@@ -46,6 +46,7 @@ dependencies = [
 [project.scripts]
 ops-migrate = "opsconsole.ledger.cli:migrate"
 ops-purge-residency = "opsconsole.ledger.cli:purge"
+ops-refresh-rollup = "opsconsole.ledger.cli:refresh_rollup"
 
 [dependency-groups]
 dev = [

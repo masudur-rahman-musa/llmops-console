@@ -1,14 +1,30 @@
-"""The Postgres write path: residency evidence now, cost and eval rows later.
+"""The Postgres write path: residency evidence and cost rows now, eval rows later.
 
 the design gives this package the project's Postgres writes, and an earlier change is the
 first of them, so the connection pool, the migration runner and the schema
 convention arrive here rather than in the one table that needed them first.
 
-Two modules: `db` is the seam and the runner, `residency` is the log itself.
-`cli` is not re-exported - it is what `make migrate` and `make purge-residency`
-call, and nothing in the gateway imports it.
+Three modules: `db` is the seam and the runner, `residency` is the decision log,
+`cost_ledger` is the spend row and its daily rollup. `cli` is not re-exported -
+it is what `make migrate`, `make purge-residency` and `make refresh-rollup` call,
+and nothing in the gateway imports it.
 """
 
+from opsconsole.ledger.cost_ledger import (
+    CostLedgerRow as CostLedgerRow,
+)
+from opsconsole.ledger.cost_ledger import (
+    CostLedgerWriter as CostLedgerWriter,
+)
+from opsconsole.ledger.cost_ledger import (
+    InMemoryCostLedgerWriter as InMemoryCostLedgerWriter,
+)
+from opsconsole.ledger.cost_ledger import (
+    PostgresCostLedgerWriter as PostgresCostLedgerWriter,
+)
+from opsconsole.ledger.cost_ledger import (
+    record_cost as record_cost,
+)
 from opsconsole.ledger.db import (
     DEFAULT_SCHEMA as DEFAULT_SCHEMA,
 )

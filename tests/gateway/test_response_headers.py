@@ -9,8 +9,8 @@ wrong is a claim about residency and cost that cannot be checked after the fact.
 Every value is asserted exactly, and the set is asserted whole,
 so an added header is a deliberate change rather than a surprise. That is what
 pins decision B: `X-Gateway-Cost-USD` is absent until the ledger can price the
-call, because a header reading `0.00` is a wrong number, and an earlier change adding it
-should turn this file red on purpose.
+call, because a header reading `0.00` is a wrong number, and an earlier change - which
+wires the ledger to the route - adding it should turn this file red on purpose.
 
 Expectations come from `resolve()` over the shipped policy rather than from
 literals alone, with one literal anchor per value so the comparison cannot become
@@ -112,7 +112,8 @@ def test_the_header_set_is_exactly_six(chat_client: TestClient) -> None:
 def test_cost_header_is_absent(chat_client: TestClient) -> None:
     """Catches an implementation emitting `X-Gateway-Cost-USD: 0` before the ledger can
     price a call (decision B): a zero cost is a wrong number a dashboard would happily
-    sum, and an absent header is the honest answer until an earlier change."""
+    sum, and an absent header is the honest answer until an earlier change wires the ledger to
+    the route."""
     response = post_chat(chat_client, chat_body())
 
     assert response.status_code == 200, response.text

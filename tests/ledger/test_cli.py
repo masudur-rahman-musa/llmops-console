@@ -1,4 +1,5 @@
-"""`make migrate` and `make purge-residency`: the two entry points and the purge boundary.
+"""`make migrate`, `make purge-residency` and `make refresh-rollup`: the entry points
+and the purge boundary.
 
 The retention boundary is asserted EXACTLY: `today - 90` is
 kept and `today - 91` is dropped, with the neighbouring days present in the same
@@ -7,8 +8,8 @@ injected rather than read from the clock, so the rows below mean the same thing
 on every day of the year and at 23:59.
 
 Skipped without `OPSCONSOLE_TEST_DATABASE_URL`, except
-the two cases about an UNCONFIGURED database, which are the whole point of the
-non-zero exit code and need no server at all. Those two set
+the three cases about an UNCONFIGURED database, which are the whole point of the
+non-zero exit code and need no server at all. Those three set
 `OPSCONSOLE_DATABASE_URL` through `monkeypatch` where they need it: the root
 tests/conftest.py clears it for the session, so a developer with a local stack up
 runs the same suite as one without.
@@ -29,7 +30,7 @@ import pytest
 from psycopg import sql
 
 from opsconsole.ledger import RESIDENCY_LOG_RETENTION_DAYS, PostgresResidencyLogWriter
-from opsconsole.ledger.cli import migrate, purge, purge_partitions
+from opsconsole.ledger.cli import migrate, purge, purge_partitions, refresh_rollup
 from opsconsole.ledger.residency import ResidencyLogRow, partition_name
 from opsconsole.routing.policy import DataClass
 
@@ -217,7 +218,7 @@ def test_the_shipped_retention_is_the_purges_default() -> None:
 
 
 # --------------------------------------------------------------------------
-# the two entry points
+# the three entry points
 # --------------------------------------------------------------------------
 
 
@@ -246,6 +247,22 @@ def test_purge_refuses_without_a_database_url(
     monkeypatch.delenv(DATABASE_URL_ENV, raising=False)
 
     code = purge([])
+
+    assert code != 0
+    printed = capsys.readouterr()
+    assert (printed.out + printed.err).strip() != ""
+
+
+def test_refresh_rollup_refuses_without_a_database_url(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The same claim for the third entry point. This one runs on a schedule rather than
+    in a deploy, so an unconfigured refresh reporting success is a console cost page that
+    silently stops moving while every CronJob run is recorded as a success - the failure
+    mode nobody looks for, because there is nothing to look at."""
+    monkeypatch.delenv(DATABASE_URL_ENV, raising=False)
+
+    code = refresh_rollup([])
 
     assert code != 0
     printed = capsys.readouterr()

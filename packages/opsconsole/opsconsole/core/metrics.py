@@ -19,7 +19,8 @@ platform collectors nobody chose. Both halves are pinned by
 
 **Why eleven families exist when nine carry data.** `gateway_cost_usd_total` and
 `gateway_budget_ratio` are the design names whose subsystems are later plans (the
-ledger in an earlier change, budgets in an earlier change). Declaring them now means those plans add
+cost ledger's route wiring in an earlier change, budgets in an earlier change). Declaring them now
+means those plans add
 a VALUE rather than a family, exactly as an earlier change declared `cache`, `cost_usd`
 and `fallback_count` on `SpanAttributes` without setting them. They are
 registered and empty, not registered and zeroed: a zero cost booked on every
@@ -176,7 +177,7 @@ CACHE_HITS = Counter(
 
 COST_USD = Counter(
     "gateway_cost_usd_total",
-    "Spend booked to the ledger, by tenant, provider and model. Fed by plan 14b.",
+    "Spend booked to the ledger, by tenant, provider and model. Fed by plan 14c.",
     ("tenant", "provider", "model"),
     registry=_registry,
 )

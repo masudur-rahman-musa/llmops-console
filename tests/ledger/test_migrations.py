@@ -40,8 +40,11 @@ from opsconsole.ledger.db import (
 from .conftest import Pool, new_schema_name, partitions, requires_postgres, table_names
 
 FIRST_VERSION = "001_residency_log"
-"""The migration this plan ships. Its stem is the version string, so a file
-renamed after it has been applied somewhere would re-run as a new version."""
+SECOND_VERSION = "002_cost_ledger"
+ALL_VERSIONS = (FIRST_VERSION, SECOND_VERSION)
+"""Every migration that ships, in the order the runner applies them. A stem is
+the version string, so a file renamed after it has been applied somewhere would
+re-run as a new version."""
 
 SCHEMA_MIGRATIONS = "schema_migrations"
 
@@ -187,7 +190,7 @@ def test_the_runner_answers_the_versions_it_applied(pool: Pool, schema: str) -> 
     with pool.connection() as conn:
         applied = apply_migrations(conn, schema=schema)
 
-    assert applied == (FIRST_VERSION,)
+    assert applied == ALL_VERSIONS
     assert {"residency_log", SCHEMA_MIGRATIONS} <= table_names(pool, schema)
 
 
@@ -202,7 +205,7 @@ def test_a_second_run_applies_nothing(pool: Pool, schema: str) -> None:
     with pool.connection() as conn:
         second = apply_migrations(conn, schema=schema)
 
-    assert first == (FIRST_VERSION,)
+    assert first == ALL_VERSIONS
     assert second == ()
 
 
@@ -231,8 +234,8 @@ def test_a_second_run_leaves_the_data_alone(pool: Pool, migrated_schema: str) ->
 def test_every_applied_version_is_recorded(pool: Pool, migrated_schema: str) -> None:
     """Catches bookkeeping written for some files and not others, which makes the runner
     re-apply exactly the migration it forgot on the next deploy. Compared against
-    `migrations()` rather than against a literal, so a second SQL file added by an earlier change
-    is covered here without this case being edited."""
+    `migrations()` rather than against a literal, so the second SQL file an earlier change added
+    is covered here without this case being edited, and so is every file after it."""
     assert applied_versions(pool, migrated_schema) == [
         migration.version for migration in migrations()
     ]

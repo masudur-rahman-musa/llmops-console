@@ -1,4 +1,4 @@
-.PHONY: help setup run test select-tests test-adjacent lint typecheck format verify eval infra-check migrate purge-residency
+.PHONY: help setup run test select-tests test-adjacent lint typecheck format verify eval infra-check migrate purge-residency refresh-rollup
 
 # The console arrives in a later milestone. Until then its checks are skipped
 # rather than deleted, so the intended gate stays visible in this file. The
@@ -49,6 +49,8 @@ migrate:    ## Apply the ledger migrations (safe to run twice)
 	uv run ops-migrate
 purge-residency: ## Drop residency log partitions past the retention
 	uv run ops-purge-residency
+refresh-rollup: ## Refresh the daily cost rollup the console reads
+	uv run ops-refresh-rollup
 eval:       ## Project evals: golden set vs project-evals/baseline.json
 	uv run ops-eval run --target http://localhost:8080 --set "$$GOLDEN_SET" --tenant evals --out project-evals/reports/local
 infra-check: ## Validate infrastructure as code (no apply)

@@ -180,8 +180,8 @@ def test_gateway_headers_reports_the_redaction_outcome(
 
 def test_the_header_set_is_still_exactly_six(policy: Policy) -> None:
     """Catches a redaction outcome added as a SEVENTH header rather than filling the
-    existing one: the six are a published contract (#9) and an earlier change is meant to be what
-    turns this red."""
+    existing one: the six are a published contract (#9) and an earlier change, which adds
+    `X-Gateway-Cost-USD`, is meant to be what turns this red."""
     headers = gateway_headers(resolved_for(policy), "trace-id", redacted=True)
 
     assert len(headers) == 6
