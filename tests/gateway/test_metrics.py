@@ -24,7 +24,7 @@ dashboard query uses. `gateway_eval_*` is deliberately absent (decision C): the
 nightly job pushes those gauges to a Pushgateway, so this process never declares
 them.
 
-Two things are deliberately NOT asserted here. The label NAMES of the five unfed
+Two things are deliberately NOT asserted here. The label NAMES of the three unfed
 families, which have no samples to read them off and no public accessor that
 would not pin an implementation detail; and the resolved provider model id, which
 lives in `routing.yaml` - the token-label test compares the label against the
@@ -113,10 +113,14 @@ FED_FAMILIES = (
     TOKENS,
     REDACTIONS,
     PROVIDER_ERRORS,
-    RESIDENCY_VIOLATIONS,
     FALLBACKS,
     CIRCUIT_STATE,
 )
+"""The families a request through a route in this file feeds. An earlier change took
+`gateway_residency_violations_total` OUT of this tuple: under
+decision E a 451 no longer moves it, and nothing else a route can do moves it
+either, so a case asserting it carries samples after a request would be asserting
+the behaviour that plan removed."""
 
 UNFED_FAMILIES = (
     "gateway_cache_hits_total",
@@ -128,11 +132,22 @@ time a subsystem lands: an earlier change filled `gateway_fallbacks_total` and
 `gateway_circuit_state` and moved both above. The count below
 does not change - a plan here adds a value, never a family."""
 
-DECLARED_FAMILIES = frozenset(FED_FAMILIES) | frozenset(UNFED_FAMILIES)
+ROUTE_UNFED_FAMILIES = (RESIDENCY_VIOLATIONS,)
+"""Declared, and unreachable from any route. It is fed by exactly one thing - an
+`allowed=false` residency log row, which the resolver cannot produce (an earlier change
+decision E) - so it belongs in neither tuple above: a request never moves it, and
+it does carry samples in this session, because
+tests/gateway/test_residency_log.py feeds it directly. That is why it is not
+listed with the three empty ones, whose case asserts the absence of any sample."""
+
+DECLARED_FAMILIES = (
+    frozenset(FED_FAMILIES) | frozenset(UNFED_FAMILIES) | frozenset(ROUTE_UNFED_FAMILIES)
+)
 
 DECLARED_FAMILY_COUNT = 11
-"""Eight fed with data plus three declared and empty. The plan's own number, so a
-family added or dropped fails here as well as in the set comparison."""
+"""Seven fed through a route, three declared and empty, and one fed only by a row
+the resolver cannot produce. The plan's own number, so a family added or dropped
+fails here as well as in the set comparison."""
 
 # The `le` values decision H fixes, in the order and the spelling
 # prometheus_client renders them with, `+Inf` included. The default histogram
@@ -792,14 +807,18 @@ def test_a_provider_failure_increments_the_provider_error_counter(
     assert metrics.total(REQUESTS) == 1
 
 
-def test_a_residency_refusal_increments_the_violation_counter(
+def test_a_residency_refusal_leaves_the_violation_counter_flat(
     chat_client: TestClient, metrics: MetricDelta
 ) -> None:
-    """Catches a 451 counted only as an ordinary failed request. `gateway_residency_
-    violations_total` is alerted at greater than zero (the design), so a refusal that moves
-    only `gateway_requests_total{status="451"}` leaves the one alert that exists for a
-    residency breach silent. The provider-error assertion is the other direction: a
-    refusal is not a provider failure and must not fire that panel."""
+    """An earlier change decision E. Catches the older reading, where `record_failure` moved
+    `gateway_residency_violations_total` on every 451: a 451 is the resolver refusing
+    correctly, and the design alerts this counter at greater than zero, so an EU tenant
+    asking for `agent-strong` - which the shipped policy refuses by design - would page
+    someone every time it happened. The counter is fed only by an `allowed=false`
+    residency log row, which the resolver cannot produce; that half is pinned by
+    tests/gateway/test_residency_log.py. The refusal is still counted, by
+    `gateway_requests_total`, because a 451 counted nowhere is a request the RPS panel
+    cannot reconcile with the access log; and it is still not a provider failure."""
     response = post_chat(
         chat_client,
         chat_body(model="agent-strong"),
@@ -808,8 +827,8 @@ def test_a_residency_refusal_increments_the_violation_counter(
     )
     assert_error_body(response, status=451, code="RESIDENCY_UNAVAILABLE")
 
-    assert metrics.delta(RESIDENCY_VIOLATIONS, tenant="nordlicht") == 1
-    assert metrics.total(RESIDENCY_VIOLATIONS) == 1
+    assert metrics.delta(RESIDENCY_VIOLATIONS, tenant="nordlicht") == 0
+    assert metrics.total(RESIDENCY_VIOLATIONS) == 0
     assert metrics.total(PROVIDER_ERRORS) == 0
     assert metrics.total(REQUESTS) == 1
 

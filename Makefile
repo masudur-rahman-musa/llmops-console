@@ -1,4 +1,4 @@
-.PHONY: help setup run test select-tests test-adjacent lint typecheck format verify eval infra-check
+.PHONY: help setup run test select-tests test-adjacent lint typecheck format verify eval infra-check migrate purge-residency
 
 # The console arrives in a later milestone. Until then its checks are skipped
 # rather than deleted, so the intended gate stays visible in this file. The
@@ -40,6 +40,15 @@ typecheck:  ## Static types
 format:     ## Auto-format
 	uv run ruff format .
 verify: format lint typecheck test   ## The full gate, in order
+# The ledger's schema is applied by a deploy STEP, never on app start: replicas
+# coming up together would otherwise race each other over the same DDL, and
+# nobody would get to read the migration before it ran. Both targets answer a
+# non-zero code when OPSCONSOLE_DATABASE_URL is unset, so a pipeline cannot
+# mistake "nothing was configured" for "nothing needed doing".
+migrate:    ## Apply the ledger migrations (safe to run twice)
+	uv run ops-migrate
+purge-residency: ## Drop residency log partitions past the retention
+	uv run ops-purge-residency
 eval:       ## Project evals: golden set vs project-evals/baseline.json
 	uv run ops-eval run --target http://localhost:8080 --set "$$GOLDEN_SET" --tenant evals --out project-evals/reports/local
 infra-check: ## Validate infrastructure as code (no apply)

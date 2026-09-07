@@ -33,8 +33,19 @@ dependencies = [
     # prerequisite for `uv sync`. Qdrant is probed over the `httpx` already here
     # rather than through a client library, because a probe is one GET.
     "redis>=5",
-    "psycopg[binary]>=3.2",
+    # `pool` on top of `binary`: the residency log is a
+    # write on every served request, so a connect-per-write would put a TCP and
+    # TLS handshake on the hot path. `psycopg_pool` ships separately from
+    # `psycopg`, which is why the extra is named here rather than assumed.
+    "psycopg[binary,pool]>=3.2",
 ]
+
+# The two deploy commands the ledger owns. Declared as entry points
+# rather than left to `python -m`, because the Makefile targets and the k8s Job
+# and CronJob that will call them all want one name that works inside the image.
+[project.scripts]
+ops-migrate = "opsconsole.ledger.cli:migrate"
+ops-purge-residency = "opsconsole.ledger.cli:purge"
 
 [dependency-groups]
 dev = [

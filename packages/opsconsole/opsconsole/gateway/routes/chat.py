@@ -75,6 +75,7 @@ from opsconsole.gateway.routes.redact import (
     redact_or_reject,
     redaction_applies,
 )
+from opsconsole.ledger import ResidencyLogWriter, record_residency
 from opsconsole.providers.base import (
     Adapter,
     ChatMessage,
@@ -94,7 +95,7 @@ from opsconsole.providers.base import (
 )
 from opsconsole.providers.breaker import CircuitBreaker
 from opsconsole.routing.errors import AllProvidersUnavailable
-from opsconsole.routing.policy import Policy, PolicyStore
+from opsconsole.routing.policy import DataClass, Policy, PolicyStore
 from opsconsole.routing.resolver import Resolved, resolve
 
 COMPLETION_ID_PREFIX = "chatcmpl-"
@@ -498,9 +499,18 @@ def absorb_failure(breaker: CircuitBreaker, provider: str, error: ProviderError)
 
 
 def record_served(
-    scope: Scope, breaker: CircuitBreaker, *, tenant: str, alias: str, chosen: Resolved, failed: int
+    scope: Scope,
+    breaker: CircuitBreaker,
+    *,
+    tenant: str,
+    alias: str,
+    chosen: Resolved,
+    failed: int,
+    policy: Policy,
+    data_class: DataClass,
+    log: ResidencyLogWriter,
 ) -> None:
-    """Close the loop on the candidate that served: the breaker, the counter, the span.
+    """Close the loop on the candidate that served: the breaker, the counter, the span, the log.
 
     On a STREAM this runs when the first event arrives, not when the last one does,
     because that is where the route hands the response back. The consequence is
@@ -517,9 +527,24 @@ def record_served(
     `test_a_fallback_is_recorded_on_the_trace_as_a_count`), and neither is touched
     at all when nothing fell back
     (`test_a_request_that_needed_no_fallback_counts_none`).
+
+    The residency row is written here, and here is the ONLY place it is written,
+    which is what makes "one row per served request" true of all three paths -
+    both chat paths and `/v1/embeddings` reach the log through this function and
+    through nothing else. It names `chosen`, so a request that fell back records
+    the candidate that SERVED
+    (`test_a_chat_request_that_fell_back_logs_the_serving_provider`). On a stream
+    that is still before the first frame is on the wire, so a stream that dies
+    mid-answer has already recorded where its data went. The write is guarded
+    inside `record_residency`: it cannot change a status
+    code, a body or a header on any of the three paths
+    (`test_a_failing_writer_changes_no_status_body_or_header`).
     """
     breaker.record_success(chosen.provider)
     record_circuit_state(provider=chosen.provider, state=int(breaker.state(chosen.provider)))
+    record_residency(
+        log, policy=policy, tenant=tenant, data_class=data_class, alias=alias, chosen=chosen
+    )
     if failed == 0:
         return
     record_fallback(tenant=tenant, alias=alias, provider=chosen.provider)
@@ -958,6 +983,9 @@ def create_chat_completion(
             alias=body.model,
             chosen=chosen,
             failed=attempt,
+            policy=store.policy,
+            data_class=context.data_class,
+            log=request.app.state.residency_log,
         )
         if body.stream:
             return streamed

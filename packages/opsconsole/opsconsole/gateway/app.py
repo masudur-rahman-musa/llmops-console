@@ -43,6 +43,12 @@ from opsconsole.gateway.routes.embeddings import router as embeddings_router
 from opsconsole.gateway.routes.metrics import router as metrics_router
 from opsconsole.gateway.routes.models import router as models_router
 from opsconsole.gateway.routes.redact import router as redact_router
+from opsconsole.ledger import (
+    InMemoryResidencyLogWriter,
+    PostgresResidencyLogWriter,
+    ResidencyLogWriter,
+    build_pool,
+)
 from opsconsole.providers.breaker import CircuitBreaker
 from opsconsole.providers.factory import build_adapters
 from opsconsole.providers.factory import close_adapters as close_adapters
@@ -198,6 +204,15 @@ def create_app(
     `test_create_app_keeps_the_in_process_store_without_a_redis_url` and
     `test_create_app_uses_the_redis_store_when_a_redis_url_is_configured`.
 
+    The residency log writer is settings-driven for the same reason and by the
+    same rule: `OPSCONSOLE_DATABASE_URL` set builds `PostgresResidencyLogWriter`
+    over a pool, absent builds `InMemoryResidencyLogWriter`, which files rows in
+    this process and is what lets the suite and a bare local run open no
+    connection at all
+    (`test_the_app_builds_the_in_process_writer_without_a_database_url`). The
+    migration is NOT applied here: `make migrate` is a deploy step, so that
+    replicas coming up together do not race each other over the same DDL.
+
     `register_probes` runs last of the state-building steps, because the probes it
     registers close over the adapter mapping and the settings built above; what it
     registers is decided by which backing services are configured
@@ -218,6 +233,12 @@ def create_app(
         else InProcessRedactionMapStore()
     )
     app.state.redaction_map_store = store
+    residency_log: ResidencyLogWriter = (
+        PostgresResidencyLogWriter(build_pool(resolved.database_url))
+        if resolved.database_url is not None
+        else InMemoryResidencyLogWriter()
+    )
+    app.state.residency_log = residency_log
     register_probes(app)
     register_error_handlers(app)
     install_exporter(resolved)

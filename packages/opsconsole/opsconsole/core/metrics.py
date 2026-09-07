@@ -113,10 +113,12 @@ One member, and it stays one. `ALL_PROVIDERS_FAILED` is raised by the resolver
 BEFORE any provider is chosen - the breaker's contribution is to make the seam
 refuse more often, not to name a provider - so it has no provider to label with
 and would need the empty one, which is a series nobody can act on (an earlier change
-decision E). A refusal is deliberately not here: a 451 is a residency
-decision, not a provider outage, and counting it as one would fire the design's
-provider panel on a request no provider ever saw
-(`test_a_residency_refusal_increments_the_violation_counter`)."""
+decision E). A residency refusal is deliberately not here either: a 451 is a
+residency decision, not a provider outage, and counting it as one would fire
+the design's provider panel on a request no provider ever saw. Since an earlier change
+decision E it moves no failure family at all and is counted only by
+`gateway_requests_total`'s `status` label
+(`test_a_residency_refusal_leaves_the_violation_counter_flat`)."""
 
 _registry = CollectorRegistry()
 
@@ -158,7 +160,7 @@ PROVIDER_ERRORS = Counter(
 
 RESIDENCY_VIOLATIONS = Counter(
     "gateway_residency_violations_total",
-    "Requests refused because no allowed provider could serve the tenant's regions.",
+    "Requests served from a region the tenant's policy does not allow. Zero by construction.",
     ("tenant",),
     registry=_registry,
 )
@@ -419,15 +421,21 @@ def record_redactions(*, tenant: str, counts: Mapping[str, int]) -> None:
 def record_failure(scope: Scope, error: GatewayError) -> None:
     """Move whichever failure counter this typed error belongs on, if any.
 
-    Two failures have a panel of their own because two failures have an operator
-    response of their own. A provider outage is answered by looking at the
-    provider, so it is labelled with the one that failed and with the typed code -
-    `test_a_provider_failure_increments_the_provider_error_counter`. A residency
-    refusal is alerted at greater than zero (the design), so it needs a counter that
-    a 502 cannot move and that a 451 cannot leave still -
-    `test_a_residency_refusal_increments_the_violation_counter`. Every other typed
-    failure is already counted by `gateway_requests_total`'s `status` label and
-    gets no second family.
+    One failure has a panel of its own, because one failure has an operator
+    response of its own: a provider outage is answered by looking at the provider,
+    so it is labelled with the one that failed and with the typed code
+    (`test_a_provider_failure_increments_the_provider_error_counter`). Every other
+    typed failure is already counted by `gateway_requests_total`'s `status` label
+    and gets no second family.
+
+    A 451 is NOT among them, and used to be. A residency
+    refusal is the resolver working: it is the guarantee being kept, not a
+    violation of it, and the design alerts `gateway_residency_violations_total` at
+    greater than zero - so counting 451s there paged someone every time an EU
+    tenant asked for `agent-strong`. That counter is now moved only by an
+    `allowed=false` row in the residency log, from `record_residency_violation`
+    below, which is what makes it zero by construction and alertable at all.
+    `test_a_residency_refusal_leaves_the_violation_counter_flat` is the case.
     """
     with _guarded("failure counters"):
         record = request_metrics(scope)
@@ -435,5 +443,23 @@ def record_failure(scope: Scope, error: GatewayError) -> None:
             return
         if error.code in PROVIDER_FAILURE_CODES and record.provider != UNSET_LABEL:
             PROVIDER_ERRORS.labels(provider=record.provider, code=error.code.value).inc()
-        elif error.code is ErrorCode.RESIDENCY_UNAVAILABLE:
-            RESIDENCY_VIOLATIONS.labels(tenant=record.tenant).inc()
+
+
+def record_residency_violation(*, tenant: str) -> None:
+    """Book one residency violation: a request SERVED from a region policy forbids.
+
+    The resolver cannot produce one - it filters the candidate list by region
+    before anything is dialled, and `tests/routing/test_residency_property.py`
+    is the proof - so this counter is expected to stay at zero forever, which is
+    exactly what makes the design's "alert above zero" a usable alert rather than
+    a threshold someone has to tune. It moves only from
+    `ledger/residency.py::record_residency`, on a row whose `allowed` came back
+    false; if it ever moves, the log row beside it names the tenant, the alias,
+    the provider and the region.
+
+    Moved BEFORE the write rather than after it, so a violation is still visible
+    when the database is the thing that has broken
+    (`test_a_forced_allowed_false_row_moves_the_violation_counter_once`).
+    """
+    with _guarded("residency violations"):
+        RESIDENCY_VIOLATIONS.labels(tenant=tenant).inc()

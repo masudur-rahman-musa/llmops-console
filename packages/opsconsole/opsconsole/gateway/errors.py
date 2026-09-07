@@ -118,11 +118,14 @@ async def handle_gateway_error(request: Request, exc: Exception) -> JSONResponse
 
     `record_failure` is the metrics half of the same fact, and it is here for the
     same reason: this is where a raised `GatewayError` arrives with its typed code
-    still attached. It moves the two failure families that have an operator
-    response of their own and nothing else - which of them, and on what, is
+    still attached. It moves the ONE failure family that has an operator response
+    of its own and nothing else - which family, and on what, is
     `core/metrics.py`'s decision rather than this file's
-    (`test_a_provider_failure_increments_the_provider_error_counter`,
-    `test_a_residency_refusal_increments_the_violation_counter`).
+    (`test_a_provider_failure_increments_the_provider_error_counter`). A 451 used
+    to move a second one and no longer does: `gateway_residency_violations_total`
+    now counts only a request actually SERVED from a forbidden region, which no
+    handler ever sees (an earlier change decision E,
+    `test_a_residency_refusal_leaves_the_violation_counter_flat`).
     """
     error = cast(GatewayError, exc)
     record_error_code(request.scope, error.code.value if error.code is not None else None)

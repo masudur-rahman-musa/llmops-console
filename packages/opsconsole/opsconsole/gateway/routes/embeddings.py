@@ -330,6 +330,9 @@ def create_embeddings(
         alias=body.model,
         chosen=chosen,
         failed=attempt,
+        policy=store.policy,
+        data_class=context.data_class,
+        log=request.app.state.residency_log,
     )
     record_tokens(
         tenant=context.tenant,
