@@ -68,8 +68,8 @@ class IdentifierInvalid(RoutingError):
         gateway/context.py       the X-Tenant, X-Session and X-Data-Class headers
         gateway/routes/admin.py  the admin tenant parameter, and a reload whose
                                  routing.yaml will not parse
-        gateway/routes/chat.py   the X-Gateway-Rehydrate map id, and the same
-                                 header on a streamed request
+        gateway/routes/chat.py   the X-Gateway-Rehydrate map id, on a returned
+                                 answer and on a streamed one alike
         gateway/routes/directory.py  the pushed tenant, and a directory cap
                                  breach converted out of DirectoryNameInvalid
         gateway/routes/redact.py the redact endpoint's own identifiers

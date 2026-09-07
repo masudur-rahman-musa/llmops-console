@@ -100,6 +100,7 @@ from opsconsole.redaction import (
     DirectoryStore,
     RedactionMapStore,
     RedactionMapStoreUnavailable,
+    StreamRehydrator,
     rehydrate,
 )
 from opsconsole.routing.errors import AllProvidersUnavailable, IdentifierInvalid
@@ -843,6 +844,8 @@ def sse_frames(
     alias: str,
     completion_id: str,
     on_usage: Callable[[Usage], None] | None = None,
+    *,
+    mapping: Mapping[str, str] | None = None,
 ) -> Generator[str, None, None]:
     """Render the neutral events as SSE frames, ending with `[DONE]` if they finish.
 
@@ -877,15 +880,77 @@ def sse_frames(
     A sync generator, deliberately: FastAPI iterates it in a worker thread, so a
     provider that pauses between events holds a thread rather than the event
     loop, exactly as the non-streaming path is already handled.
+
+    `mapping` is the rehydration the caller asked for, and `None` - the shape a
+    request without `X-Gateway-Rehydrate` takes - leaves every frame exactly as
+    it was before an earlier change (`test_a_stream_without_the_header_is_what_it_is_today`).
+    With a mapping, a `TextDelta` goes through a `StreamRehydrator` and becomes
+    ZERO or one frame: a fragment that could still be completing a placeholder is
+    held rather than sent as an empty delta (decision D). A `ToolCallDelta`
+    carries a COMPLETE call, so its `arguments` need no
+    buffer and are substituted whole
+    (`test_a_streamed_tool_calls_arguments_are_rehydrated`).
+
+    The held text is flushed before EVERY non-text event, before the error frame
+    and before `[DONE]` (decisions E and F), so a `finish_reason` can never
+    overtake the last of the answer and nothing the provider produced is dropped
+    (`test_held_text_is_flushed_before_the_finish_reason`,
+    `test_held_text_is_flushed_before_an_error_frame`,
+    `test_a_trailing_partial_placeholder_is_flushed_before_done`).
+
+    The wrap runs INSIDE this generator rather than around the iterator it is
+    handed (decision C): the `finally` below closes `events` by name, and closing
+    a wrapper instead would leave the provider's stream to the garbage collector
+    - which is what `test_closing_the_frame_generator_releases_the_provider_stream`
+    exists to catch.
     """
     created = int(time.time())
+    # An empty map stands in for "no rehydration asked for": both `rehydrate` and
+    # `StreamRehydrator` are the identity over one, so the frames of a request
+    # without the header are what they were before this parameter existed, and
+    # the two paths do not need two copies of the loop below.
+    restore: Mapping[str, str] = mapping if mapping is not None else {}
+    rehydrator = StreamRehydrator(restore)
+
+    def rendered(event: StreamEvent) -> str:
+        return _frame(
+            to_chunk(
+                event, completion_id=completion_id, created=created, alias=alias
+            ).model_dump_json()
+        )
+
+    def held() -> Generator[str, None, None]:
+        """The frame carrying whatever is still buffered, or no frame at all."""
+        text = rehydrator.flush()
+        if text:
+            yield rendered(TextDelta(text=text))
+
     try:
         for event in chain((first,), events):
+            if isinstance(event, TextDelta):
+                emitted = rehydrator.feed(event.text)
+                if not emitted and event.text:
+                    # Everything the provider sent is still held: no frame at all
+                    # (decision D). `event.text` guards the other way round - a
+                    # provider delta that was empty to begin with is rendered
+                    # exactly as it was before this parameter existed.
+                    continue
+                event = TextDelta(text=emitted)
+            else:
+                yield from held()
+                if isinstance(event, ToolCallDelta):
+                    event = ToolCallDelta(
+                        index=event.index,
+                        call=event.call.model_copy(
+                            update={"arguments": rehydrate(event.call.arguments, restore)}
+                        ),
+                    )
             if isinstance(event, UsageTotal) and on_usage is not None:
                 on_usage(event.usage)
-            chunk = to_chunk(event, completion_id=completion_id, created=created, alias=alias)
-            yield _frame(chunk.model_dump_json())
+            yield rendered(event)
+        yield from held()
     except GatewayError as error:
+        yield from held()
         yield _frame(
             json.dumps(
                 error_body(
@@ -907,7 +972,7 @@ def sse_frames(
 
 
 def requested_mapping(
-    store: RedactionMapStore, tenant: str, header: str | None, *, stream: bool
+    store: RedactionMapStore, tenant: str, header: str | None
 ) -> Mapping[str, str] | None:
     """The map this request asked to rehydrate through, or `None` when it asked for none.
 
@@ -923,13 +988,16 @@ def requested_mapping(
     rather than a request that never asked (the empty row of
     `test_the_map_id_rejection_table`).
 
-    Four refusals, in the order they are cheapest to make:
+    The answer is the same on a streamed request as on a returned one: an earlier change
+    gave the frame renderer a boundary-safe buffer, so `stream: true` with the
+    header no longer refuses and each refusal below is re-asserted on a streamed
+    body (`test_a_malformed_map_id_on_a_stream_is_422_with_no_outbound_call`,
+    `test_an_unknown_map_id_on_a_stream_is_422_with_no_outbound_call`,
+    `test_an_id_live_for_another_tenant_is_absent_on_a_stream`,
+    `test_an_unreachable_map_store_on_a_stream_is_502_with_no_outbound_call`).
 
-    * `stream: true` with the header is 422 (decision E). A placeholder can be
-      split across two SSE frames, so the streamed path needs an earlier change's
-      boundary-safe buffer; ignoring an explicit control instead would hand back
-      an answer still carrying `<EMAIL_1>` with nothing to say why
-      (`test_a_streamed_request_asking_for_rehydration_is_422`).
+    Three refusals, in the order they are cheapest to make:
+
     * A malformed id is 422 before the store is asked, against the store's own
       `MAP_ID_PATTERN` rather than a second copy of the rule.
       `fullmatch`, because `$` in Python also matches before a trailing newline; the inclusive boundary and the whitespace rows are
@@ -948,11 +1016,6 @@ def requested_mapping(
     """
     if header is None:
         return None
-    if stream:
-        raise IdentifierInvalid(
-            f"{REHYDRATE_HEADER}: rehydration is not available on a streamed request",
-            param=REHYDRATE_HEADER,
-        )
     if MAP_ID_PATTERN.fullmatch(header) is None:
         raise IdentifierInvalid(f"{REHYDRATE_HEADER}: not a valid map id", param=REHYDRATE_HEADER)
     try:
@@ -967,10 +1030,12 @@ def requested_mapping(
 def rehydrated(answer: ChatResponse, mapping: Mapping[str, str] | None) -> ChatResponse:
     """The answer with the map's placeholders restored, or the answer itself.
 
-    Applied to the NEUTRAL response before `to_wire` (decision C), because plan
-    12c's `TextDelta` and `ToolCallDelta` are neutral too and one seam covers both
-    paths; on the wire model the two would need two implementations of the same
-    substitution.
+    Applied to the NEUTRAL response before `to_wire` (decision C), because the
+    streamed path's `TextDelta` and `ToolCallDelta` are neutral too and one
+    substitution covers both; on the wire model the two would need two
+    implementations of the same thing. `sse_frames` is where the streamed half
+    runs, over a `StreamRehydrator` rather than this function, because a
+    placeholder can be split across two frames.
 
     Both `content` and each tool call's `arguments` (decision D). A tool call
     handed `<EMAIL_1>` is a broken tool call, and the content of an answer whose
@@ -1054,7 +1119,6 @@ def create_chat_completion(
         request.app.state.redaction_map_store,
         context.tenant,
         request.headers.get(REHYDRATE_HEADER),
-        stream=body.stream,
     )
 
     with stage_span(scope, ROUTE_SPAN):
@@ -1085,6 +1149,7 @@ def create_chat_completion(
                         chosen,
                         headers,
                         _token_sink(context.tenant, chosen),
+                        mapping=mapping,
                     )
                 else:
                     answer = adapters[chosen.provider].chat(to_neutral(outbound, chosen.model))
@@ -1207,6 +1272,8 @@ def _streamed(
     chosen: Resolved,
     headers: dict[str, str],
     on_usage: Callable[[Usage], None],
+    *,
+    mapping: Mapping[str, str] | None = None,
 ) -> StreamingResponse:
     """Open the stream, pull its first event, and only then answer 200.
 
@@ -1230,7 +1297,7 @@ def _streamed(
         )
 
     return StreamingResponse(
-        sse_frames(first, events, body.model, _completion_id(), on_usage=on_usage),
+        sse_frames(first, events, body.model, _completion_id(), on_usage=on_usage, mapping=mapping),
         media_type=SSE_MEDIA_TYPE,
         headers={**headers, **SSE_HEADERS},
     )

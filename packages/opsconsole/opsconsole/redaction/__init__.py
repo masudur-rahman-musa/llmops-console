@@ -3,7 +3,8 @@
 The engine is a pure library: it reads one string and returns another plus a
 map, with no HTTP surface and no dependency on the routing policy. Alongside it,
 `store.py` holds the placeholder maps a call produced, keyed by tenant and
-expiring after an hour, `rehydrate.py` puts those values back into an answer, and
+expiring after an hour, `rehydrate.py` puts those values back into an answer -
+whole, or fragment by fragment as a stream delivers it - and
 `directory.py` holds the display names a tenant's operator pushed. The gateway's
 `POST /v1/redact`, `POST /admin/directory` and the inline call sites live in
 `opsconsole.gateway.routes`, not here.
@@ -59,7 +60,7 @@ from opsconsole.redaction.redactor import (
     resolve_overlaps,
     taken_placeholders,
 )
-from opsconsole.redaction.rehydrate import rehydrate
+from opsconsole.redaction.rehydrate import StreamRehydrator, rehydrate
 from opsconsole.redaction.store import (
     MAP_ID_PATTERN,
     REDACTION_MAP_ID_BYTES,
@@ -97,6 +98,7 @@ __all__ = [
     "RedactionResult",
     "RedisDirectoryStore",
     "RedisRedactionMapStore",
+    "StreamRehydrator",
     "checked_entries",
     "compact_separators",
     "detect_all",

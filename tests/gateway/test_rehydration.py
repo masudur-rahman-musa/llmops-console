@@ -35,12 +35,33 @@ resetting the stub's script and the store's recorded reads. The 502 case is the
 one exception - its store must refuse every read, so it gets an app of its own
 rather than leaving every later case here talking to a broken store.
 
+An earlier change adds the streamed half, and the arrangements there are chosen the same
+way:
+
+* THE FLUSH POINTS. Each of the three has its script arranged so that only its
+  own flush can decide the outcome. The `finish_reason` case asserts the ORDER of
+  the frames rather than the assembled text, because a flush that happened only
+  at `[DONE]` would still deliver every character - just after the client had
+  been told the answer ended. The `[DONE]` case ends its script on the text delta
+  itself, with no `finish_reason` and no usage chunk after it, so the flush before
+  a non-text event cannot be what saves it.
+* THE REFUSALS ON A STREAM. An earlier change answered 422 to the header on ANY streamed
+  body before it looked at the id at all, and this plan deletes that guard; the
+  four rows re-assert the remaining refusals on a streamed body, and each is
+  separated from its neighbour exactly as the non-streamed four are - by whether
+  the store was asked (`gets == []` for the malformed id, one read for the
+  unknown one).
+* THE STUB'S SCRIPT. `RehydrationStub.events` is per test for the same reason
+  `response` is: every streamed case needs a different fragment sequence, and one
+  app per case would be the rebuild a project rule forbids.
+
 No provider key is read and no network is touched: the adapter is a stub and the
 map store is the in-process one `create_app` builds.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any, cast
@@ -49,13 +70,19 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx import Response
 
+from opsconsole.core.errors import ProviderError
 from opsconsole.core.settings import Settings
 from opsconsole.providers.base import (
     Adapter,
     ChatRequest,
     ChatResponse,
+    FinishReason,
     StreamEvent,
+    StreamStart,
+    TextDelta,
     ToolCall,
+    ToolCallDelta,
+    UsageTotal,
 )
 from opsconsole.redaction import (
     MAP_ID_PATTERN,
@@ -65,6 +92,8 @@ from opsconsole.redaction import (
 
 from .conftest import (
     CHAT,
+    STREAM_TOOL_INDEX,
+    STREAM_USAGE,
     TEST_KEYS,
     app_of,
     assert_error_body,
@@ -120,6 +149,20 @@ GATEWAY_HEADER_PREFIX = "x-gateway-"
 STUB_TOOL_ID = "toolu_01RehydrateCall0000000"
 STUB_TOOL_NAME = "send_email"
 
+DONE_PAYLOAD = "[DONE]"
+
+# The two SSE headers a streamed answer carries beside the six `X-Gateway-*`
+# ones. Named here so the rehydrated stream is compared against the same pair
+# `tests/gateway/test_chat_streaming.py` pins on an ordinary one, rather than
+# against whatever the rehydrating branch happens to build.
+EXPECTED_SSE_HEADERS = {"cache-control": "no-cache", "x-accel-buffering": "no"}
+
+# A PROPER PREFIX of `<PERSON_1>`, the longest key in `LIVE_MAPPING`. That is the
+# whole reason it is held rather than emitted, and being held is what makes the
+# three flush points observable at all: no script below ever sends the `1>` that
+# would complete it, so it can only leave the gateway through a flush.
+HELD_PARTIAL = "<PERSON_"
+
 
 class RehydrationStub:
     """A stub adapter whose ANSWER is set per test, and which records every call.
@@ -130,6 +173,15 @@ class RehydrationStub:
     case would be the rebuild a project rule forbids. `response` and `reset()`
     are the same public-script shape `FallbackStubAdapter` uses.
 
+    `events` is the streamed half of the same script and is set the
+    same way, because each streamed case needs its own fragment sequence: one
+    holding a partial placeholder at the end, one carrying a tool call, one that
+    stops without a `finish_reason` at all.
+
+    `stream_error` is raised AFTER the scripted events have been yielded, which
+    is the mid-stream position an earlier change decision E is about: the 200 and the
+    first frames are already on the wire, so the failure can only be a frame.
+
     `requests` is the load-bearing part: every refusal in this module asserts it
     is still empty, which is the only evidence a caller with a stale map id paid
     for no tokens.
@@ -139,11 +191,15 @@ class RehydrationStub:
         self.name = name
         self.requests: list[ChatRequest] = []
         self.response: ChatResponse = stub_response()
+        self.events: tuple[StreamEvent, ...] = stream_events()
+        self.stream_error: Exception | None = None
 
     def reset(self) -> None:
-        """Forget every recorded call and go back to the default answer."""
+        """Forget every recorded call and go back to the default answer and script."""
         self.requests = []
         self.response = stub_response()
+        self.events = stream_events()
+        self.stream_error = None
 
     @property
     def call_count(self) -> int:
@@ -156,7 +212,9 @@ class RehydrationStub:
 
     def stream_chat(self, request: ChatRequest) -> Iterator[StreamEvent]:
         self.requests.append(request)
-        yield from stream_events()
+        yield from self.events
+        if self.stream_error is not None:
+            raise self.stream_error
 
     def healthcheck(self) -> bool:
         return True
@@ -306,6 +364,66 @@ def gateway_headers(response: Response) -> dict[str, str]:
     }
 
 
+def stream_body(**overrides: object) -> dict[str, Any]:
+    """The baseline request body with `stream: true`."""
+    return chat_body(stream=True, **overrides)
+
+
+def data_frames(response: Response) -> list[str]:
+    """The payload of every `data:` frame of a streamed 200, sentinel included.
+
+    Written here rather than imported from `tests/gateway/test_chat_streaming.py`:
+    those helpers are that module's private reading of the same wire format, and
+    no test module in this repo imports from another (`grep -rn "^from test" tests/`
+    finds nothing). The media type is asserted here once, so an
+    `application/json` refusal cannot be read as frames by any case below.
+    """
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].split(";")[0] == "text/event-stream"
+    return [
+        line.removeprefix("data:").strip()
+        for line in response.text.splitlines()
+        if line.strip().startswith("data:")
+    ]
+
+
+def chunks(response: Response) -> list[dict[str, Any]]:
+    """Every frame of a streamed 200 parsed as JSON, without the `[DONE]` sentinel."""
+    return [json.loads(payload) for payload in data_frames(response) if payload != DONE_PAYLOAD]
+
+
+def deltas(parsed: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The `delta` object of every chunk that carries one choice."""
+    return [chunk["choices"][0]["delta"] for chunk in parsed if chunk["choices"]]
+
+
+def streamed_content(response: Response) -> str:
+    """The answer a client assembles: every `content` delta joined in frame order.
+
+    This is the only reading in which a lost carry and a doubled one are both
+    visible, and it is what an OpenAI SDK builds from the same frames.
+    """
+    return "".join(delta.get("content") or "" for delta in deltas(chunks(response)))
+
+
+def content_frame_positions(parsed: list[dict[str, Any]]) -> list[int]:
+    """The index of every chunk carrying a non-empty `content` delta."""
+    return [
+        index
+        for index, chunk in enumerate(parsed)
+        if chunk["choices"] and chunk["choices"][0]["delta"].get("content")
+    ]
+
+
+def finish_frame_positions(parsed: list[dict[str, Any]]) -> list[int]:
+    """The index of every chunk carrying a `finish_reason`."""
+    return [
+        index
+        for index, chunk in enumerate(parsed)
+        if chunk["choices"] and chunk["choices"][0].get("finish_reason") is not None
+    ]
+
+
 # --------------------------------------------------------------------------
 # off by default
 # --------------------------------------------------------------------------
@@ -439,6 +557,195 @@ def test_a_rehydrated_answer_carries_the_same_six_headers(
 
 
 # --------------------------------------------------------------------------
+# the stream
+# --------------------------------------------------------------------------
+
+
+def test_a_stream_without_the_header_is_what_it_is_today(
+    rehydration_client: TestClient,
+    rehydration_stub: RehydrationStub,
+    map_store: RecordingMapStore,
+    live_map_id: str,
+) -> None:
+    """Catches a route that rehydrates every stream once the streamed path can rehydrate
+    at all - the easy mistake when a refusal is lifted, since the branch that used to
+    raise is now the branch that substitutes. The map naming both placeholders IS live for
+    this caller, so only the missing header stands between these frames and
+    `alice@example.com`, and the arrangement is asserted rather than assumed at the end."""
+    rehydration_stub.events = stream_events(fragments=("write to <EMAIL_1>", " about <PERSON_1>"))
+
+    response = post_rehydrated(rehydration_client, stream_body(), map_id=None)
+
+    assert streamed_content(response) == "write to <EMAIL_1> about <PERSON_1>"
+    assert EMAIL_A not in response.text
+    assert PERSON_A not in response.text
+    assert map_store.get(TENANT, live_map_id) == LIVE_MAPPING
+
+
+def test_a_stream_without_the_header_reads_the_map_store_zero_times(
+    rehydration_client: TestClient, rehydration_stub: RehydrationStub, live_map_id: str
+) -> None:
+    """Catches a streamed path that loads the map before it looks at the header - or that
+    builds a rehydrator for every stream and feeds it an empty map: every streamed request
+    would pay a store round trip (a Redis call in production) for a feature almost no
+    stream asks for, and a suite that only read the frames could not see it."""
+    rehydration_stub.events = stream_events(fragments=("write to <EMAIL_1>",))
+
+    post_rehydrated(rehydration_client, stream_body(), map_id=None)
+
+    assert map_store_reads(rehydration_client) == []
+
+
+def test_a_streamed_placeholder_comes_back_as_the_raw_value(
+    rehydration_client: TestClient, rehydration_stub: RehydrationStub, live_map_id: str
+) -> None:
+    """Catches the route still refusing the combination 12b turned down (decision G), and
+    catches the opposite half-fix: a 200 `text/event-stream` whose frames were never
+    passed the map, which hands the caller `<EMAIL_1>` while telling it the request
+    succeeded. Both placeholders are asserted gone from the WHOLE body and both raw values
+    present, so substituting only the first key passes neither."""
+    rehydration_stub.events = stream_events(fragments=("write to <EMAIL_1>", " about <PERSON_1>"))
+
+    response = post_rehydrated(rehydration_client, stream_body(), map_id=live_map_id)
+
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].split(";")[0] == "text/event-stream"
+    assert streamed_content(response) == f"write to {EMAIL_A} about {PERSON_A}"
+    assert "<EMAIL_1>" not in response.text
+    assert "<PERSON_1>" not in response.text
+    assert data_frames(response)[-1] == DONE_PAYLOAD
+
+
+def test_a_streamed_tool_calls_arguments_are_rehydrated(
+    rehydration_client: TestClient, rehydration_stub: RehydrationStub, live_map_id: str
+) -> None:
+    """Catches a streamed wrap that handles `TextDelta` only: this script has no text at
+    all, so a content-only implementation streams a 200 that looks entirely correct and
+    hands the client a tool call whose `to` field is `<EMAIL_1>`. `index`, `id` and `name`
+    are pinned unchanged, so a wrap that rebuilt the call around the substitution - or
+    reset its index to 0 - is caught as well. `ToolCallDelta` carries a COMPLETE call, which is why its arguments need no buffer."""
+    rehydration_stub.events = stream_events(
+        fragments=(),
+        tool_calls=(
+            ToolCallDelta(
+                index=STREAM_TOOL_INDEX,
+                call=ToolCall(
+                    id=STUB_TOOL_ID,
+                    name=STUB_TOOL_NAME,
+                    arguments='{"to": "<EMAIL_1>", "subject": "for <PERSON_1>"}',
+                ),
+            ),
+        ),
+        finish_reason="tool_use",
+    )
+
+    response = post_rehydrated(rehydration_client, stream_body(), map_id=live_map_id)
+
+    calls = [call for delta in deltas(chunks(response)) for call in (delta.get("tool_calls") or [])]
+    assert len(calls) == 1
+    assert calls[0]["index"] == STREAM_TOOL_INDEX
+    assert calls[0]["id"] == STUB_TOOL_ID
+    assert calls[0]["function"]["name"] == STUB_TOOL_NAME
+    assert json.loads(calls[0]["function"]["arguments"]) == {
+        "to": EMAIL_A,
+        "subject": f"for {PERSON_A}",
+    }
+
+
+def test_held_text_is_flushed_before_the_finish_reason(
+    rehydration_client: TestClient, rehydration_stub: RehydrationStub, live_map_id: str
+) -> None:
+    """Catches a wrap that flushes only at the end of the stream (decision E's rejected
+    half). The text is all delivered either way, so the assembled answer cannot tell the
+    two apart - the ORDER can: a client that renders as it reads paints a visibly
+    truncated answer, then finishes it after `finish_reason` said the answer was over. The
+    usage chunk is asserted last as well, so a flush emitted after everything is caught by
+    the same case."""
+    rehydration_stub.events = (
+        StreamStart(),
+        TextDelta(text=f"write to <EMAIL_1> or {HELD_PARTIAL}"),
+        FinishReason(reason="end_turn"),
+        UsageTotal(usage=STREAM_USAGE),
+    )
+
+    response = post_rehydrated(rehydration_client, stream_body(), map_id=live_map_id)
+    parsed = chunks(response)
+
+    assert streamed_content(response) == f"write to {EMAIL_A} or {HELD_PARTIAL}"
+    finished = finish_frame_positions(parsed)
+    assert len(finished) == 1
+    assert max(content_frame_positions(parsed)) < finished[0]
+    assert parsed[-1]["usage"]["total_tokens"] == STREAM_USAGE.total_tokens
+
+
+def test_a_trailing_partial_placeholder_is_flushed_before_done(
+    rehydration_client: TestClient, rehydration_stub: RehydrationStub, live_map_id: str
+) -> None:
+    """Catches a wrap that returns without a final flush: `<PERSON_` is a proper prefix of
+    a key and is therefore still held when the events run out, so it would be dropped and
+    the caller would never learn that the last of what the provider wrote - and billed for
+    - was thrown away. The script deliberately ends on the text delta itself, with no
+    `finish_reason` and no usage chunk after it, so the flush before a non-text event
+    cannot be what saves this row."""
+    rehydration_stub.events = (StreamStart(), TextDelta(text=f"write to {HELD_PARTIAL}"))
+
+    response = post_rehydrated(rehydration_client, stream_body(), map_id=live_map_id)
+
+    assert streamed_content(response) == f"write to {HELD_PARTIAL}"
+    assert data_frames(response)[-1] == DONE_PAYLOAD
+
+
+def test_held_text_is_flushed_before_an_error_frame(
+    rehydration_client: TestClient, rehydration_stub: RehydrationStub, live_map_id: str
+) -> None:
+    """Catches an error path that returns straight from the `except` without flushing
+    (decision F): the held span is text the provider produced and the caller paid for, and
+    at worst it is a partial placeholder, which is what the model wrote anyway. The
+    truncation report of an earlier change decision E is asserted unchanged in the same case - one
+    error frame, last, and no sentinel - so a flush bolted on by re-running the whole
+    stream, or one that let `[DONE]` follow the error, is caught here too."""
+    rehydration_stub.events = (
+        StreamStart(),
+        TextDelta(text=f"write to <EMAIL_1> or {HELD_PARTIAL}"),
+    )
+    rehydration_stub.stream_error = ProviderError(
+        "anthropic: the connection dropped", retryable=True
+    )
+
+    response = post_rehydrated(rehydration_client, stream_body(), map_id=live_map_id)
+    payloads = data_frames(response)
+
+    assert streamed_content(response) == f"write to {EMAIL_A} or {HELD_PARTIAL}"
+    assert DONE_PAYLOAD not in payloads
+    errors = [json.loads(payload) for payload in payloads if "error" in json.loads(payload)]
+    assert len(errors) == 1
+    assert errors[0]["error"]["code"] == "PROVIDER_ERROR"
+    assert json.loads(payloads[-1]) == errors[0], "the error frame is the last one"
+
+
+def test_a_rehydrated_stream_carries_the_same_headers(
+    rehydration_client: TestClient, rehydration_stub: RehydrationStub, live_map_id: str
+) -> None:
+    """Catches the seventh header decision G refuses - an `X-Gateway-Rehydrated: true`
+    added because it seemed helpful - and the opposite mistake of a rehydrating branch
+    that builds its own `StreamingResponse` and drops the six an operator's dashboard
+    reads, or the two SSE headers without which a proxy buffers the whole answer and
+    delivers it as one block. The set is compared whole, against a request that really did
+    rehydrate."""
+    rehydration_stub.events = stream_events(fragments=("write to <EMAIL_1>",))
+
+    response = post_rehydrated(rehydration_client, stream_body(), map_id=live_map_id)
+
+    headers = gateway_headers(response)
+    assert set(headers) == EXPECTED_HEADER_NAMES
+    assert len(headers) == 6
+    lowered = {name.lower(): value for name, value in response.headers.items()}
+    assert {name: lowered[name] for name in EXPECTED_SSE_HEADERS} == EXPECTED_SSE_HEADERS
+    assert lowered["content-type"].split(";")[0] == "text/event-stream"
+    assert streamed_content(response) == f"write to {EMAIL_A}"
+
+
+# --------------------------------------------------------------------------
 # the refusals, all before a provider is dialled
 # --------------------------------------------------------------------------
 
@@ -499,24 +806,57 @@ def test_an_unknown_map_id_is_422_with_no_outbound_call(
     assert rehydration_stub.call_count == 0
 
 
-def test_a_streamed_request_asking_for_rehydration_is_422(
-    rehydration_client: TestClient, rehydration_stub: RehydrationStub, live_map_id: str
+def test_a_malformed_map_id_on_a_stream_is_422_with_no_outbound_call(
+    rehydration_client: TestClient, rehydration_stub: RehydrationStub
 ) -> None:
-    """Catches a route that ignores the header on the streamed path (decision E): a
-    placeholder can be split across two SSE frames, so the answer would carry `<EMAIL_1>`
-    through while the caller believes it asked for names back. The SAME body without the
-    header is asserted to stream normally in the same case, so nothing but the header can
-    be what produced the 422."""
-    streamed = chat_body(stream=True)
+    """Catches a route that lifts 12b's streamed refusal and hands the id straight to the
+    store on the streamed path only: the in-process store answers `None` for anything it
+    does not hold, so the request would still 422 and the missing pre-check would be
+    invisible. `gets == []` is the whole discriminator, exactly as on the non-streamed
+    row, and the JSON content type catches a route that opened a stream first and then
+    reported the refusal inside a 200."""
+    response = post_rehydrated(rehydration_client, stream_body(), map_id="not-a-valid-map-id")
 
-    refused = post_rehydrated(rehydration_client, streamed, map_id=live_map_id)
-    allowed = post_rehydrated(rehydration_client, streamed, map_id=None)
+    assert_error_body(response, status=422, code="VALIDATION")
+    assert response.headers["content-type"].split(";")[0] == "application/json"
+    assert map_store_reads(rehydration_client) == []
+    assert rehydration_stub.call_count == 0
 
-    assert_error_body(refused, status=422, code="VALIDATION")
-    assert refused.headers["content-type"].split(";")[0] == "application/json"
-    assert allowed.status_code == 200, allowed.text
-    assert allowed.headers["content-type"].split(";")[0] == "text/event-stream"
-    assert rehydration_stub.call_count == 1
+
+def test_an_unknown_map_id_on_a_stream_is_422_with_no_outbound_call(
+    rehydration_client: TestClient, rehydration_stub: RehydrationStub
+) -> None:
+    """Catches the streamed path skipping the map lookup altogether - streaming the
+    answer un-rehydrated when the map has expired, which reaches an end user as
+    `<PERSON_1>` in the middle of a sentence with nothing to explain it. Exactly one store
+    read is asserted, which is what separates this row from the malformed one above: an
+    implementation missing either control cannot satisfy both."""
+    response = post_rehydrated(rehydration_client, stream_body(), map_id=UNKNOWN_ID)
+
+    assert_error_body(response, status=422, code="VALIDATION")
+    assert response.headers["content-type"].split(";")[0] == "application/json"
+    assert map_store_reads(rehydration_client) == [(TENANT, UNKNOWN_ID)]
+    assert rehydration_stub.call_count == 0
+
+
+def test_an_id_live_for_another_tenant_is_absent_on_a_stream(
+    rehydration_client: TestClient,
+    rehydration_stub: RehydrationStub,
+    other_tenant_map_id: str,
+) -> None:
+    """Catches a streamed lookup keyed by map id alone: this id IS live and its map DOES
+    name `<EMAIL_1>`, for `cuan`, so an implementation missing the tenant in its key
+    streams Carol's address to `evals` frame by frame - the leak is the same as on the
+    non-streamed path, and a stream is where a body-wide assertion is the only way to see
+    it. The stub is scripted with that placeholder so a leak would have somewhere to
+    appear."""
+    rehydration_stub.events = stream_events(fragments=("write to <EMAIL_1>",))
+
+    response = post_rehydrated(rehydration_client, stream_body(), map_id=other_tenant_map_id)
+
+    assert_error_body(response, status=422, code="VALIDATION")
+    assert EMAIL_OTHER not in response.text
+    assert rehydration_stub.call_count == 0
 
 
 # --------------------------------------------------------------------------
@@ -610,6 +950,22 @@ def test_an_unreachable_map_store_is_502_with_no_outbound_call(
     response = post_rehydrated(unavailable_store_client, chat_body(), map_id=WELL_FORMED_ID)
 
     assert_error_body(response, status=502, code="PROVIDER_ERROR")
+    assert unavailable_store_stub.call_count == 0
+
+
+def test_an_unreachable_map_store_on_a_stream_is_502_with_no_outbound_call(
+    unavailable_store_client: TestClient, unavailable_store_stub: RehydrationStub
+) -> None:
+    """Catches a route that reads the map AFTER the stream has opened: the status is 200
+    the moment `StreamingResponse` is returned, so a store outage would reach the caller
+    as an error frame inside a successful stream - which an SDK reports as a parse
+    failure - and the provider would have been dialled and billed for an answer the
+    caller asked to have names put back into. The JSON content type is what proves the
+    refusal came before the stream, and `call_count` that it came before the provider."""
+    response = post_rehydrated(unavailable_store_client, stream_body(), map_id=WELL_FORMED_ID)
+
+    assert_error_body(response, status=502, code="PROVIDER_ERROR")
+    assert response.headers["content-type"].split(";")[0] == "application/json"
     assert unavailable_store_stub.call_count == 0
 
 

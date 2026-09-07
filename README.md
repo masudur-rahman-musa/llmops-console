@@ -52,7 +52,8 @@ as `X-Gateway-Rehydrate` on a chat completion: the answer's text and its tool
 call arguments come back with the original values in place of the placeholders.
 It is off unless that header is present, an unknown or expired id is refused
 before a provider is called rather than served with placeholders left in, and a
-streamed answer is not rehydrated yet. And it runs
+streamed answer is rehydrated too - a placeholder split across two frames is put
+back together before it is sent. And it runs
 inline: when a tenant's rule for the request's data class says `redact`, every
 chat message and every embedding input is redacted before the request leaves for
 a provider, so the provider is only ever handed placeholders. Either way,
