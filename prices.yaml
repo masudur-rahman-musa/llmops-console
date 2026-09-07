@@ -1,0 +1,97 @@
+# The price table.
+#
+# What a token costs, in USD per 1,000,000 tokens, keyed by `provider/model` -
+# the policy PROVIDER NAME from `routing.yaml`, never the provider kind, so two
+# rows of the same kind priced differently stay apart. The key is what
+# `Adapter.price_key` builds, and nothing here invents a second key format.
+#
+# Every key carries a LIST of entries, each with its own `effective_from` date.
+# A cost is priced against the newest entry whose date is on or before the
+# instant being priced, so re-pricing is appending a row and never editing one:
+# a request served last month keeps the number it was actually charged. The
+# entry that priced a row is named on that row as `provider/model@YYYY-MM-DD`,
+# built from that entry's own `effective_from`.
+#
+# Prices are written as QUOTED strings. The loader accepts a bare number too and
+# a short one survives it intact, so this is a convention rather than a
+# requirement - but a bare number is parsed as a float first, and a float holds
+# about seventeen significant digits and drops trailing zeros, so bare 1.00 is
+# read as 1.0 and a price written to twenty digits is silently shortened.
+# Quoting keeps the digits exactly as they are written here.
+#
+# A key this file does not cover is not an error: it is priced at zero and
+# flagged `unpriced`, because a missing price must never be able to change a
+# status code. Those rows are findable in the ledger by that version string,
+# which is the point of not raising.
+#
+# The schema is enforced on load by `opsconsole.limits.prices`, and the file
+# itself is a test case: every (provider, model) pair the shipped `routing.yaml`
+# can resolve to - through an alias or through a tenant override - is asserted
+# to have a key here, so adding a model to routing and forgetting it here fails
+# the suite rather than quietly filling the ledger with `unpriced`.
+#
+# These are list prices as published by each vendor, recorded by hand. No test
+# knows what a vendor charges, so no test asserts a value; what the tests hold
+# is the arithmetic, the effective-from selection and the coverage above.
+
+prices:
+  anthropic/claude-haiku-4-5:
+    - effective_from: 2025-10-15
+      input_usd_per_1m: "1.00"
+      output_usd_per_1m: "5.00"
+
+  anthropic/claude-opus-5:
+    - effective_from: 2025-11-24
+      input_usd_per_1m: "5.00"
+      output_usd_per_1m: "25.00"
+
+  # The EU provider is a different row of the same vendor at the same list
+  # price. It is priced even though `anthropic_eu` ships disabled: enabling it
+  # is a config change, and an enable that silently started booking `unpriced`
+  # rows would be found in the ledger a month later.
+  anthropic_eu/claude-haiku-4-5:
+    - effective_from: 2025-10-15
+      input_usd_per_1m: "1.00"
+      output_usd_per_1m: "5.00"
+
+  anthropic_eu/claude-opus-5:
+    - effective_from: 2025-11-24
+      input_usd_per_1m: "5.00"
+      output_usd_per_1m: "25.00"
+
+  # Two entries, and the only key here that has them. The August 2024 refresh
+  # halved the input price, so this is a real re-pricing rather than a fixture:
+  # it means the shipped file exercises the selection path, and a request dated
+  # before that day is still priced at the old number.
+  openai/gpt-4o:
+    - effective_from: 2024-05-13
+      input_usd_per_1m: "5.00"
+      output_usd_per_1m: "15.00"
+    - effective_from: 2024-08-06
+      input_usd_per_1m: "2.50"
+      output_usd_per_1m: "10.00"
+
+  # The two providers we host ourselves. Zero is the honest number for what a
+  # token costs in API spend, and it is stated rather than omitted: omitting
+  # them would fill the ledger with `unpriced` rows for the one provider whose
+  # cost we actually understand. What they really cost is instance hours over
+  # measured throughput, which is a different calculation done elsewhere and
+  # deliberately not folded into a per-token rate.
+  local/qwen2.5-7b-instruct:
+    - effective_from: 2025-01-01
+      input_usd_per_1m: "0.0"
+      output_usd_per_1m: "0.0"
+
+  local/bge-small-en-v1.5:
+    - effective_from: 2025-01-01
+      input_usd_per_1m: "0.0"
+      output_usd_per_1m: "0.0"
+
+  # `vllm` ships disabled and no alias names it, so no model id for it exists in
+  # `routing.yaml` yet and the coverage test cannot reach this key. It is here
+  # because the measurement plan puts qwen on vLLM, and a self-hosted provider
+  # that books `unpriced` on its first request is the thing this row prevents.
+  vllm/qwen2.5-7b-instruct:
+    - effective_from: 2025-01-01
+      input_usd_per_1m: "0.0"
+      output_usd_per_1m: "0.0"

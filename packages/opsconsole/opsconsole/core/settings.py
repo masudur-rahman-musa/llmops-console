@@ -11,6 +11,10 @@ DEFAULT_ROUTING_POLICY_PATH = Path(__file__).resolve().parents[4] / "routing.yam
 directory. A deployment that does not carry the repository layout - the container
 image, a wheel install - sets `OPSCONSOLE_ROUTING_POLICY_PATH` instead."""
 
+DEFAULT_PRICES_PATH = Path(__file__).resolve().parents[4] / "prices.yaml"
+"""The shipped `prices.yaml`, found the same way and for the same reason, with
+`OPSCONSOLE_PRICES_PATH` as the escape hatch."""
+
 
 class Settings(BaseSettings):
     """Gateway settings.
@@ -34,6 +38,13 @@ class Settings(BaseSettings):
     running gateway that authorises nobody."""
 
     routing_policy_path: Path = DEFAULT_ROUTING_POLICY_PATH
+
+    prices_path: Path = DEFAULT_PRICES_PATH
+    """Where the price table is read from. Nothing puts it on `app.state` yet:
+    an earlier change is what gives the gateway a `PriceStore` and a ledger row to spend
+    it on. The field is here now because the loader and the shipped file are,
+    and a path setting that arrives with its consumer is one more thing to get
+    right in the plan that has the harder work."""
 
     admin_key_sha256: str = ""
     """The sha256 digest of the one admin key, or empty for a gateway whose

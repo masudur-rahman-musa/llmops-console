@@ -176,7 +176,7 @@ CACHE_HITS = Counter(
 
 COST_USD = Counter(
     "gateway_cost_usd_total",
-    "Spend booked to the ledger, by tenant, provider and model. Fed by plan 14.",
+    "Spend booked to the ledger, by tenant, provider and model. Fed by plan 14b.",
     ("tenant", "provider", "model"),
     registry=_registry,
 )
