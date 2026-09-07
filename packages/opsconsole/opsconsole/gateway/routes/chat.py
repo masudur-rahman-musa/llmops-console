@@ -95,8 +95,14 @@ from opsconsole.providers.base import (
     UsageTotal,
 )
 from opsconsole.providers.breaker import CircuitBreaker
-from opsconsole.redaction import DirectoryStore
-from opsconsole.routing.errors import AllProvidersUnavailable
+from opsconsole.redaction import (
+    MAP_ID_PATTERN,
+    DirectoryStore,
+    RedactionMapStore,
+    RedactionMapStoreUnavailable,
+    rehydrate,
+)
+from opsconsole.routing.errors import AllProvidersUnavailable, IdentifierInvalid
 from opsconsole.routing.policy import DataClass, Policy, PolicyStore
 from opsconsole.routing.resolver import Resolved, resolve
 
@@ -168,6 +174,22 @@ console sums this string and `True` would count as neither
 Which one a response carries is decided per REQUEST, not per route: the header is
 `true` exactly when at least one value was actually replaced (an earlier change decision
 C), so a redact class carrying no personal data answers `false`."""
+
+
+REHYDRATE_HEADER = "X-Gateway-Rehydrate"
+"""The request header a caller puts a `redaction_map_id` in to ask for its values back.
+
+A request header rather than a body field (decision A): the body is the OpenAI
+wire shape with `extra="forbid"`, so a gateway control there would be a field
+every OpenAI-shaped client had to be taught, sitting next to `model` as if the
+provider understood it. Read on this route and nowhere else (decision F) - it
+means nothing on `/v1/redact` or on embeddings, and parsing it in the shared
+`context` dependency would 422 requests that never rehydrate.
+
+Its ABSENCE is what "off by default" means: there is no flag and no value that
+means off; `tests/gateway/test_rehydration.py` covers that in
+`test_no_header_answers_exactly_what_it_answers_today`, and the spelling is
+pinned by every case in that module, which sends this exact name."""
 
 
 class _Wire(BaseModel):
@@ -884,6 +906,91 @@ def sse_frames(
     yield _frame(DONE_SENTINEL)
 
 
+def requested_mapping(
+    store: RedactionMapStore, tenant: str, header: str | None, *, stream: bool
+) -> Mapping[str, str] | None:
+    """The map this request asked to rehydrate through, or `None` when it asked for none.
+
+    Everything here happens BEFORE a provider is dialled, which is the point: a
+    caller holding a stale id pays for no tokens, and every refusal below is
+    asserted against an adapter that recorded zero calls
+    (`test_a_malformed_map_id_is_422_with_no_outbound_call`,
+    `test_an_unknown_map_id_is_422_with_no_outbound_call`,
+    `test_an_unreachable_map_store_is_502_with_no_outbound_call`).
+
+    The header is tested against `None`, never for truthiness: an empty value is a
+    caller that sent the header with nothing in it, and that is a malformed id
+    rather than a request that never asked (the empty row of
+    `test_the_map_id_rejection_table`).
+
+    Four refusals, in the order they are cheapest to make:
+
+    * `stream: true` with the header is 422 (decision E). A placeholder can be
+      split across two SSE frames, so the streamed path needs an earlier change's
+      boundary-safe buffer; ignoring an explicit control instead would hand back
+      an answer still carrying `<EMAIL_1>` with nothing to say why
+      (`test_a_streamed_request_asking_for_rehydration_is_422`).
+    * A malformed id is 422 before the store is asked, against the store's own
+      `MAP_ID_PATTERN` rather than a second copy of the rule.
+      `fullmatch`, because `$` in Python also matches before a trailing newline; the inclusive boundary and the whitespace rows are
+      `test_a_thirty_two_character_hex_id_is_accepted` and
+      `test_the_map_id_rejection_table`.
+    * An unreachable store is a 502 `PROVIDER_ERROR` in this function's OWN
+      words, exactly as `filed_map_id` renders the write side: the client's text
+      names an internal host and port and stays in the chained cause
+      (`test_a_map_store_failure_does_not_put_the_clients_words_in_front_of_a_caller`).
+    * An id with no live map is 422 (decision B). The map is read for the
+      AUTHENTICATED tenant, so an id live for another tenant is simply absent and
+      answers the identical body - a message naming the id, or saying whose it
+      was, would hand a caller an oracle for which ids exist
+      (`test_an_id_live_for_another_tenant_is_absent`,
+      `test_an_unknown_map_id_is_422_with_no_outbound_call`).
+    """
+    if header is None:
+        return None
+    if stream:
+        raise IdentifierInvalid(
+            f"{REHYDRATE_HEADER}: rehydration is not available on a streamed request",
+            param=REHYDRATE_HEADER,
+        )
+    if MAP_ID_PATTERN.fullmatch(header) is None:
+        raise IdentifierInvalid(f"{REHYDRATE_HEADER}: not a valid map id", param=REHYDRATE_HEADER)
+    try:
+        mapping = store.get(tenant, header)
+    except RedactionMapStoreUnavailable as exc:
+        raise ProviderError("the redaction map store is unavailable", retryable=True) from exc
+    if mapping is None:
+        raise IdentifierInvalid(f"{REHYDRATE_HEADER}: no live map", param=REHYDRATE_HEADER)
+    return mapping
+
+
+def rehydrated(answer: ChatResponse, mapping: Mapping[str, str] | None) -> ChatResponse:
+    """The answer with the map's placeholders restored, or the answer itself.
+
+    Applied to the NEUTRAL response before `to_wire` (decision C), because plan
+    12c's `TextDelta` and `ToolCallDelta` are neutral too and one seam covers both
+    paths; on the wire model the two would need two implementations of the same
+    substitution.
+
+    Both `content` and each tool call's `arguments` (decision D). A tool call
+    handed `<EMAIL_1>` is a broken tool call, and the content of an answer whose
+    only placeholder sits in a tool call looks entirely correct
+    (`test_a_placeholder_in_a_tool_calls_arguments_is_rehydrated`). The call is
+    copied rather than rebuilt, so its `id` and `name` are what the provider sent.
+    """
+    if mapping is None:
+        return answer
+    return answer.model_copy(
+        update={
+            "content": rehydrate(answer.content, mapping),
+            "tool_calls": tuple(
+                call.model_copy(update={"arguments": rehydrate(call.arguments, mapping)})
+                for call in answer.tool_calls
+            ),
+        }
+    )
+
+
 router = APIRouter()
 
 
@@ -943,6 +1050,13 @@ def create_chat_completion(
     breaker: CircuitBreaker = request.app.state.breaker
     scope = request.scope
 
+    mapping = requested_mapping(
+        request.app.state.redaction_map_store,
+        context.tenant,
+        request.headers.get(REHYDRATE_HEADER),
+        stream=body.stream,
+    )
+
     with stage_span(scope, ROUTE_SPAN):
         candidates = resolve(
             store.policy,
@@ -1001,7 +1115,7 @@ def create_chat_completion(
             completion_tokens=answer.usage.completion_tokens,
         )
         response.headers.update(headers)
-        return to_wire(answer, body.model)
+        return to_wire(rehydrated(answer, mapping), body.model)
 
     # Unreachable while `resolve()` keeps its contract: it raises rather than
     # answering an empty tuple, and the last candidate's failure is re-raised

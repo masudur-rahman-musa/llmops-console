@@ -61,13 +61,15 @@ class AllProvidersUnavailable(RoutingError):
 class IdentifierInvalid(RoutingError):
     """A client-supplied identifier failed its pre-check.
 
-    r`grep -rlE "raise Identifier[I]nvalid" packages/` returns ELEVEN modules as
+    r`grep -rlE "raise Identifier[I]nvalid" packages/` returns TWELVE modules as
     of an earlier change - the bracket is what keeps this quotation out of its own results,
     so the command can be re-run here and compared:
 
         gateway/context.py       the X-Tenant, X-Session and X-Data-Class headers
         gateway/routes/admin.py  the admin tenant parameter, and a reload whose
                                  routing.yaml will not parse
+        gateway/routes/chat.py   the X-Gateway-Rehydrate map id, and the same
+                                 header on a streamed request
         gateway/routes/directory.py  the pushed tenant, and a directory cap
                                  breach converted out of DirectoryNameInvalid
         gateway/routes/redact.py the redact endpoint's own identifiers
@@ -80,7 +82,7 @@ class IdentifierInvalid(RoutingError):
         redaction/store.py       a tenant and a redaction_map_id
         routing/resolver.py      a tenant, an alias, a data class
 
-    A twelfth module, `gateway.errors`, CONSTRUCTS one without raising it, to render
+    A thirteenth module, `gateway.errors`, CONSTRUCTS one without raising it, to render
     FastAPI's own `RequestValidationError` into the wire contract, so it answers a
     grep for the constructor and not the one above.
 
