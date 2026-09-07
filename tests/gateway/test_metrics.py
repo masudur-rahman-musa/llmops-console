@@ -122,32 +122,43 @@ decision E a 451 no longer moves it, and nothing else a route can do moves it
 either, so a case asserting it carries samples after a request would be asserting
 the behaviour that plan removed."""
 
+CACHE_HITS = "gateway_cache_hits_total"
+
 UNFED_FAMILIES = (
-    "gateway_cache_hits_total",
     "gateway_cost_usd_total",
     "gateway_budget_ratio",
 )
 """The families still DECLARED AND EMPTY, which shrinks by one plan's worth each
 time a subsystem lands: an earlier change filled `gateway_fallbacks_total` and
-`gateway_circuit_state` and moved both above. The count below
-does not change - a plan here adds a value, never a family."""
+`gateway_circuit_state`, an earlier change filled `gateway_cache_hits_total`, and each
+moved its own out of here. The count below does not change - a
+plan here adds a value, never a family."""
 
-ROUTE_UNFED_FAMILIES = (RESIDENCY_VIOLATIONS,)
-"""Declared, and unreachable from any route. It is fed by exactly one thing - an
-`allowed=false` residency log row, which the resolver cannot produce (an earlier change
-decision E) - so it belongs in neither tuple above: a request never moves it, and
-it does carry samples in this session, because
-tests/gateway/test_residency_log.py feeds it directly. That is why it is not
-listed with the three empty ones, whose case asserts the absence of any sample."""
+ELSEWHERE_FED_FAMILIES = (RESIDENCY_VIOLATIONS, CACHE_HITS)
+"""Declared, empty after every request THIS file makes, and fed elsewhere in the
+session - so neither tuple above can hold them.
+
+`gateway_residency_violations_total` is fed by exactly one thing, an
+`allowed=false` residency log row the resolver cannot produce (an earlier change decision
+E); tests/gateway/test_residency_log.py writes one directly.
+`gateway_cache_hits_total` is fed by a route as of an earlier change, but only by a
+request eligible for the cache - a stated `temperature: 0` or the
+`X-Gateway-Cache: allow` header - and no request in this file is either, which is
+why every `cache` label asserted here reads `miss`.
+tests/gateway/test_exact_cache.py is where its samples come from.
+
+The distinction matters because the emptiness case below reads the PROCESS
+registry: a family another module fed would fail it for a reason that has
+nothing to do with the claim."""
 
 DECLARED_FAMILIES = (
-    frozenset(FED_FAMILIES) | frozenset(UNFED_FAMILIES) | frozenset(ROUTE_UNFED_FAMILIES)
+    frozenset(FED_FAMILIES) | frozenset(UNFED_FAMILIES) | frozenset(ELSEWHERE_FED_FAMILIES)
 )
 
 DECLARED_FAMILY_COUNT = 11
-"""Seven fed through a route, three declared and empty, and one fed only by a row
-the resolver cannot produce. The plan's own number, so a family added or dropped
-fails here as well as in the set comparison."""
+"""Seven fed by a request in this file, two declared and empty, and two fed only
+from elsewhere in the session. The plan's own number, so a family added or
+dropped fails here as well as in the set comparison."""
 
 # The `le` values decision H fixes, in the order and the spelling
 # prometheus_client renders them with, `+Inf` included. The default histogram
@@ -185,8 +196,11 @@ PLAIN_CLASS = "internal"
 REDACT_CLASS = "confidential"
 
 CACHE_MISS = "miss"
-"""What `X-Gateway-Cache` says today, and therefore the `cache` label on every
-served request. Nothing is cached before an earlier change."""
+"""What `X-Gateway-Cache` says on a request the cache did not serve, and therefore
+the `cache` label those requests carry. Every request in this file is one: none
+states `temperature: 0` and none sends the `X-Gateway-Cache: allow` header, so
+none is eligible under an earlier change. The hit label is covered in
+tests/gateway/test_exact_cache.py."""
 
 EMPTY = ""
 """Decision F: a label a request never got. Not a `none` sentinel and not a
@@ -448,13 +462,16 @@ def test_the_exposed_family_names_are_exactly_the_declared_set(
 def test_the_unfed_families_are_registered_and_carry_no_samples(
     gateway_client: TestClient, chat_client: TestClient, metrics: MetricDelta
 ) -> None:
-    """Names the three families an earlier change fill in, and asserts both halves.
+    """Names the two families an earlier change fill in, and asserts both halves.
     Catches a plan that has to ADD the family rather than a value (the half a set
     comparison already sees), and catches a placeholder emission - a zero cost booked on
-    every request, a `hit`/`miss` counter incremented before any cache exists - which
-    would draw a confident flat line on a dashboard for a subsystem that does not exist
-    yet. The served request is what makes the second half mean something: samples were
-    being written while these three stayed empty."""
+    every request - which would draw a confident flat line on a dashboard for a subsystem
+    that does not exist yet. The served request is what makes the second half mean
+    something: samples were being written while these two stayed empty.
+
+    `gateway_cache_hits_total` was the third until an earlier change fed it, and its emptiness is
+    now a claim about ELIGIBILITY rather than about a missing subsystem, asserted where
+    that claim belongs (tests/gateway/test_exact_cache.py)."""
     assert post_chat(chat_client, chat_body(model=ALIAS)).status_code == 200
 
     body = scrape(gateway_client).text

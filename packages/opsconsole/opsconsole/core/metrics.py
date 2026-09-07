@@ -17,17 +17,18 @@ platform collectors nobody chose. Both halves are pinned by
 `test_a_second_app_registers_no_duplicate_family` and
 `test_the_exposed_family_names_are_exactly_the_declared_set`.
 
-**Why eleven families exist when eight carry data.** `gateway_cache_hits_total`,
-`gateway_cost_usd_total` and `gateway_budget_ratio` are the design names whose
-subsystems are later plans (the cache and the ledger in an earlier change, budgets in plan
-15). Declaring them now means those plans add a VALUE rather than a family,
-exactly as an earlier change declared `cache`, `cost_usd` and `fallback_count` on
-`SpanAttributes` without setting them. They are registered and empty, not
-registered and zeroed: a zero cost booked on every request would draw a confident
-flat line on a dashboard for a subsystem that does not exist. Pinned by
+**Why eleven families exist when nine carry data.** `gateway_cost_usd_total` and
+`gateway_budget_ratio` are the design names whose subsystems are later plans (the
+ledger in an earlier change, budgets in an earlier change). Declaring them now means those plans add
+a VALUE rather than a family, exactly as an earlier change declared `cache`, `cost_usd`
+and `fallback_count` on `SpanAttributes` without setting them. They are
+registered and empty, not registered and zeroed: a zero cost booked on every
+request would draw a confident flat line on a dashboard for a subsystem that does
+not exist. Pinned by
 `test_the_unfed_families_are_registered_and_carry_no_samples`, which is where the
 list lives - an earlier change moved `gateway_fallbacks_total` and `gateway_circuit_state`
-out of it by filling them, and each later plan moves its own.
+out of it by filling them, an earlier change moved `gateway_cache_hits_total`, and each
+later plan moves its own.
 
 `gateway_eval_*` is deliberately not here. the design has the nightly job PUSH
 those gauges to a Pushgateway, so they are not this process's to declare.
@@ -62,6 +63,7 @@ import logging
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
+from typing import Final
 
 from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram
 from starlette.types import Scope
@@ -167,8 +169,8 @@ RESIDENCY_VIOLATIONS = Counter(
 
 CACHE_HITS = Counter(
     "gateway_cache_hits_total",
-    "Responses served from a cache, by tenant and cache tier. Fed by plan 14.",
-    ("tenant", "tier"),
+    "Responses served from a cache instead of a provider, by tenant and cache tier.",
+    ("tenant", "kind"),
     registry=_registry,
 )
 
@@ -416,6 +418,30 @@ def record_redactions(*, tenant: str, counts: Mapping[str, int]) -> None:
     with _guarded("redaction counts"):
         for kind, count in counts.items():
             REDACTIONS.labels(tenant=tenant, kind=kind).inc(count)
+
+
+EXACT_CACHE_KIND: Final[str] = "exact"
+"""The `kind` an exact-match hit is counted under.
+
+One of the two tiers the design describes; the semantic one (#23) is an earlier change and
+adds a second value rather than a second family, which is the whole reason this
+label exists. Pinned by `test_a_hit_counts_a_cache_hit_and_labels_the_request_hit`."""
+
+
+def record_cache_hit(*, tenant: str, kind: str) -> None:
+    """Count one answer served from a cache instead of from a provider (#24).
+
+    Only a HIT moves this counter. A miss is already visible as
+    `gateway_requests_total`'s `cache="miss"` label, and a second family counting
+    both would report a hit rate of one on every dashboard that divided them
+    (`test_a_miss_is_labelled_miss_and_moves_no_hit_counter`).
+
+    Nothing here books tokens or cost: `gateway_tokens_total`
+    is what the providers billed, and a hit bought nothing
+    (`test_a_hit_books_no_tokens`).
+    """
+    with _guarded("cache hit"):
+        CACHE_HITS.labels(tenant=tenant, kind=kind).inc()
 
 
 def record_failure(scope: Scope, error: GatewayError) -> None:

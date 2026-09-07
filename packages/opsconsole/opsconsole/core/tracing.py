@@ -129,10 +129,14 @@ class SpanAttributes(BaseModel):
     conversation, not a person, and it is what an operator needs to follow one
     caller's traffic through the gateway.
 
-    `cache` and `cost_usd` are named by the design and nothing sets them yet -
-    the cache is a later plan, the ledger a later one. They are declared here so
-    those plans add a value rather than a field, and the absence of the two spans
-    that would carry them is pinned by `test_no_cache_or_ledger_span_is_emitted`.
+    `cache` and `cost_usd` are named by the design and nothing sets them yet.
+    They are declared here so the plans that need them add a value rather than a
+    field. The `cache` STAGE SPAN is a different thing and does now exist, on
+    every chat request (an earlier change,
+    `test_the_cache_span_is_emitted_on_a_miss_and_on_a_hit`): the outcome it
+    would put in this field is on the response header and on
+    `gateway_requests_total`'s `cache` label instead. Only the `ledger` span is
+    still absent, pinned by `test_no_ledger_span_is_emitted`.
     `fallback_count` was the third and is now set, by the routes' fallback loop
     and only on a request that actually fell back
     (`test_a_fallback_is_recorded_on_the_trace_as_a_count`).

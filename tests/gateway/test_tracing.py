@@ -143,11 +143,15 @@ TEXT_WITH_PII = f"write to {EMAIL} about it"
 
 SESSION = "session-1"
 
-# The four stage names the design gives this plan, and the two it does not.
+# The stage names the design gives this plan, and the one still unbuilt.
 AUTH_SPAN = "auth"
 ROUTE_SPAN = "route"
+CACHE_SPAN = "cache"
 REDACT_SPAN = "redact"
-UNEMITTED_SPAN_NAMES = frozenset({"cache", "ledger"})
+UNEMITTED_SPAN_NAMES = frozenset({"ledger"})
+"""`cache` left this set in an earlier change, which emits it on every chat request; the
+positive claim is `test_the_cache_span_is_emitted_on_a_miss_and_on_a_hit` in
+tests/gateway/test_exact_cache.py. `ledger` stays until a call can be priced."""
 
 ALLOWED_ATTRIBUTE_KEYS = frozenset(
     {
@@ -543,7 +547,7 @@ SPAN_NAME_ROWS: list[tuple[str, str, str, Callable[[TestClient], Response], set[
             chat_body(model=ALIAS, messages=[{"role": "user", "content": TEXT_WITH_PII}]),
             data_class=REDACT_CLASS,
         ),
-        {AUTH_SPAN, ROUTE_SPAN, REDACT_SPAN, f"provider:{LOCAL_PROVIDER}"},
+        {AUTH_SPAN, ROUTE_SPAN, CACHE_SPAN, REDACT_SPAN, f"provider:{LOCAL_PROVIDER}"},
     ),
     (
         "embeddings-plain-class",
@@ -591,14 +595,13 @@ def test_the_emitted_span_names_are_exactly_the_stages_that_exist(
     assert len(recorded) == len(expected) + 1
 
 
-def test_no_cache_or_ledger_span_is_emitted(
+def test_no_ledger_span_is_emitted(
     chat_client: TestClient, embeddings_client: TestClient, spans: InMemorySpanExporter
 ) -> None:
-    """Catches placeholder spans for the two the design stages this plan does not build:
-    an empty `cache` span on every request would report a cache lookup that never
-    happened, and a `ledger` span would say a call was booked when nothing prices it yet.
-    Asserted on the two shapes the exact-set rows do not cover - a plain-class chat and
-    an embeddings request in the same buffer."""
+    """Catches a placeholder span for the one the design stage still unbuilt: a `ledger`
+    span would say a call was booked when nothing prices it yet, which makes a later
+    plan's work look done. Asserted on the two shapes the exact-set rows do not cover - a
+    plain-class chat and an embeddings request in the same buffer."""
     assert send_chat(chat_client, None).status_code == 200
     assert send_embeddings(embeddings_client, None).status_code == 200
 
@@ -625,7 +628,7 @@ def test_the_stage_spans_share_the_roots_trace_id(
     recorded = finished(spans)
     root = root_of(recorded)
 
-    assert len(recorded) == 5, [span.name for span in recorded]
+    assert len(recorded) == 6, [span.name for span in recorded]
     assert {trace_id_of(span) for span in recorded} == {trace_id_of(root)}
     for span in recorded:
         if span is root:

@@ -79,9 +79,10 @@ def gateway_headers(response: Response) -> dict[str, str]:
 def test_response_headers_on_success(chat_client: TestClient, policy: Policy) -> None:
     """Catches every wrong value in the set at once - a provider label taken from the
     vendor rather than the policy name, a region hardcoded to the tenant's own, a cache
-    status of `hit` on a route with no cache, or a redaction flag of `true` on a route
-    that redacts nothing - each of which is an unverifiable claim about where a tenant's
-    data went."""
+    status of `hit` on a request that was never eligible for the an earlier change cache (this
+    body states no `temperature: 0` and sends no `X-Gateway-Cache: allow`), or a
+    redaction flag of `true` on a route that redacts nothing - each of which is an
+    unverifiable claim about where a tenant's data went."""
     resolved = first_candidate(policy)
 
     headers = gateway_headers(post_chat(chat_client, chat_body(model=ALIAS)))

@@ -20,6 +20,7 @@ from fastapi import FastAPI
 from opentelemetry.context import Context
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from opsconsole.cache import InProcessResponseCache, RedisResponseCache, ResponseCache
 from opsconsole.core.metrics import observe_request, start_request
 from opsconsole.core.settings import Settings
 from opsconsole.core.tracing import (
@@ -215,6 +216,15 @@ def create_app(
     stores. Redis decodes nothing for either - the map store stores JSON and the
     directory store decodes its own hash values.
 
+    The exact-match response cache is built from that SAME client and on the same
+    switch: `RedisResponseCache` when Redis is configured,
+    `InProcessResponseCache` otherwise, so a bare local run and the suite need no
+    backing service and still take the cache path
+    (`test_create_app_keeps_the_in_process_cache_without_a_redis_url`,
+    `test_create_app_uses_the_redis_cache_when_a_redis_url_is_configured`). It is
+    the third reader of one connection pool, and unlike the two stores above it
+    never raises: a Redis outage is a miss on this seam, not a failed request.
+
     The residency log writer is settings-driven for the same reason and by the
     same rule: `OPSCONSOLE_DATABASE_URL` set builds `PostgresResidencyLogWriter`
     over a pool, absent builds `InMemoryResidencyLogWriter`, which files rows in
@@ -251,6 +261,10 @@ def create_app(
         RedisDirectoryStore(redis_client) if redis_client is not None else InProcessDirectoryStore()
     )
     app.state.directory_store = directory
+    response_cache: ResponseCache = (
+        RedisResponseCache(redis_client) if redis_client is not None else InProcessResponseCache()
+    )
+    app.state.response_cache = response_cache
     residency_log: ResidencyLogWriter = (
         PostgresResidencyLogWriter(build_pool(resolved.database_url))
         if resolved.database_url is not None

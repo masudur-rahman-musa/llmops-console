@@ -63,16 +63,23 @@ class Settings(BaseSettings):
 
     redis_url: str | None = None
     """Where the shared Redis lives, or `None` for a gateway that keeps its
-    redaction maps in process memory and registers no Redis readiness probe.
+    redaction maps, its tenant directories and its response cache in process
+    memory and registers no Redis readiness probe.
 
-    Two things read it, and both read absence as "not configured" rather than as
-    a default: `gateway/probes.py` registers the `redis` probe only when it is
-    set, and `create_app` picks `RedisRedactionMapStore`
-    over `InProcessRedactionMapStore` when it is (decision B). Absent by default
-    so the suite and a bare local run need no backing service; pinned by
+    Two modules read it, and both read absence as "not configured" rather than as
+    a default (`grep -rn "\\.redis_url" packages/ services/`, excluding this
+    file, answers `gateway/app.py` and `gateway/probes.py`). `probes.py`
+    registers the `redis` probe only when it is set.
+    `create_app` builds ONE client from it and hands it to three seams, each of
+    which falls back to an in-process twin when it is absent:
+    `RedisRedactionMapStore`, `RedisDirectoryStore` (plan
+    12a) and `RedisResponseCache`. Absent by default so the
+    suite and a bare local run need no backing service; pinned by
     `test_a_backing_service_url_is_absent_until_the_environment_sets_it`,
-    `test_create_app_keeps_the_in_process_store_without_a_redis_url` and
-    `test_create_app_uses_the_redis_store_when_a_redis_url_is_configured`."""
+    `test_create_app_keeps_the_in_process_store_without_a_redis_url`,
+    `test_create_app_uses_the_redis_store_when_a_redis_url_is_configured`,
+    `test_create_app_keeps_the_in_process_cache_without_a_redis_url` and
+    `test_create_app_uses_the_redis_cache_when_a_redis_url_is_configured`."""
 
     database_url: str | None = None
     """Where PostgreSQL lives, or `None` for no `postgres` readiness probe.

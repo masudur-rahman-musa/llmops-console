@@ -2,8 +2,9 @@
 
 An earlier change left three things that did not touch each other: a request could be
 authenticated, resolved to a provider and a model id, and a provider could be
-called. This module is that join, plus the one control that has to happen before
-the outbound call: inline redaction. No cache, no ledger, no fallback.
+called. This module is that join, plus the two things that have to happen around
+the outbound call: inline redaction before it, and the exact-match cache that can
+replace it entirely. No ledger.
 
 The OpenAI wire shape lives here and stops here. `providers/base.py` keeps the
 gateway's own vocabulary, so the two mappings - a wire request into a
@@ -59,9 +60,18 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.types import Scope
 
+from opsconsole.cache import (
+    CACHE_ALLOW,
+    CACHE_HEADER,
+    ResponseCache,
+    cache_key,
+    is_cacheable,
+)
 from opsconsole.core.errors import GatewayError, ProviderError
 from opsconsole.core.metrics import (
+    EXACT_CACHE_KIND,
     label_resolution,
+    record_cache_hit,
     record_circuit_state,
     record_fallback,
     record_redactions,
@@ -163,8 +173,21 @@ is the one wrong answer that looks right.
 """
 
 CACHE_STATUS_MISS = "miss"
-"""`X-Gateway-Cache` on every response here. Nothing is cached yet, and `miss` is
-the truthful value for a call that went to the provider."""
+CACHE_STATUS_HIT = "hit"
+"""The two words `X-Gateway-Cache` answers with, and the two values the `cache`
+label of `gateway_requests_total` carries.
+
+`hit` means no adapter was called: the answer came out of the exact-match cache
+under the design's key, and the caller was charged nothing for it. `miss` covers
+both a request that was looked up and not found and one that was never eligible
+to be looked up at all - a caller cannot tell those apart, and there is nothing
+it would do differently if it could. Which one a response carries is asserted
+against the ADAPTER's call count rather than against itself
+(`test_a_second_identical_eligible_request_calls_no_adapter`), because a route
+could serve a fresh completion and label it `hit`.
+
+The same header name carries the caller's opt-in on the way IN, where the only
+accepted value is `CACHE_ALLOW` (decision D)."""
 
 REDACTED_TRUE = "true"
 REDACTED_FALSE = "false"
@@ -460,6 +483,16 @@ imports it from here for the same reason it imports `gateway_headers`: one name
 in one place, so two routes cannot disagree about what a stage is called. Pinned
 by `test_the_emitted_span_names_are_exactly_the_stages_that_exist`."""
 
+CACHE_SPAN = "cache"
+"""The stage span around the exact-match lookup, on this route only.
+
+Emitted on every chat request, hit or miss, by
+`test_the_cache_span_is_emitted_on_a_miss_and_on_a_hit`:
+a span present only on hits would make every trace that carries one a hit by
+construction, and an operator could not see how long a lookup that found nothing
+took. It wraps the LOOKUP and not the write, because the write happens after the
+answer is on its way and its latency is not the caller's."""
+
 PROVIDER_SPAN_PREFIX = "provider:"
 """What a provider span's name starts with. The suffix is the RESOLVED provider,
 never the alias the caller sent: an alias names a policy entry and a provider
@@ -576,7 +609,9 @@ def record_served(
     annotate(scope, SpanAttributes(fallback_count=failed))
 
 
-def label_candidate(scope: Scope, alias: str, chosen: Resolved) -> None:
+def label_candidate(
+    scope: Scope, alias: str, chosen: Resolved, *, cache: str = CACHE_STATUS_MISS
+) -> None:
     """Attribute this request to one candidate, on the span and on the counter.
 
     Called for `candidates[0]` as soon as `resolve()` answers, and again for each
@@ -590,6 +625,13 @@ def label_candidate(scope: Scope, alias: str, chosen: Resolved) -> None:
     would book every such refusal under an empty `alias`, `provider` and `region`,
     so the design's per-alias error panel would show nothing during a redaction-side
     incident (`test_a_refused_request_is_still_attributed_to_its_resolved_candidate`).
+
+    `cache` defaults to `miss` because that is what every caller of this function
+    is describing at the moment it calls: the outcome is not known until the
+    lookup has run, and a request that never reaches one missed. The chat route
+    calls it once more with `hit` after a lookup finds something, which
+    overwrites rather than accumulates, exactly as the fallback loop's repeated
+    calls do (`test_a_hit_counts_a_cache_hit_and_labels_the_request_hit`).
     """
     annotate(scope, resolution_attributes(alias, chosen))
     label_resolution(
@@ -597,7 +639,7 @@ def label_candidate(scope: Scope, alias: str, chosen: Resolved) -> None:
         alias=alias,
         provider=chosen.provider,
         region=chosen.region,
-        cache=CACHE_STATUS_MISS,
+        cache=cache,
     )
 
 
@@ -612,13 +654,22 @@ def resolution_attributes(alias: str, resolved: Resolved) -> SpanAttributes:
     return SpanAttributes(alias=alias, provider=resolved.provider, region=resolved.region)
 
 
-def gateway_headers(resolved: Resolved, trace_id: str, *, redacted: bool) -> dict[str, str]:
+def gateway_headers(
+    resolved: Resolved, trace_id: str, *, redacted: bool, cache: str = CACHE_STATUS_MISS
+) -> dict[str, str]:
     """The six `X-Gateway-*` headers describing one served request (#9).
 
     `redacted` is keyword-only and has no default on purpose. A default would let
     a route report "nothing was redacted" for a request it did redact simply by
     forgetting the argument, and that is the one value here a caller might act on
     (`test_the_redaction_outcome_is_keyword_only_and_required`).
+
+    `cache` does have one, and the asymmetry is deliberate: `miss` is the true
+    value for every path that has no cache to consult - the embeddings route,
+    which imports this function, has none - so the default cannot state something
+    false the way a `redacted` default could. Only the exact-match hit passes
+    anything else, and it is asserted through the adapter's call count rather
+    than through this string (`test_a_hit_still_carries_the_six_gateway_headers`).
 
     Six, and only six: `X-Gateway-Cost-USD` is deliberately absent until the
     ledger can price a call, because a header reading
@@ -634,7 +685,7 @@ def gateway_headers(resolved: Resolved, trace_id: str, *, redacted: bool) -> dic
         "X-Gateway-Provider": resolved.provider,
         "X-Gateway-Region": resolved.region,
         "X-Gateway-Model": resolved.model,
-        "X-Gateway-Cache": CACHE_STATUS_MISS,
+        "X-Gateway-Cache": cache,
         "X-Gateway-Redacted": REDACTED_TRUE if redacted else REDACTED_FALSE,
         "X-Gateway-Trace-Id": trace_id,
     }
@@ -1027,6 +1078,102 @@ def requested_mapping(
     return mapping
 
 
+def allowed_by_header(header: str | None) -> bool:
+    """Whether the caller opted this request into the cache, refusing anything else.
+
+    Three states, and the middle one is the point (decision D). No header at all
+    is `False` and costs nothing: the ABSENCE is how a caller says nothing, the
+    same way `REHYDRATE_HEADER`'s absence is. Exactly `CACHE_ALLOW` is `True`.
+    ANY other value - `yes`, `true`, `ALLOW`, `allow ` - is an
+    `IdentifierInvalid`, which the handlers in `gateway/errors.py` render as a
+    422 `VALIDATION` naming this header, raised here rather than treated as a
+    quiet "no" because a typo that silently disables a caching regime is the
+    failure a caller cannot see (`test_a_cache_header_that_is_not_the_accepted_word_is_422`,
+    nine rows, each asserting the adapter was never called;
+    `test_the_accepted_word_is_not_refused` is what stops a check that refuses
+    everything from passing the table).
+
+    Compared with `==` and not with `in`, `startswith`, `.strip()` or `.lower()`
+    - each of those is one row of that table.
+    """
+    if header is None:
+        return False
+    if header != CACHE_ALLOW:
+        raise IdentifierInvalid(f"{CACHE_HEADER}: not an accepted value", param=CACHE_HEADER)
+    return True
+
+
+def cached_answer(cache: ResponseCache, tenant: str, key: str | None) -> ChatResponse | None:
+    """The stored answer for this request, or `None` - for any reason at all.
+
+    `key` is `None` for a request that was never eligible, which is a miss
+    without a lookup. Everything else is a lookup whose every failure is the
+    same miss: an entry that is not there, a store that cannot be reached, a
+    value this build cannot read.
+
+    The `except Exception` is deliberate and is the route's own backstop rather
+    than a duplicate of the store's. `RedisResponseCache` already swallows
+    `redis.RedisError` and a bad stored value, so nothing the SHIPPED store does
+    reaches here - but this seam is a Protocol, the wiring is settings-driven,
+    and a cache is the one dependency whose failure must never change a status
+    code. `test_a_cache_that_raises_still_serves_the_request` injects a store
+    that raises a plain `RuntimeError` from both methods, which no `redis`-shaped
+    guard would catch.
+    """
+    if key is None:
+        return None
+    try:
+        return cache.get(tenant, key)
+    except Exception:
+        return None
+
+
+def store_answer(cache: ResponseCache, tenant: str, key: str | None, answer: ChatResponse) -> None:
+    """File this answer for the next identical request, or do nothing at all.
+
+    Guarded for a sharper reason than the lookup is: this runs AFTER a provider
+    has answered and been paid, so an escaping failure would lose a request that
+    was completely served. `key` is `None` for an ineligible request, which is
+    stored nowhere (decisions G and H).
+    """
+    if key is None:
+        return
+    try:
+        cache.put(tenant, key, answer)
+    except Exception:
+        return
+
+
+def requested_key(
+    body: ChatCompletionRequest, tenant: str, chosen: Resolved, *, allow_header: bool
+) -> str | None:
+    """The cache key for this request, or `None` when it may not be cached (#22).
+
+    One function for both the lookup and the write, so the two cannot disagree
+    about what the key is or about which requests are eligible - the lookup uses
+    `candidates[0]` and the write uses whatever candidate actually served
+    (decision B), and that resolved model is the only argument that differs
+    between the two calls.
+
+    The body is the INBOUND one, before redaction (decision A). The redacted text
+    depends on the tenant's directory, so keying on the outbound body would
+    silently invalidate every entry the moment a name is pushed, and would give
+    two callers' identical prompts two keys for nothing.
+    """
+    if not is_cacheable(body, allow_header=allow_header):
+        return None
+    dumped = body.model_dump(mode="json", exclude_none=True)
+    return cache_key(
+        tenant=tenant,
+        alias=body.model,
+        model=chosen.model,
+        messages=dumped["messages"],
+        tools=dumped.get("tools"),
+        response_format=dumped.get("response_format"),
+        temperature=dumped.get("temperature"),
+    )
+
+
 def rehydrated(answer: ChatResponse, mapping: Mapping[str, str] | None) -> ChatResponse:
     """The answer with the map's placeholders restored, or the answer itself.
 
@@ -1101,6 +1248,23 @@ def create_chat_completion(
     refusal and a candidate with no adapter are the ordinary typed errors on both
     (`test_a_routing_failure_on_a_stream_is_the_ordinary_typed_error`).
 
+    The exact-match cache sits between the resolution and the loop (#22). One
+    lookup, keyed on `candidates[0]`, and one write, keyed on the candidate that
+    actually SERVED (decision B): under a healthy system those are the same
+    resolution, and under degradation the next request simply misses rather than
+    being handed an answer from a model the healthy path would not have chosen. A
+    hit returns before `_redacted` runs, which is the point of caching at all -
+    no directory is loaded, no redaction pass runs, no adapter is dialled and no
+    token is booked (`test_a_second_identical_eligible_request_calls_no_adapter`,
+    `test_a_hit_books_no_tokens`). It still goes through `rehydrated` and
+    `to_wire`, so a replayed answer gets its OWN completion id and a caller that
+    sent `X-Gateway-Rehydrate` gets its values back from ITS map (decision E).
+
+    Only an eligible request is looked up or stored: `temperature == 0` stated in
+    the body or `X-Gateway-Cache: allow`, never streamed, never with live tools
+    (decisions G and H). Everything else answers `X-Gateway-Cache: miss` without
+    touching the store at all.
+
     `response_model=None` because the return type is a union: FastAPI would
     otherwise try to validate a `StreamingResponse` against `ChatCompletion`. The
     non-streaming body is a built model either way, so nothing is left unchecked.
@@ -1115,6 +1279,9 @@ def create_chat_completion(
     breaker: CircuitBreaker = request.app.state.breaker
     scope = request.scope
 
+    cache: ResponseCache = request.app.state.response_cache
+
+    allowed = allowed_by_header(request.headers.get(CACHE_HEADER))
     mapping = requested_mapping(
         request.app.state.redaction_map_store,
         context.tenant,
@@ -1130,6 +1297,17 @@ def create_chat_completion(
             is_healthy=health_seam(breaker, lambda provider: provider in adapters),
         )
     label_candidate(scope, body.model, candidates[0])
+
+    with stage_span(scope, CACHE_SPAN):
+        key = requested_key(body, context.tenant, candidates[0], allow_header=allowed)
+        hit = cached_answer(cache, context.tenant, key)
+    if hit is not None:
+        label_candidate(scope, body.model, candidates[0], cache=CACHE_STATUS_HIT)
+        record_cache_hit(tenant=context.tenant, kind=EXACT_CACHE_KIND)
+        response.headers.update(
+            gateway_headers(candidates[0], context.trace_id, redacted=False, cache=CACHE_STATUS_HIT)
+        )
+        return to_wire(rehydrated(hit, mapping), body.model)
 
     outbound, redacted = _redacted(
         scope, store.policy, context, body, request.app.state.directory_store
@@ -1178,6 +1356,12 @@ def create_chat_completion(
             model=chosen.model,
             prompt_tokens=answer.usage.prompt_tokens,
             completion_tokens=answer.usage.completion_tokens,
+        )
+        store_answer(
+            cache,
+            context.tenant,
+            requested_key(body, context.tenant, chosen, allow_header=allowed),
+            answer,
         )
         response.headers.update(headers)
         return to_wire(rehydrated(answer, mapping), body.model)
