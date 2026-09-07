@@ -1,7 +1,17 @@
-"""The gateway app factory."""
+"""The gateway app factory.
+
+`close_adapters` is imported here and used by `lifespan`; it is defined in
+`providers.factory`, beside the `build_adapters` it undoes. Importing it here
+re-exports it - in the `import X as X` form `mypy --strict` requires for an
+explicit re-export - so `from opsconsole.gateway.app import close_adapters`,
+which the wiring tests use, keeps working while `gateway.routes.admin` reaches
+the same function without importing this module back (this module imports every
+route module, so that would be a cycle).
+"""
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
@@ -27,36 +37,20 @@ from opsconsole.gateway.errors import register_error_handlers
 from opsconsole.gateway.health import ProbeRegistry
 from opsconsole.gateway.health import router as health_router
 from opsconsole.gateway.probes import build_redis_client, register_probes
+from opsconsole.gateway.routes.admin import router as admin_router
 from opsconsole.gateway.routes.chat import router as chat_router
 from opsconsole.gateway.routes.embeddings import router as embeddings_router
 from opsconsole.gateway.routes.metrics import router as metrics_router
 from opsconsole.gateway.routes.models import router as models_router
 from opsconsole.gateway.routes.redact import router as redact_router
-from opsconsole.providers.base import Adapter
 from opsconsole.providers.factory import build_adapters
+from opsconsole.providers.factory import close_adapters as close_adapters
 from opsconsole.redaction import (
     InProcessRedactionMapStore,
     RedactionMapStore,
     RedisRedactionMapStore,
 )
 from opsconsole.routing.policy import PolicyStore
-
-
-def close_adapters(adapters: Mapping[str, Adapter]) -> None:
-    """Release whatever an adapter holds open, for every adapter that holds anything.
-
-    `close()` is not on the `Adapter` protocol: an adapter with no connection
-    pool has nothing to close, and requiring the method would make every future
-    adapter write an empty one. `AnthropicAdapter` has it, and its `httpx.Client`
-    owns a pool that outlives the process otherwise.
-
-    An earlier change's policy reload calls this on the adapters it drops, which is why it
-    is a module function rather than inline in the lifespan.
-    """
-    for adapter in adapters.values():
-        close = getattr(adapter, "close", None)
-        if callable(close):
-            close()
 
 
 @asynccontextmanager
@@ -206,7 +200,8 @@ def create_app(
     app.state.probes = ProbeRegistry()
     app.state.key_store = SettingsKeyStore(resolved.api_keys)
     app.state.policy = PolicyStore(resolved.routing_policy_path)
-    app.state.adapters = build_adapters(app.state.policy.policy, environ)
+    app.state.provider_environ = os.environ if environ is None else environ
+    app.state.adapters = build_adapters(app.state.policy.policy, app.state.provider_environ)
     store: RedactionMapStore = (
         RedisRedactionMapStore(build_redis_client(resolved.redis_url))
         if resolved.redis_url is not None
@@ -223,4 +218,5 @@ def create_app(
     app.include_router(chat_router)
     app.include_router(embeddings_router)
     app.include_router(redact_router)
+    app.include_router(admin_router)
     return app

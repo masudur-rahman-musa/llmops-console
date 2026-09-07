@@ -99,6 +99,28 @@ def build_adapters(policy: Policy, environ: Mapping[str, str] | None = None) -> 
     return adapters
 
 
+def close_adapters(adapters: Mapping[str, Adapter]) -> None:
+    """Release whatever an adapter holds open, for every adapter that holds anything.
+
+    `close()` is not on the `Adapter` protocol: an adapter with no connection pool
+    has nothing to close, and requiring the method would make every future adapter
+    write an empty one (`test_close_adapters_skips_an_adapter_with_nothing_to_close`).
+    `AnthropicAdapter` has it, and its `httpx.Client` owns a pool that outlives the
+    process otherwise.
+
+    It lives beside `build_adapters` rather than in `gateway.app` because the two
+    are one lifecycle, and because the policy reload in `gateway.routes.admin`
+    needs both ends of it. `gateway.app` imports every route module, so a route
+    importing this helper back out of `gateway.app` would be a cycle.
+    `gateway.app` re-exports the name, which is where `lifespan` and the wiring
+    tests read it from.
+    """
+    for adapter in adapters.values():
+        close = getattr(adapter, "close", None)
+        if callable(close):
+            close()
+
+
 def _warn_unusable_key(name: str, provider: Provider) -> None:
     """Say that a provider needing a key has none, naming the variable to set.
 

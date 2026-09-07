@@ -766,3 +766,55 @@ def metrics_registry() -> CollectorRegistry:
 def metrics(metrics_registry: CollectorRegistry) -> MetricDelta:
     """The registry snapshotted at the start of this test, for reading deltas."""
     return MetricDelta(metrics_registry)
+
+
+# --- admin --------------------------------------------------------
+#
+# `/admin/*` is a second key space: the admin key is not a tenant key and a
+# tenant key is not an admin key (the design). So the admin app is a fourth app,
+# built once from a `Settings` carrying BOTH the tenant key
+# store above and an `admin_key_sha256`, because the cases that matter present a
+# working tenant key to an admin route and expect a 401.
+#
+# `no_admin_key_client` is the shipped default: `admin_key_sha256` left empty,
+# which authorises nobody, exactly as the empty `SettingsKeyStore` does.
+#
+# The reload cases do NOT use these two. Rewriting the policy file is the thing
+# under test there, so each of those cases owns a `tmp_path` app of its own; the
+# helper that builds one lives in tests/gateway/test_admin.py. That is the one
+# documented exception to the session-scoped rule, and it costs a YAML parse.
+
+ADMIN_ROUTING = "/admin/routing"
+ADMIN_ROUTING_RELOAD = "/admin/routing/reload"
+"""The two admin paths, spelled out here so the requests in the tests do not
+read their target from the module under test. `test_the_admin_paths_and_statuses_are_pinned`
+compares these literals with the module's own constants."""
+
+ADMIN_KEY = "test-admin-key-belonging-to-nobody"
+"""Test data, not a secret: worth nothing, and the store only ever holds its
+sha256 digest (`sha256_hex(ADMIN_KEY)`)."""
+
+
+@pytest.fixture(scope="session")
+def admin_settings() -> Settings:
+    """The tenant key store, the shipped policy, and a configured admin key."""
+    return Settings(
+        api_keys=API_KEYS,
+        routing_policy_path=SHIPPED_POLICY_PATH,
+        admin_key_sha256=sha256_hex(ADMIN_KEY),
+    )
+
+
+@pytest.fixture(scope="session")
+def admin_client(admin_settings: Settings) -> Iterator[TestClient]:
+    """An app with an admin key configured, built once."""
+    with TestClient(create_app(admin_settings, NO_PROVIDER_KEYS)) as client:
+        yield client
+
+
+@pytest.fixture(scope="session")
+def no_admin_key_client() -> Iterator[TestClient]:
+    """An app with no admin key configured: the shipped default, which denies."""
+    settings = Settings(api_keys=API_KEYS, routing_policy_path=SHIPPED_POLICY_PATH)
+    with TestClient(create_app(settings, NO_PROVIDER_KEYS)) as client:
+        yield client

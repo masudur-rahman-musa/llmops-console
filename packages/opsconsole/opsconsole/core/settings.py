@@ -35,6 +35,19 @@ class Settings(BaseSettings):
 
     routing_policy_path: Path = DEFAULT_ROUTING_POLICY_PATH
 
+    admin_key_sha256: str = ""
+    """The sha256 digest of the one admin key, or empty for a gateway whose
+    `/admin/*` routes authorise nobody.
+
+    A digest rather than the key itself: the tenant keys
+    above are already hashed at rest, and a plaintext admin key in an environment
+    variable is the one form that also leaks through a process dump and a
+    `docker inspect`. Issuing a key is sha256-ing it once. This is a SEPARATE key
+    space from `api_keys`: a valid tenant key is 401 on `/admin/*`, pinned by
+    `test_admin_routes_reject_a_tenant_api_key`, and the shipped empty default
+    denies every caller, pinned by
+    `test_admin_routes_reject_every_caller_when_no_admin_key_is_configured`."""
+
     otlp_endpoint: str | None = None
     """Where traces are sent, or `None` for a gateway that builds spans and drops
     them. Langfuse EU is an OTLP/HTTP endpoint, so this is a
