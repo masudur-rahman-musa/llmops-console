@@ -36,6 +36,47 @@ def test_policy_loads_shipped_file() -> None:
             assert candidate.provider in policy.providers
 
 
+ALIAS_WITHOUT_THE_SWITCH = """
+providers:
+  eu-a: {kind: anthropic, region: eu}
+eu_regions: [eu]
+aliases:
+  chat:
+    candidates:
+      - {provider: eu-a, model: m1}
+tenants: {}
+"""
+"""One alias written the way every alias in the repository was written before #23:
+no `semantic_cache` key at all."""
+
+
+def test_only_agent_default_carries_the_semantic_cache_switch() -> None:
+    """Catches the semantic tier turned on for an alias whose callers need the answer to
+    THEIR input - `judge`, `embed`, `agent-strong` - which serves a near-neighbour's answer
+    to an evaluation and makes a scoring run irreproducible without a single failing
+    assertion anywhere. Asserted against the SHIPPED file rather than a fixture, because the
+    file is what a deployment runs, and stated as an exhaustive pair (the one that is on,
+    every other one off) so that a later alias added with the switch on cannot slip in
+    behind a check that only names today's aliases (#23, "off by default per alias")."""
+    policy = load_policy(SHIPPED_POLICY_PATH)
+
+    enabled = {name for name, alias in policy.aliases.items() if alias.semantic_cache}
+
+    assert enabled == {"agent-default"}
+
+
+def test_an_alias_that_omits_the_semantic_switch_is_off(policy_file: PolicyWriter) -> None:
+    """Catches a switch whose default is `True`, or one Pydantic makes required: every alias
+    written before #23 omits the key, so a required field would refuse every policy file in
+    existence and a `True` default would silently opt all of them into approximate reuse -
+    the opposite of what "off by default per alias" means."""
+    path = policy_file(ALIAS_WITHOUT_THE_SWITCH)
+
+    policy = load_policy(path)
+
+    assert policy.aliases["chat"].semantic_cache is False
+
+
 UNKNOWN_PROVIDER_IN_ALIAS = """
 providers:
   eu-a: {kind: anthropic, region: eu}

@@ -80,9 +80,19 @@ class Candidate(_Frozen):
 
 
 class Alias(_Frozen):
-    """The ordered candidates an alias resolves to when a tenant has no override."""
+    """The ordered candidates an alias resolves to when a tenant has no override.
+
+    `semantic_cache` is #23's per-alias switch, and it defaults to OFF: the
+    semantic tier serves an answer to a question that is merely SIMILAR, which is
+    right for a chat assistant and wrong for a judge or an extraction, so an
+    alias reaches it only by saying so. An alias that omits the key is off
+    (`test_an_alias_that_omits_the_semantic_switch_is_off`), and what the shipped
+    file turns on is pinned by
+    `test_only_agent_default_carries_the_semantic_cache_switch`.
+    """
 
     candidates: tuple[Candidate, ...]
+    semantic_cache: bool = False
 
 
 class DataClassRule(_Frozen):

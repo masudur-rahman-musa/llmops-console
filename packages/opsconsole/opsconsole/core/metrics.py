@@ -423,9 +423,10 @@ def record_redactions(*, tenant: str, counts: Mapping[str, int]) -> None:
 EXACT_CACHE_KIND: Final[str] = "exact"
 """The `kind` an exact-match hit is counted under.
 
-One of the two tiers the design describes; the semantic one (#23) is an earlier change and
-adds a second value rather than a second family, which is the whole reason this
-label exists. Pinned by `test_a_hit_counts_a_cache_hit_and_labels_the_request_hit`."""
+One of the two tiers the design describes. The semantic one (#23) has its layer in
+`opsconsole.cache.vectors` and reaches this family when an earlier change wires it into
+the route, adding a second VALUE rather than a second family, which is the whole
+reason this label exists. Pinned by `test_a_hit_counts_a_cache_hit_and_labels_the_request_hit`."""
 
 
 def record_cache_hit(*, tenant: str, kind: str) -> None:

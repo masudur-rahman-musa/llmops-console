@@ -95,8 +95,9 @@ CACHE_HITS = "gateway_cache_hits_total"
 
 EXACT_TIER = "exact"
 """The value of `gateway_cache_hits_total`'s `kind` label for this tier (SPEC
-§13.2). An earlier change adds the semantic one, and the label NAME is `kind` rather than
-`tier`, which is what the family was declared with while it carried no samples."""
+§13.2). An earlier change adds the semantic one when it wires that tier into the route,
+and the label NAME is `kind` rather than `tier`, which is what the family was
+declared with while it carried no samples."""
 
 ANSWER = "Berlin is the capital of Germany."
 TOOL_BODY_TOOLS: tuple[dict[str, Any], ...] = (

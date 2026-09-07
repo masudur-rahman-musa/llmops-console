@@ -52,7 +52,13 @@ providers:
 eu_regions: [eu, self]
 
 aliases:
+  # The only alias on the semantic cache (#23). A chat assistant's callers ask the
+  # same question in different words, which is the reuse this tier exists for; a
+  # judge, an extraction and an embedding need the answer to THEIR input and not
+  # to one that resembles it, so they stay off. Off is the default, so turning
+  # this on anywhere is a deliberate line in this file.
   agent-default:
+    semantic_cache: true
     candidates:
       - { provider: anthropic, model: claude-haiku-4-5 }
       - { provider: anthropic_eu, model: claude-haiku-4-5 }
