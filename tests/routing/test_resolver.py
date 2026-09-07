@@ -11,6 +11,7 @@ from collections.abc import Callable
 
 import pytest
 
+from opsconsole.providers.factory import build_adapters
 from opsconsole.routing.errors import (
     AliasUnknown,
     AllProvidersUnavailable,
@@ -25,6 +26,41 @@ from .conftest import SHIPPED_POLICY_PATH
 
 def as_tuples(resolved: tuple[Resolved, ...]) -> list[tuple[str, str, str]]:
     return [(r.provider, r.model, r.region) for r in resolved]
+
+
+# The `judge` alias against the SHIPPED policy, resolved through the health seam
+# the routes fill: a provider is healthy when `build_adapters` built an adapter
+# for it. `evals` is the one tenant with `residency: any`, and both `judge`
+# candidates are `us`, so the reachable set is decided by the environment alone
+# and by nothing the residency clamp does.
+
+JUDGE_TENANT = "evals"
+JUDGE_ALIAS = "judge"
+JUDGE_DATA_CLASS = "public"
+
+ANTHROPIC_KEY_ENV = "ANTHROPIC_API_KEY"
+OPENAI_KEY_ENV = "OPENAI_API_KEY"
+FAKE_ANTHROPIC_KEY = "sk-ant-not-a-real-key"
+FAKE_OPENAI_KEY = "sk-openai-not-a-real-key"
+
+
+def judge_candidates(environ: dict[str, str]) -> list[tuple[str, str, str]]:
+    """What `judge` resolves to when only `environ` is set, adapters as the health seam.
+
+    The keys are injected rather than read from `os.environ`, so no case here
+    depends on a provider key being present in the environment (#66).
+    """
+    policy = load_policy(SHIPPED_POLICY_PATH)
+    adapters = build_adapters(policy, environ)
+    return as_tuples(
+        resolve(
+            policy,
+            JUDGE_TENANT,
+            JUDGE_ALIAS,
+            JUDGE_DATA_CLASS,
+            is_healthy=lambda provider: provider in adapters,
+        )
+    )
 
 
 def test_override_beats_alias_default(policy: Policy) -> None:
@@ -262,3 +298,30 @@ def test_shipped_policy_exhaustive() -> None:
 
     assert checked == len(policy.tenants) * len(policy.aliases) * len(DataClass)
     assert checked > 0
+
+
+def test_judge_has_two_candidates_when_the_openai_key_is_set() -> None:
+    """Catches a factory with no `openai` branch: the shipped `judge` alias
+    names a second candidate, and without an adapter for it the health seam drops that
+    candidate, so a judge request that fails on the first provider has nowhere to fall.
+
+    The tuple is asserted whole and in order, so a branch that builds the adapter under
+    the kind rather than under the policy provider name fails here too."""
+    candidates = judge_candidates(
+        {ANTHROPIC_KEY_ENV: FAKE_ANTHROPIC_KEY, OPENAI_KEY_ENV: FAKE_OPENAI_KEY}
+    )
+
+    assert candidates == [
+        ("anthropic", "claude-opus-5", "us"),
+        ("openai", "gpt-4o", "us"),
+    ]
+
+
+def test_judge_has_one_candidate_when_it_is_not() -> None:
+    """Catches a branch that builds the vendor adapter whatever the environment holds - an
+    unset or empty `OPENAI_API_KEY` included: `judge` would gain a second candidate that
+    401s on every request, turning a deployment that never configured that vendor into one
+    that bills latency and a failed fallback for every judged eval."""
+    candidates = judge_candidates({ANTHROPIC_KEY_ENV: FAKE_ANTHROPIC_KEY})
+
+    assert candidates == [("anthropic", "claude-opus-5", "us")]

@@ -15,18 +15,23 @@ from __future__ import annotations
 
 import logging
 
+import httpx
 import pytest
 
 from opsconsole.providers.anthropic import AnthropicAdapter
-from opsconsole.providers.base import Adapter
+from opsconsole.providers.base import Adapter, ChatMessage, ChatRequest
 from opsconsole.providers.factory import build_adapters
-from opsconsole.providers.openai_compatible import OpenAICompatibleAdapter
+from opsconsole.providers.openai_compatible import OPENAI_BASE_URL, OpenAICompatibleAdapter
 from opsconsole.routing.policy import Policy, Provider, ProviderKind
+
+from .conftest import ScriptedTransport, local_ok
 
 KEY_ENV = "ANTHROPIC_API_KEY_EU"
 UNSET_ENV = "ANTHROPIC_API_KEY_NOWHERE"
 EMPTY_ENV = "ANTHROPIC_API_KEY_EMPTY"
 OPENAI_ENV = "OPENAI_API_KEY"
+OPENAI_UNSET_ENV = "OPENAI_API_KEY_NOWHERE"
+OPENAI_EMPTY_ENV = "OPENAI_API_KEY_EMPTY"
 
 POLICY = Policy(
     providers={
@@ -51,6 +56,7 @@ ENVIRON = {
     KEY_ENV: "sk-ant-eu-not-a-real-key",
     EMPTY_ENV: "",
     OPENAI_ENV: "sk-openai-not-a-real-key",
+    OPENAI_EMPTY_ENV: "",
 }
 
 
@@ -66,12 +72,16 @@ def test_enabled_provider_with_its_key_set_is_built() -> None:
     assert built.price_key("claude-haiku-4-5") == "anthropic-eu/claude-haiku-4-5"
 
 
-def test_only_the_usable_anthropic_provider_is_built() -> None:
+def test_only_the_usable_providers_of_the_base_policy_are_built() -> None:
     """Catches a factory that builds an adapter with an empty key (or with `None`), which
-    would look healthy to the resolver and 401 on the first real request."""
+    would look healthy to the resolver and 401 on the first real request.
+
+    `openai-eu` joins `anthropic-eu` from an earlier change on: it is enabled and its key is set,
+    so from that plan on the ONLY reason a provider is missing here is the control its own
+    row names."""
     adapters = build_adapters(POLICY, ENVIRON)
 
-    assert set(adapters) == {"anthropic-eu"}
+    assert set(adapters) == {"anthropic-eu", "openai-eu"}
 
 
 OMITTED_CASES: list[tuple[str, str, str | None]] = [
@@ -119,16 +129,14 @@ def test_disabled_provider_is_omitted_without_a_warning(
     ] == []
 
 
-def test_non_anthropic_kind_is_absent_without_a_warning(caplog: pytest.LogCaptureFixture) -> None:
+def test_an_openai_provider_is_not_built_as_anthropic() -> None:
     """Catches a factory that builds an `AnthropicAdapter` for every enabled provider with
     a key, which would send OpenAI traffic to Anthropic's endpoint with an OpenAI key."""
-    with caplog.at_level(logging.WARNING):
-        adapters = build_adapters(POLICY, ENVIRON)
+    adapters = build_adapters(POLICY, ENVIRON)
 
-    assert "openai-eu" not in adapters
-    assert [
-        record.getMessage() for record in caplog.records if "openai-eu" in record.getMessage()
-    ] == []
+    built = adapters["openai-eu"]
+    assert not isinstance(built, AnthropicAdapter)
+    assert built.name == "openai-eu"
 
 
 def test_an_empty_policy_builds_nothing_and_says_nothing(caplog: pytest.LogCaptureFixture) -> None:
@@ -146,10 +154,10 @@ def test_an_empty_policy_builds_nothing_and_says_nothing(caplog: pytest.LogCaptu
 # --- the openai_compatible kind -----------------------------------
 #
 # A policy of its own rather than more rows in `POLICY` above: the cases there
-# assert the whole built set (`set(adapters) == {"anthropic-eu"}`), so adding a
-# provider to it would edit an existing test's meaning. Every provider below
-# differs from the built one in exactly one attribute - the `enabled` flag, the
-# `key_env`, the `base_url` or the kind - so a row going green can only be the
+# assert the whole built set (`set(adapters) == {"anthropic-eu", "openai-eu"}`),
+# so adding a provider to it would edit an existing test's meaning. Every provider
+# below differs from the built one in exactly one attribute - the `enabled` flag,
+# the `key_env`, the `base_url` or the kind - so a row going green can only be the
 # control it names.
 
 LOCAL_KEY_ENV = "VLLM_API_KEY_NOWHERE"
@@ -291,3 +299,167 @@ def test_exactly_the_usable_providers_of_both_kinds_are_built() -> None:
     adapters = build_adapters(LOCAL_POLICY, ENVIRON)
 
     assert set(adapters) == {"local", "vllm", "anthropic-eu"}
+
+
+# --- the openai kind ----------------------------------------------
+#
+# A third policy, for the same reason `LOCAL_POLICY` is a second one: the cases
+# above assert whole built sets. Every provider here differs from the built one
+# in exactly one attribute - the `key_env`, the value that variable holds, or the
+# `base_url` - so a row going green can only be the control it names.
+#
+# The provider names are deliberately neither `openai` (the kind, and the shipped
+# policy's own name for this provider) nor a vendor name, so an adapter keyed or
+# priced by the kind rather than by the policy name is visible.
+
+OPENAI_PROVIDER = "openai-us"
+OPENAI_PROVIDER_BASE_URL = "https://api.openai.test/v1"
+
+OPENAI_POLICY = Policy(
+    providers={
+        # Enabled, a key in ENVIRON, and a base url of its own.
+        OPENAI_PROVIDER: Provider(
+            kind=ProviderKind.OPENAI,
+            region="us",
+            base_url=OPENAI_PROVIDER_BASE_URL,
+            key_env=OPENAI_ENV,
+        ),
+        # No base url is the ONLY difference: the vendor default is what it gets.
+        "openai-default-url": Provider(kind=ProviderKind.OPENAI, region="us", key_env=OPENAI_ENV),
+        # A declared key that is not in the environment is the only difference.
+        "openai-unset": Provider(
+            kind=ProviderKind.OPENAI,
+            region="us",
+            base_url=OPENAI_PROVIDER_BASE_URL,
+            key_env=OPENAI_UNSET_ENV,
+        ),
+        # A declared key set to the empty string is the only difference.
+        "openai-empty": Provider(
+            kind=ProviderKind.OPENAI,
+            region="us",
+            base_url=OPENAI_PROVIDER_BASE_URL,
+            key_env=OPENAI_EMPTY_ENV,
+        ),
+        # No `key_env` at all is the only difference: legal for the
+        # `openai_compatible` kind, a drop for this one.
+        "openai-nokeyenv": Provider(
+            kind=ProviderKind.OPENAI, region="us", base_url=OPENAI_PROVIDER_BASE_URL
+        ),
+    },
+    eu_regions=("eu", "self"),
+    aliases={},
+    tenants={},
+)
+
+OPENAI_REQUEST = ChatRequest(
+    model="gpt-4o",
+    messages=(ChatMessage(role="user", content="What is the capital of Germany?"),),
+)
+
+
+def test_an_openai_provider_with_its_key_set_is_built() -> None:
+    """Catches a factory with no `openai` branch at all (the provider is silently absent,
+    and every alias naming it loses a candidate) and one that keys or names the adapter by
+    the KIND: the ledger, the metric label and the resolver all address it as `openai-us`,
+    the policy's own name for it."""
+    adapters = build_adapters(OPENAI_POLICY, ENVIRON)
+
+    assert OPENAI_PROVIDER in adapters
+    built = adapters[OPENAI_PROVIDER]
+    assert isinstance(built, Adapter)
+    assert built.name == "openai-us"
+
+
+def test_an_openai_adapter_sends_the_key_only_as_a_bearer_header() -> None:
+    """Catches a branch that hands the vendor its key any way other than one bearer header
+    - the neighbouring `x-api-key`, which OpenAI answers 401 to, or a base url or query
+    parameter carrying the key, which writes it into every proxy log on the path.
+
+    The adapter is the one `build_adapters` built, with only its transport swapped, so the
+    headers under assertion are the factory's own rather than a second set written here."""
+    adapters = build_adapters(OPENAI_POLICY, ENVIRON)
+    built = adapters[OPENAI_PROVIDER]
+    assert isinstance(built, OpenAICompatibleAdapter)
+
+    scripted = ScriptedTransport([local_ok("plain")])
+    factory_client = built.client
+    built.http.client = httpx.Client(
+        base_url=factory_client.base_url,
+        headers=factory_client.headers,
+        timeout=factory_client.timeout,
+        transport=scripted.transport,
+    )
+    factory_client.close()
+
+    built.chat(OPENAI_REQUEST)
+
+    key = ENVIRON[OPENAI_ENV]
+    sent = scripted.requests[0]
+    assert sent.headers.get_list("authorization") == [f"Bearer {key}"]
+    assert [name for name, value in sent.headers.multi_items() if key in value] == ["authorization"]
+    assert key not in str(sent.url)
+    assert key not in sent.content.decode("utf-8")
+
+
+OPENAI_DROPPED_CASES: list[tuple[str, str, str | None]] = [
+    ("the variable is not in the environment", "openai-unset", OPENAI_UNSET_ENV),
+    ("the variable is set but empty", "openai-empty", OPENAI_EMPTY_ENV),
+    ("no key_env is configured at all", "openai-nokeyenv", None),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "provider", "variable"),
+    OPENAI_DROPPED_CASES,
+    ids=[case for case, *_ in OPENAI_DROPPED_CASES],
+)
+def test_an_openai_provider_without_a_usable_key_is_dropped_with_a_warning(
+    case: str, provider: str, variable: str | None, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Catches an `openai` branch copied from the `openai_compatible` one, where a missing
+    key is legal: this kind has no private network to sit on, so an adapter built without a
+    key is a 401 the tenant paid for, and the no-`key_env` row is the one that separates
+    the two kinds. The empty-string row catches a check written as `variable in environ`,
+    and each row asserts a warning, so a branch that drops the provider in silence - which
+    is what an absent branch does - fails here too."""
+    with caplog.at_level(logging.WARNING):
+        adapters = build_adapters(OPENAI_POLICY, ENVIRON)
+
+    assert provider not in adapters, case
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno == logging.WARNING and provider in record.getMessage()
+    ]
+    assert len(warnings) == 1, f"{case}: expected exactly one warning naming {provider}"
+    if variable is not None:
+        assert variable in warnings[0], f"{case}: the warning must name the variable to set"
+
+
+def test_an_openai_provider_without_a_base_url_uses_the_vendor_default() -> None:
+    """Catches a branch that drops an `openai` provider naming no base url (the vendor has
+    exactly one public endpoint, so there is nothing to guess and no reason to lose the
+    candidate) and one that falls back to some other host - `localhost`, or the Anthropic
+    base url the branch next door uses - which would send a real key off to it."""
+    adapters = build_adapters(OPENAI_POLICY, ENVIRON)
+
+    assert "openai-default-url" in adapters
+    built = adapters["openai-default-url"]
+    assert isinstance(built, OpenAICompatibleAdapter)
+    assert OPENAI_BASE_URL == "https://api.openai.com/v1"
+    # `rstrip`: httpx normalises a base url to a trailing slash, which is the one
+    # difference between the constant and the client's own.
+    assert str(built.client.base_url).rstrip("/") == "https://api.openai.com/v1"
+    # The policy's own base url is still what a provider naming one gets.
+    policy_built = adapters[OPENAI_PROVIDER]
+    assert isinstance(policy_built, OpenAICompatibleAdapter)
+    assert str(policy_built.client.base_url).rstrip("/") == OPENAI_PROVIDER_BASE_URL
+
+
+def test_openai_price_key_is_the_policy_provider_name_slash_model() -> None:
+    """Catches an adapter priced by the vendor or by the kind (`openai/gpt-4o` for every
+    account): the ledger prices against this string, so two accounts on one vendor - or a
+    US and an EU deployment - would be billed into one row and one metric label."""
+    adapters = build_adapters(OPENAI_POLICY, ENVIRON)
+
+    assert adapters[OPENAI_PROVIDER].price_key("gpt-4o") == "openai-us/gpt-4o"

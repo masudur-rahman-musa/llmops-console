@@ -16,7 +16,14 @@ What "usable" means is per kind, and the difference is the point:
   `test_an_openai_compatible_provider_with_no_key_env_is_built`). It needs a
   `base_url` instead, because there is no vendor default to fall back to and a
   guessed endpoint would send `self`-region traffic somewhere else
-  (`test_an_openai_compatible_provider_without_a_base_url_is_dropped_with_a_warning`).
+  (`test_an_openai_compatible_provider_without_a_base_url_is_dropped_with_a_warning`);
+* an `openai` provider is the other way round on both counts. It MUST have a key,
+  including the case where it names no `key_env` at all - unlike the kind above it
+  has no private network to sit on, so a keyless call is a 401 the tenant paid for
+  (`test_an_openai_provider_without_a_usable_key_is_dropped_with_a_warning`) - and
+  it needs no `base_url`, because the vendor has one and it is the endpoint that
+  key belongs to (`OPENAI_BASE_URL`,
+  `test_an_openai_provider_without_a_base_url_uses_the_vendor_default`).
 
 A provider that DECLARES a `key_env` which is unset is dropped whatever its kind:
 that is a half-configured deployment, not a configured one. A disabled provider
@@ -24,9 +31,16 @@ is dropped without a warning either way: that is an operator's decision, and
 warning about it trains people to ignore the warning that matters
 (`test_disabled_provider_is_omitted_without_a_warning`).
 
-`ProviderKind.OPENAI` and `ProviderKind.AZURE_OPENAI` are still absent and
-silent, until an earlier change adds their adapters; a missing provider is a case the
-resolver's health seam already handles.
+`ProviderKind.AZURE_OPENAI` is still absent and silent, until an earlier change adds its
+adapter; a missing provider is a case the resolver's health seam already handles.
+
+The `openai` kind is served by `OpenAICompatibleAdapter` and not by a class of its
+own: OpenAI is the wire shape that class implements, and an
+empty subclass would only be somewhere for the two to drift apart while the tests
+stayed green. The cost is that `isinstance` no longer tells an `openai` adapter
+from an `openai_compatible` one - the policy provider name does, and that is the
+identity the ledger, the metric labels and the resolver already use
+(`test_an_openai_provider_is_not_built_as_anthropic`).
 """
 
 from __future__ import annotations
@@ -37,7 +51,7 @@ from collections.abc import Mapping
 
 from opsconsole.providers.anthropic import ANTHROPIC_BASE_URL, AnthropicAdapter
 from opsconsole.providers.base import Adapter
-from opsconsole.providers.openai_compatible import OpenAICompatibleAdapter
+from opsconsole.providers.openai_compatible import OPENAI_BASE_URL, OpenAICompatibleAdapter
 from opsconsole.routing.policy import Policy, Provider, ProviderKind
 
 logger = logging.getLogger(__name__)
@@ -90,11 +104,26 @@ def build_adapters(policy: Policy, environ: Mapping[str, str] | None = None) -> 
                 name=name, base_url=provider.base_url, api_key=api_key
             )
 
-        # `openai` and `azure_openai` are absent and silent until an earlier change adds
-        # their adapters. `test_non_anthropic_kind_is_absent_without_a_warning`
-        # pins that for `openai` specifically - it asserts one provider of that
-        # kind is neither built nor warned about, not that every non-Anthropic
-        # kind is dropped, which this diff makes false for `openai_compatible`.
+        elif provider.kind is ProviderKind.OPENAI:
+            # A key is MANDATORY here, including the case where the policy names no
+            # `key_env` at all: this kind talks to the vendor over the internet, so
+            # a keyless call is a 401 rather than a call to a box on our own network.
+            if not api_key:
+                _warn_unusable_key(name, provider)
+                continue
+            # `max_tokens` is forwarded to the vendor as-is.
+            # `gpt-4o` accepts it and is the only OpenAI model the shipped policy
+            # routes to. The o-series and gpt-5 reject it and want
+            # `max_completion_tokens`, so adding one of those as a candidate is a
+            # change to the mapper next door, not a config edit - and until one is
+            # added, a translation table would be branching on a hypothetical.
+            adapters[name] = OpenAICompatibleAdapter(
+                name=name,
+                base_url=provider.base_url if provider.base_url is not None else OPENAI_BASE_URL,
+                api_key=api_key,
+            )
+
+        # `azure_openai` is absent and silent until an earlier change adds its adapter.
 
     return adapters
 

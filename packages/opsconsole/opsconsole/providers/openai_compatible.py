@@ -91,6 +91,21 @@ carrying its own `/v1` would send the request to `/v1/v1/embeddings`.
 `test_the_embeddings_path_is_appended_to_the_policy_base_url` asserts the whole
 URL against a base url ending in `/v1`, mirroring the shipped policy's."""
 
+OPENAI_BASE_URL = "https://api.openai.com/v1"
+"""The vendor's own endpoint, for a `kind: openai` provider that names no `base_url`.
+
+It sits here rather than in `providers/factory.py` because it belongs to the wire
+shape this module implements, beside the two paths that are appended to it: the
+`/v1` is part of the constant precisely because `CHAT_COMPLETIONS_PATH` and
+`EMBEDDINGS_PATH` carry none of their own. The factory's job is to choose which
+endpoint a provider gets, not to know what the vendor's is.
+
+Only the `openai` kind falls back to it. An `openai_compatible` provider naming
+no `base_url` is dropped instead, because there is no such thing as a default box
+of our own (`test_an_openai_compatible_provider_without_a_base_url_is_dropped_with_a_warning`).
+Pinned as an exact string by
+`test_an_openai_provider_without_a_base_url_uses_the_vendor_default`."""
+
 FLOAT32_MAX = 3.4028234663852886e38
 """The largest finite value a float32 can hold, and therefore the largest
 component a vector may carry.
