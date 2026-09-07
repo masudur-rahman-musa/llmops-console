@@ -1,4 +1,4 @@
-r"""The nine detector kinds, their checksums and the DOB cue window.
+r"""The ten detector kinds, their checksums and the DOB cue window.
 
 Every accepted row asserts the exact `(kind, start, end)` triple rather than
 "something was found", because a detector that swallows the surrounding space or
@@ -33,6 +33,7 @@ from opsconsole.redaction.detectors import (
     ppsn_ok,
     steuer_id_ok,
 )
+from opsconsole.redaction.names import NameDirectory
 
 # Synthetic specimens. Cards pass Luhn, IBANs mod-97, Steuer-IDs ISO 7064
 # MOD 11,10 and PPSNs mod-23; every one was generated and verified rather than
@@ -59,11 +60,14 @@ def spans_of(text: str, kind: Kind) -> list[tuple[int, int]]:
     return [(d.start, d.end) for d in detect_all(text) if d.kind == kind]
 
 
-def test_kind_members_are_the_nine_named_in_acceptance() -> None:
+def test_kind_members_are_the_ten_named_in_acceptance() -> None:
     """Catches a detector set that drops a kind or renames one.
 
-    The nine labels are the wire-visible half of the placeholder `<KIND_N>`, so
-    a rename is a silent contract break for an earlier change's stored map.
+    The ten labels are the wire-visible half of the placeholder `<KIND_N>`, so
+    a rename is a silent contract break for an earlier change's stored map. `PERSON` is
+    the tenth and is asserted in its position, not merely as a member:
+    the list is compared by equality, so a kind inserted in the middle fails here
+    as well.
     """
     assert [kind.value for kind in Kind] == [
         "EMAIL",
@@ -75,14 +79,28 @@ def test_kind_members_are_the_nine_named_in_acceptance() -> None:
         "IPV4",
         "IPV6",
         "DOB",
+        "PERSON",
     ]
 
 
 def test_precedence_lists_every_kind_exactly_once() -> None:
     """Catches a precedence tuple that omits a kind, so equal-length ties involving
     it fall through to an undefined branch."""
-    assert len(KIND_PRECEDENCE) == 9
+    assert len(KIND_PRECEDENCE) == 10
     assert set(KIND_PRECEDENCE) == set(Kind)
+
+
+def test_person_is_last_in_the_precedence_order() -> None:
+    """Catches `PERSON` inserted anywhere but the end.
+
+    Precedence decides EQUAL-length ties only, and every other kind carries a
+    check of its own - a Luhn, a mod-97, a parsed address - while a directory name
+    is membership and nothing more. Put first, a tenant with a staff member called
+    `Mai` would relabel a date span `PERSON` and the map would name the wrong
+    class for a value that is not a name at all. `set(KIND_PRECEDENCE)` above
+    cannot see the position, which is why this is its own row.
+    """
+    assert KIND_PRECEDENCE[-1] is Kind.PERSON
 
 
 def test_dob_cue_distance_is_thirty_two() -> None:
@@ -768,3 +786,64 @@ def test_a_lowercase_ppsn_is_detected() -> None:
     lower case is a silent miss that no mutation can redden.
     """
     assert spans_of("PPSN 1234567t recorded.", Kind.PPSN) == [(5, 13)]
+
+
+# --------------------------------------------------------------------------
+# the tenth kind, whose input is not the text
+# --------------------------------------------------------------------------
+
+DIRECTORY_NAME = "Anna Schmidt"
+NAME_IN_TEXT = "Ansprechpartner: Anna Schmidt, Abteilung 4"
+
+
+def test_detect_all_without_a_directory_yields_no_person_candidate() -> None:
+    """Catches a `detect_all` that reads a directory from anywhere but its own argument -
+    a module-level default, a process-wide cache, a store import.
+
+    This is what keeps the seam additive: every existing caller, the residency and
+    accuracy suites included, calls `detect_all(text)` with one argument, and a PERSON
+    candidate appearing there would be a name matched for a tenant nobody asked about.
+    The text carries a name that IS in a directory in the row below, so an implementation
+    that simply found nothing in this string cannot be what passes this.
+    """
+    assert [d.kind for d in detect_all(NAME_IN_TEXT) if d.kind is Kind.PERSON] == []
+
+
+def test_detect_all_with_a_directory_yields_the_person_candidate() -> None:
+    """The positive control for the row above: catches a `directory=` keyword that is
+    accepted and then ignored, which would make the negative row pass for the wrong reason
+    and leave the whole kind unreachable from the engine's own entry point."""
+    directory = NameDirectory.compile([DIRECTORY_NAME])
+
+    found = [d for d in detect_all(NAME_IN_TEXT, directory=directory) if d.kind is Kind.PERSON]
+
+    assert [(d.start, d.end, d.value) for d in found] == [(17, 29, DIRECTORY_NAME)]
+
+
+def test_a_directory_candidate_joins_the_others_in_start_order() -> None:
+    """Catches PERSON candidates appended after the nine pattern kinds rather than merged
+    into the sorted list: `resolve_overlaps` walks candidates in start order, so a name
+    arriving out of order makes the merge compare spans that do not touch and lets an
+    overlapping pair through as two placeholders."""
+    text = "Anna Schmidt wrote from alice@example.com"
+    directory = NameDirectory.compile([DIRECTORY_NAME])
+
+    found = detect_all(text, directory=directory)
+
+    assert [d.start for d in found] == sorted(d.start for d in found)
+    assert [d.kind for d in found] == [Kind.PERSON, Kind.EMAIL]
+
+
+def test_a_directory_name_inside_an_email_address_loses_to_the_longer_span() -> None:
+    """Catches PERSON given a precedence that beats a longer overlapping span: the whole
+    address is the value a caller must not leak, and a name matched inside it would
+    replace `anna.schmidt` alone and leave `@example.com` - with the local part gone, the
+    map's inverse no longer reproduces the input. Decision F's "unequal overlap is decided
+    by length" reading, exercised through `redact` because that is where the merge runs."""
+    directory = NameDirectory.compile(["anna.schmidt"])
+
+    result = redact("write to anna.schmidt@example.com", directory=directory)
+
+    assert [(d.kind, d.value) for d in result.detections] == [
+        (Kind.EMAIL, "anna.schmidt@example.com")
+    ]

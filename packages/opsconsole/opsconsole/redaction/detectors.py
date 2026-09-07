@@ -1,6 +1,6 @@
-r"""The nine detector kinds, their checksums and the DOB cue window.
+r"""The ten detector kinds, their checksums and the DOB cue window.
 
-Each kind is one compiled pattern run with `finditer` over free text, plus an
+Nine of them are one compiled pattern run with `finditer` over free text, plus an
 optional post-check the pattern itself cannot express: Luhn for `CARD`, mod-97
 for `IBAN`, ISO 7064 MOD 11,10 for `STEUER_ID`, mod-23 for `PPSN`, the octet and
 group ranges (via `ipaddress`) for `IPV4` and `IPV6`, and the cue window for
@@ -43,12 +43,21 @@ boundary lookarounds are still written to keep raw overlaps rare, because
 `test_precision_meets_the_floor` scores `detect_all` and every spurious
 candidate is a false positive whether or not the merge would later drop it.
 
-What a detector owes, for whoever adds the tenth kind in an earlier change: a span whose
-`value` is `text[start:end]` exactly, boundaries that stop it firing inside a
-longer alphanumeric run, and a fixture case in `tests/redaction/fixtures/cases.json`
-for each of its accepted forms. `test_fixture_covers_every_detector_kind` fails
-on a kind with no ground truth, but nothing forces the negative case that would
-show the new pattern eating an ordinary number.
+What a detector owes: a span whose `value` is `text[start:end]` exactly,
+boundaries that stop it firing inside a longer alphanumeric run, and a fixture
+case in `tests/redaction/fixtures/cases.json` for each of its accepted forms.
+`test_fixture_covers_every_detector_kind` fails on a kind with no ground truth,
+but nothing forces the negative case that would show the new pattern eating an
+ordinary number.
+
+The tenth kind, `PERSON`, is the one exception to "a pattern over the text" and
+lives in `opsconsole.redaction.names`. Its input is a tenant's pushed
+display names as well as the text, so it cannot be a pure function of one string:
+`detect_all` takes it as an optional `directory` argument and yields nothing of
+that kind when none is passed, which is what keeps every existing caller
+behaving exactly as it did
+(`test_detect_all_without_a_directory_yields_no_person_candidate`). It owes the
+same three things as the nine, and its module docstring says how it holds them.
 """
 
 from __future__ import annotations
@@ -59,15 +68,18 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
-from typing import Final
+from typing import TYPE_CHECKING, Final
+
+if TYPE_CHECKING:  # pragma: no cover - names.py imports this module, so runtime would cycle
+    from opsconsole.redaction.names import NameDirectory
 
 
 class Kind(StrEnum):
-    """The nine detector labels. Each is the `KIND` half of a `<KIND_N>` placeholder.
+    """The ten detector labels. Each is the `KIND` half of a `<KIND_N>` placeholder.
 
     Wire-visible: an earlier change stores the map under these strings, so a rename is a
     contract change rather than an implementation detail. The member list is held
-    against a literal by `test_kind_members_are_the_nine_named_in_acceptance`.
+    against a literal by `test_kind_members_are_the_ten_named_in_acceptance`.
     """
 
     EMAIL = "EMAIL"
@@ -79,6 +91,7 @@ class Kind(StrEnum):
     IPV4 = "IPV4"
     IPV6 = "IPV6"
     DOB = "DOB"
+    PERSON = "PERSON"
 
 
 # Tie-break for two overlapping candidates of the SAME length; longer always wins
@@ -86,6 +99,9 @@ class Kind(StrEnum):
 # both a checksum and a shape is far likelier to be the checksummed kind. Held
 # complete by `test_precedence_lists_every_kind_exactly_once`; the tie-break
 # behaviour is pinned by `test_equal_length_overlap_falls_to_the_precedence_order`.
+# `PERSON` is last:
+# it is the one kind whose only check is membership in a list an operator pushed,
+# so on an equal-length tie the checksummed kind is the likelier truth.
 KIND_PRECEDENCE: Final[tuple[Kind, ...]] = (
     Kind.EMAIL,
     Kind.IBAN,
@@ -96,6 +112,7 @@ KIND_PRECEDENCE: Final[tuple[Kind, ...]] = (
     Kind.STEUER_ID,
     Kind.PPSN,
     Kind.DOB,
+    Kind.PERSON,
 )
 
 # A date counts as a birth date only when one of these appears before it, ending
@@ -434,13 +451,23 @@ def _dates(text: str) -> Iterator[tuple[Kind, int, int, str]]:
             yield Kind.DOB, match.start(), match.end(), match.group(0)
 
 
-def detect_all(text: str) -> list[Detection]:
+def detect_all(text: str, directory: NameDirectory | None = None) -> list[Detection]:
     """Every candidate span in `text`, in start order, overlaps included.
 
     Deduplicated on `(kind, start, end)` so two date patterns matching the same
     run cannot yield the span twice. Ordering is pinned by
     `test_detect_all_returns_candidates_in_start_order`; resolving the overlaps
     is `resolve_overlaps` in `opsconsole.redaction.redactor`.
+
+    `directory` is the tenant's compiled display names and defaults to `None`,
+    which yields no `PERSON` candidate at all - so every caller written before
+    an earlier change behaves exactly as it did, and a name is only ever matched for the
+    tenant whose directory was passed in
+    (`test_detect_all_without_a_directory_yields_no_person_candidate`,
+    `test_detect_all_with_a_directory_yields_the_person_candidate`). Its
+    candidates join the same list as the nine patterns' BEFORE the sort rather
+    than being appended after it, because `resolve_overlaps` walks candidates in
+    start order (`test_a_directory_candidate_joins_the_others_in_start_order`).
     """
     found: list[tuple[Kind, int, int, str]] = []
     found.extend(_simple(text, EMAIL_PATTERN, Kind.EMAIL))
@@ -453,6 +480,8 @@ def detect_all(text: str) -> list[Detection]:
     found.extend(_checked(text, IPV4_PATTERN, Kind.IPV4, _parses_as(ipaddress.IPv4Address)))
     found.extend(_checked(text, IPV6_PATTERN, Kind.IPV6, _ipv6_ok))
     found.extend(_dates(text))
+    if directory is not None:
+        found.extend((d.kind, d.start, d.end, d.value) for d in directory.detect(text))
 
     unique = {(kind, start, end): value for kind, start, end, value in found}
     ordered = sorted(unique, key=lambda key: (key[1], key[2], KIND_PRECEDENCE.index(key[0])))

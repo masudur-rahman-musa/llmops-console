@@ -103,23 +103,30 @@ class RecordingStore:
         return self.inner.get(tenant, map_id)
 
 
-def store_attribute(app: FastAPI) -> str:
-    """The name under which `create_app` put the redaction map store on `app.state`.
+MAP_STORE_ATTRIBUTE = "redaction_map_store"
+"""The `app.state` attribute `create_app` puts the placeholder map store under.
 
-    Found by shape - the one state object exposing both `put` and `get` - rather
-    than by a hardcoded attribute name, so this suite pins the store's BEHAVIOUR
-    without also pinning a wiring detail the plan does not publish. A missing
-    store fails here with that sentence rather than as an opaque AttributeError.
+Named, not found by shape. This helper used to select "the one state object with
+a `put` and a `get`" and assert there was exactly one; an earlier change's tenant
+directory store has both, so every case in this file broke the moment a second
+store was wired - and no grep for a name could have predicted it, because the
+selection named nothing. A hardcoded attribute is a wiring
+detail this suite now pins on purpose: it is the price of being able to tell two
+stores of the same shape apart.
+"""
+
+
+def store_attribute(app: FastAPI) -> str:
+    """Check the map store really is on `app.state` under its published name.
+
+    A missing store fails here with that sentence rather than as an opaque
+    `AttributeError` three fixtures later.
     """
-    names = [
-        name
-        for name, value in app.state._state.items()
-        if callable(getattr(value, "put", None)) and callable(getattr(value, "get", None))
-    ]
-    assert len(names) == 1, (
-        f"expected exactly one redaction map store on app.state, found {names!r}"
+    store = getattr(app.state, MAP_STORE_ATTRIBUTE, None)
+    assert callable(getattr(store, "put", None)) and callable(getattr(store, "get", None)), (
+        f"expected a redaction map store on app.state.{MAP_STORE_ATTRIBUTE}, found {store!r}"
     )
-    return names[0]
+    return MAP_STORE_ATTRIBUTE
 
 
 @pytest.fixture(scope="module")

@@ -29,10 +29,11 @@ a signature cannot be asserted through HTTP.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from typing import cast
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
 
@@ -40,10 +41,13 @@ from opsconsole.core.settings import Settings
 from opsconsole.gateway.routes.chat import REDACTED_FALSE, REDACTED_TRUE, gateway_headers
 from opsconsole.gateway.routes.embeddings import MAX_EMBEDDING_INPUT_CHARS
 from opsconsole.redaction import MAX_REDACTION_INPUT_CHARS
+from opsconsole.redaction.directory import DirectoryStore
+from opsconsole.redaction.errors import DirectoryStoreUnavailable
 from opsconsole.routing.policy import Policy
 from opsconsole.routing.resolver import Resolved, resolve
 
 from .conftest import (
+    TEST_KEYS,
     EmbeddingStubAdapter,
     MetricDelta,
     StubAdapter,
@@ -486,3 +490,207 @@ def test_a_full_batch_of_capped_inputs_is_accepted_on_a_redact_class(
 
     assert response.status_code == 200, response.text
     assert inline_batch_stub.requests[0].input == tuple(batch)
+
+
+# --------------------------------------------------------------------------
+# the tenant's directory names
+# --------------------------------------------------------------------------
+#
+# The name is seeded through the app's own store rather than through
+# `POST /admin/directory`, so a failure here points at the inline path and not at
+# the endpoint, which has its own file. Seeding is a merge, so calling it twice
+# with the same name changes nothing and no case has to clean up after another.
+#
+# The cross-tenant row is the sharp one. `nordlicht` sends the SAME text under a
+# redact class and reaches the same stub (its `agent-default` override resolves
+# to `local`), and the text carries an address as well - so redaction demonstrably
+# ran for that request and simply did not know the name. Without that second
+# tenant, "the directory was loaded for the authenticated tenant" and "one global
+# directory was loaded" are indistinguishable.
+
+DIRECTORY_NAME = "Anna Schmidt"
+NAME_TEXT = f"escalate to {DIRECTORY_NAME} at {EMAIL_A}"
+NAME_REDACTED = "escalate to <PERSON_1> at <EMAIL_1>"
+NAME_WITHOUT_PERSON = f"escalate to {DIRECTORY_NAME} at <EMAIL_1>"
+
+NORDLICHT_KEY = TEST_KEYS["nordlicht"]
+
+
+def seed_directory(client: TestClient, tenant: str, *names: str) -> None:
+    """Put names into the app's directory store, as `POST /admin/directory` would."""
+    app = cast(FastAPI, client.app)
+    store = cast(DirectoryStore, app.state.directory_store)
+    store.put(tenant, list(names))
+
+
+REDIS_FAILURE_TEXT = "Error 111 connecting to redis:6379. Connection refused."
+"""The client's own words, planted as a marker: they name internal topology and
+must not travel to a caller."""
+
+
+class UnavailableDirectoryStore:
+    """A `DirectoryStore` whose read fails the way an unreachable Redis does.
+
+    `put` is here because the protocol has it; nothing in this file calls it. The
+    failure is on `get`, because `get` is what the inline path makes on EVERY
+    redacted request.
+    """
+
+    def put(self, tenant: str, names: Sequence[str]) -> None:
+        raise DirectoryStoreUnavailable(REDIS_FAILURE_TEXT)
+
+    def get(self, tenant: str) -> tuple[str, ...]:
+        raise DirectoryStoreUnavailable(REDIS_FAILURE_TEXT)
+
+
+@pytest.fixture
+def unavailable_directory_chat_client(settings: Settings) -> Iterator[TestClient]:
+    """A second app whose directory store cannot be reached.
+
+    Its own app rather than the module's: swapping the store is the thing under
+    test, and doing it on `inline_chat_client` would leave every later case in this
+    file talking to a directory that refuses every read.
+    """
+    stub = StubAdapter(name=PROVIDER, response=stub_response())
+    with build_chat_client(settings, {stub.name: stub}) as client:
+        cast(FastAPI, client.app).state.directory_store = UnavailableDirectoryStore()
+        yield client
+
+
+def test_the_chat_adapter_receives_a_placeholder_where_a_directory_name_stood(
+    inline_chat_client: TestClient, inline_chat_stub: StubAdapter
+) -> None:
+    """Catches an inline path that redacts with the nine pattern kinds and never loads the
+    tenant's directory: the address in the same message is still replaced, so the header
+    reads `true` and the response looks correct while the name this control exists to
+    remove leaves the box. Both the placeholder and the header are asserted, because a
+    route that redacted but reported `false` is a different bug with the same body."""
+    seed_directory(inline_chat_client, "evals", DIRECTORY_NAME)
+
+    response = post_chat(
+        inline_chat_client,
+        chat_body(messages=[{"role": "user", "content": NAME_TEXT}]),
+        data_class="confidential",
+    )
+
+    assert redacted_header(response) == "true"
+    assert inline_chat_stub.requests[0].messages[0].content == NAME_REDACTED
+
+
+def test_the_embedding_adapter_receives_a_placeholder_where_a_directory_name_stood(
+    inline_embeddings_client: TestClient, inline_embedding_stub: EmbeddingStubAdapter
+) -> None:
+    """Catches the directory wired into the chat route alone: embeddings is the route
+    whose batches are largest and whose text is stored in a vector database afterwards, so
+    a name that survives here survives in a corpus nobody re-reads."""
+    seed_directory(inline_embeddings_client, "evals", DIRECTORY_NAME)
+
+    response = post_embeddings(
+        inline_embeddings_client, embeddings_body(input=NAME_TEXT), data_class="confidential"
+    )
+
+    assert redacted_header(response) == "true"
+    assert inline_embedding_stub.requests[0].input == (NAME_REDACTED,)
+
+
+def test_one_tenants_directory_name_is_not_redacted_for_another_tenant(
+    inline_chat_client: TestClient, inline_chat_stub: StubAdapter
+) -> None:
+    """Catches a directory loaded without its tenant - one process-wide matcher, or a
+    matcher compiled once at startup from every tenant's names.
+
+    `nordlicht` sends the same text under a redact class and the address in it IS still
+    replaced, so redaction ran for this request and only the name was left alone. That is
+    the arrangement in which removing the tenant from the load is the single thing that
+    flips the result: a test asserting nothing was redacted would also pass if inline
+    redaction had been switched off altogether.
+    """
+    seed_directory(inline_chat_client, "evals", DIRECTORY_NAME)
+
+    response = post_chat(
+        inline_chat_client,
+        chat_body(messages=[{"role": "user", "content": NAME_TEXT}]),
+        key=NORDLICHT_KEY,
+        tenant="nordlicht",
+        data_class="confidential",
+    )
+
+    assert redacted_header(response) == "true"
+    assert inline_chat_stub.requests[0].messages[0].content == NAME_WITHOUT_PERSON
+
+
+def test_a_person_redaction_is_counted_under_the_person_kind(
+    inline_chat_client: TestClient, metrics: MetricDelta
+) -> None:
+    """Catches a counter that files a directory match under an existing kind label, or
+    under none: `gateway_redactions_total` is what the design's redaction panel sums, and a
+    tenth kind counted as `EMAIL` would make the panel report a detector that is not the
+    one that fired. The message carries an address too, so a single kindless increment
+    cannot pass, and `moved_series` is what says no THIRD label appeared."""
+    seed_directory(inline_chat_client, "evals", DIRECTORY_NAME)
+
+    response = post_chat(
+        inline_chat_client,
+        chat_body(messages=[{"role": "user", "content": NAME_TEXT}]),
+        data_class="confidential",
+    )
+    assert response.status_code == 200, response.text
+
+    assert metrics.delta("gateway_redactions_total", tenant="evals", kind="PERSON") == 1
+    assert metrics.delta("gateway_redactions_total", tenant="evals", kind="EMAIL") == 1
+    assert len(metrics.moved_series("gateway_redactions_total")) == 2
+
+
+def test_an_unreachable_directory_store_is_502_with_no_outbound_call(
+    unavailable_directory_chat_client: TestClient,
+) -> None:
+    """Catches the failure mode decision H exists to forbid: a route that reads the
+    directory in a `try` and carries on with an empty one would serve this request with
+    the tenant's names in the clear, and the response would still say
+    `X-Gateway-Redacted: true`. Redaction is deny-by-default like residency, so the only
+    acceptable answer is the 502 PROVIDER_ERROR `filed_map_id` already gives an
+    unreachable map store - and NOTHING may reach the adapter."""
+    app = cast(FastAPI, unavailable_directory_chat_client.app)
+    stub = cast(StubAdapter, app.state.adapters[PROVIDER])
+
+    response = post_chat(
+        unavailable_directory_chat_client,
+        chat_body(messages=[{"role": "user", "content": NAME_TEXT}]),
+        data_class="confidential",
+    )
+
+    assert_error_body(response, status=502, code="PROVIDER_ERROR")
+    assert stub.requests == []
+
+
+def test_a_directory_store_failure_does_not_put_the_clients_words_in_front_of_a_caller(
+    unavailable_directory_chat_client: TestClient,
+) -> None:
+    """Catches a conversion that pastes the Redis error into the client-facing message:
+    that string names an internal host and port, and the same rule already holds for the
+    map store and on the provider path."""
+    response = post_chat(
+        unavailable_directory_chat_client,
+        chat_body(messages=[{"role": "user", "content": NAME_TEXT}]),
+        data_class="confidential",
+    )
+
+    assert REDIS_FAILURE_TEXT not in response.text
+    assert "6379" not in response.text
+
+
+def test_a_non_redact_class_is_served_while_the_directory_store_is_down(
+    unavailable_directory_chat_client: TestClient,
+) -> None:
+    """Catches a directory read moved in front of the `redact: true` check: a `public`
+    request is not redacted at all, so a store outage that took it down would turn a Redis
+    incident into a total outage rather than one confined to the classes that redact. Also
+    the positive control for the 502 rows above - without it, a route that answered 502 to
+    everything would pass them both."""
+    response = post_chat(
+        unavailable_directory_chat_client,
+        chat_body(messages=[{"role": "user", "content": NAME_TEXT}]),
+        data_class="public",
+    )
+
+    assert response.status_code == 200, response.text

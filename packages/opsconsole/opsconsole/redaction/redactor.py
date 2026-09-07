@@ -27,6 +27,7 @@ from typing import Final
 
 from opsconsole.redaction.detectors import KIND_PRECEDENCE, Detection, Kind, detect_all
 from opsconsole.redaction.errors import RedactionInputTooLong
+from opsconsole.redaction.names import NameDirectory
 
 # Twice an earlier change's per-input embedding cap. An earlier change's request model imports this
 # constant rather than restating it, so a body and the engine cannot disagree
@@ -103,11 +104,18 @@ def taken_placeholders(text: str) -> set[str]:
     return {match.group(0) for match in _LITERAL_PLACEHOLDER.finditer(text)}
 
 
-def redact(text: str) -> RedactionResult:
+def redact(text: str, directory: NameDirectory | None = None) -> RedactionResult:
     """Replace every detected value in `text` with a stable `<KIND_N>` placeholder.
 
     Raises `RedactionInputTooLong` when `text` is longer than
     `MAX_REDACTION_INPUT_CHARS`, before any detector runs.
+
+    `directory` is the tenant's compiled display names, passed straight through to
+    `detect_all`. It defaults to `None`, which is no `PERSON` candidate at all, so
+    a caller that passes none gets exactly what it got before an earlier change. The
+    matcher is compiled by the ROUTE and handed in rather than built here
+    (decision E): `redact` is per string and `redact_batch` calls it up to 64
+    times for one request.
 
     Placeholders are keyed on `(kind, value)` and numbered per kind from 1 in
     first-appearance order, so the same raw value twice in one call gets one
@@ -122,7 +130,7 @@ def redact(text: str) -> RedactionResult:
     if len(text) > MAX_REDACTION_INPUT_CHARS:
         raise RedactionInputTooLong(len(text), MAX_REDACTION_INPUT_CHARS)
 
-    detections = tuple(resolve_overlaps(detect_all(text)))
+    detections = tuple(resolve_overlaps(detect_all(text, directory)))
     taken = taken_placeholders(text)
     mapping: dict[str, str] = {}
     assigned: dict[tuple[Kind, str], str] = {}

@@ -74,6 +74,7 @@ from opsconsole.gateway.routes.redact import (
     REDACT_SPAN,
     redact_or_reject,
     redaction_applies,
+    tenant_directory,
 )
 from opsconsole.ledger import ResidencyLogWriter, record_residency
 from opsconsole.providers.base import (
@@ -94,6 +95,7 @@ from opsconsole.providers.base import (
     UsageTotal,
 )
 from opsconsole.providers.breaker import CircuitBreaker
+from opsconsole.redaction import DirectoryStore
 from opsconsole.routing.errors import AllProvidersUnavailable
 from opsconsole.routing.policy import DataClass, Policy, PolicyStore
 from opsconsole.routing.resolver import Resolved, resolve
@@ -951,7 +953,9 @@ def create_chat_completion(
         )
     label_candidate(scope, body.model, candidates[0])
 
-    outbound, redacted = _redacted(scope, store.policy, context, body)
+    outbound, redacted = _redacted(
+        scope, store.policy, context, body, request.app.state.directory_store
+    )
     annotate(scope, SpanAttributes(redacted=redacted))
 
     last = len(candidates) - 1
@@ -1035,7 +1039,11 @@ def _token_sink(tenant: str, chosen: Resolved) -> Callable[[Usage], None]:
 
 
 def _redacted(
-    scope: Scope, policy: Policy, context: RequestContext, body: ChatCompletionRequest
+    scope: Scope,
+    policy: Policy,
+    context: RequestContext,
+    body: ChatCompletionRequest,
+    directory_store: DirectoryStore,
 ) -> tuple[ChatCompletionRequest, bool]:
     """The request the adapter should see, and whether anything was actually replaced.
 
@@ -1043,6 +1051,13 @@ def _redacted(
     class does not ask for redaction, which is what keeps a `public` caller from
     getting placeholders it never asked for and keeps the 16384-character cap off
     a route that had none (`test_the_redaction_cap_does_not_apply_on_a_non_redact_class`).
+
+    The directory is loaded INSIDE that branch, after the check, for the same
+    reason: a class that is not redacted must not depend on the directory store
+    at all, or a Redis incident would take down `public` traffic that never reads
+    a name (`test_a_non_redact_class_is_served_while_the_directory_store_is_down`).
+    Once, for the whole conversation, because the matcher is compiled from up to
+    2000 names and every turn is scanned with the same one.
 
     Every turn goes through ONE `redact_or_reject` call, so the numbering is
     shared across the conversation: the same address in turn 0 and turn 2 is one
@@ -1057,9 +1072,12 @@ def _redacted(
     if not redaction_applies(policy, context.tenant, context.data_class):
         return body, False
 
+    directory = tenant_directory(directory_store, context.tenant)
     with stage_span(scope, REDACT_SPAN):
         batch = redact_or_reject(
-            tuple(message.content or "" for message in body.messages), param="messages"
+            tuple(message.content or "" for message in body.messages),
+            param="messages",
+            directory=directory,
         )
     record_redactions(tenant=context.tenant, counts=batch.counts)
     rebuilt = tuple(

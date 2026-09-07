@@ -72,7 +72,12 @@ from opsconsole.gateway.routes.chat import (
     provider_span_name,
     record_served,
 )
-from opsconsole.gateway.routes.redact import REDACT_SPAN, redact_or_reject, redaction_applies
+from opsconsole.gateway.routes.redact import (
+    REDACT_SPAN,
+    redact_or_reject,
+    redaction_applies,
+    tenant_directory,
+)
 from opsconsole.providers.base import Adapter, EmbeddingAdapter, EmbeddingRequest
 from opsconsole.providers.breaker import CircuitBreaker
 from opsconsole.routing.errors import AllProvidersUnavailable
@@ -294,8 +299,14 @@ def create_embeddings(
     texts = body.texts
     redacted = False
     if redaction_applies(store.policy, context.tenant, context.data_class):
+        # After the check, never before it: a class that is not redacted must not
+        # depend on the directory store at all, or a Redis incident would take
+        # down `public` traffic that never reads a name. Compiled once for the
+        # whole batch, which is why it is not inside
+        # `redact_batch`.
+        directory = tenant_directory(request.app.state.directory_store, context.tenant)
         with stage_span(scope, REDACT_SPAN):
-            batch = redact_or_reject(texts, param="input")
+            batch = redact_or_reject(texts, param="input", directory=directory)
         texts, redacted = batch.texts, batch.redacted
         record_redactions(tenant=context.tenant, counts=batch.counts)
     annotate(scope, SpanAttributes(redacted=redacted))

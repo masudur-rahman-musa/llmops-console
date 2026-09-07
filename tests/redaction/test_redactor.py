@@ -434,7 +434,7 @@ def test_a_taken_number_of_another_kind_does_not_shift_this_kind() -> None:
 
 def test_a_placeholder_shaped_token_of_an_unknown_kind_is_ignored() -> None:
     """Catches a taken-token pattern written as `<[A-Z]+_[0-9]+>` rather than over
-    the nine kinds: an unrelated template token would then shift our numbering."""
+    the ten kinds: an unrelated template token would then shift our numbering."""
     text = f"Template <FIELD_1> here, mail {EMAIL_A}."
 
     result = redact(text)

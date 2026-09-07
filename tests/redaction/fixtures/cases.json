@@ -619,6 +619,83 @@
       "id": "neg-ticket-reference",
       "text": "Ticket #4815162342 is still open.",
       "spans": []
+    },
+    {
+      "id": "pos-person-given-name",
+      "text": "Bitte melde dich bei Katrin wegen des Termins.",
+      "directory": [
+        "Katrin"
+      ],
+      "spans": [
+        {
+          "kind": "PERSON",
+          "start": 21,
+          "end": 27,
+          "value": "Katrin"
+        }
+      ]
+    },
+    {
+      "id": "pos-person-full-name-beats-first-token",
+      "text": "Ansprechpartner: Anna Schmidt, Abteilung 4.",
+      "directory": [
+        "Anna",
+        "Anna Schmidt"
+      ],
+      "spans": [
+        {
+          "kind": "PERSON",
+          "start": 17,
+          "end": 29,
+          "value": "Anna Schmidt"
+        }
+      ]
+    },
+    {
+      "id": "pos-person-name-with-regex-metacharacters",
+      "text": "Der Bericht kam von A. Bergmann-Voß* heute Morgen.",
+      "directory": [
+        "A. Bergmann-Voß*"
+      ],
+      "spans": [
+        {
+          "kind": "PERSON",
+          "start": 20,
+          "end": 36,
+          "value": "A. Bergmann-Voß*"
+        }
+      ]
+    },
+    {
+      "id": "pos-person-name-inside-an-email-address",
+      "text": "Schreib an anna.schmidt@example.com, Anna Schmidt antwortet.",
+      "directory": [
+        "anna.schmidt",
+        "Anna Schmidt"
+      ],
+      "spans": [
+        {
+          "kind": "EMAIL",
+          "start": 11,
+          "end": 35,
+          "value": "anna.schmidt@example.com"
+        },
+        {
+          "kind": "PERSON",
+          "start": 37,
+          "end": 49,
+          "value": "Anna Schmidt"
+        }
+      ]
+    },
+    {
+      "id": "neg-directory-name-inside-a-longer-word",
+      "text": "Die Annahme wurde abgelehnt, Anhang folgt.",
+      "directory": [
+        "Anna",
+        "Anhan"
+      ],
+      "spans": []
     }
   ]
 }

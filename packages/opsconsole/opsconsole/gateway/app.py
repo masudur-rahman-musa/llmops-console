@@ -39,6 +39,7 @@ from opsconsole.gateway.health import router as health_router
 from opsconsole.gateway.probes import build_redis_client, register_probes
 from opsconsole.gateway.routes.admin import router as admin_router
 from opsconsole.gateway.routes.chat import router as chat_router
+from opsconsole.gateway.routes.directory import router as directory_router
 from opsconsole.gateway.routes.embeddings import router as embeddings_router
 from opsconsole.gateway.routes.metrics import router as metrics_router
 from opsconsole.gateway.routes.models import router as models_router
@@ -53,8 +54,11 @@ from opsconsole.providers.breaker import CircuitBreaker
 from opsconsole.providers.factory import build_adapters
 from opsconsole.providers.factory import close_adapters as close_adapters
 from opsconsole.redaction import (
+    DirectoryStore,
+    InProcessDirectoryStore,
     InProcessRedactionMapStore,
     RedactionMapStore,
+    RedisDirectoryStore,
     RedisRedactionMapStore,
 )
 from opsconsole.routing.policy import PolicyStore
@@ -204,6 +208,13 @@ def create_app(
     `test_create_app_keeps_the_in_process_store_without_a_redis_url` and
     `test_create_app_uses_the_redis_store_when_a_redis_url_is_configured`.
 
+    The tenant directory store is built from the SAME client and on the same
+    switch: one `redis.Redis` per app, so a deployment with Redis
+    configured opens one connection pool rather than two for what is one
+    dependency, and the readiness probe that already checks Redis covers both
+    stores. Redis decodes nothing for either - the map store stores JSON and the
+    directory store decodes its own hash values.
+
     The residency log writer is settings-driven for the same reason and by the
     same rule: `OPSCONSOLE_DATABASE_URL` set builds `PostgresResidencyLogWriter`
     over a pool, absent builds `InMemoryResidencyLogWriter`, which files rows in
@@ -227,12 +238,19 @@ def create_app(
     app.state.provider_environ = os.environ if environ is None else environ
     app.state.adapters = build_adapters(app.state.policy.policy, app.state.provider_environ)
     app.state.breaker = CircuitBreaker()
+    redis_client = (
+        build_redis_client(resolved.redis_url) if resolved.redis_url is not None else None
+    )
     store: RedactionMapStore = (
-        RedisRedactionMapStore(build_redis_client(resolved.redis_url))
-        if resolved.redis_url is not None
+        RedisRedactionMapStore(redis_client)
+        if redis_client is not None
         else InProcessRedactionMapStore()
     )
     app.state.redaction_map_store = store
+    directory: DirectoryStore = (
+        RedisDirectoryStore(redis_client) if redis_client is not None else InProcessDirectoryStore()
+    )
+    app.state.directory_store = directory
     residency_log: ResidencyLogWriter = (
         PostgresResidencyLogWriter(build_pool(resolved.database_url))
         if resolved.database_url is not None
@@ -250,4 +268,5 @@ def create_app(
     app.include_router(embeddings_router)
     app.include_router(redact_router)
     app.include_router(admin_router)
+    app.include_router(directory_router)
     return app

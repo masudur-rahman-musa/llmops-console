@@ -1,6 +1,6 @@
 r"""`POST /v1/redact`, and the two pieces the inline path shares with it.
 
-Three things live here, and the second and third are here because the chat and
+Four things live here, and all but the route are here because the chat and
 embeddings routes need them too - the same reason `gateway_headers` lives in
 `chat.py` and is imported rather than copied.
 
@@ -13,6 +13,9 @@ embeddings routes need them too - the same reason `gateway_headers` lives in
 * `redaction_applies` answers whether the tenant's rule for a data class carries
   `redact: true`. The routing policy is where that flag lives; nothing in the
   routing package reads it, because the control it configures is this one.
+* `tenant_directory` loads a tenant's pushed display names and compiles them
+  once per request, because the tenth detector kind's input is not the text. All three call sites take the matcher it returns; an unreachable
+  directory store is a 502 there and never an empty directory.
 * The route itself: the two body shapes, the class it applied, and the id of the
   map it filed.
 
@@ -47,7 +50,10 @@ from opsconsole.core.tracing import SpanAttributes, annotate, stage_span
 from opsconsole.gateway.context import Context
 from opsconsole.redaction import (
     MAX_REDACTION_INPUT_CHARS,
+    DirectoryStore,
+    DirectoryStoreUnavailable,
     Kind,
+    NameDirectory,
     RedactionInputTooLong,
     RedactionMapStore,
     RedactionMapStoreUnavailable,
@@ -101,7 +107,31 @@ that something was redacted when nothing touched it
 (`test_redact_span_is_absent_on_a_non_redact_class`)."""
 
 
-def redact_batch(texts: Sequence[str]) -> RedactedBatch:
+def tenant_directory(store: DirectoryStore, tenant: str) -> NameDirectory:
+    """This tenant's names, compiled once, with an unreachable store rendered as a 502.
+
+    Compiled HERE and not inside `redact`: a request is up
+    to 64 strings under one numbering, and compiling 2000 alternatives per string
+    is the difference between microseconds and a visible pause.
+
+    `DirectoryStoreUnavailable` becomes `ProviderError` - 502, `PROVIDER_ERROR` -
+    and never an empty directory. That is decision H, and it is the same
+    deny-by-default rule residency holds: a request redacted without the tenant's
+    names and served anyway carries the values this control exists to remove out
+    to a provider, with `X-Gateway-Redacted: true` on the answer
+    (`test_an_unreachable_directory_store_is_502_with_no_outbound_call`). The
+    message is this module's own words, exactly as `filed_map_id`'s is: the
+    client's name an internal host and port
+    (`test_a_directory_store_failure_does_not_put_the_clients_words_in_front_of_a_caller`).
+    """
+    try:
+        names = store.get(tenant)
+    except DirectoryStoreUnavailable as exc:
+        raise ProviderError("the directory store is unavailable", retryable=True) from exc
+    return NameDirectory.compile(names)
+
+
+def redact_batch(texts: Sequence[str], directory: NameDirectory | None = None) -> RedactedBatch:
     """Redact every string under one shared map and one shared numbering.
 
     Raises `RedactionInputTooLong` for any string over
@@ -123,7 +153,7 @@ def redact_batch(texts: Sequence[str]) -> RedactedBatch:
     (`test_a_placeholder_written_in_one_string_is_never_handed_out_for_another`).
     """
     originals = tuple(texts)
-    detected = tuple(redact(original).detections for original in originals)
+    detected = tuple(redact(original, directory).detections for original in originals)
     taken = set[str]().union(*(taken_placeholders(original) for original in originals))
 
     mapping: dict[str, str] = {}
@@ -156,7 +186,9 @@ def redact_batch(texts: Sequence[str]) -> RedactedBatch:
     return RedactedBatch(texts=tuple(rewritten), mapping=mapping, counts=minted)
 
 
-def redact_or_reject(texts: Sequence[str], *, param: str) -> RedactedBatch:
+def redact_or_reject(
+    texts: Sequence[str], *, param: str, directory: NameDirectory | None = None
+) -> RedactedBatch:
     """`redact_batch`, with the engine's cap rendered as the 422 a client can act on.
 
     `RedactionInputTooLong` is a plain exception, not a `GatewayError` (an earlier change:
@@ -171,7 +203,7 @@ def redact_or_reject(texts: Sequence[str], *, param: str) -> RedactedBatch:
     be two chances to answer differently for the same refusal.
     """
     try:
-        return redact_batch(texts)
+        return redact_batch(texts, directory)
     except RedactionInputTooLong as exc:
         raise IdentifierInvalid(
             f"{param}: a string longer than {exc.limit} characters cannot be redacted",
@@ -345,16 +377,17 @@ def create_redaction(
     the length of the scan instead of running in a worker thread.
     """
     maps: RedactionMapStore = request.app.state.redaction_map_store
+    directory = tenant_directory(request.app.state.directory_store, context.tenant)
     data_class = body.data_class if body.data_class is not None else context.data_class
 
     with stage_span(request.scope, REDACT_SPAN):
         if body.text is not None:
-            batch = redact_batch((body.text,))
+            batch = redact_batch((body.text,), directory)
             text: str | None = batch.texts[0]
             messages: tuple[RedactMessage, ...] | None = None
         else:
             turns = body.messages or ()
-            batch = redact_batch(tuple(turn.content for turn in turns))
+            batch = redact_batch(tuple(turn.content for turn in turns), directory)
             text = None
             messages = tuple(
                 turn.model_copy(update={"content": content})

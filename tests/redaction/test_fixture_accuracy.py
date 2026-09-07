@@ -1,9 +1,9 @@
-r"""The 50-case fixture: its composition, its checksums, the floors and README drift.
+r"""The 57-case fixture: its composition, its checksums, the floors and README drift.
 
 Two of these tests guard the fixture rather than the engine. That is deliberate:
 precision and recall are only meaningful if the ground truth is real, and a
-fixture whose "card number" fails Luhn or whose ten negatives quietly became
-nine would move both numbers without any detector changing.
+fixture whose "card number" fails Luhn or whose eleven negatives quietly became
+ten would move both numbers without any detector changing.
 
 The floors are asserted as exact literals (decision C, a project rule), not as
 a band: `>= 0.95` and `>= 0.90` are the numbers #21 and the design name.
@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from opsconsole.redaction import Detection, Kind, redact
+from opsconsole.redaction import Detection, Kind, NameDirectory, redact
 from opsconsole.redaction.detectors import (
     compact_separators,
     detect_all,
@@ -34,6 +34,7 @@ from .conftest import (
     README_PATH,
     Case,
     ExpectedSpan,
+    directory_for,
     emitted_detections,
     load_render_table,
     load_report_module,
@@ -42,16 +43,22 @@ from .conftest import (
     score_cases,
 )
 
-# Decision F, pinned exactly: without the ten negatives precision is 1.0 by
+# Decision F, pinned exactly: without the eleven negatives precision is 1.0 by
 # construction, so the count is part of what makes the number mean anything.
 # Round 2 of this plan's review grew the positives from 40 to 42: the fixture had
 # no space-grouped IBAN and no IPv4-mapped IPv6, the two forms whose patterns
 # matched only a PREFIX of the value and left the rest in the clear. A score
 # cannot see what the fixture omits, so the two rows are the fix, not the
 # pattern change alone.
-EXPECTED_CASE_COUNT = 52
-EXPECTED_POSITIVE_CASES = 42
-EXPECTED_NEGATIVE_CASES = 10
+# An earlier change decision I adds the tenth kind's ground truth: four positive PERSON
+# cases (a single given name, a full name winning over its own first token, a
+# name carrying regex metacharacters, and a name overlapping an email address)
+# and one negative, a directory name sitting inside a longer word. 42/10 becomes
+# 46/11, and the negative is what stops PERSON buying recall at precision's
+# expense.
+EXPECTED_CASE_COUNT = 57
+EXPECTED_POSITIVE_CASES = 46
+EXPECTED_NEGATIVE_CASES = 11
 
 # The negative shapes decision F names by hand. Ids, not texts, so a case can be
 # reworded without this list rotting, but cannot be deleted.
@@ -63,12 +70,16 @@ REQUIRED_NEGATIVE_IDS = (
     "neg-date-without-cue",
     "neg-time-of-day",
     "neg-short-numeric-run",
+    "neg-directory-name-inside-a-longer-word",
 )
 
 
-def test_fixture_has_forty_two_positive_and_ten_negative_cases(cases: tuple[Case, ...]) -> None:
+def test_fixture_has_forty_six_positive_and_eleven_negative_cases(
+    cases: tuple[Case, ...],
+) -> None:
     """Catches a fixture that grew its positives without its negatives, which
-    raises precision for free."""
+    raises precision for free - which is exactly what adding a kind whose only
+    check is membership in a list invites."""
     positives = [case for case in cases if case.spans]
     negatives = [case for case in cases if not case.spans]
 
@@ -103,6 +114,62 @@ def test_required_negative_shape_is_present_and_has_no_spans(
 
     assert case_id in by_id
     assert by_id[case_id].spans == ()
+
+
+def test_every_person_span_belongs_to_a_case_that_names_a_directory(
+    cases: tuple[Case, ...],
+) -> None:
+    """Catches a PERSON case added with ground truth and no `directory` key.
+
+    The matcher's input is not the text, so such a case is unreachable by any correct
+    engine: every one of its spans scores as a false negative and recall drops for a
+    reason no detector change can fix. `test_fixture_covers_every_detector_kind` forces
+    the case to exist and says nothing about what it needs to be scored.
+    """
+    for case in cases:
+        if any(span.kind is Kind.PERSON for span in case.spans):
+            assert case.directory, case.id
+
+
+def test_the_directory_field_is_only_on_the_cases_that_need_one(
+    cases: tuple[Case, ...],
+) -> None:
+    """Catches a directory pasted onto every case, which would make the nine pattern kinds
+    scored against a matcher no request of theirs compiles: a name that happened to sit in
+    another case's text would become a false positive there and quietly lower precision
+    for a change to a case it has nothing to do with."""
+    with_directory = {case.id for case in cases if case.directory}
+    with_person = {
+        case.id for case in cases if any(span.kind is Kind.PERSON for span in case.spans)
+    }
+
+    assert with_person <= with_directory
+    assert with_directory - with_person == {"neg-directory-name-inside-a-longer-word"}
+
+
+def test_the_scorer_hands_each_case_its_own_compiled_directory() -> None:
+    """Catches a scorer that passes `None` for every case, and one that pools every case's
+    names into a single directory.
+
+    `None` for all is the failure that would make the PERSON cases score zero recall while
+    the engine was correct; pooling is the one that would charge unrelated cases false
+    positives. Both are invisible to the floors, which move for a dozen other reasons, so
+    the seam is asserted directly against a recording detector over two hand-built cases.
+    """
+    named = Case(id="named", text="x", spans=(), directory=("Anna Schmidt",))
+    plain = Case(id="plain", text="x", spans=())
+    seen: list[tuple[str, tuple[str, ...] | None]] = []
+
+    def record(text: str, directory: NameDirectory | None) -> list[Detection]:
+        if directory is None:
+            seen.append((text, None))
+        else:
+            seen.append((text, tuple(d.value for d in directory.detect("cc Anna Schmidt"))))
+        return []
+
+    score_cases([named, plain], record)
+
+    assert seen == [("x", ("Anna Schmidt",)), ("x", None)]
 
 
 def test_every_checksummed_fixture_value_actually_passes_its_checksum(
@@ -143,7 +210,7 @@ def test_recall_meets_the_floor(cases: tuple[Case, ...]) -> None:
 
 def test_precision_meets_the_floor(cases: tuple[Case, ...]) -> None:
     """Catches an over-broad PHONE or IBAN pattern that eats ordinary numbers -
-    the risk decision F's ten negatives exist to expose."""
+    the risk decision F's eleven negatives exist to expose."""
     score = score_cases(cases, emitted_detections)
 
     assert score.precision >= 0.90
@@ -163,7 +230,7 @@ def test_scoring_counts_a_mislabelled_span_as_both_a_miss_and_a_false_positive()
         spans=(ExpectedSpan(kind=Kind.CARD, start=0, end=1, value="x"),),
     )
 
-    def mislabel(text: str) -> list[Detection]:
+    def mislabel(text: str, directory: NameDirectory | None) -> list[Detection]:
         return [Detection(kind=Kind.EMAIL, start=0, end=1, value="x")]
 
     score = score_cases([case], mislabel)
@@ -180,7 +247,7 @@ def test_scoring_counts_an_exact_match_once() -> None:
         spans=(ExpectedSpan(kind=Kind.CARD, start=0, end=1, value="x"),),
     )
 
-    def exact(text: str) -> list[Detection]:
+    def exact(text: str, directory: NameDirectory | None) -> list[Detection]:
         return [Detection(kind=Kind.CARD, start=0, end=1, value="x")]
 
     score = score_cases([case], exact)
@@ -194,7 +261,7 @@ def test_redact_and_detect_all_agree_on_every_positive_case(cases: tuple[Case, .
     """Catches a `redact` that re-scans or filters differently from the resolved
     span list it reports, which would make the map disagree with the output."""
     for case in cases:
-        result = redact(case.text)
+        result = redact(case.text, directory=directory_for(case))
         for found in result.detections:
             assert case.text[found.start : found.end] == found.value
 

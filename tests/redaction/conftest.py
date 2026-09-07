@@ -3,7 +3,7 @@ r"""Fixtures and scoring helpers for the redaction engine tests.
 Everything here is in-process: one JSON file read and pure CPU work. There is no
 backing service, so a project rule (session-scoped fixtures, isolation by
 namespace) has nothing to apply to. The case list is read once at session scope
-anyway, because it is immutable data and re-reading it 50 times buys nothing.
+anyway, because it is immutable data and re-reading it 57 times buys nothing.
 
 Two helpers carry the load-bearing claims:
 
@@ -34,7 +34,7 @@ from typing import cast
 
 import pytest
 
-from opsconsole.redaction import Detection, Kind, RedactionResult, redact
+from opsconsole.redaction import Detection, Kind, NameDirectory, RedactionResult, redact
 
 FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "cases.json"
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -61,11 +61,19 @@ class ExpectedSpan:
 
 @dataclass(frozen=True, slots=True)
 class Case:
-    """One fixture row. `spans` is empty for the ten negative cases."""
+    """One fixture row. `spans` is empty for the eleven negative cases.
+
+    `directory` is the tenant display names this case is scored with, and it is
+    empty for every case that is not about `Kind.PERSON`.
+    The default is what keeps every existing fixture row unchanged: a case with
+    no `directory` key is scored with no matcher at all, which is exactly how
+    `detect_all` and `redact` behave for a caller that passes none.
+    """
 
     id: str
     text: str
     spans: tuple[ExpectedSpan, ...]
+    directory: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,8 +81,10 @@ class Score:
     """Pooled counts over every case, plus the two derived metrics.
 
     Both metrics are 0.0 when their denominator is zero. That never happens for
-    this fixture (there are 51 expected spans), and a silent `ZeroDivisionError`
-    in a scorer is worse than a floor test that fails loudly at 0.0.
+    this fixture - `test_fixture_has_forty_six_positive_and_eleven_negative_cases`
+    holds it at 46 positive cases, and a positive case carries at least one
+    expected span - and a silent `ZeroDivisionError` in a scorer is worse than a
+    floor test that fails loudly at 0.0.
     """
 
     true_positives: int
@@ -127,13 +137,33 @@ def load_cases(path: Path = FIXTURE_PATH) -> tuple[Case, ...]:
                 f"{text[span.start : span.end]!r}, not {span.value!r}"
             )
             spans.append(span)
-        cases.append(Case(id=case_id, text=text, spans=tuple(spans)))
+        cases.append(
+            Case(
+                id=case_id,
+                text=text,
+                spans=tuple(spans),
+                directory=tuple(str(name) for name in raw.get("directory", ())),
+            )
+        )
     return tuple(cases)
+
+
+def directory_for(case: Case) -> NameDirectory | None:
+    """The compiled matcher one case is scored with, or `None` when it names no names.
+
+    `None` and not an empty `NameDirectory`, so a case with no `directory` key is
+    scored through exactly the code path every caller that passes no directory
+    takes; an empty matcher would exercise a branch the gateway never reaches for
+    a tenant with no names.
+    """
+    if not case.directory:
+        return None
+    return NameDirectory.compile(case.directory)
 
 
 def score_cases(
     cases: Sequence[Case],
-    detect: Callable[[str], Sequence[Detection]],
+    detect: Callable[[str, NameDirectory | None], Sequence[Detection]],
 ) -> Score:
     """Pool true/false positives and false negatives over every case.
 
@@ -141,13 +171,18 @@ def score_cases(
     expected span exactly: a right span with the wrong kind label counts once as
     a false positive and once as a false negative, which is the whole reason
     decision B stores spans rather than an expected output string.
+
+    Each case is scored with ITS OWN compiled directory.
+    Scoring `Kind.PERSON` against a directory pooled over the whole fixture would
+    charge every other case a false positive for a name it was never given, and
+    would measure a matcher no request ever compiles.
     """
     true_positives = 0
     false_positives = 0
     false_negatives = 0
     for case in cases:
         expected = {(span.kind, span.start, span.end) for span in case.spans}
-        found = {(d.kind, d.start, d.end) for d in detect(case.text)}
+        found = {(d.kind, d.start, d.end) for d in detect(case.text, directory_for(case))}
         true_positives += len(expected & found)
         false_positives += len(found - expected)
         false_negatives += len(expected - found)
@@ -191,7 +226,7 @@ def placeholders_in_order(original: str, result: RedactionResult) -> list[str]:
     return tokens
 
 
-def emitted_detections(text: str) -> tuple[Detection, ...]:
+def emitted_detections(text: str, directory: NameDirectory | None = None) -> tuple[Detection, ...]:
     """What `redact` actually replaces, which is what precision and recall measure.
 
     NOT `detect_all`. Raw candidates are an internal stage: inside a
@@ -202,8 +237,11 @@ def emitted_detections(text: str) -> tuple[Detection, ...]:
     persists, so it is the honest subject. `detect_all` keeps its own per-kind
     rejection rows in `test_detectors.py`; see
     `test_the_score_measures_what_the_engine_emits_not_raw_candidates`.
+
+    `directory` is the case's own compiled matcher, defaulted so the rows that
+    call this helper directly with one argument keep reading as they did.
     """
-    return redact(text).detections
+    return redact(text, directory=directory).detections
 
 
 def load_report_module() -> ModuleType:
@@ -244,5 +282,5 @@ def readme_table_block(readme: str) -> str:
 
 @pytest.fixture(scope="session")
 def cases() -> tuple[Case, ...]:
-    """The 50 fixture cases, read and offset-checked once per session."""
+    """The 57 fixture cases, read and offset-checked once per session."""
     return load_cases()
