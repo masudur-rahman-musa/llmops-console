@@ -44,9 +44,10 @@ ASSERTION_NAMES: Final[tuple[str, ...]] = (
 )
 """Every assertion `assert_case` reports, in the order it reports them.
 
-`16c` writes these strings into `eval_cases` rows and row 17's taxonomy keys off
-them, so a rename re-labels reports already stored. Pinned, name for name and in
-order, by `test_every_assertion_is_reported_even_when_the_case_states_nothing`.
+`16c` writes these strings into `report.json`, `16d` into `eval_cases` rows and
+row 17's taxonomy keys off them, so a rename re-labels reports already stored.
+Pinned, name for name and in order, by
+`test_every_assertion_is_reported_even_when_the_case_states_nothing`.
 """
 
 
@@ -68,8 +69,9 @@ class AssertionResult(BaseModel):
 
     `expected` and `actual` are `None` on anything but a failure
     (`test_a_passed_or_skipped_result_carries_no_expected_or_actual`), so a report
-    does not show a diff-shaped pair beside a passing row and `16c` does not store
-    a whole reply against a case that had nothing wrong with it.
+    does not show a diff-shaped pair beside a passing row and neither `16c`'s report
+    nor `16d`'s row carries a whole reply against a case that had nothing wrong
+    with it.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

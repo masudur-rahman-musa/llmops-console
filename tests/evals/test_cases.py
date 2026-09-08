@@ -23,8 +23,8 @@ The contract these cases are written against, before it exists:
 a project rule on `PRINCIPAL_PATTERN`: matched with `re.fullmatch`, and the
 rejection table below carries a trailing newline, a trailing CRLF and a trailing
 space, because a check written `^...$` with `.match` accepts the first of those,
-and `16c` stores `principal_user` as an `eval_cases` column and names a per-case
-report file inside the directory `16b`'s `--out` creates.
+and `16c` writes `principal_user` into `report.json` while `16d` stores it as an
+`eval_cases` column.
 
 `id` and `tenant` are checked against the gateway's OWN `IDENTIFIER_PATTERN` and
 `MAX_IDENTIFIER_LENGTH`, imported here rather than restated, so an id a golden
@@ -269,7 +269,7 @@ OVER_CAP_PRINCIPAL = "a" * (MAX_PRINCIPAL_LENGTH + 1)
 
 def test_the_length_caps_are_the_published_ones() -> None:
     """Catches a cap invented here instead of imported from the resolver, and a principal
-    cap quietly widened - `16c` stores both as `eval_cases` columns, so a value the model
+    cap quietly widened - `16d` stores both as `eval_cases` columns, so a value the model
     accepts and the column does not is an insert that fails after the run is paid for."""
     assert MAX_IDENTIFIER_LENGTH == 64
     assert MAX_PRINCIPAL_LENGTH == 128
@@ -298,7 +298,7 @@ def test_the_tenant_length_boundary_is_inclusive() -> None:
 def test_the_principal_length_boundary_is_inclusive() -> None:
     """Catches the principal being checked against the identifier's cap of 64 - real
     principals are email-shaped and routinely longer - and catches 129 being accepted,
-    which is the value `16c`'s column would truncate."""
+    which is the value `16d`'s column would truncate."""
     assert case_with(principal_user=MAX_PRINCIPAL).principal_user == MAX_PRINCIPAL
 
     with pytest.raises(IdentifierInvalid):
@@ -324,9 +324,9 @@ REJECTED_IDENTIFIERS: list[tuple[str, str]] = [
     ("label", "value"), REJECTED_IDENTIFIERS, ids=[row[0] for row in REJECTED_IDENTIFIERS]
 )
 def test_a_malformed_id_is_refused(label: str, value: str) -> None:
-    """Catches an id that never passes through a pattern at all: `16c` puts it in a report
-    file name inside the directory `16b`'s `--out` creates, so `../case-1` writes outside
-    the report directory and `case-1\\n` puts a
+    """Catches an id that never passes through a pattern at all: `16c` writes it into
+    `report.json` and `16d` into an `eval_cases` row, so `../case-1` reaches a stored
+    key and `case-1\\n` puts a
     line break in a path and in an `eval_cases` row. The trailing-newline row is standing
     rule 4's - a check written `^...$` with `.match` accepts it."""
     with pytest.raises(IdentifierInvalid):
@@ -339,7 +339,7 @@ def test_a_malformed_id_is_refused(label: str, value: str) -> None:
 def test_a_malformed_tenant_is_refused(label: str, value: str) -> None:
     """Catches the tenant being taken on trust because it "comes from a file we wrote":
     the set is an adopter's file (#74), and this tenant reaches a residency lookup in
-    `16b` and a ledger row in `16c`. Same rejection table as the id, so the two fields
+    `16b` and a stored row in `16d`. Same rejection table as the id, so the two fields
     cannot drift into two vocabularies."""
     with pytest.raises(IdentifierInvalid):
         case_with(tenant=value)
@@ -385,8 +385,8 @@ REJECTED_PRINCIPALS: list[tuple[str, str]] = [
 )
 def test_a_malformed_principal_is_refused(label: str, value: str) -> None:
     """Catches a principal check that is only a length cap, which would let a newline or a
-    path separator into the `eval_cases` column `16c` writes and the report file `16c`
-    names inside `16b`'s `--out`.
+    path separator into the report `16c` writes and the `eval_cases` column `16d`
+    stores it in.
     The trailing-newline and trailing-CRLF rows are a project rule's."""
     with pytest.raises(IdentifierInvalid):
         case_with(principal_user=value)

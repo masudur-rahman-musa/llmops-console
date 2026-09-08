@@ -432,8 +432,8 @@ def test_the_deterministic_assertions(
 
 
 def test_the_status_vocabulary_is_the_published_three() -> None:
-    """Catches a fourth status, or `skipped` renamed - `16c` writes these strings into
-    `eval_cases` rows and a report, so a value drifting silently re-labels every row
+    """Catches a fourth status, or `skipped` renamed - `16c` writes these strings into a
+    report and `16d` into `eval_cases` rows, so a value drifting silently re-labels every row
     already stored."""
     assert {member.value for member in AssertionStatus} == {"passed", "failed", "skipped"}
     assert len(list(AssertionStatus)) == 3
@@ -478,9 +478,9 @@ def test_every_assertion_is_reported_even_when_the_case_states_nothing() -> None
 
 
 def test_the_result_names_the_case_it_belongs_to() -> None:
-    """Catches a `CaseAssertions` that carries no id: `16c` writes one `eval_cases` row per
-    case, and a result nothing can be joined back to its case turns a failing run into a
-    count with no names in it."""
+    """Catches a `CaseAssertions` that carries no id: `16c` writes one report row per case
+    and `16d` one `eval_cases` row, and a result nothing can be joined back to its
+    case turns a failing run into a count with no names in it."""
     assertions = assert_case(make_case(), make_outcome())
 
     assert assertions.case_id == "case-1"
@@ -620,7 +620,7 @@ def test_a_failed_args_assertion_names_the_argument_at_fault() -> None:
 
 def test_a_passed_or_skipped_result_carries_no_expected_or_actual() -> None:
     """Catches a builder that fills `expected` and `actual` on every result. A report
-    would then show a diff-shaped pair of values beside a passing row, and `16c`'s
+    would then show a diff-shaped pair of values beside a passing row, and `16d`'s
     `eval_cases` writer would store the model's whole reply against cases that had nothing
     wrong with them - telemetry weight for no signal."""
     assertions = assert_case(
@@ -681,7 +681,7 @@ def test_asserting_a_case_does_not_mutate_the_case_or_the_outcome() -> None:
 
 
 def test_the_outcome_record_carries_what_the_runner_measures() -> None:
-    """Catches a `CaseOutcome` that drops the measured fields `16b` fills and `16c` writes
+    """Catches a `CaseOutcome` that drops the measured fields `16b` fills and `16c` reports
     (`latency_ms`, `cost_usd`, `provider`, `region`), which would be discovered a plan
     later with no report column to put them in - and catches defaults that lie: an unfilled
     outcome must read as "nothing observed", so `refused` and `clarified` default False and

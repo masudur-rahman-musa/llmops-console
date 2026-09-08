@@ -9,11 +9,24 @@ The contract these cases are written against, before it exists:
 
 * `main(argv=None) -> int`, wired as `[project.scripts] ops-eval`, with a `run`
   subcommand taking `--target --set --tenant --out` and `--policy`, which
-  defaults to the shipped `routing.yaml`.
+  defaults to the shipped `routing.yaml`, plus `16c`'s `--set-sha` (optional)
+  and `--run-kind` (an argparse `choices` of `ci`/`nightly`/`manual`,
+  defaulting to `manual`).
 * `EXIT_OK`, `EXIT_FAILED`, `EXIT_USAGE`, `EXIT_RESIDENCY` - the constants
   a project rule requires a test to pin exactly (decision C).
 * `cli.run_set` resolved as a module attribute, which is the seam these cases
   replace.
+* `report.write_reports` called with `--out` BEFORE `_exit_code` is chosen
+  (decision D), so `report.json` and `report.md` are on disk whatever the run
+  answered. The report cases below read the files rather than the call, so they
+  cannot pass on a CLI that builds a report and drops it.
+* `git_sha` from ONE `subprocess.run(["git", "rev-parse", "HEAD"], ...)`. Those
+  cases double `subprocess.run` and nothing narrower: doubling a `_git_sha`
+  helper would remove the control under test and the case would pass whether or
+  not the failure is handled.
+* `CaseRun` carrying `category` and `outcome` beside what `16b` shipped, which
+  is where a `CaseReport`'s category and its four measured fields come from -
+  `build_report` reads the `RunResult` and nothing else.
 
 The tenant table below is arranged against the neighbouring guard: the generated
 policy DEFINES the exact tenant string each row passes, malformed ones included,
@@ -26,17 +39,24 @@ table for the same reason they are in 16a's: a check written `^...$` with
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
+import subprocess
 from collections.abc import Sequence
+from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from opsconsole.evals import cli
 from opsconsole.evals.assertions import AssertionResult, AssertionStatus, CaseAssertions
-from opsconsole.evals.cases import EvalCase
+from opsconsole.evals.cases import EvalCase, EvalCategory
 from opsconsole.evals.cli import EXIT_FAILED, EXIT_OK, EXIT_RESIDENCY, EXIT_USAGE
+from opsconsole.evals.outcome import CaseOutcome
+from opsconsole.evals.report import REPORT_JSON_NAME, REPORT_MD_NAME
 from opsconsole.evals.residency import ResidencyVerdict
 from opsconsole.evals.runner import CaseRun, RunResult
 from opsconsole.evals.target import TargetClient
@@ -90,8 +110,19 @@ def write_policy(tmp_path: Path, *tenants: str) -> Path:
     return path
 
 
-def make_run(case_id: str, tenant: str, verdict: str) -> CaseRun:
-    """One per-case record of the named shape, as `run_set` would have built it."""
+def make_run(
+    case_id: str,
+    tenant: str,
+    verdict: str,
+    *,
+    category: EvalCategory = EvalCategory.HELPDESK,
+) -> CaseRun:
+    """One per-case record of the named shape, as `run_set` would have built it.
+
+    The measured outcome is filled with values distinct per case id, so a report
+    that carries one case's latency against another's row is visible rather than
+    plausible.
+    """
     residency = ResidencyVerdict(
         case_id=case_id,
         tenant=tenant,
@@ -121,8 +152,16 @@ def make_run(case_id: str, tenant: str, verdict: str) -> CaseRun:
         )
     return CaseRun(
         case_id=case_id,
+        category=category,
         assertions=CaseAssertions(case_id=case_id, results=tuple(results)),
         residency=residency,
+        outcome=CaseOutcome(
+            reply="Done.",
+            latency_ms=100 + len(case_id),
+            cost_usd=Decimal("0.0010"),
+            provider="anthropic_eu",
+            region=residency.observed,
+        ),
         error=None,
         passed=verdict == "pass",
     )
@@ -153,7 +192,7 @@ class RecordingRunner:
         verdicts = self.verdicts if self.verdicts else ("pass",) * len(cases)
         return RunResult(
             runs=tuple(
-                make_run(case.id, tenant, verdict)
+                make_run(case.id, tenant, verdict, category=case.category)
                 for case, verdict in zip(cases, verdicts, strict=True)
             )
         )
@@ -171,13 +210,23 @@ def argv(
     tenant: str = "acme",
     out: Path | None = None,
     policy: Path | None = None,
+    set_sha: str | None = None,
+    run_kind: str | None = None,
 ) -> list[str]:
-    """One `ops-eval run` command line."""
+    """One `ops-eval run` command line.
+
+    `--set-sha` and `--run-kind` are omitted unless a case names one, which is
+    what lets the default cases below tell "absent" from "passed as empty".
+    """
     arguments = ["run", "--target", target, "--set", str(case_set), "--tenant", tenant]
     if out is not None:
         arguments += ["--out", str(out)]
     if policy is not None:
         arguments += ["--policy", str(policy)]
+    if set_sha is not None:
+        arguments += ["--set-sha", set_sha]
+    if run_kind is not None:
+        arguments += ["--run-kind", run_kind]
     return arguments
 
 
@@ -191,6 +240,8 @@ def run_cli(
     case_set: Path = VALID_SET,
     out: Path | None = None,
     policy_tenants: Sequence[str] | None = None,
+    set_sha: str | None = None,
+    run_kind: str | None = None,
 ) -> int:
     """Run the CLI with a stand-in runner and a policy defining the tenant under test."""
     installed = runner if runner is not None else RecordingRunner()
@@ -203,8 +254,21 @@ def run_cli(
             tenant=tenant,
             out=out if out is not None else tmp_path / "reports",
             policy=write_policy(tmp_path, *tenants),
+            set_sha=set_sha,
+            run_kind=run_kind,
         )
     )
+
+
+def read_report(out: Path) -> dict[str, Any]:
+    """The JSON report a run left in `--out`, parsed.
+
+    Read off DISK rather than out of a doubled `write_reports`: a CLI that builds
+    a correct report and never writes it would pass every call-recording check
+    and leave row 18's gate with nothing to read.
+    """
+    document: dict[str, Any] = json.loads((out / REPORT_JSON_NAME).read_text(encoding="utf-8"))
+    return document
 
 
 # --------------------------------------------------------------------------
@@ -471,19 +535,20 @@ def test_an_out_path_that_is_an_existing_file_is_refused(
     assert out.read_text(encoding="utf-8") == "not a directory"
 
 
-def test_nothing_is_written_into_the_out_directory(
+def test_a_run_writes_exactly_the_two_report_files_into_the_out_directory(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Catches this plan writing a report (decision D): the report file, its schema and the
-    `eval_runs` rows are `16c`'s, and a half-written `report.json` shipped here is a file
-    format nobody agreed and a consumer might start reading. The directory is validated and
-    created, and it stays empty."""
+    """Catches a run that writes nothing (`16b` left this directory empty and this plan is
+    the one that fills it) and, at the other end, a writer that puts a file per case, per
+    tenant or a timestamped copy in there - the claim `16b`'s docstrings carry and this
+    plan corrects. The names are the module constants, so a rename that keeps the gate's
+    glob working still fails here (decision B)."""
     out = tmp_path / "reports"
 
     code = run_cli(monkeypatch, tmp_path, runner=RecordingRunner("pass", "fail", "pass"), out=out)
 
     assert code == EXIT_FAILED
-    assert list(out.iterdir()) == []
+    assert sorted(path.name for path in out.iterdir()) == [REPORT_JSON_NAME, REPORT_MD_NAME]
 
 
 # --------------------------------------------------------------------------
@@ -542,3 +607,286 @@ def test_the_summary_is_one_line_naming_the_four_counts(
     assert re.findall(r"\d+", line) == ["3", "1", "2", "1"]
     for word in ("cases", "passed", "failed", "residency"):
         assert word in line.lower()
+
+
+# --------------------------------------------------------------------------
+# the reports: written before the exit code is chosen (decision D)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("verdict", "expected"),
+    [("fail", EXIT_FAILED), ("residency", EXIT_RESIDENCY)],
+    ids=["a failed assertion, exit 1", "a residency violation, exit 3"],
+)
+def test_both_reports_are_written_on_a_run_that_does_not_exit_zero(
+    verdict: str, expected: int, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Catches the reports written only on a passing run, or written after the exit code
+    is chosen and returned - a failed run is exactly the one somebody opens the report for,
+    and a gate that fails with no artefact is a gate people work around (decision D). Both
+    non-zero codes are covered because a CLI that returns early on the residency branch
+    alone would still pass the exit-1 row."""
+    out = tmp_path / "reports"
+
+    code = run_cli(monkeypatch, tmp_path, runner=RecordingRunner("pass", verdict, "pass"), out=out)
+
+    assert code == expected
+    assert (out / REPORT_MD_NAME).read_text(encoding="utf-8") != ""
+    document = read_report(out)
+    assert document["passed"] is False
+    assert document["metrics"]["failed"] == 1
+    assert len(document["cases"]) == 3
+
+
+def test_the_report_carries_the_run_identity_the_command_line_named(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Catches a CLI that writes a report of defaults beside the run it actually made: the
+    tenant, the target and the set are what tell two report directories apart, and `16d`
+    stores all three as `eval_runs` columns. Each is a value no other argument on this
+    command line carries."""
+    out = tmp_path / "reports"
+
+    code = run_cli(monkeypatch, tmp_path, out=out, target="https://target.example/gateway")
+
+    document = read_report(out)
+    assert code == EXIT_OK
+    assert document["tenant"] == "acme"
+    assert document["target"] == "https://target.example/gateway"
+    assert "valid_set" in document["set_name"]
+    assert document["metrics"]["cases"] == 3
+
+
+# --------------------------------------------------------------------------
+# --set-sha: the pre-check, inclusive at the boundary
+# --------------------------------------------------------------------------
+
+
+SEVEN_HEX = "a1b2c3d"
+SIXTY_FOUR_HEX = "0123456789abcdef" * 4
+
+
+@pytest.mark.parametrize(
+    ("label", "set_sha"),
+    [
+        ("the shortest accepted, seven", SEVEN_HEX),
+        ("the longest accepted, sixty-four", SIXTY_FOUR_HEX),
+    ],
+    ids=["seven", "sixty-four"],
+)
+def test_a_set_sha_at_the_boundary_is_accepted_and_recorded_as_a_commit(
+    label: str, set_sha: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Catches an off-by-one that refuses a legitimate short SHA or a full 64-character
+    one, which is the half of the boundary a rejection table never sees, and a CLI that
+    takes `--set-sha` and then hashes the file anyway - the caller's commit is the one
+    answer to "which version of the set was this?" and a content hash silently substituted
+    for it is decision A's whole failure mode."""
+    out = tmp_path / "reports"
+
+    code = run_cli(monkeypatch, tmp_path, out=out, set_sha=set_sha)
+
+    document = read_report(out)
+    assert code == EXIT_OK
+    assert document["set_sha"] == set_sha
+    assert document["set_sha_source"] == "commit"
+
+
+REJECTED_SET_SHAS: list[tuple[str, str]] = [
+    ("empty", ""),
+    ("one character under the floor, six", "a1b2c3"),
+    ("one character over the cap, sixty-five", SIXTY_FOUR_HEX + "a"),
+    ("uppercase hex", "A1B2C3D"),
+    ("not hex at all", "zzzzzzz"),
+    ("a path separator", "../a1b2c3d"),
+    ("a trailing newline", SEVEN_HEX + "\n"),
+    ("a trailing CRLF", SEVEN_HEX + "\r\n"),
+    ("a trailing space", SEVEN_HEX + " "),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "set_sha"), REJECTED_SET_SHAS, ids=[row[0] for row in REJECTED_SET_SHAS]
+)
+def test_a_malformed_set_sha_is_refused_before_the_target_is_touched(
+    label: str, set_sha: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Catches a `--set-sha` taken on trust: it is written into a report and into `16d`'s
+    `eval_runs` row, so `a1b2c3d\\n` and `../a1b2c3d` have to be refused before the seed is
+    reset and the run is paid for. Nothing else on this command line
+    looks at the value, so removing the pre-check is the only thing that flips these rows -
+    and the three trailing-whitespace rows are what separate `re.fullmatch` from an
+    anchored `.match`, which accepts the newline."""
+    out = tmp_path / "reports"
+    runner = RecordingRunner()
+
+    code = run_cli(monkeypatch, tmp_path, runner=runner, out=out, set_sha=set_sha)
+
+    assert code == EXIT_USAGE
+    assert runner.calls == []
+    assert list(out.iterdir()) == []
+
+
+def test_without_a_set_sha_the_field_is_the_sets_own_sha256(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Catches a run with no `--set-sha` recording nothing, a placeholder, or a hash of the
+    PATH rather than of the bytes - two machines running the same file from different
+    directories would then disagree about whether the set changed. `set_sha_source` is
+    asserted as `content` in the same breath, because the failure decision A exists to
+    prevent is a reader being told a content hash is a commit."""
+    out = tmp_path / "reports"
+    expected = hashlib.sha256(VALID_SET.read_bytes()).hexdigest()
+
+    code = run_cli(monkeypatch, tmp_path, out=out)
+
+    document = read_report(out)
+    assert code == EXIT_OK
+    assert document["set_sha"] == expected
+    assert document["set_sha_source"] == "content"
+
+
+# --------------------------------------------------------------------------
+# --run-kind
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("run_kind", ["ci", "nightly", "manual"])
+def test_each_run_kind_reaches_the_report(
+    run_kind: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Catches a `--run-kind` parsed and dropped: row 18 filters `eval_runs` by it, so a
+    field that always reads `manual` would make every CI run invisible as a CI run. All
+    three are covered because a CLI recording only the value it was built around passes any
+    single row."""
+    out = tmp_path / "reports"
+
+    code = run_cli(monkeypatch, tmp_path, out=out, run_kind=run_kind)
+
+    assert code == EXIT_OK
+    assert read_report(out)["run_kind"] == run_kind
+
+
+def test_the_run_kind_defaults_to_manual(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Catches a `--run-kind` that is required in practice (every operator running
+    `ops-eval` by hand would have to name one) or that defaults to `ci`, which would label
+    a laptop run as a gate run in `16d`'s rows. Run with the flag ABSENT, which is the only
+    way to see the default at all."""
+    out = tmp_path / "reports"
+
+    code = run_cli(monkeypatch, tmp_path, out=out)
+
+    assert code == EXIT_OK
+    assert read_report(out)["run_kind"] == "manual"
+
+
+def test_a_run_kind_outside_the_three_is_a_usage_error(tmp_path: Path) -> None:
+    """Catches a free-string `--run-kind`, which puts a fourth word nobody agreed into a
+    report and into `16d`'s column - `nightly-2` and `CI` both read as a typo to a human
+    and as a new kind to a query. argparse `choices` answers by raising `SystemExit`, and
+    the integer it carries is the code `make eval` reads."""
+    with pytest.raises(SystemExit) as raised:
+        cli.main(argv(out=tmp_path / "reports", run_kind="smoke"))
+
+    assert raised.value.code == EXIT_USAGE
+
+
+# --------------------------------------------------------------------------
+# git_sha
+# --------------------------------------------------------------------------
+
+
+HEAD_SHA = "b71f0c3a9d5e42188a6c0f37d21be9054c8a7f6d"
+
+
+def install_git(monkeypatch: pytest.MonkeyPatch, answer: object) -> None:
+    """Double `subprocess.run` itself, which is the only seam that keeps the control under
+    test: doubling a `_git_sha` helper would replace the very code that decides what a
+    failed `git rev-parse` becomes. `answer` is either an exception to raise or the
+    `CompletedProcess` to hand back."""
+
+    def fake_run(*args: object, **kwargs: object) -> object:
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+
+def test_the_git_sha_is_this_repos_head_with_no_trailing_newline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Catches the newline `git rev-parse` prints being carried into the report and into
+    `16d`'s column, where it makes every equality query against a commit miss. The doubled
+    answer ends in a newline for exactly that reason."""
+    out = tmp_path / "reports"
+    install_git(
+        monkeypatch,
+        subprocess.CompletedProcess(args=["git"], returncode=0, stdout=f"{HEAD_SHA}\n", stderr=""),
+    )
+
+    code = run_cli(monkeypatch, tmp_path, out=out)
+
+    assert code == EXIT_OK
+    assert read_report(out)["git_sha"] == HEAD_SHA
+
+
+GIT_FAILURES: list[tuple[str, object]] = [
+    ("git is not installed", FileNotFoundError("git")),
+    ("git rev-parse exits non-zero", subprocess.CompletedProcess(["git"], 128, "", "not a repo")),
+    (
+        "git rev-parse raises",
+        subprocess.CalledProcessError(128, ["git", "rev-parse", "HEAD"], "", "not a repo"),
+    ),
+]
+
+
+@pytest.mark.parametrize(("label", "answer"), GIT_FAILURES, ids=[row[0] for row in GIT_FAILURES])
+def test_the_git_sha_is_null_when_git_rev_parse_does_not_answer(
+    label: str, answer: object, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Catches a `git_sha` guessed or defaulted when git cannot answer - an empty string, a
+    literal `unknown`, or a traceback that loses a paid-for run. `null` is the only honest
+    value, and the three rows are the three shapes the failure really takes (no git binary,
+    a non-zero exit, a raising call), so an implementation handling one of them still
+    fails the others. The run exits on its OWN counts, which proves the missing SHA did not
+    become the exit code."""
+    out = tmp_path / "reports"
+    install_git(monkeypatch, answer)
+
+    code = run_cli(monkeypatch, tmp_path, runner=RecordingRunner("pass", "fail", "pass"), out=out)
+
+    document = read_report(out)
+    assert code == EXIT_FAILED
+    assert document["git_sha"] is None
+
+
+# --------------------------------------------------------------------------
+# the write that fails after the run has been paid for
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root writes into a mode 0o500 directory anyway")
+def test_an_out_directory_that_cannot_be_written_exits_two_naming_the_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Catches the `PermissionError` from a read-only mount or a full disk escaping as a
+    traceback at the END of a run whose counts are already spent: the operator needs the
+    path and an exit code the gate can tell from "cases failed", not a stack trace and a 1.
+    The directory passes `--out`'s parse-time check and only fails at write time - the
+    runner IS called here - so the pre-check cannot be what produces the 2."""
+    out = tmp_path / "reports"
+    out.mkdir()
+    out.chmod(0o500)
+    runner = RecordingRunner()
+    try:
+        code = run_cli(monkeypatch, tmp_path, runner=runner, out=out)
+    finally:
+        out.chmod(0o700)
+
+    printed = capsys.readouterr()
+    assert code == EXIT_USAGE
+    assert runner.calls == ["acme"]
+    assert str(out) in printed.err
+    assert "Traceback" not in printed.err

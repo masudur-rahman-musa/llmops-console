@@ -1,8 +1,8 @@
 """What one case actually produced: the seam between the runner and the verdict.
 
 A dumb record with no logic. `evals.target` fills it from a real target run and
-`16c` writes its measured fields into a report and an `eval_cases` row; `assertions`
-reads it and nothing else, which is what lets the whole deterministic verdict be
+`16c` writes its measured fields into a report and `16d` into an `eval_cases` row;
+`assertions` reads it and nothing else, which is what lets the whole deterministic verdict be
 pinned before anything here can reach a network.
 
 Defaults read as "nothing observed" rather than as an observation: `refused` and
@@ -10,7 +10,7 @@ Defaults read as "nothing observed" rather than as an observation: `refused` and
 filled cannot look like a refusal. Pinned by
 `test_the_outcome_record_carries_what_the_runner_measures`, which also pins the
 four measured fields (`latency_ms`, `cost_usd`, `provider`, `region`) this plan
-asserts nothing about and `16c` has no report column for if they are missing.
+asserts nothing about and `16c`'s `CaseReport` carries straight through.
 """
 
 from __future__ import annotations

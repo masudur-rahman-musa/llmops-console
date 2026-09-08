@@ -3,8 +3,9 @@
 The loop is the whole module: reset once before the first case (decision F), send
 each case in the order the file listed it, map the envelope, score it with 16a's
 `assert_case` - imported, never re-implemented - and check the region every turn
-reports. Nothing here writes a file: `16c` owns `report.json`, `report.md` and
-the `eval_runs` rows, and this plan owns only the counts they will read.
+reports. Nothing here writes a file: `16c` owns `report.json` and `report.md`,
+`16d` owns the `eval_runs` and `eval_cases` rows, and this module owns only the
+record both of them read.
 
 Three rules the record keeps that no single field states:
 
@@ -25,7 +26,8 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict
 
 from opsconsole.evals.assertions import AssertionStatus, CaseAssertions, assert_case
-from opsconsole.evals.cases import EvalCase
+from opsconsole.evals.cases import EvalCase, EvalCategory
+from opsconsole.evals.outcome import CaseOutcome
 from opsconsole.evals.residency import EVAL_DATA_CLASS, ResidencyVerdict, check_residency
 from opsconsole.evals.target import TargetClient, TurnFailed
 from opsconsole.routing.policy import Policy
@@ -43,14 +45,24 @@ class CaseRun(BaseModel):
 
     `assertions` is `None` exactly when the turn failed, and `error` carries that
     failure's message - so a report can tell "the agent answered wrongly" from
-    "the target never answered", which are not the same regression.
+    "the target never answered", which are not the same regression. `outcome` is
+    `None` in exactly the same place and for the same reason: a turn that never
+    answered measured nothing, and a report that filled its latency and its cost
+    with zeros would read as a free, instant success.
+
+    `category` and `outcome` are carried rather than re-derived because the
+    report is built from this record and nothing else (`16c` decision E), and
+    neither the golden set nor the turn is available to it
+    (`test_a_case_report_carries_the_measured_fields_the_assertions_and_the_verdict`).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     case_id: str
+    category: EvalCategory
     assertions: CaseAssertions | None
     residency: ResidencyVerdict | None
+    outcome: CaseOutcome | None = None
     error: str | None = None
     passed: bool
 
@@ -126,7 +138,13 @@ def run_set(
         except TurnFailed as exc:
             runs.append(
                 CaseRun(
-                    case_id=case.id, assertions=None, residency=None, error=str(exc), passed=False
+                    case_id=case.id,
+                    category=case.category,
+                    assertions=None,
+                    residency=None,
+                    outcome=None,
+                    error=str(exc),
+                    passed=False,
                 )
             )
             continue
@@ -142,8 +160,10 @@ def run_set(
         runs.append(
             CaseRun(
                 case_id=case.id,
+                category=case.category,
                 assertions=assertions,
                 residency=residency,
+                outcome=outcome,
                 error=None,
                 passed=assertions.passed and not residency.violation,
             )

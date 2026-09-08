@@ -1,0 +1,310 @@
+{
+  "id": "9f2c1d8b4a6e47c3a1b05e7d2f83c4a6",
+  "started_at": "2026-03-04T09:12:31.204512Z",
+  "finished_at": "2026-03-04T09:14:02.881044Z",
+  "set_name": "helpdesk-golden-v1.jsonl",
+  "set_sha": "e4b2c0d9a71f3856cbb4d20e9f61a7c845d3e0b2",
+  "set_sha_source": "commit",
+  "run_kind": "ci",
+  "git_sha": "b71f0c3a9d5e42188a6c0f37d21be9054c8a7f6d",
+  "tenant": "acme",
+  "target": "https://helpdesk.example",
+  "passed": false,
+  "metrics": {
+    "cases": 4,
+    "passed": 1,
+    "failed": 3,
+    "residency_violations": 1,
+    "leaked": false,
+    "categories": {
+      "access_auto": {
+        "passed": 1,
+        "failed": 0
+      },
+      "helpdesk": {
+        "passed": 0,
+        "failed": 1
+      },
+      "policy_qa": {
+        "passed": 0,
+        "failed": 1
+      },
+      "cross_tenant": {
+        "passed": 0,
+        "failed": 1
+      }
+    }
+  },
+  "cases": [
+    {
+      "case_id": "alpha",
+      "category": "access_auto",
+      "passed": true,
+      "latency_ms": 1840,
+      "cost_usd": "0.0142",
+      "provider": "anthropic_eu",
+      "region": "eu",
+      "assertions": {
+        "case_id": "alpha",
+        "results": [
+          {
+            "name": "intent",
+            "status": "passed",
+            "expected": null,
+            "actual": null
+          },
+          {
+            "name": "tool_call_sequence",
+            "status": "passed",
+            "expected": null,
+            "actual": null
+          },
+          {
+            "name": "tool_call_args",
+            "status": "passed",
+            "expected": null,
+            "actual": null
+          },
+          {
+            "name": "decision",
+            "status": "passed",
+            "expected": null,
+            "actual": null
+          },
+          {
+            "name": "risk_class",
+            "status": "passed",
+            "expected": null,
+            "actual": null
+          },
+          {
+            "name": "refusal",
+            "status": "skipped",
+            "expected": null,
+            "actual": null
+          },
+          {
+            "name": "clarify",
+            "status": "skipped",
+            "expected": null,
+            "actual": null
+          },
+          {
+            "name": "citations",
+            "status": "passed",
+            "expected": null,
+            "actual": null
+          },
+          {
+            "name": "forbidden_phrases",
+            "status": "skipped",
+            "expected": null,
+            "actual": null
+          },
+          {
+            "name": "cross_tenant_leak",
+            "status": "skipped",
+            "expected": null,
+            "actual": null
+          }
+        ]
+      },
+      "residency": {
+        "case_id": "alpha",
+        "tenant": "acme",
+        "data_class": "internal",
+        "observed": "eu",
+        "allowed": [
+          "eu",
+          "self"
+        ],
+        "violation": false
+      },
+      "error": null
+    },
+    {
+      "case_id": "beta",
+      "category": "helpdesk",
+      "passed": false,
+      "latency_ms": 2310,
+      "cost_usd": "0.0208",
+      "provider": "anthropic_eu",
+      "region": "eu",
+      "assertions": {
+        "case_id": "beta",
+        "results": [
+          {
+            "name": "intent",
+            "status": "passed",
+            "expected": null,
+            "actual": null
+          },
+          {
+            "name": "tool_call_sequence",
+            "status": "passed",
+            "expected": null,
+            "actual": null
+          },
+          {
+            "name": "tool_call_args",
+            "status": "passed",
+            "expected": null,
+            "actual": null
+          },
+          {
+            "name": "decision",
+            "status": "failed",
+            "expected": "auto_approved",
+            "actual": "escalated"
+          },
+          {
+            "name": "risk_class",
+            "status": "passed",
+            "expected": null,
+            "actual": null
+          },
+          {
+            "name": "refusal",
+            "status": "skipped",
+            "expected": null,
+            "actual": null
+          },
+          {
+            "name": "clarify",
+            "status": "skipped",
+            "expected": null,
+            "actual": null
+          },
+          {
+            "name": "citations",
+            "status": "skipped",
+            "expected": null,
+            "actual": null
+          },
+          {
+            "name": "forbidden_phrases",
+            "status": "skipped",
+            "expected": null,
+            "actual": null
+          },
+          {
+            "name": "cross_tenant_leak",
+            "status": "skipped",
+            "expected": null,
+            "actual": null
+          }
+        ]
+      },
+      "residency": {
+        "case_id": "beta",
+        "tenant": "acme",
+        "data_class": "internal",
+        "observed": "eu",
+        "allowed": [
+          "eu",
+          "self"
+        ],
+        "violation": false
+      },
+      "error": null
+    },
+    {
+      "case_id": "gamma",
+      "category": "policy_qa",
+      "passed": false,
+      "latency_ms": 1502,
+      "cost_usd": "0.0091",
+      "provider": "openai_us",
+      "region": "us",
+      "assertions": {
+        "case_id": "gamma",
+        "results": [
+          {
+            "name": "intent",
+            "status": "skipped",
+            "expected": null,
+            "actual": null
+          },
+          {
+            "name": "tool_call_sequence",
+            "status": "skipped",
+            "expected": null,
+            "actual": null
+          },
+          {
+            "name": "tool_call_args",
+            "status": "skipped",
+            "expected": null,
+            "actual": null
+          },
+          {
+            "name": "decision",
+            "status": "skipped",
+            "expected": null,
+            "actual": null
+          },
+          {
+            "name": "risk_class",
+            "status": "skipped",
+            "expected": null,
+            "actual": null
+          },
+          {
+            "name": "refusal",
+            "status": "skipped",
+            "expected": null,
+            "actual": null
+          },
+          {
+            "name": "clarify",
+            "status": "skipped",
+            "expected": null,
+            "actual": null
+          },
+          {
+            "name": "citations",
+            "status": "passed",
+            "expected": null,
+            "actual": null
+          },
+          {
+            "name": "forbidden_phrases",
+            "status": "skipped",
+            "expected": null,
+            "actual": null
+          },
+          {
+            "name": "cross_tenant_leak",
+            "status": "skipped",
+            "expected": null,
+            "actual": null
+          }
+        ]
+      },
+      "residency": {
+        "case_id": "gamma",
+        "tenant": "acme",
+        "data_class": "internal",
+        "observed": "us",
+        "allowed": [
+          "eu",
+          "self"
+        ],
+        "violation": true
+      },
+      "error": null
+    },
+    {
+      "case_id": "delta",
+      "category": "cross_tenant",
+      "passed": false,
+      "latency_ms": null,
+      "cost_usd": null,
+      "provider": null,
+      "region": null,
+      "assertions": null,
+      "residency": null,
+      "error": "turn failed: HTTP 502 from https://helpdesk.example/v1/eval/turn"
+    }
+  ]
+}

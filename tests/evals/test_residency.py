@@ -1,7 +1,7 @@
 """`evals/residency.py`: the per-turn residency verdict (#38), deny by default.
 
 Pure and in-memory: a `Policy` built straight from the models, a region string,
-a verdict back. No YAML, no network, no database - `16c` brings Postgres, and
+a verdict back. No YAML, no network, no database - `16d` brings Postgres, and
 an earlier change decision B reads the allow list from the shipped policy rather than
 from a second copy of the rule.
 

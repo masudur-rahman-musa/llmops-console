@@ -23,10 +23,11 @@ the first into the second; pinned by
 `MAX_IDENTIFIER_LENGTH`, imported rather than restated, so a name a golden set
 may use and a name a running gateway authenticated cannot disagree.
 `principal_user` is email-shaped and gets its own `PRINCIPAL_PATTERN` at
-`MAX_PRINCIPAL_LENGTH`. Both use `re.fullmatch`: `16b`'s
-`--out` is the directory `16c` names a per-case report file inside, and `16c`
-stores the id, the tenant and the principal as `eval_cases` columns, so a trailing
-newline or a `..` segment has to be refused before an `EvalCase` exists at all.
+`MAX_PRINCIPAL_LENGTH`. Both use `re.fullmatch`: `16c`
+writes the id, the tenant and the principal into `report.json` and `16d` stores
+them as `eval_cases` columns, so a trailing newline or a `..` segment has to be
+refused before an `EvalCase` exists at all. Neither shapes a path: the two
+report file names are constants (`16c` decision B).
 Boundaries are inclusive and pinned exactly by
 `test_the_length_caps_are_the_published_ones`,
 `test_the_id_length_boundary_is_inclusive`,
@@ -58,7 +59,7 @@ MAX_PRINCIPAL_LENGTH: Final[int] = 128
 """The longest `principal_user` a golden line may name.
 
 Wider than `MAX_IDENTIFIER_LENGTH` because a principal is a directory name and
-routinely an email address. `16c` stores it as an `eval_cases` column, so the
+routinely an email address. `16d` stores it as an `eval_cases` column, so the
 value is pinned exactly by `test_the_length_caps_are_the_published_ones`.
 """
 
