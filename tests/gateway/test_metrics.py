@@ -102,6 +102,7 @@ PROVIDER_ERRORS = "gateway_provider_errors_total"
 RESIDENCY_VIOLATIONS = "gateway_residency_violations_total"
 FALLBACKS = "gateway_fallbacks_total"
 CIRCUIT_STATE = "gateway_circuit_state"
+COST_USD = "gateway_cost_usd_total"
 
 LATENCY_BUCKET = f"{LATENCY}_bucket"
 LATENCY_COUNT = f"{LATENCY}_count"
@@ -115,6 +116,7 @@ FED_FAMILIES = (
     PROVIDER_ERRORS,
     FALLBACKS,
     CIRCUIT_STATE,
+    COST_USD,
 )
 """The families a request through a route in this file feeds. An earlier change took
 `gateway_residency_violations_total` OUT of this tuple: under
@@ -124,15 +126,13 @@ the behaviour that plan removed."""
 
 CACHE_HITS = "gateway_cache_hits_total"
 
-UNFED_FAMILIES = (
-    "gateway_cost_usd_total",
-    "gateway_budget_ratio",
-)
+UNFED_FAMILIES = ("gateway_budget_ratio",)
 """The families still DECLARED AND EMPTY, which shrinks by one plan's worth each
 time a subsystem lands: an earlier change filled `gateway_fallbacks_total` and
-`gateway_circuit_state`, an earlier change filled `gateway_cache_hits_total`, and each
-moved its own out of here. The count below does not change - a
-plan here adds a value, never a family."""
+`gateway_circuit_state`, an earlier change filled `gateway_cache_hits_total`, an earlier change
+filled `gateway_cost_usd_total`, and each moved its own out of here (standing
+rule 33). The count below does not change - a plan here adds a value, never a
+family."""
 
 ELSEWHERE_FED_FAMILIES = (RESIDENCY_VIOLATIONS, CACHE_HITS)
 """Declared, empty after every request THIS file makes, and fed elsewhere in the
@@ -462,16 +462,18 @@ def test_the_exposed_family_names_are_exactly_the_declared_set(
 def test_the_unfed_families_are_registered_and_carry_no_samples(
     gateway_client: TestClient, chat_client: TestClient, metrics: MetricDelta
 ) -> None:
-    """Names the two families an earlier change fill in, and asserts both halves.
-    Catches a plan that has to ADD the family rather than a value (the half a set
-    comparison already sees), and catches a placeholder emission - a zero cost booked on
-    every request - which would draw a confident flat line on a dashboard for a subsystem
-    that does not exist yet. The served request is what makes the second half mean
-    something: samples were being written while these two stayed empty.
+    """Names the family an earlier change fills in, and asserts both halves. Catches a plan that
+    has to ADD the family rather than a value (the half a set comparison already sees),
+    and catches a placeholder emission - a zero ratio published on every request - which
+    would draw a confident flat line on a dashboard for a subsystem that does not exist
+    yet. The served request is what makes the second half mean something: samples were
+    being written while this one stayed empty.
 
-    `gateway_cache_hits_total` was the third until an earlier change fed it, and its emptiness is
-    now a claim about ELIGIBILITY rather than about a missing subsystem, asserted where
-    that claim belongs (tests/gateway/test_exact_cache.py)."""
+    It was two until an earlier change fed `gateway_cost_usd_total` from the route, which is why
+    that name is in `FED_FAMILIES` above now;
+    `gateway_cache_hits_total` was a third until an earlier change, and its emptiness is now a
+    claim about ELIGIBILITY rather than about a missing subsystem, asserted where that
+    claim belongs (tests/gateway/test_exact_cache.py)."""
     assert post_chat(chat_client, chat_body(model=ALIAS)).status_code == 200
 
     body = scrape(gateway_client).text

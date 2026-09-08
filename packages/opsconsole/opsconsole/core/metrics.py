@@ -17,19 +17,17 @@ platform collectors nobody chose. Both halves are pinned by
 `test_a_second_app_registers_no_duplicate_family` and
 `test_the_exposed_family_names_are_exactly_the_declared_set`.
 
-**Why eleven families exist when nine carry data.** `gateway_cost_usd_total` and
-`gateway_budget_ratio` are the design names whose subsystems are later plans (the
-cost ledger's route wiring in an earlier change, budgets in an earlier change). Declaring them now
-means those plans add
-a VALUE rather than a family, exactly as an earlier change declared `cache`, `cost_usd`
-and `fallback_count` on `SpanAttributes` without setting them. They are
-registered and empty, not registered and zeroed: a zero cost booked on every
-request would draw a confident flat line on a dashboard for a subsystem that does
-not exist. Pinned by
+**Why eleven families exist when ten carry data.** `gateway_budget_ratio` is a
+the design name whose subsystem is a later plan (budgets, an earlier change). Declaring it
+now means that plan adds a VALUE rather than a family, exactly as an earlier change
+declared `cache`, `cost_usd` and `fallback_count` on `SpanAttributes` without
+setting them. It is registered and empty, not registered and zeroed: a zero
+booked on every request would draw a confident flat line on a dashboard for a
+subsystem that does not exist. Pinned by
 `test_the_unfed_families_are_registered_and_carry_no_samples`, which is where the
 list lives - an earlier change moved `gateway_fallbacks_total` and `gateway_circuit_state`
-out of it by filling them, an earlier change moved `gateway_cache_hits_total`, and each
-later plan moves its own.
+out of it by filling them, an earlier change moved `gateway_cache_hits_total`, an earlier change
+moved `gateway_cost_usd_total`, and each later plan moves its own.
 
 `gateway_eval_*` is deliberately not here. the design has the nightly job PUSH
 those gauges to a Pushgateway, so they are not this process's to declare.
@@ -64,6 +62,7 @@ import logging
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Final
 
 from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram
@@ -177,7 +176,7 @@ CACHE_HITS = Counter(
 
 COST_USD = Counter(
     "gateway_cost_usd_total",
-    "Spend booked to the ledger, by tenant, provider and model. Fed by plan 14c.",
+    "Spend booked to the ledger, by tenant, provider and model.",
     ("tenant", "provider", "model"),
     registry=_registry,
 )
@@ -358,6 +357,33 @@ def record_tokens(
             TOKENS.labels(
                 tenant=tenant, provider=provider, model=model, direction=DIRECTION_OUT
             ).inc(completion_tokens)
+
+
+def record_cost_usd(*, tenant: str, provider: str, model: str, usd: Decimal) -> None:
+    """Book one request's spend, exactly as the ledger row records it (#29).
+
+    The number comes from the row `opsconsole.ledger.record_cost` ANSWERS, never
+    from a second pricing: the counter, the `X-Gateway-Cost-USD` header and the
+    ledger row are one figure computed once, so a dashboard and an invoice cannot
+    disagree by a rounding (an earlier change decision G,
+    `test_the_counter_moves_by_exactly_the_rows_cost`).
+
+    Moved on a CACHE HIT too, by zero. A hit is a served request with a real row,
+    and a counter that skipped it would still read the same total - `inc(0)`
+    creates the tenant's series and adds nothing to it
+    (`test_a_cache_hit_books_zero_with_its_tokens`).
+
+    `model` is the RESOLVED provider model for the reason `record_tokens` gives:
+    the two families are reconciled against each other and against an earlier change's
+    ledger, and an alias covers several models.
+
+    `Decimal` in, float out, because a Prometheus counter is a float and there is
+    no way to give it anything else. The ledger keeps the exact decimal; this is
+    the dashboard's copy of it, and six decimal places is far inside a float's
+    exact range for any total a gateway will reach.
+    """
+    with _guarded("cost"):
+        COST_USD.labels(tenant=tenant, provider=provider, model=model).inc(float(usd))
 
 
 def record_fallback(*, tenant: str, alias: str, provider: str) -> None:

@@ -313,8 +313,11 @@ def test_headers_on_a_streamed_success(chat_client: TestClient) -> None:
     carries, which would leave an operator unable to say which provider and region served
     a streamed request; catches a missing `Cache-Control: no-cache` or
     `X-Accel-Buffering: no`, either of which lets a proxy buffer the whole answer and
-    deliver it as one block; and catches a cost header appearing before the ledger can
-    price a call, whose `0.00` a dashboard would sum."""
+    deliver it as one block; and catches a cost header on a stream, which is not a
+    number the gateway is withholding but one that does not exist yet: these headers
+    are on the wire before the first frame, and the usage a cost is priced from arrives
+    with the last one. Six here and seven on a non-streamed answer is the
+    permanent shape, not a stage of it."""
     response = post_chat(chat_client, stream_body(model=ALIAS))
 
     assert response.status_code == 200, response.text

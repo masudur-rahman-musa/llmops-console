@@ -180,8 +180,12 @@ def test_gateway_headers_reports_the_redaction_outcome(
 
 def test_the_header_set_is_still_exactly_six(policy: Policy) -> None:
     """Catches a redaction outcome added as a SEVENTH header rather than filling the
-    existing one: the six are a published contract (#9) and an earlier change, which adds
-    `X-Gateway-Cost-USD`, is meant to be what turns this red."""
+    existing one: the six are a published contract (#9).
+
+    Six, still, after an earlier change: `X-Gateway-Cost-USD` is the seventh header a non-streamed
+    ANSWER carries, and the route sets it on the response once the ledger has priced the
+    call. This builder runs before a provider is dialled, so it cannot know the number
+    and does not carry it - which is also what keeps the header off a stream."""
     headers = gateway_headers(resolved_for(policy), "trace-id", redacted=True)
 
     assert len(headers) == 6

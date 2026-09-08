@@ -53,12 +53,14 @@ import json
 import secrets
 import time
 from collections.abc import Callable, Generator, Iterator, Mapping
+from decimal import Decimal
 from itertools import chain
 from typing import Any, Literal, assert_never, cast
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from starlette.datastructures import State
 from starlette.types import Scope
 
 from opsconsole.cache import (
@@ -80,6 +82,7 @@ from opsconsole.core.metrics import (
     label_resolution,
     record_cache_hit,
     record_circuit_state,
+    record_cost_usd,
     record_fallback,
     record_redactions,
     record_tokens,
@@ -93,7 +96,9 @@ from opsconsole.gateway.routes.redact import (
     redaction_applies,
     tenant_directory,
 )
-from opsconsole.ledger import ResidencyLogWriter, record_residency
+from opsconsole.ledger import CostLedgerWriter, ResidencyLogWriter, record_cost, record_residency
+from opsconsole.limits.cost import COST_QUANTUM
+from opsconsole.limits.prices import PriceStore
 from opsconsole.providers.base import (
     Adapter,
     ChatMessage,
@@ -228,6 +233,24 @@ to see. It is resolved per request like any other alias, so residency, health an
 the tenant's data class apply to the embedding exactly as they apply to a
 completion (`test_the_semantic_words_are_the_published_ones`,
 `test_an_embed_alias_refused_by_residency_is_a_miss`)."""
+
+
+COST_HEADER = "X-Gateway-Cost-USD"
+"""The seventh `X-Gateway-*` header: what this request cost, in USD.
+
+Its value is the ledger row's own `cost_usd`, rendered at exactly six decimal
+places - the quantum `opsconsole.limits.cost` prices at and the scale
+`cost_ledger.cost_usd` stores - so the header, the row and
+`gateway_cost_usd_total` are one number computed once (an earlier change decision G,
+`test_the_cost_header_is_the_booked_cost`). A float would lose the sixth place on
+the way out and make a client's total disagree with the invoice.
+
+Added by the ROUTE rather than by `gateway_headers`, and that is what keeps it
+off a stream: the six headers are on the wire before the first frame, and the
+usage a stream is priced from does not exist yet at that point
+(`test_the_cost_header_is_absent_on_a_stream`). A cache hit does carry it, reading
+`0.000000`, because zero is what a hit cost.
+"""
 
 
 REHYDRATE_HEADER = "X-Gateway-Rehydrate"
@@ -654,6 +677,93 @@ def record_served(
     annotate(scope, SpanAttributes(fallback_count=failed))
 
 
+def book_cost(
+    state: State,
+    context: RequestContext,
+    *,
+    alias: str,
+    chosen: Resolved,
+    usage: Usage | None,
+    cached: bool,
+    prompt_chars: int = 0,
+    completion_chars: int = 0,
+) -> str:
+    """Price one served request, file its ledger row, count it, and answer the header.
+
+    The three numbers a request reports its cost through - the row in
+    `cost_ledger`, the `gateway_cost_usd_total` counter and `X-Gateway-Cost-USD`
+    - come from ONE call to `opsconsole.ledger.record_cost` here (an earlier change
+    decisions A and G). Three call sites pricing separately is how a dashboard
+    comes to disagree with an invoice by a rounding, and only one of the three
+    would ever be audited (`test_the_counter_moves_by_exactly_the_rows_cost`,
+    `test_the_cost_header_is_the_booked_cost`).
+
+    Called once per REQUEST and never once per attempt, from the same closing
+    stretch as `record_served`: `chosen` is the candidate that SERVED, so a
+    request that fell back books one row against the provider that charged for it
+    and nothing at all against the one that failed
+    (`test_a_request_that_fell_back_books_one_row_against_the_serving_provider`).
+
+    `price_key` comes from the SERVING adapter rather than being rebuilt from the
+    provider name, so the key the price was read under and the key the adapter
+    publishes cannot drift (an earlier change's own argument for taking it as a
+    parameter). The lookup is the same `state.adapters[chosen.provider]` the route
+    dialled: the resolver's health seam is what guarantees the entry exists, and a
+    cache hit reads it without dialling anything.
+
+    `cached` is keyword-only and has NO default, exactly as `gateway_headers`'
+    `redacted` has none and for the same reason: a forgotten argument would book a
+    replayed answer as money that was spent. What the flag then costs is decided
+    inside `record_cost` (decision C), not here.
+
+    `usage` is what the provider reported, and `None` is the streamed request that
+    ended without a usage event - the two character counts are what its row is
+    estimated from then (decision E).
+
+    Nothing here can change the answer. `record_cost` swallows a failing write,
+    `record_cost_usd` is guarded like every other emission, and the header is
+    formatted from a `Decimal` this function already holds
+    (`test_a_failing_writer_changes_no_status_body_or_header`).
+    """
+    ledger: CostLedgerWriter = state.cost_ledger
+    prices: PriceStore = state.prices
+    adapters: Mapping[str, Adapter] = state.adapters
+    row = record_cost(
+        ledger,
+        table=prices.table,
+        tenant=context.tenant,
+        alias=alias,
+        provider=chosen.provider,
+        model=chosen.model,
+        region=chosen.region,
+        usage=usage,
+        prompt_chars=prompt_chars,
+        completion_chars=completion_chars,
+        cached=cached,
+        session=context.session,
+        trace_id=context.trace_id,
+        price_key=adapters[chosen.provider].price_key(chosen.model),
+    )
+    record_cost_usd(
+        tenant=context.tenant, provider=chosen.provider, model=chosen.model, usd=row.cost_usd
+    )
+    return cost_header_value(row.cost_usd)
+
+
+def cost_header_value(usd: Decimal) -> str:
+    """One cost as `X-Gateway-Cost-USD` carries it: six decimal places, always.
+
+    `Decimal` formatting rather than a float or a rounded string: every cost this
+    gateway books is already quantized to `COST_QUANTUM`, and the quantize here is
+    what makes the SIX places a property of the header rather than of whatever
+    reached it (`test_the_cost_header_is_the_rows_decimal_at_six_places`). A
+    `float` would render `0.000105` as an approximation and drop the last place on
+    some values, which is exactly the disagreement between a client's total and
+    the ledger this header exists to prevent.
+    """
+    return f"{usd.quantize(COST_QUANTUM):f}"
+
+
 def label_candidate(
     scope: Scope, alias: str, chosen: Resolved, *, cache: str = CACHE_STATUS_MISS
 ) -> None:
@@ -714,13 +824,16 @@ def gateway_headers(
     which imports this function, has none - so the default cannot state something
     false the way a `redacted` default could. Only the exact-match hit passes
     anything else, and it is asserted through the adapter's call count rather
-    than through this string (`test_a_hit_still_carries_the_six_gateway_headers`).
+    than through this string (`test_a_hit_still_carries_the_seven_gateway_headers`).
 
-    Six, and only six: `X-Gateway-Cost-USD` is deliberately absent until the
-    ledger can price a call, because a header reading
-    `0.00` is a wrong number a dashboard would happily sum. The set is asserted
-    whole by `test_the_header_set_is_exactly_six` and its absence by
-    `test_cost_header_is_absent`.
+    Six, and only six, because six is what is KNOWN here. This runs before a
+    provider is dialled, and `X-Gateway-Cost-USD` cannot be priced until the
+    answer's usage exists - so the route adds it to the response afterwards
+    (`COST_HEADER`), and a stream, whose headers are on the wire before its first
+    frame, carries six for good. The seven a non-streamed answer ends up with are
+    asserted whole by `test_the_header_set_is_exactly_seven`, the six of a stream
+    by `test_headers_on_a_streamed_success`, and this builder's own six by
+    `test_the_header_set_is_still_exactly_six`.
 
     Only the success path carries them. An error answers through the handlers in
     `gateway/errors.py`, which run outside the route and have no resolver result
@@ -942,6 +1055,7 @@ def sse_frames(
     on_usage: Callable[[Usage], None] | None = None,
     *,
     mapping: Mapping[str, str] | None = None,
+    on_unreported_usage: Callable[[int], None] | None = None,
 ) -> Generator[str, None, None]:
     """Render the neutral events as SSE frames, ending with `[DONE]` if they finish.
 
@@ -977,6 +1091,22 @@ def sse_frames(
     provider that pauses between events holds a thread rather than the event
     loop, exactly as the non-streaming path is already handled.
 
+    `on_unreported_usage` is called with the characters this generator actually
+    SENT, and only when the stream ended without a `UsageTotal` event - a typed
+    failure after the first frame, or a client that went away mid-answer. It runs
+    in the `finally` beside the release above, so the abandoned stream reaches it
+    too, and it is what makes an earlier change decision E true: every served request
+    books a row, and the one nobody reported usage for books an estimated one
+    rather than nothing at all
+    (`test_a_stream_that_fails_after_its_first_frame_books_one_estimated_row`).
+    A stream that DID report usage has already booked from `on_usage`, so the
+    flag below is what keeps a completed stream from booking twice
+    (`test_a_stream_with_usage_books_exactly_one_row`).
+
+    The count is of text this generator EMITTED, not of what the provider sent:
+    text still held in the rehydrator was never part of an answer anyone
+    received, and counting it would price a fragment the client never saw.
+
     `mapping` is the rehydration the caller asked for, and `None` - the shape a
     request without `X-Gateway-Rehydrate` takes - leaves every frame exactly as
     it was before an earlier change (`test_a_stream_without_the_header_is_what_it_is_today`).
@@ -1007,6 +1137,8 @@ def sse_frames(
     # the two paths do not need two copies of the loop below.
     restore: Mapping[str, str] = mapping if mapping is not None else {}
     rehydrator = StreamRehydrator(restore)
+    sent_chars = 0
+    usage_reported = False
 
     def rendered(event: StreamEvent) -> str:
         return _frame(
@@ -1017,8 +1149,10 @@ def sse_frames(
 
     def held() -> Generator[str, None, None]:
         """The frame carrying whatever is still buffered, or no frame at all."""
+        nonlocal sent_chars
         text = rehydrator.flush()
         if text:
+            sent_chars += len(text)
             yield rendered(TextDelta(text=text))
 
     try:
@@ -1031,6 +1165,7 @@ def sse_frames(
                     # provider delta that was empty to begin with is rendered
                     # exactly as it was before this parameter existed.
                     continue
+                sent_chars += len(emitted)
                 event = TextDelta(text=emitted)
             else:
                 yield from held()
@@ -1041,8 +1176,10 @@ def sse_frames(
                             update={"arguments": rehydrate(event.call.arguments, restore)}
                         ),
                     )
-            if isinstance(event, UsageTotal) and on_usage is not None:
-                on_usage(event.usage)
+            if isinstance(event, UsageTotal):
+                usage_reported = True
+                if on_usage is not None:
+                    on_usage(event.usage)
             yield rendered(event)
         yield from held()
     except GatewayError as error:
@@ -1064,6 +1201,8 @@ def sse_frames(
             # what has to be closed; `_streamed` passes it separately for that
             # reason rather than chaining the first event onto it here.
             events.close()
+        if on_unreported_usage is not None and not usage_reported:
+            on_unreported_usage(sent_chars)
     yield _frame(DONE_SENTINEL)
 
 
@@ -1454,7 +1593,12 @@ def create_chat_completion(
     token is booked (`test_a_second_identical_eligible_request_calls_no_adapter`,
     `test_a_hit_books_no_tokens`). It still goes through `rehydrated` and
     `to_wire`, so a replayed answer gets its OWN completion id and a caller that
-    sent `X-Gateway-Rehydrate` gets its values back from ITS map (decision E).
+    sent `X-Gateway-Rehydrate` gets its values back from ITS map (decision E), and
+    it still books a cost row - `cached=true` at `0.000000`, with the replayed
+    answer's own token counts (an earlier change decision B,
+    `test_a_cache_hit_books_zero_with_its_tokens`). Both tiers do: a hit is a
+    served request, and a ledger that skipped it could not report a hit rate or a
+    saving at all.
 
     Only an eligible request is looked up or stored: `temperature == 0` stated in
     the body or `X-Gateway-Cache: allow`, never streamed, never with live tools
@@ -1517,6 +1661,14 @@ def create_chat_completion(
         response.headers.update(
             gateway_headers(candidates[0], context.trace_id, redacted=False, cache=CACHE_STATUS_HIT)
         )
+        response.headers[COST_HEADER] = book_cost(
+            request.app.state,
+            context,
+            alias=body.model,
+            chosen=candidates[0],
+            usage=hit.usage,
+            cached=True,
+        )
         return to_wire(rehydrated(hit, mapping), body.model)
 
     outbound, redacted = _redacted(
@@ -1554,6 +1706,14 @@ def create_chat_completion(
                     cache=CACHE_STATUS_SEMANTIC,
                 )
             )
+            response.headers[COST_HEADER] = book_cost(
+                request.app.state,
+                context,
+                alias=body.model,
+                chosen=candidates[0],
+                usage=near.usage,
+                cached=True,
+            )
             return to_wire(rehydrated(near, mapping), body.model)
 
     last = len(candidates) - 1
@@ -1568,8 +1728,15 @@ def create_chat_completion(
                         outbound,
                         chosen,
                         headers,
-                        _token_sink(context.tenant, chosen),
+                        _token_sink(request.app.state, context, alias=body.model, chosen=chosen),
                         mapping=mapping,
+                        on_unreported_usage=_estimated_cost_sink(
+                            request.app.state,
+                            context,
+                            alias=body.model,
+                            chosen=chosen,
+                            prompt_chars=prompt_characters(outbound),
+                        ),
                     )
                 else:
                     answer = adapters[chosen.provider].chat(to_neutral(outbound, chosen.model))
@@ -1615,6 +1782,16 @@ def create_chat_completion(
             tools_hash=tools_hash(outbound),
         )
         response.headers.update(headers)
+        # After `record_served`, and last: `book_cost` is the closing loop's other
+        # half and the only place this route prices anything.
+        response.headers[COST_HEADER] = book_cost(
+            request.app.state,
+            context,
+            alias=body.model,
+            chosen=chosen,
+            usage=answer.usage,
+            cached=False,
+        )
         return to_wire(rehydrated(answer, mapping), body.model)
 
     # Unreachable while `resolve()` keeps its contract: it raises rather than
@@ -1627,8 +1804,10 @@ def create_chat_completion(
     )
 
 
-def _token_sink(tenant: str, chosen: Resolved) -> Callable[[Usage], None]:
-    """The callback a stream books its tokens through when the usage chunk arrives.
+def _token_sink(
+    state: State, context: RequestContext, *, alias: str, chosen: Resolved
+) -> Callable[[Usage], None]:
+    """The callback a stream books its tokens AND its cost through when the usage arrives.
 
     A stream reports its usage in a `UsageTotal` event, delivered from inside the
     frame generator long after this route returned - so the labels the counter
@@ -1638,18 +1817,81 @@ def _token_sink(tenant: str, chosen: Resolved) -> Callable[[Usage], None]:
     id, never the alias and never what the provider called it
     (`test_tokens_are_recorded_from_the_streams_usage_chunk`,
     `test_the_token_model_label_is_the_resolved_model_not_the_alias`).
+
+    The cost row is booked from the same event and through the same `book_cost`
+    the three non-streamed paths use, so a streamed request is one measured row
+    like any other and `estimated` on it means what it means everywhere else. The header is
+    discarded here rather than never built: the six headers of a stream were on
+    the wire before this event existed, which is the whole of why
+    `X-Gateway-Cost-USD` is absent on a stream.
     """
 
     def sink(usage: Usage) -> None:
         record_tokens(
-            tenant=tenant,
+            tenant=context.tenant,
             provider=chosen.provider,
             model=chosen.model,
             prompt_tokens=usage.prompt_tokens,
             completion_tokens=usage.completion_tokens,
         )
+        book_cost(state, context, alias=alias, chosen=chosen, usage=usage, cached=False)
 
     return sink
+
+
+def _estimated_cost_sink(
+    state: State, context: RequestContext, *, alias: str, chosen: Resolved, prompt_chars: int
+) -> Callable[[int], None]:
+    """The callback a stream books an ESTIMATED row through when it reported no usage.
+
+    Decision E: `UsageTotal` is sent by every stream that finishes, so its absence
+    is a typed failure after the first frame or a client that went away - and the
+    provider has already charged for what it sent either way. Booking nothing
+    would make "every served request writes a row" false exactly when an operator
+    is looking at an incident
+    (`test_a_stream_that_fails_after_its_first_frame_books_one_estimated_row`).
+
+    The row carries `estimated=true`, from `record_cost`'s own absent-usage path:
+    the tokens are `opsconsole.limits.cost`'s four-characters-a-token
+    approximation over the prompt this request sent and the characters the stream
+    actually delivered, and the flag is what keeps a number nobody measured
+    separable from the ones that were.
+
+    It books a cost row and nothing else. `gateway_tokens_total` is what the
+    providers REPORTED, and an estimate is not a report, so no token sample is
+    emitted from here; the ledger is where the estimated row lives, flagged.
+    """
+
+    def sink(completion_chars: int) -> None:
+        book_cost(
+            state,
+            context,
+            alias=alias,
+            chosen=chosen,
+            usage=None,
+            cached=False,
+            prompt_chars=prompt_chars,
+            completion_chars=completion_chars,
+        )
+
+    return sink
+
+
+def prompt_characters(body: ChatCompletionRequest) -> int:
+    """How many characters of prompt this request sent, for the estimate above.
+
+    The message CONTENT and nothing else: a tool specification and a tool call's
+    arguments are billed too, but they are the small and highly variable part of a
+    prompt, and this number is only ever the input to a stated approximation that
+    the row flags as one. It is counted on the OUTBOUND body, so what it measures
+    is what actually left the box - a redacted prompt is priced as the
+    placeholders the provider was sent. The estimator itself is pinned on the
+    COMPLETION side, where the characters sent are known exactly
+    (`test_a_stream_that_reports_no_usage_books_one_estimated_row`); this half is
+    a count with no branch in it and no case separates a right answer from a
+    wrong one.
+    """
+    return sum(len(message.content or "") for message in body.messages)
 
 
 def _redacted(
@@ -1709,6 +1951,7 @@ def _streamed(
     on_usage: Callable[[Usage], None],
     *,
     mapping: Mapping[str, str] | None = None,
+    on_unreported_usage: Callable[[int], None] | None = None,
 ) -> StreamingResponse:
     """Open the stream, pull its first event, and only then answer 200.
 
@@ -1732,7 +1975,15 @@ def _streamed(
         )
 
     return StreamingResponse(
-        sse_frames(first, events, body.model, _completion_id(), on_usage=on_usage, mapping=mapping),
+        sse_frames(
+            first,
+            events,
+            body.model,
+            _completion_id(),
+            on_usage=on_usage,
+            mapping=mapping,
+            on_unreported_usage=on_unreported_usage,
+        ),
         media_type=SSE_MEDIA_TYPE,
         headers={**headers, **SSE_HEADERS},
     )

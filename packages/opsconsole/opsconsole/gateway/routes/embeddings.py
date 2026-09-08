@@ -31,7 +31,11 @@ Three things here that the chat route does not have to think about:
 
 The six `X-Gateway-*` headers come from `gateway.routes.chat.gateway_headers`,
 imported rather than rebuilt: two header sets would drift the first time either
-changed (`test_the_header_set_is_exactly_six`).
+changed (`test_the_header_set_is_exactly_seven`). The seventh,
+`X-Gateway-Cost-USD`, is added here from `book_cost` for the same reason - one
+booking seam, so an embedding is priced, counted and filed exactly as a
+completion is, with `completion_tokens=0` because an embedding has no output
+direction (`test_a_served_request_books_exactly_one_row`).
 
 Inline redaction applies here for the same reason it applies to a completion, and
 the reason is this route specifically: `confidential` allows region `eu`, so an
@@ -64,8 +68,10 @@ from opsconsole.core.metrics import record_redactions, record_tokens
 from opsconsole.core.tracing import SpanAttributes, annotate, stage_span
 from opsconsole.gateway.context import Context
 from opsconsole.gateway.routes.chat import (
+    COST_HEADER,
     ROUTE_SPAN,
     absorb_failure,
+    book_cost,
     gateway_headers,
     health_seam,
     label_candidate,
@@ -78,7 +84,7 @@ from opsconsole.gateway.routes.redact import (
     redaction_applies,
     tenant_directory,
 )
-from opsconsole.providers.base import Adapter, EmbeddingAdapter, EmbeddingRequest
+from opsconsole.providers.base import Adapter, EmbeddingAdapter, EmbeddingRequest, Usage
 from opsconsole.providers.breaker import CircuitBreaker
 from opsconsole.routing.errors import AllProvidersUnavailable
 from opsconsole.routing.policy import PolicyStore
@@ -274,6 +280,15 @@ def create_embeddings(
     recorded `EmbeddingRequest` rather than the answer, because a route that
     redacted its response and sent the raw text would look identical from the body.
 
+    The cost row is booked at the end, through the chat route's `book_cost` and
+    after `record_served`, so an embedding is priced, counted and filed exactly as
+    a completion is. `EmbeddingUsage` becomes the ledger's `Usage` with
+    `completion_tokens=0`: an embedding has no output direction, and the zero here
+    is arithmetic rather than a zero-filled report - `record_tokens` above still
+    omits the direction rather than sampling it
+    (`test_a_served_request_books_exactly_one_row`,
+    `test_the_booked_row_names_what_served`).
+
     Declared `def` rather than `async def` for the same reason the chat route is:
     the adapters are synchronous `httpx` clients, so FastAPI runs this in a
     worker thread instead of blocking the event loop for the whole provider call.
@@ -352,6 +367,18 @@ def create_embeddings(
         prompt_tokens=answer.usage.prompt_tokens,
     )
     response.headers.update(gateway_headers(chosen, context.trace_id, redacted=redacted))
+    response.headers[COST_HEADER] = book_cost(
+        request.app.state,
+        context,
+        alias=body.model,
+        chosen=chosen,
+        usage=Usage(
+            prompt_tokens=answer.usage.prompt_tokens,
+            completion_tokens=0,
+            total_tokens=answer.usage.total_tokens,
+        ),
+        cached=False,
+    )
     return EmbeddingsResponse(
         data=tuple(
             WireEmbedding(

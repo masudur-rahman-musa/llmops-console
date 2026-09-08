@@ -40,12 +40,12 @@ class Settings(BaseSettings):
     routing_policy_path: Path = DEFAULT_ROUTING_POLICY_PATH
 
     prices_path: Path = DEFAULT_PRICES_PATH
-    """Where the price table is read from. Nothing puts it on `app.state` yet:
-    an earlier change built the cost ledger's table and its writer, and an earlier change is what
-    gives the gateway a `PriceStore` and a route that spends it. The field is
-    here now because the loader and the shipped file are,
-    and a path setting that arrives with its consumer is one more thing to get
-    right in the plan that has the harder work."""
+    """Where the price table is read from.
+
+    Read by `create_app`, which builds the `PriceStore` on `app.state.prices` from
+    it at startup, so a malformed file stops the process rather than surfacing on
+    a request that then cannot be priced. Every served request is costed against
+    that one snapshot (`test_the_price_store_is_built_over_the_configured_path`)."""
 
     admin_key_sha256: str = ""
     """The sha256 digest of the one admin key, or empty for a gateway whose
@@ -96,13 +96,12 @@ class Settings(BaseSettings):
     database_url: str | None = None
     """Where PostgreSQL lives, or `None` for no `postgres` readiness probe.
 
-    Read by two things beside the probe: `create_app` builds a
-    `PostgresResidencyLogWriter` from it when it is set, and
-    `make migrate`, `make purge-residency` and `make refresh-rollup` read it
-    through this same field. The cost ledger's writer joins them in an earlier change. A
-    probe for a store nothing writes to would still be worth having, because #5
-    names Postgres and a readiness endpoint that silently omits a configured
-    dependency is a readiness endpoint that lies."""
+    Read by two things beside the probe: `create_app` builds ONE pool from it when
+    it is set and hands that pool to both Postgres writers - the residency log and the cost ledger - and `make migrate`,
+    `make purge-residency` and `make refresh-rollup` read it through this same
+    field. A probe for a store nothing writes to would still be worth having,
+    because #5 names Postgres and a readiness endpoint that silently omits a
+    configured dependency is a readiness endpoint that lies."""
 
     qdrant_url: str | None = None
     """Where Qdrant lives, or `None` for the in-process semantic cache and no probe.

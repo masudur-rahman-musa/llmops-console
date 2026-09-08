@@ -1,4 +1,4 @@
-"""The six `X-Gateway-*` headers on a successful chat completion (#9).
+"""The seven `X-Gateway-*` headers on a successful chat completion (#9).
 
 They are the operator's view of one request: which provider served it, in which
 region, on which provider model, whether it was cached, whether it was redacted,
@@ -7,10 +7,12 @@ the body deliberately names the alias - so a header that is missing, renamed or
 wrong is a claim about residency and cost that cannot be checked after the fact.
 
 Every value is asserted exactly, and the set is asserted whole,
-so an added header is a deliberate change rather than a surprise. That is what
-pins decision B: `X-Gateway-Cost-USD` is absent until the ledger can price the
-call, because a header reading `0.00` is a wrong number, and an earlier change - which
-wires the ledger to the route - adding it should turn this file red on purpose.
+so an added header is a deliberate change rather than a surprise. The set grew
+from six to seven when the cost ledger was wired to the route: an earlier change decision
+B kept `X-Gateway-Cost-USD` off the answer until a call could really be priced,
+because a header reading `0.00` is a wrong number, and it is on the answer now
+that the number is the ledger row's own. It stays absent on a stream and on
+every error response, which tests/gateway/test_cost_wiring.py pins.
 
 Expectations come from `resolve()` over the shipped policy rather than from
 literals alone, with one literal anchor per value so the comparison cannot become
@@ -20,19 +22,21 @@ a tautology over the resolver.
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 
 from fastapi.testclient import TestClient
 from httpx import Response
 
 from opsconsole.core.settings import Settings
+from opsconsole.ledger import InMemoryCostLedgerWriter
 from opsconsole.routing.policy import Policy
 from opsconsole.routing.resolver import Resolved, resolve
 
-from .conftest import StubAdapter, build_chat_client, chat_body, post_chat
+from .conftest import StubAdapter, app_of, build_chat_client, chat_body, post_chat
 
 GATEWAY_HEADER_PREFIX = "x-gateway-"
 
-# The whole set, and only this set. `X-Gateway-Cost-USD` is deliberately not here.
+# The whole set, and only this set.
 EXPECTED_HEADER_NAMES = {
     "x-gateway-provider",
     "x-gateway-region",
@@ -40,6 +44,7 @@ EXPECTED_HEADER_NAMES = {
     "x-gateway-cache",
     "x-gateway-redacted",
     "x-gateway-trace-id",
+    "x-gateway-cost-usd",
 }
 
 ALIAS = "agent-default"
@@ -99,25 +104,35 @@ def test_response_headers_on_success(chat_client: TestClient, policy: Policy) ->
     assert resolved.model == "claude-haiku-4-5"
 
 
-def test_the_header_set_is_exactly_six(chat_client: TestClient) -> None:
+def test_the_header_set_is_exactly_seven(chat_client: TestClient) -> None:
     """Catches both directions: a header quietly dropped (an operator loses the trace id
     on the one request they need it for) and one quietly added ahead of the plan that
     specifies it, which would ship an unpinned value into a published contract."""
     headers = gateway_headers(post_chat(chat_client, chat_body()))
 
     assert set(headers) == EXPECTED_HEADER_NAMES
-    assert len(headers) == 6
+    assert len(headers) == 7
 
 
-def test_cost_header_is_absent(chat_client: TestClient) -> None:
-    """Catches an implementation emitting `X-Gateway-Cost-USD: 0` before the ledger can
-    price a call (decision B): a zero cost is a wrong number a dashboard would happily
-    sum, and an absent header is the honest answer until an earlier change wires the ledger to
-    the route."""
+def test_the_cost_header_is_the_booked_cost(chat_client: TestClient) -> None:
+    """The positive claim that replaced the absence an earlier change decision B pinned. Catches a
+    header that carries a number the route computed for itself rather than the ledger
+    row's - the two would then drift apart on the first pricing change, and only the
+    ledger would be audited - and catches a placeholder `0` or `0.00`, since the value is
+    compared to the row as a `Decimal` and its six places are counted. The literal is the
+    arithmetic of the fixture usage over the shipped price entry, so a header and a row
+    that are consistently wrong fail here too."""
     response = post_chat(chat_client, chat_body())
 
     assert response.status_code == 200, response.text
-    assert "x-gateway-cost-usd" not in {name.lower() for name in response.headers}
+    ledger = app_of(chat_client).state.cost_ledger
+    assert isinstance(ledger, InMemoryCostLedgerWriter)
+    row = ledger.rows[-1]
+    value = response.headers["x-gateway-cost-usd"]
+    assert Decimal(value) == row.cost_usd
+    assert len(value.partition(".")[2]) == 6, value
+    # 137 input and 29 output tokens at the shipped 1.00 / 5.00 per million.
+    assert value == "0.000282"
 
 
 def test_model_header_is_the_provider_model_not_the_alias(

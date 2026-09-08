@@ -30,6 +30,7 @@ from __future__ import annotations
 import base64
 import binascii
 import struct
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -53,6 +54,7 @@ from opsconsole.gateway.routes.embeddings import (
     MAX_EMBEDDING_INPUTS,
     to_base64,
 )
+from opsconsole.ledger import InMemoryCostLedgerWriter
 from opsconsole.providers.base import EmbeddingAdapter, EmbeddingRequest
 from opsconsole.routing.policy import Policy
 from opsconsole.routing.resolver import Resolved, resolve
@@ -65,6 +67,7 @@ from .conftest import (
     TEST_KEYS,
     EmbeddingStubAdapter,
     StubAdapter,
+    app_of,
     assert_error_body,
     auth_headers,
     build_chat_client,
@@ -86,7 +89,6 @@ PROVIDER_MODEL = "bge-small-en-v1.5"
 GATEWAY_HEADER_PREFIX = "x-gateway-"
 
 # The whole set, and only this set, exactly as the chat route's is.
-# `X-Gateway-Cost-USD` is deliberately not here.
 EXPECTED_HEADER_NAMES = {
     "x-gateway-provider",
     "x-gateway-region",
@@ -94,6 +96,7 @@ EXPECTED_HEADER_NAMES = {
     "x-gateway-cache",
     "x-gateway-redacted",
     "x-gateway-trace-id",
+    "x-gateway-cost-usd",
 }
 
 UPSTREAM_TRACE_ID = "9c4a1b77e2d34f08b6510ac3d7e29f41"
@@ -631,7 +634,7 @@ def test_an_eu_pii_request_is_served_by_the_self_region_provider(settings: Setti
     )
 
 
-# --- the six headers ----------------------------------------------------------
+# --- the seven headers ----------------------------------------------------------
 
 
 def test_response_headers_on_success(embeddings_client: TestClient, policy: Policy) -> None:
@@ -655,24 +658,34 @@ def test_response_headers_on_success(embeddings_client: TestClient, policy: Poli
     assert resolved.model == PROVIDER_MODEL
 
 
-def test_the_header_set_is_exactly_six(embeddings_client: TestClient) -> None:
+def test_the_header_set_is_exactly_seven(embeddings_client: TestClient) -> None:
     """Catches a second header set built for this route rather than the shared
     `gateway_headers`: a copy would drift from the chat route's the first time either
     changed, and the criterion is that both come from the one function."""
     headers = gateway_headers(post_embeddings(embeddings_client, embeddings_body()))
 
     assert set(headers) == EXPECTED_HEADER_NAMES
-    assert len(headers) == 6
+    assert len(headers) == 7
 
 
-def test_cost_header_is_absent(embeddings_client: TestClient) -> None:
-    """Catches an implementation emitting `X-Gateway-Cost-USD: 0` before the ledger can price
-    a call: a zero cost is a wrong number a dashboard would happily sum, and embeddings are
-    the calls a dashboard would sum most of."""
+def test_the_cost_header_is_the_booked_cost(embeddings_client: TestClient) -> None:
+    """The positive claim that replaced the absence an earlier change decision B pinned, on the
+    route a dashboard would sum most of. Catches an embeddings path that books a row and
+    forgets the header - the chat route is where the header is built, so this route
+    getting it is not automatic - and catches a header that is not the row's number, since
+    the value is compared to the row as a `Decimal` and its six places are counted. The
+    zero here is a PRICED zero: `local/bge-small-en-v1.5` ships at 0.00 per million, and
+    the row's `price_version` says so rather than reading `unpriced`."""
     response = post_embeddings(embeddings_client, embeddings_body())
 
     assert response.status_code == 200, response.text
-    assert "x-gateway-cost-usd" not in {name.lower() for name in response.headers}
+    ledger = app_of(embeddings_client).state.cost_ledger
+    assert isinstance(ledger, InMemoryCostLedgerWriter)
+    row = ledger.rows[-1]
+    value = response.headers["x-gateway-cost-usd"]
+    assert Decimal(value) == row.cost_usd
+    assert len(value.partition(".")[2]) == 6, value
+    assert row.price_version == f"local/{PROVIDER_MODEL}@2025-01-01"
 
 
 def test_model_header_is_the_provider_model_not_the_alias(

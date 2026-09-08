@@ -143,11 +143,17 @@ def a_row(**overrides: Any) -> CostLedgerRow:  # noqa: ANN401
     return CostLedgerRow(**fields)
 
 
-def record(ledger: CostLedgerWriter, **overrides: Any) -> None:  # noqa: ANN401
-    """Drive one `record_cost` with the clock fixed at `WHEN`.
+def record(ledger: CostLedgerWriter, **overrides: Any) -> CostLedgerRow:  # noqa: ANN401
+    """Drive one `record_cost` with the clock fixed at `WHEN`, and answer its row.
 
     Every argument is keyword-only on `record_cost` itself, so this helper is the
     one place the full call is spelled out and a case names only what it changes.
+
+    The return is decision G: `record_cost` answers the row it built,
+    so the header, the metric and the row are one number computed once. The cases
+    written before that decision read the row off the writer instead and ignore
+    what this hands back, which is why the change is a signature and not a
+    rewrite.
     """
     call: dict[str, Any] = {
         "table": PRICE_TABLE,
@@ -166,7 +172,7 @@ def record(ledger: CostLedgerWriter, **overrides: Any) -> None:  # noqa: ANN401
         "now": lambda: WHEN,
     }
     call.update(overrides)
-    record_cost(ledger, **call)
+    return record_cost(ledger, **call)
 
 
 # --------------------------------------------------------------------------
@@ -686,3 +692,112 @@ def test_a_failing_write_is_swallowed() -> None:
     record(ledger)
 
     assert ledger.calls == 1
+
+
+# --------------------------------------------------------------------------
+# a cached request costs zero, and the ledger is what says so (14c decision C)
+# --------------------------------------------------------------------------
+
+ZERO = Decimal("0.000000")
+
+CACHED_PRICING_CASES: list[tuple[str, bool, str, Decimal, str, bool]] = [
+    ("a fresh request at a priced key", False, PRICED_KEY, USAGE_COST, PRICED_VERSION, False),
+    ("a cached request at a priced key", True, PRICED_KEY, ZERO, PRICED_VERSION, False),
+    ("a fresh request at an unpriced key", False, UNPRICED_KEY, ZERO, UNPRICED_VERSION, True),
+    ("a cached request at an unpriced key", True, UNPRICED_KEY, ZERO, UNPRICED_VERSION, True),
+]
+"""The whole decision table `cached` x priced, because zero has two different
+meanings here and only the version string tells them apart. The two `cached=False`
+rows are what stop the table passing on an implementation that returns zero for
+everything, and the unpriced rows are what stop it passing on one that answers the
+price version in force whether or not a price was found."""
+
+
+@pytest.mark.parametrize(
+    ("case", "cached", "price_key", "cost", "version", "estimated"),
+    CACHED_PRICING_CASES,
+    ids=[case for case, *_ in CACHED_PRICING_CASES],
+)
+def test_a_cached_request_is_booked_at_zero_with_the_price_version_in_force(
+    case: str,
+    cached: bool,
+    price_key: str,
+    cost: Decimal,
+    version: str,
+    estimated: bool,
+) -> None:
+    """An earlier change decision C: the zero rule lives HERE, not in the route. Catches a
+    `record_cost` that prices a cache hit at the cost it AVOIDED, which puts money that
+    was never spent into the spend column where no `WHERE cached = false` can find it;
+    catches one that answers a NULL or `unpriced` version on a hit, which would lose the
+    price a hit was measured against and with it an earlier change's cache-savings figure; and
+    catches a route-side zero being the only thing that makes a hit free, since nothing
+    in this file is a route. The exponent is asserted because `Decimal("0") ==
+    Decimal("0.000000")`, so equality alone would not see a number that lost its scale."""
+    ledger = InMemoryCostLedgerWriter()
+
+    record(ledger, cached=cached, price_key=price_key)
+
+    row = ledger.rows[0]
+    assert row.cached is cached
+    assert row.cost_usd == cost
+    assert row.cost_usd.as_tuple().exponent == -6
+    assert row.price_version == version
+    assert row.estimated is estimated
+
+
+def test_a_cached_row_keeps_the_replayed_answers_token_counts() -> None:
+    """The other half of decision C, and the half a zero cost makes easy to lose. Catches
+    a `record_cost` that zeroes the TOKENS along with the cost on a hit - the shape that
+    reads as "this request consumed nothing" - which would make the cached rows useless
+    for the one thing they are kept for: saying how much a tenant did not spend. The
+    counts differ from each other, so a swap is visible as well as a zero-fill."""
+    ledger = InMemoryCostLedgerWriter()
+
+    record(ledger, cached=True)
+
+    row = ledger.rows[0]
+    assert (row.input_tokens, row.output_tokens) == (
+        USAGE.prompt_tokens,
+        USAGE.completion_tokens,
+    )
+
+
+# --------------------------------------------------------------------------
+# `record_cost` answers the row it built (14c decision G)
+# --------------------------------------------------------------------------
+
+
+def test_record_cost_answers_the_row_it_wrote() -> None:
+    """An earlier change decision G. Catches a `record_cost` that stays `-> None` and leaves the
+    route to re-price for the header and the metric, which is how the row, the counter and
+    `X-Gateway-Cost-USD` become three numbers that can disagree; and catches one that
+    answers a SECOND row built from the same arguments, which would carry a different
+    timestamp and, on a table reloaded between the two, a different price. Identity is
+    asserted, not equality: two rows built from one call compare equal on every field."""
+    ledger = InMemoryCostLedgerWriter()
+
+    row = record(ledger)
+
+    assert row is ledger.rows[0]
+    assert row.cost_usd == USAGE_COST
+    assert row.price_version == PRICED_VERSION
+
+
+def test_record_cost_answers_the_row_even_when_the_write_failed() -> None:
+    """Decision G's whole point, and the case that separates it from a convenience. The
+    header describes what the request COST, not what the database managed to keep, so a
+    writer that raised must still yield the number the caller reports - 14b decision E
+    already says the ledger is a lower bound during an incident. Catches a `record_cost`
+    that answers `None` on a failed write, which would leave the route with nothing to put
+    in the header and the counter exactly when a Postgres blip is under way, and catches
+    one that answers a zero-cost row as a placeholder. The attempt count is what stops a
+    `record_cost` that never wrote at all from passing."""
+    ledger = RaisingWriter()
+
+    row = record(ledger)
+
+    assert ledger.calls == 1
+    assert row.cost_usd == USAGE_COST
+    assert row.price_version == PRICED_VERSION
+    assert row.estimated is False

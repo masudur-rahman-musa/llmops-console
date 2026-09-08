@@ -20,8 +20,10 @@ The provider has already charged by the time this runs, so a Postgres blip
 turning a served request into a 500 would lose the answer as well as the row.
 What that costs is stated rather than hidden: a cost row can be lost, so the
 ledger is a LOWER BOUND on spend during a database incident, and the counter
-`gateway_cost_usd_total` is the number that keeps moving regardless.
-Pinned by `test_a_failing_write_is_swallowed`.
+`gateway_cost_usd_total` is the number that keeps moving regardless - the route
+moves it from the row this function ANSWERS, which is why a
+lost write still shows up as spend on a dashboard. Pinned by
+`test_a_failing_write_is_swallowed`.
 
 **`model` has its own rule, not the resolver's** (decision D). The shipped
 `routing.yaml` names `qwen2.5-7b-instruct` and `bge-small-en-v1.5`, and both fail
@@ -48,7 +50,7 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, ConfigDict
 
 from opsconsole.ledger.db import DEFAULT_SCHEMA, checked_schema
-from opsconsole.limits.cost import cost_for, estimate_tokens
+from opsconsole.limits.cost import COST_QUANTUM, cost_for, estimate_tokens
 from opsconsole.limits.prices import PriceTable
 from opsconsole.providers.base import Usage
 from opsconsole.routing.errors import IdentifierInvalid
@@ -105,6 +107,20 @@ TRACE_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"[0-9a-f]{32}")
 the three sharpest rejection rows - a trailing newline, CRLF and space at the
 exact total length - are refused by the pattern and by nothing else
 (`test_write_refuses_a_malformed_trace_id_before_any_sql`)."""
+
+CACHED_COST_USD: Final[Decimal] = Decimal(0).quantize(COST_QUANTUM)
+"""What a request served from a cache costs: zero, at the ledger's six places.
+
+Decision B of an earlier change, and it is a statement about what one column MEANS rather
+than a saving: `sum(cost_usd)` is spend, so it reconciles against an invoice with
+no `WHERE cached = false` and a console page that forgot that filter cannot
+overstate a tenant's bill. Nothing is lost - the row still carries the replayed
+answer's tokens and the price version in force, so the cost the hit AVOIDED is
+derivable from the row exactly. Quantized from `COST_QUANTUM` rather than written
+as a literal, so the zero has the same exponent every other cost on the table
+has. Pinned by `test_a_cached_request_is_booked_at_zero_with_the_price_version_in_force`
+and `test_a_cached_row_keeps_the_replayed_answers_token_counts`.
+"""
 
 
 class CostLedgerRow(BaseModel):
@@ -316,8 +332,8 @@ def record_cost(
     trace_id: str,
     price_key: str,
     now: Callable[[], datetime] = _utcnow,
-) -> None:
-    """Price one request and write its row. Never raises.
+) -> CostLedgerRow:
+    """Price one request, write its row, and answer the row. Never raises.
 
     `price_key` is the `provider/model` key `Adapter.price_key` builds from the
     POLICY provider name, which is what keeps two rows of the same provider kind
@@ -334,6 +350,24 @@ def record_cost(
     `unpriced` and never raises - `opsconsole.limits.cost` is where that decision
     lives, and this function inherits it: a model added to `routing.yaml` and not
     to `prices.yaml` must not be able to change a status code.
+
+    `cached` is what the row records AND what decides the cost: a request served
+    from a cache costs `CACHED_COST_USD` and keeps everything else the pricing
+    produced - the replayed answer's tokens, the price version in force and the
+    `estimated` flag that version came with. The rule
+    lives here rather than in the route for the reason decision C above gives: a
+    route computing a zero would be the caller-supplied cost this function
+    refuses. Pinned by
+    `test_a_cached_request_is_booked_at_zero_with_the_price_version_in_force` and
+    `test_a_cached_row_keeps_the_replayed_answers_token_counts`.
+
+    The row is RETURNED so that the header the request
+    answers, the counter it moves and the row it files are one number computed
+    once. It is answered even when the write failed: the header describes what the
+    request COST, not what the database managed to keep, and the paragraph above
+    already says the ledger is a lower bound during an incident. Pinned by
+    `test_record_cost_answers_the_row_it_wrote` and
+    `test_record_cost_answers_the_row_even_when_the_write_failed`.
 
     The write is guarded (decision E): an exception is logged and the request is
     unchanged.
@@ -364,7 +398,7 @@ def record_cost(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         cached=cached,
-        cost_usd=cost.usd,
+        cost_usd=CACHED_COST_USD if cached else cost.usd,
         price_version=cost.price_version,
         estimated=cost.estimated,
         session=session,
@@ -374,3 +408,4 @@ def record_cost(
         ledger.write(row)
     except Exception:
         logger.exception("cost ledger write failed for tenant %s, model %s", tenant, model)
+    return row

@@ -54,11 +54,15 @@ from opsconsole.gateway.routes.metrics import router as metrics_router
 from opsconsole.gateway.routes.models import router as models_router
 from opsconsole.gateway.routes.redact import router as redact_router
 from opsconsole.ledger import (
+    CostLedgerWriter,
+    InMemoryCostLedgerWriter,
     InMemoryResidencyLogWriter,
+    PostgresCostLedgerWriter,
     PostgresResidencyLogWriter,
     ResidencyLogWriter,
     build_pool,
 )
+from opsconsole.limits.prices import PriceStore
 from opsconsole.providers.breaker import CircuitBreaker
 from opsconsole.providers.factory import build_adapters
 from opsconsole.providers.factory import close_adapters as close_adapters
@@ -259,6 +263,13 @@ def create_app(
     different service; like the response cache and unlike the two stores, it never
     raises, so an unreachable Qdrant is a miss and not a failed request.
 
+    The price table is built here for the reason the key store and the policy are:
+    a malformed `prices.yaml` stops the process from starting rather than
+    surfacing on a live request that then cannot be priced
+    (`test_create_app_refuses_a_malformed_prices_file`,
+    `test_the_price_store_is_built_over_the_configured_path`). A route reads one
+    snapshot per request from `app.state.prices`, exactly as it reads the policy.
+
     The residency log writer is settings-driven for the same reason and by the
     same rule: `OPSCONSOLE_DATABASE_URL` set builds `PostgresResidencyLogWriter`
     over a pool, absent builds `InMemoryResidencyLogWriter`, which files rows in
@@ -267,6 +278,14 @@ def create_app(
     (`test_the_app_builds_the_in_process_writer_without_a_database_url`). The
     migration is NOT applied here: `make migrate` is a deploy step, so that
     replicas coming up together do not race each other over the same DDL.
+
+    The cost ledger writer takes that same switch and that same pool (an earlier change
+    decision D): ONE `app.state.db_pool` serves both Postgres writers, so a
+    deployment opens one set of connections for what is one dependency and the
+    `postgres` readiness probe that already exists covers both
+    (`test_both_postgres_writers_share_one_pool`,
+    `test_the_app_builds_the_in_memory_cost_ledger_without_a_database_url`). The
+    argument is the one that gives the three Redis readers one client above.
 
     `register_probes` runs last of the state-building steps, because the probes it
     registers close over the adapter mapping and the settings built above; what it
@@ -305,12 +324,17 @@ def create_app(
         else InProcessSemanticCache()
     )
     app.state.semantic_cache = semantic_cache
+    app.state.prices = PriceStore(resolved.prices_path)
+    pool = build_pool(resolved.database_url) if resolved.database_url is not None else None
+    app.state.db_pool = pool
     residency_log: ResidencyLogWriter = (
-        PostgresResidencyLogWriter(build_pool(resolved.database_url))
-        if resolved.database_url is not None
-        else InMemoryResidencyLogWriter()
+        PostgresResidencyLogWriter(pool) if pool is not None else InMemoryResidencyLogWriter()
     )
     app.state.residency_log = residency_log
+    cost_ledger: CostLedgerWriter = (
+        PostgresCostLedgerWriter(pool) if pool is not None else InMemoryCostLedgerWriter()
+    )
+    app.state.cost_ledger = cost_ledger
     register_probes(app)
     register_error_handlers(app)
     install_exporter(resolved)
