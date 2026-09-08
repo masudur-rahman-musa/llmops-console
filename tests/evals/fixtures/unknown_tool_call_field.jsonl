@@ -1,0 +1,1 @@
+{"id": "extra-in-tool-call", "category": "access_approval", "tenant": "acme", "principal_user": "dana.okafor", "messages": [{"role": "user", "content": "Grant me admin on billing."}], "expected": {"tool_calls": [{"name": "open_approval", "args_subset": {"resource": "billing"}, "args": {"resource": "billing"}}]}}

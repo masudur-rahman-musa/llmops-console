@@ -1,0 +1,4 @@
+# Line 4 is truncated JSON. Line 3 is a perfectly good case, so a loader that
+# returns what it parsed before the failure would hand back one case.
+{"id": "good-one", "category": "helpdesk", "tenant": "acme", "principal_user": "dana.okafor", "messages": [{"role": "user", "content": "Printer is offline."}], "expected": {}}
+{"id": "broken", "category": "helpdesk", "tenant": "acme", "principal_user": "dana.okafor", "messages": [{"role": "user",

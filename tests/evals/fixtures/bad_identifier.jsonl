@@ -1,0 +1,2 @@
+{"id": "good-one", "category": "helpdesk", "tenant": "acme", "principal_user": "dana.okafor", "messages": [{"role": "user", "content": "Printer is offline."}], "expected": {}}
+{"id": "Access-Auto-001", "category": "helpdesk", "tenant": "acme", "principal_user": "dana.okafor", "messages": [{"role": "user", "content": "Printer is offline."}], "expected": {}}

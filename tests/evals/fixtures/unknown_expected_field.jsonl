@@ -1,0 +1,4 @@
+# Line 3's `expected` carries a real `intent` AND a misspelt `intents`, so the
+# refusal cannot come from a missing field: only the extra can produce it.
+{"id": "good-one", "category": "helpdesk", "tenant": "acme", "principal_user": "dana.okafor", "messages": [{"role": "user", "content": "Printer is offline."}], "expected": {}}
+{"id": "extra-in-expected", "category": "helpdesk", "tenant": "acme", "principal_user": "dana.okafor", "messages": [{"role": "user", "content": "Printer is offline."}], "expected": {"intent": "troubleshoot", "intents": "troubleshoot"}}

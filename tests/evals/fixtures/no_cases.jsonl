@@ -1,0 +1,5 @@
+# A set file with nothing but comments and blank lines. Loading it must raise
+# rather than return an empty list: a run over zero cases scores 100%.
+
+   # indented comment
+

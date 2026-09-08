@@ -1,0 +1,2 @@
+{"id": "good-one", "category": "helpdesk", "tenant": "acme", "principal_user": "dana.okafor", "messages": [{"role": "user", "content": "Printer is offline."}], "expected": {}}
+{"id": "extra-top-level", "category": "helpdesk", "tenant": "acme", "principal_user": "dana.okafor", "messages": [{"role": "user", "content": "Printer is offline."}], "expected": {}, "notes": "every required field is present and correct; only `notes` is extra"}
