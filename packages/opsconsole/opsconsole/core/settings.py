@@ -60,6 +60,25 @@ class Settings(BaseSettings):
     denies every caller, pinned by
     `test_admin_routes_reject_every_caller_when_no_admin_key_is_configured`."""
 
+    budget_override_secret: str = ""
+    """The key an `X-Gateway-Budget-Override` token is signed with, or empty for a
+    gateway that honours no override at all.
+
+    A SEPARATE secret from `admin_key_sha256` above, which is an earlier change decision A
+    and a design note: the admin key opens `/admin/*` and is scoped to nothing else, so
+    signing overrides with it would put it in the hands of every eval client that
+    ever needs to finish a run over its cap. A token here is bound to one tenant
+    and one month instead, and cannot be replayed by another tenant or in the next
+    one.
+
+    A secret, not a digest, unlike the admin key: an HMAC needs the key itself to
+    verify a signature, where authenticating the admin key only needs its digest.
+
+    The shipped empty default refuses every token outright rather than verifying
+    against an empty key, because HMAC over an empty key is still good HMAC and
+    anyone who knows the scheme could mint one
+    (`test_a_gateway_with_no_override_secret_refuses_a_token_minted_from_the_empty_one`)."""
+
     otlp_endpoint: str | None = None
     """Where traces are sent, or `None` for a gateway that builds spans and drops
     them. Langfuse EU is an OTLP/HTTP endpoint, so this is a

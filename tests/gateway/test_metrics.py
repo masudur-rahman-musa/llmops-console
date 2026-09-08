@@ -24,9 +24,7 @@ dashboard query uses. `gateway_eval_*` is deliberately absent (decision C): the
 nightly job pushes those gauges to a Pushgateway, so this process never declares
 them.
 
-Two things are deliberately NOT asserted here. The label NAMES of the three unfed
-families, which have no samples to read them off and no public accessor that
-would not pin an implementation detail; and the resolved provider model id, which
+One thing is deliberately NOT asserted here: the resolved provider model id, which
 lives in `routing.yaml` - the token-label test compares the label against the
 `X-Gateway-Model` header the same request answered, so the two cannot drift and
 neither is copied from the policy.
@@ -103,6 +101,7 @@ RESIDENCY_VIOLATIONS = "gateway_residency_violations_total"
 FALLBACKS = "gateway_fallbacks_total"
 CIRCUIT_STATE = "gateway_circuit_state"
 COST_USD = "gateway_cost_usd_total"
+BUDGET_RATIO = "gateway_budget_ratio"
 
 LATENCY_BUCKET = f"{LATENCY}_bucket"
 LATENCY_COUNT = f"{LATENCY}_count"
@@ -117,22 +116,27 @@ FED_FAMILIES = (
     FALLBACKS,
     CIRCUIT_STATE,
     COST_USD,
+    BUDGET_RATIO,
 )
 """The families a request through a route in this file feeds. An earlier change took
 `gateway_residency_violations_total` OUT of this tuple: under
 decision E a 451 no longer moves it, and nothing else a route can do moves it
 either, so a case asserting it carries samples after a request would be asserting
-the behaviour that plan removed."""
+the behaviour that plan removed.
+
+An earlier change ADDED `gateway_budget_ratio` to it, from the other direction: the tuple
+of families that were declared and left empty shrank by one plan's worth each
+time a subsystem landed - an earlier change filled `gateway_fallbacks_total` and
+`gateway_circuit_state`, an earlier change filled `gateway_cache_hits_total`, an earlier change
+filled `gateway_cost_usd_total` - and an earlier change filled the last of them, so that
+tuple and the emptiness case that read it are gone rather than empty (standing
+rule 33; an emptiness assertion over an empty tuple asserts nothing). The budget
+gauge is now set after every served request, and every chat request in this file
+is one. What the gauge READS is pinned in
+tests/gateway/test_budget_enforcement.py, which is where the store that decides
+it lives."""
 
 CACHE_HITS = "gateway_cache_hits_total"
-
-UNFED_FAMILIES = ("gateway_budget_ratio",)
-"""The families still DECLARED AND EMPTY, which shrinks by one plan's worth each
-time a subsystem lands: an earlier change filled `gateway_fallbacks_total` and
-`gateway_circuit_state`, an earlier change filled `gateway_cache_hits_total`, an earlier change
-filled `gateway_cost_usd_total`, and each moved its own out of here (standing
-rule 33). The count below does not change - a plan here adds a value, never a
-family."""
 
 ELSEWHERE_FED_FAMILIES = (RESIDENCY_VIOLATIONS, CACHE_HITS)
 """Declared, empty after every request THIS file makes, and fed elsewhere in the
@@ -151,14 +155,18 @@ The distinction matters because the emptiness case below reads the PROCESS
 registry: a family another module fed would fail it for a reason that has
 nothing to do with the claim."""
 
-DECLARED_FAMILIES = (
-    frozenset(FED_FAMILIES) | frozenset(UNFED_FAMILIES) | frozenset(ELSEWHERE_FED_FAMILIES)
-)
+DECLARED_FAMILIES = frozenset(FED_FAMILIES) | frozenset(ELSEWHERE_FED_FAMILIES)
 
 DECLARED_FAMILY_COUNT = 11
-"""Seven fed by a request in this file, two declared and empty, and two fed only
-from elsewhere in the session. The plan's own number, so a family added or
-dropped fails here as well as in the set comparison."""
+"""Nine fed by a request in this file and two fed only from elsewhere in the
+session. The plan's own number, so a family added or dropped fails here as well
+as in the set comparison - and it did NOT change when an earlier change filled the last
+declared-and-empty family, because a plan here adds a value, never a family.
+
+The sentence this replaced read "seven ... two declared and empty, and two fed
+only from elsewhere", which was already one short of the eight names in
+`FED_FAMILIES` when an earlier change added `gateway_cost_usd_total` to it (standing
+rule 6)."""
 
 # The `le` values decision H fixes, in the order and the spelling
 # prometheus_client renders them with, `+Inf` included. The default histogram
@@ -459,30 +467,32 @@ def test_the_exposed_family_names_are_exactly_the_declared_set(
         assert not name.startswith(PLATFORM_COLLECTOR_PREFIXES), name
 
 
-def test_the_unfed_families_are_registered_and_carry_no_samples(
+def test_the_last_declared_family_is_now_fed_by_a_served_request(
     gateway_client: TestClient, chat_client: TestClient, metrics: MetricDelta
 ) -> None:
-    """Names the family an earlier change fills in, and asserts both halves. Catches a plan that
-    has to ADD the family rather than a value (the half a set comparison already sees),
-    and catches a placeholder emission - a zero ratio published on every request - which
-    would draw a confident flat line on a dashboard for a subsystem that does not exist
-    yet. The served request is what makes the second half mean something: samples were
-    being written while this one stayed empty.
+    """This case used to be `test_the_unfed_families_are_registered_and_carry_no_samples`,
+    which asserted that `gateway_budget_ratio` was registered and EMPTY - exactly what
+    an earlier change exists to break. It is inverted rather than deleted,
+    because the claim it protected is still worth holding from this file: the family had
+    to be filled with a VALUE and not re-declared, and this is the one file that reads
+    the whole exposition.
 
-    It was two until an earlier change fed `gateway_cost_usd_total` from the route, which is why
-    that name is in `FED_FAMILIES` above now;
-    `gateway_cache_hits_total` was a third until an earlier change, and its emptiness is now a
-    claim about ELIGIBILITY rather than about a missing subsystem, asserted where that
-    claim belongs (tests/gateway/test_exact_cache.py)."""
+    Catches a plan that adds the family again under a second registration (the set
+    comparison above would fail too, but this says which one), and catches a gauge that
+    is registered, set once at startup and never moved - the sample would be present and
+    `moved_series` empty, which is the shape a placeholder emission has. The served
+    request is what makes both halves mean something: the gauge is fed after a request,
+    so a file that made none could not tell a fed family from an empty one."""
     assert post_chat(chat_client, chat_body(model=ALIAS)).status_code == 200
 
     body = scrape(gateway_client).text
 
-    assert set(UNFED_FAMILIES) <= type_names(body)
-    for name in UNFED_FAMILIES:
-        assert metrics.series(name) == set(), name
-        assert name not in sample_names(body), name
-    assert metrics.total(REQUESTS) == 1, "no request was counted, so the emptiness proves nothing"
+    assert BUDGET_RATIO in type_names(body)
+    assert BUDGET_RATIO in sample_names(body)
+    assert metrics.moved_series(BUDGET_RATIO) != set(), (
+        "the gauge was not moved by a served request"
+    )
+    assert metrics.total(REQUESTS) == 1, "no request was counted, so the reading proves nothing"
 
 
 # --------------------------------------------------------------------------
@@ -941,7 +951,8 @@ def test_a_second_app_registers_no_duplicate_family(
 # --------------------------------------------------------------------------
 #
 # The two families an earlier change declared empty and this plan fills are fed from here
-# on, which is why they moved out of `UNFED_FAMILIES` above. They are
+# on, which is why they are in `FED_FAMILIES` above. (They moved there out of a
+# tuple of declared-and-empty families that an earlier change emptied and removed.) They are
 # read the same way everything else in this file is - through the session
 # registry - but the gauge is read ABSOLUTELY rather than as a delta: a gauge
 # carries a level, not an increment, and "0 for a provider nothing failed on" is

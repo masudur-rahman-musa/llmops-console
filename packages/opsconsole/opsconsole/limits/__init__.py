@@ -8,8 +8,11 @@ decision that matters at runtime: a price the table does not carry costs zero
 and says `estimated` with the version `unpriced`, rather than raising on a
 request a provider already served.
 
-Budgets and rate limits are the other half of this package and arrive later;
-what they will share with this half is the same rule about status codes.
+`budget.py` is the other half of that arithmetic: the running total of those
+same rows for the month in progress, and the two thresholds the design puts on it
+(#27). It shares the ledger's quantum exactly - the counter is integer micro-USD
+- so a month of rows adds up here to what the ledger holds. Per-tenant rate
+limits are the one piece of this package still to come.
 """
 
 from __future__ import annotations

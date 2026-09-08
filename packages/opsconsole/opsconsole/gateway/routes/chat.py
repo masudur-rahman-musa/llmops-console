@@ -75,11 +75,12 @@ from opsconsole.cache import (
     system_hash,
     tools_hash,
 )
-from opsconsole.core.errors import GatewayError, ProviderError
+from opsconsole.core.errors import BudgetExceeded, GatewayError, ProviderError
 from opsconsole.core.metrics import (
     EXACT_CACHE_KIND,
     SEMANTIC_CACHE_KIND,
     label_resolution,
+    record_budget_ratio,
     record_cache_hit,
     record_circuit_state,
     record_cost_usd,
@@ -87,6 +88,7 @@ from opsconsole.core.metrics import (
     record_redactions,
     record_tokens,
 )
+from opsconsole.core.settings import Settings
 from opsconsole.core.tracing import SpanAttributes, annotate, stage_span
 from opsconsole.gateway.context import Context, RequestContext
 from opsconsole.gateway.errors import error_body
@@ -97,6 +99,17 @@ from opsconsole.gateway.routes.redact import (
     tenant_directory,
 )
 from opsconsole.ledger import CostLedgerWriter, ResidencyLogWriter, record_cost, record_residency
+from opsconsole.limits.budget import (
+    BUDGET_OVERRIDE_HEADER,
+    BudgetDecision,
+    BudgetStore,
+    budget_ratio,
+    current_month,
+    decide,
+    to_micro_usd,
+    verify_override,
+    warn_budget,
+)
 from opsconsole.limits.cost import COST_QUANTUM
 from opsconsole.limits.prices import PriceStore
 from opsconsole.providers.base import (
@@ -677,6 +690,105 @@ def record_served(
     annotate(scope, SpanAttributes(fallback_count=failed))
 
 
+def check_budget(state: State, context: RequestContext, *, override: str | None) -> None:
+    """Refuse this request if the tenant has already spent its month, and warn it near.
+
+    Called at the top of BOTH routes, after `Context` has authenticated the
+    tenant and before anything is resolved, redacted, embedded or dialled (plan
+    15a decision D). The position is the whole point: a refusal must cost no
+    provider call, no ledger row and no cache write
+    (`test_a_refused_request_dials_no_provider_and_books_no_row`), and a streamed
+    request must be refused before the 200 and the first frames are on the wire,
+    or the client gets an error inside a stream instead of a typed 429
+    (`test_a_streamed_request_over_cap_is_refused_before_the_stream_opens`). A
+    middleware could not do this job at all: it runs before the `Context`
+    dependency, so it has no authenticated tenant to look a cap up for.
+
+    A tenant the POLICY does not carry has no cap and is not this function's to
+    refuse. Its cap is read with `.get` and not `policy.tenants[tenant]`, which
+    would raise `KeyError` and turn the resolver's typed 451 into an untyped 500;
+    inventing a cap of zero for it would be worse still, because the 429 would
+    then hide the residency refusal that is the correct answer
+    (`test_a_tenant_the_policy_does_not_carry_is_still_the_resolvers_451`).
+
+    A counter that cannot answer serves the request (an earlier change decision B, argued
+    in `limits/budget.py`): `spend` answering `None` returns here having warned
+    nobody and refused nobody.
+
+    The warning covers the whole band at or above 80%, an overridden request
+    included, because that is what criterion 2 says - it is emitted before the
+    override is even considered, so a tenant running on a standing override is
+    still visible in the log every request.
+    """
+    store: PolicyStore = state.policy
+    tenant_policy = store.policy.tenants.get(context.tenant)
+    if tenant_policy is None:
+        return
+    budget_store: BudgetStore = state.budget_store
+    month = current_month()
+    spent = budget_store.spend(context.tenant, month)
+    if spent is None:
+        return
+    cap = to_micro_usd(tenant_policy.budget_usd_month)
+    decision = decide(spend_micro_usd=spent, cap_micro_usd=cap)
+    if decision is BudgetDecision.SERVE:
+        return
+    warn_budget(tenant=context.tenant, spend_micro_usd=spent, cap_micro_usd=cap)
+    if decision is not BudgetDecision.REJECT:
+        return
+    settings: Settings = state.settings
+    if verify_override(
+        override, tenant=context.tenant, month=month, secret=settings.budget_override_secret
+    ):
+        return
+    raise BudgetExceeded(
+        f"tenant {context.tenant!r} has reached its monthly budget of "
+        f"{tenant_policy.budget_usd_month} USD"
+    )
+
+
+def debit_budget(state: State, context: RequestContext, *, usd: Decimal) -> None:
+    """Add one served request's cost to its tenant's month, and republish the gauge.
+
+    Called from `book_cost` and from nowhere else, which is what makes criterion
+    5 structural rather than a list to keep in step: every path that books a
+    ledger row debits the counter, by the cost of the row it just booked, because
+    there is one place that does both
+    (`test_every_book_cost_site_debits_the_budget`,
+    `test_a_stream_that_reports_no_usage_still_debits_its_estimated_row`).
+
+    ZERO IS A DEBIT. A cache hit books a row of `0.000000` and debits it, which
+    both keeps the gauge fresh on a hit and makes a missing call site visible: a
+    total cannot tell a path that added nothing from one that was never wired,
+    and the two cache tiers and `/v1/embeddings` against `local` all cost zero
+    (`test_a_cache_hit_debits_zero`).
+
+    The gauge is set from what `debit` ANSWERED, not from a second read, so it
+    includes the request in hand rather than lagging it by one. Nothing is
+    published when the counter could not answer or when the tenant has no cap:
+    the last known level stands rather than being overwritten with a confident
+    0.0 for the length of a Redis incident (decision B,
+    `test_an_unreachable_store_serves_and_moves_no_gauge`).
+
+    Like everything else `book_cost` calls, this cannot change the answer. The
+    store swallows every `redis.RedisError`, `record_budget_ratio` is guarded like
+    every other emission, and the tenant was validated by `Context` before the
+    key was built.
+    """
+    store: PolicyStore = state.policy
+    budget_store: BudgetStore = state.budget_store
+    total = budget_store.debit(context.tenant, current_month(), to_micro_usd(usd))
+    tenant_policy = store.policy.tenants.get(context.tenant)
+    if total is None or tenant_policy is None:
+        return
+    record_budget_ratio(
+        tenant=context.tenant,
+        ratio=budget_ratio(
+            spend_micro_usd=total, cap_micro_usd=to_micro_usd(tenant_policy.budget_usd_month)
+        ),
+    )
+
+
 def book_cost(
     state: State,
     context: RequestContext,
@@ -688,15 +800,18 @@ def book_cost(
     prompt_chars: int = 0,
     completion_chars: int = 0,
 ) -> str:
-    """Price one served request, file its ledger row, count it, and answer the header.
+    """Price one served request, file its row, count it, debit its budget, answer the header.
 
-    The three numbers a request reports its cost through - the row in
-    `cost_ledger`, the `gateway_cost_usd_total` counter and `X-Gateway-Cost-USD`
-    - come from ONE call to `opsconsole.ledger.record_cost` here (an earlier change
-    decisions A and G). Three call sites pricing separately is how a dashboard
-    comes to disagree with an invoice by a rounding, and only one of the three
-    would ever be audited (`test_the_counter_moves_by_exactly_the_rows_cost`,
-    `test_the_cost_header_is_the_booked_cost`).
+    The four numbers a request reports its cost through - the row in
+    `cost_ledger`, the `gateway_cost_usd_total` counter, the tenant's monthly
+    budget counter and `X-Gateway-Cost-USD` - come from ONE call to
+    `opsconsole.ledger.record_cost` here (an earlier change decisions A and G, an earlier change
+    criterion 5). Four call sites pricing separately is how a dashboard comes to
+    disagree with an invoice by a rounding, and how a cap comes to refuse traffic
+    on a total nobody can reconcile with the ledger; only one of the four would
+    ever be audited (`test_the_counter_moves_by_exactly_the_rows_cost`,
+    `test_the_cost_header_is_the_booked_cost`,
+    `test_the_debit_is_the_number_the_cost_header_reports`).
 
     Called once per REQUEST and never once per attempt, from the same closing
     stretch as `record_served`: `chosen` is the candidate that SERVED, so a
@@ -721,9 +836,12 @@ def book_cost(
     estimated from then (decision E).
 
     Nothing here can change the answer. `record_cost` swallows a failing write,
-    `record_cost_usd` is guarded like every other emission, and the header is
-    formatted from a `Decimal` this function already holds
-    (`test_a_failing_writer_changes_no_status_body_or_header`).
+    `record_cost_usd` and `debit_budget` are guarded like every other emission,
+    and the header is formatted from a `Decimal` this function already holds
+    (`test_a_failing_writer_changes_no_status_body_or_header`). The budget the
+    debit moves is read at the TOP of the request by `check_budget`, never here,
+    so a request is refused on what was already spent when it arrived and not on
+    a total this call has just changed.
     """
     ledger: CostLedgerWriter = state.cost_ledger
     prices: PriceStore = state.prices
@@ -747,6 +865,7 @@ def book_cost(
     record_cost_usd(
         tenant=context.tenant, provider=chosen.provider, model=chosen.model, usd=row.cost_usd
     )
+    debit_budget(state, context, usd=row.cost_usd)
     return cost_header_value(row.cost_usd)
 
 
@@ -1627,6 +1746,8 @@ def create_chat_completion(
     `async def` would block the event loop for the whole provider call, and would
     hold it for the whole length of a stream.
     """
+    check_budget(request.app.state, context, override=request.headers.get(BUDGET_OVERRIDE_HEADER))
+
     store: PolicyStore = request.app.state.policy
     adapters: Mapping[str, Adapter] = request.app.state.adapters
     breaker: CircuitBreaker = request.app.state.breaker

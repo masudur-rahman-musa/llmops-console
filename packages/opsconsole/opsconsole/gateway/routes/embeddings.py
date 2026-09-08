@@ -3,8 +3,8 @@
 The endpoint exists so that embeddings never leave the box. Nothing in this
 module enforces that: the `embed` alias, the tenant data class rules and the
 resolver do, exactly as they do for a completion. That is the point of routing
-this through `resolve()` rather than reaching for an in-process model - residency, health and, later, budgets and the ledger apply to this
-route because they apply to the resolver.
+this through `resolve()` rather than reaching for an in-process model - residency, health, the cost ledger and the monthly budget all apply
+to this route because they apply to the resolver.
 
 Three things here that the chat route does not have to think about:
 
@@ -72,6 +72,7 @@ from opsconsole.gateway.routes.chat import (
     ROUTE_SPAN,
     absorb_failure,
     book_cost,
+    check_budget,
     gateway_headers,
     health_seam,
     label_candidate,
@@ -84,6 +85,7 @@ from opsconsole.gateway.routes.redact import (
     redaction_applies,
     tenant_directory,
 )
+from opsconsole.limits.budget import BUDGET_OVERRIDE_HEADER
 from opsconsole.providers.base import Adapter, EmbeddingAdapter, EmbeddingRequest, Usage
 from opsconsole.providers.breaker import CircuitBreaker
 from opsconsole.routing.errors import AllProvidersUnavailable
@@ -280,6 +282,13 @@ def create_embeddings(
     recorded `EmbeddingRequest` rather than the answer, because a route that
     redacted its response and sent the raw text would look identical from the body.
 
+    The monthly budget is checked FIRST, through the chat route's `check_budget`
+    and before the resolution, so a tenant over its cap is the same typed 429 here
+    as on a completion and no embedding provider is dialled for it
+    (`test_the_embeddings_route_refuses_over_cap_too`). The debit that follows is
+    inside `book_cost` below, so this route needs no second call to stay in step
+    with the counter.
+
     The cost row is booked at the end, through the chat route's `book_cost` and
     after `record_served`, so an embedding is priced, counted and filed exactly as
     a completion is. `EmbeddingUsage` becomes the ledger's `Usage` with
@@ -293,6 +302,8 @@ def create_embeddings(
     the adapters are synchronous `httpx` clients, so FastAPI runs this in a
     worker thread instead of blocking the event loop for the whole provider call.
     """
+    check_budget(request.app.state, context, override=request.headers.get(BUDGET_OVERRIDE_HEADER))
+
     store: PolicyStore = request.app.state.policy
     adapters: Mapping[str, Adapter] = request.app.state.adapters
     breaker: CircuitBreaker = request.app.state.breaker

@@ -7,10 +7,25 @@ the whole table - each code's string, its HTTP status, and the requirement that
 exactly one concrete `GatewayError` subclass carries it - against a literal
 written out in the test, so any of those three drifting fails there.
 
-Five of the classes below are raised by later plans (budgets, rate limits,
-provider calls). They ship here because a code with no class is a code nothing
-can raise, and because the exhaustive test measures the pairing rather than the
-usage.
+ONE of the classes below is still raised by nobody: `RateLimited`, whose
+subsystem is per-tenant rate limits. It ships here because a code with
+no class is a code nothing can raise, and because the exhaustive test measures
+the pairing rather than the usage. The other four are live, which these two
+answer - the class names are bracketed so this quotation of the commands is not
+itself a hit:
+
+    grep -rE "raise (Unauth[o]rized|TenantMis[m]atch)" packages services
+    grep -rE "raise (BudgetExc[e]eded|Rate[L]imited|ProviderE[r]ror)" packages services
+
+with these files and no others:
+
+    gateway/context.py              TenantMismatch, Unauthorized
+    gateway/routes/admin.py         Unauthorized
+    gateway/routes/chat.py          BudgetExceeded, ProviderError
+    gateway/routes/directory.py     ProviderError
+    gateway/routes/redact.py        ProviderError
+    providers/anthropic.py          ProviderError
+    providers/openai_compatible.py  ProviderError
 """
 
 from __future__ import annotations
@@ -77,14 +92,23 @@ class TenantMismatch(GatewayError):
 
 
 class BudgetExceeded(GatewayError):
-    """The tenant's spend cap for the period is reached. Raised from a later plan."""
+    """The tenant's spend cap for the period is reached (#27).
+
+    Raised by `gateway/routes/chat.py::check_budget`, at the top of both the chat
+    and the embeddings route and before anything is resolved or dialled, so a
+    refusal costs no provider call and books no row
+    (`test_a_tenant_over_cap_is_429_budget_exceeded`,
+    `test_a_refused_request_dials_no_provider_and_books_no_row`). A request
+    carrying a valid `X-Gateway-Budget-Override` for its own tenant and the
+    current month is served instead.
+    """
 
     code: ClassVar[ErrorCode] = ErrorCode.BUDGET_EXCEEDED
     http_status: ClassVar[int] = 429
 
 
 class RateLimited(GatewayError):
-    """The tenant's request or token rate is exceeded. Raised from a later plan."""
+    """The tenant's request or token rate is exceeded. Raised from an earlier change."""
 
     code: ClassVar[ErrorCode] = ErrorCode.RATE_LIMITED
     http_status: ClassVar[int] = 429

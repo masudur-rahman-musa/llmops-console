@@ -17,17 +17,18 @@ platform collectors nobody chose. Both halves are pinned by
 `test_a_second_app_registers_no_duplicate_family` and
 `test_the_exposed_family_names_are_exactly_the_declared_set`.
 
-**Why eleven families exist when ten carry data.** `gateway_budget_ratio` is a
-the design name whose subsystem is a later plan (budgets, an earlier change). Declaring it
-now means that plan adds a VALUE rather than a family, exactly as an earlier change
-declared `cache`, `cost_usd` and `fallback_count` on `SpanAttributes` without
-setting them. It is registered and empty, not registered and zeroed: a zero
-booked on every request would draw a confident flat line on a dashboard for a
-subsystem that does not exist. Pinned by
-`test_the_unfed_families_are_registered_and_carry_no_samples`, which is where the
-list lives - an earlier change moved `gateway_fallbacks_total` and `gateway_circuit_state`
-out of it by filling them, an earlier change moved `gateway_cache_hits_total`, an earlier change
-moved `gateway_cost_usd_total`, and each later plan moves its own.
+**Why every declared family now carries data.** Each was declared as a SPEC
+§13.2 name before its subsystem existed, so the plan that built the subsystem
+added a VALUE rather than a family - the same move an earlier change made by declaring
+`cache`, `cost_usd` and `fallback_count` on `SpanAttributes` without setting
+them. Each was registered and empty in the meantime, never registered and zeroed:
+a zero booked on every request would have drawn a confident flat line on a
+dashboard for a subsystem that did not exist. An earlier change filled
+`gateway_fallbacks_total` and `gateway_circuit_state`, an earlier change
+`gateway_cache_hits_total`, an earlier change `gateway_cost_usd_total`, and an earlier change
+`gateway_budget_ratio`, which was the last of them
+(`test_the_last_declared_family_is_now_fed_by_a_served_request`). A family
+declared ahead of its subsystem again belongs back in that case's unfed list.
 
 `gateway_eval_*` is deliberately not here. the design has the nightly job PUSH
 those gauges to a Pushgateway, so they are not this process's to declare.
@@ -198,7 +199,7 @@ CIRCUIT_STATE = Gauge(
 
 BUDGET_RATIO = Gauge(
     "gateway_budget_ratio",
-    "Fraction of a tenant's period budget consumed. Fed by plan 15.",
+    "Fraction of a tenant's period budget consumed.",
     ("tenant",),
     registry=_registry,
 )
@@ -386,6 +387,30 @@ def record_cost_usd(*, tenant: str, provider: str, model: str, usd: Decimal) -> 
         COST_USD.labels(tenant=tenant, provider=provider, model=model).inc(float(usd))
 
 
+def record_budget_ratio(*, tenant: str, ratio: float) -> None:
+    """Publish how much of one tenant's monthly budget its spend has now consumed (#27).
+
+    Set after every SERVED request, from the total the budget counter answered
+    for that request's own debit, so the gauge includes the request in hand
+    rather than lagging it by one
+    (`test_the_gauge_reads_the_ratio_after_a_served_request`).
+
+    A fraction rather than the raw spend, so one alert threshold and one panel
+    work for every tenant whatever its cap - and NOT clamped at 1.0, because the
+    gauge is what an operator reads to see how far past its cap a tenant with a
+    standing override has gone (`test_the_ratio_keeps_reading_above_one_over_cap`).
+
+    Nothing is published for a request whose counter could not answer. That is
+    `limits/budget.py`'s fail-open decision reaching the dashboard: an unreachable
+    Redis leaves the last known level standing rather than overwriting every
+    tenant's series with a healthy-looking 0.0 for the length of the incident
+    (`test_an_unreachable_store_serves_and_moves_no_gauge`). The route decides
+    that by not calling this at all, which is why there is no sentinel here.
+    """
+    with _guarded("budget ratio"):
+        BUDGET_RATIO.labels(tenant=tenant).set(ratio)
+
+
 def record_fallback(*, tenant: str, alias: str, provider: str) -> None:
     """Count one request that an earlier candidate failed to serve.
 
@@ -400,7 +425,7 @@ def record_fallback(*, tenant: str, alias: str, provider: str) -> None:
     `provider` is the one that SERVED, not the one that failed, which is a
     deliberate deviation from the design's `(from, to)` labels recorded in
     a design note. What this family is for is attributing the traffic that actually
-    left, per tenant, which is what the console and an earlier change's budgets read.
+    left, per tenant, which is what the console and `limits/budget.py` read.
 
     Where the FAILED provider shows up, precisely, because the obvious answer is
     wrong: on the trace, as its own `provider:{name}` stage span on a request

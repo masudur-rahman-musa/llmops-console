@@ -62,6 +62,7 @@ from opsconsole.ledger import (
     ResidencyLogWriter,
     build_pool,
 )
+from opsconsole.limits.budget import BudgetStore, InProcessBudgetStore, RedisBudgetStore
 from opsconsole.limits.prices import PriceStore
 from opsconsole.providers.breaker import CircuitBreaker
 from opsconsole.providers.factory import build_adapters
@@ -254,6 +255,17 @@ def create_app(
     the third reader of one connection pool, and unlike the two stores above it
     never raises: a Redis outage is a miss on this seam, not a failed request.
 
+    The monthly budget counter is built from that same client and on the same
+    switch: `RedisBudgetStore` when Redis is configured, so every
+    replica adds to one total per tenant, and `InProcessBudgetStore` otherwise,
+    which counts in this process only and is what lets the suite enforce a cap
+    with no backing service
+    (`test_create_app_keeps_the_in_process_budget_store_without_a_redis_url`,
+    `test_create_app_uses_the_redis_budget_store_when_a_redis_url_is_configured`).
+    Like the response cache and unlike the two stores above it, it never raises:
+    a Redis outage leaves the counter unknown, and an unknown counter serves the
+    request.
+
     The semantic cache is settings-driven on its OWN switch, `OPSCONSOLE_QDRANT_URL`: configured builds `QdrantSemanticCache` over a bounded `httpx`
     client, absent builds `InProcessSemanticCache`, so the suite and a bare local
     run take the semantic path with no Qdrant anywhere
@@ -318,6 +330,10 @@ def create_app(
         RedisResponseCache(redis_client) if redis_client is not None else InProcessResponseCache()
     )
     app.state.response_cache = response_cache
+    budget_store: BudgetStore = (
+        RedisBudgetStore(redis_client) if redis_client is not None else InProcessBudgetStore()
+    )
+    app.state.budget_store = budget_store
     semantic_cache: SemanticCache = (
         QdrantSemanticCache(build_qdrant_data_client(resolved.qdrant_url))
         if resolved.qdrant_url is not None
