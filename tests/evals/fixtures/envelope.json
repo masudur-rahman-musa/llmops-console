@@ -1,0 +1,25 @@
+{
+  "intent": "request_access",
+  "tool_calls": [
+    {
+      "name": "grant_access",
+      "args": {
+        "resource": "finance-reports",
+        "level": "read",
+        "ticket_id": "HD-4821"
+      }
+    }
+  ],
+  "decision": "auto_approved",
+  "risk_class": "low",
+  "refused": false,
+  "clarified": false,
+  "citations": [
+    "access-policy-v3"
+  ],
+  "reply": "Read access to finance-reports is active, per the access policy.",
+  "latency_ms": 1840,
+  "cost_usd": "0.0142",
+  "provider": "anthropic_eu",
+  "region": "eu"
+}

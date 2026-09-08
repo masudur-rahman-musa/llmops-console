@@ -1,7 +1,7 @@
 """What one case actually produced: the seam between the runner and the verdict.
 
-A dumb record with no logic. `16b` fills it from a real target run and `16c`
-writes its measured fields into a report and an `eval_cases` row; `assertions`
+A dumb record with no logic. `evals.target` fills it from a real target run and
+`16c` writes its measured fields into a report and an `eval_cases` row; `assertions`
 reads it and nothing else, which is what lets the whole deterministic verdict be
 pinned before anything here can reach a network.
 

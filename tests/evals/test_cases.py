@@ -23,8 +23,8 @@ The contract these cases are written against, before it exists:
 a project rule on `PRINCIPAL_PATTERN`: matched with `re.fullmatch`, and the
 rejection table below carries a trailing newline, a trailing CRLF and a trailing
 space, because a check written `^...$` with `.match` accepts the first of those,
-and `16c` stores `principal_user` as an `eval_cases` column while `16b` puts a
-case id into a report path.
+and `16c` stores `principal_user` as an `eval_cases` column and names a per-case
+report file inside the directory `16b`'s `--out` creates.
 
 `id` and `tenant` are checked against the gateway's OWN `IDENTIFIER_PATTERN` and
 `MAX_IDENTIFIER_LENGTH`, imported here rather than restated, so an id a golden
@@ -324,8 +324,9 @@ REJECTED_IDENTIFIERS: list[tuple[str, str]] = [
     ("label", "value"), REJECTED_IDENTIFIERS, ids=[row[0] for row in REJECTED_IDENTIFIERS]
 )
 def test_a_malformed_id_is_refused(label: str, value: str) -> None:
-    """Catches an id that never passes through a pattern at all: `16b` puts it in a report
-    file name, so `../case-1` writes outside the report directory and `case-1\\n` puts a
+    """Catches an id that never passes through a pattern at all: `16c` puts it in a report
+    file name inside the directory `16b`'s `--out` creates, so `../case-1` writes outside
+    the report directory and `case-1\\n` puts a
     line break in a path and in an `eval_cases` row. The trailing-newline row is standing
     rule 4's - a check written `^...$` with `.match` accepts it."""
     with pytest.raises(IdentifierInvalid):
@@ -337,8 +338,8 @@ def test_a_malformed_id_is_refused(label: str, value: str) -> None:
 )
 def test_a_malformed_tenant_is_refused(label: str, value: str) -> None:
     """Catches the tenant being taken on trust because it "comes from a file we wrote":
-    the set is an adopter's file (#74), and this tenant reaches a routing resolution and
-    a ledger row in `16b` and `16c`. Same rejection table as the id, so the two fields
+    the set is an adopter's file (#74), and this tenant reaches a residency lookup in
+    `16b` and a ledger row in `16c`. Same rejection table as the id, so the two fields
     cannot drift into two vocabularies."""
     with pytest.raises(IdentifierInvalid):
         case_with(tenant=value)
@@ -384,7 +385,8 @@ REJECTED_PRINCIPALS: list[tuple[str, str]] = [
 )
 def test_a_malformed_principal_is_refused(label: str, value: str) -> None:
     """Catches a principal check that is only a length cap, which would let a newline or a
-    path separator into the `eval_cases` column `16c` writes and the report `16b` names.
+    path separator into the `eval_cases` column `16c` writes and the report file `16c`
+    names inside `16b`'s `--out`.
     The trailing-newline and trailing-CRLF rows are a project rule's."""
     with pytest.raises(IdentifierInvalid):
         case_with(principal_user=value)

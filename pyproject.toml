@@ -47,6 +47,10 @@ dependencies = [
 ops-migrate = "opsconsole.ledger.cli:migrate"
 ops-purge-residency = "opsconsole.ledger.cli:purge"
 ops-refresh-rollup = "opsconsole.ledger.cli:refresh_rollup"
+# The eval harness. `make eval` names this command, and so will the
+# CronJob that runs the nightly set, which is why it is a script and not a
+# `python -m` invocation nobody can spell inside the image.
+ops-eval = "opsconsole.evals.cli:main"
 
 [dependency-groups]
 dev = [

@@ -61,7 +61,7 @@ class AllProvidersUnavailable(RoutingError):
 class IdentifierInvalid(RoutingError):
     """A client-supplied identifier failed its pre-check.
 
-    r`grep -rlE "raise Identifier[I]nvalid" packages/` returns EIGHTEEN modules
+    r`grep -rlE "raise Identifier[I]nvalid" packages/` returns TWENTY modules
     as of an earlier change - the bracket is what keeps this quotation out of its own
     results, so the command can be re-run here and compared. The list is
     re-derived whole from that command rather than appended to.
@@ -71,6 +71,10 @@ class IdentifierInvalid(RoutingError):
                                  name, which is a URL segment with no backstop
         evals/cases.py           a golden line's case id, tenant and principal,
                                  which become a report path and eval_cases columns
+        evals/cli.py             the --tenant an eval run is made as, which selects
+                                 a residency rule and names a report directory
+        evals/residency.py       a tenant no policy defines, and a data class the
+                                 closed enum does not name
         gateway/context.py       the X-Tenant, X-Session and X-Data-Class headers
         gateway/routes/admin.py  the admin tenant parameter, and a reload whose
                                  routing.yaml will not parse
@@ -92,10 +96,10 @@ class IdentifierInvalid(RoutingError):
         redaction/store.py       a tenant and a redaction_map_id
         routing/resolver.py      a tenant, an alias, a data class
 
-    A nineteenth module, `gateway.errors`, CONSTRUCTS one without raising it, to render
+    One further module, `gateway.errors`, CONSTRUCTS one without raising it, to render
     FastAPI's own `RequestValidationError` into the wire contract, so it answers a
-    grep for the constructor and not the one above. A twentieth, `limits/errors.py`,
-    only quotes the command in prose.
+    grep for the constructor and not the one above. `limits/errors.py` only quotes
+    the command in prose.
 
     One code covers every rejected input. It lives in this package rather than in
     `core` because the resolver was the first raiser; a later plan may well move
