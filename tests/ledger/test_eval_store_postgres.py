@@ -337,6 +337,78 @@ def test_the_cost_reads_back_as_a_decimal_at_six_places(pool: Pool, migrated_sch
     assert stored.as_tuple().exponent == -6
 
 
+FAILING_RESULT = RunResult(
+    runs=(
+        CaseRun(
+            case_id="beta",
+            category=EvalCategory.ACCESS_AUTO,
+            assertions=CaseAssertions(
+                case_id="beta",
+                results=(
+                    AssertionResult(name="intent", status=AssertionStatus.PASSED),
+                    AssertionResult(
+                        name="decision",
+                        status=AssertionStatus.FAILED,
+                        expected="auto_approved",
+                        actual="escalated",
+                    ),
+                ),
+            ),
+            residency=ResidencyVerdict(
+                case_id="beta",
+                tenant=TENANT,
+                data_class="internal",
+                observed=REGION,
+                allowed=("eu", "self"),
+                violation=False,
+            ),
+            outcome=CaseOutcome(
+                reply="Done.",
+                latency_ms=LATENCY_MS,
+                cost_usd=COST,
+                provider=PROVIDER,
+                region=REGION,
+            ),
+            error=None,
+            passed=False,
+        ),
+    )
+)
+"""One failing case, built by hand rather than by `make_run`: `run_set` never
+builds a `CaseRun` with fewer than eleven assertion results, but `tags_for` only
+needs the one that failed, and this is the shortest record that produces exactly
+one tag to read back."""
+
+
+@requires_postgres
+def test_the_tags_column_reads_back_the_case_reports_tags_in_order(
+    pool: Pool, migrated_schema: str
+) -> None:
+    """Catches `tags` written as an unordered set, a comma-joined string, or the
+    category repeated into every row instead of the report's own computed tags.
+    PostgreSQL's `text[]` preserves the order it was given, so a store that built
+    the array from a Python `set` reads this back shuffled at least some of the
+    time, and a store that never called `taxonomy.tags_for` at all reads back an
+    empty array on a case that failed."""
+    report = build_report(
+        FAILING_RESULT,
+        started_at=STARTED,
+        finished_at=FINISHED,
+        set_name=SET_NAME,
+        set_sha=SET_SHA,
+        set_sha_source="commit",
+        run_kind="ci",
+        git_sha=GIT_SHA,
+        tenant=TENANT,
+        target=TARGET,
+    )
+
+    store_report(pool, migrated_schema, report)
+
+    stored = case_column(case_rows(pool, migrated_schema)[0], "tags")
+    assert stored == ["wrong_decision"]
+
+
 @requires_postgres
 def test_every_case_row_lands_with_its_own_measurements_and_its_details(
     pool: Pool, migrated_schema: str

@@ -15,7 +15,11 @@ Three things the module holds that no single field states:
   (`test_a_case_whose_turn_failed_carries_null_assertions_and_its_error`);
 * `cost_usd` is serialised as a JSON STRING and never through a float, so a cost
   round-trips to the number the ledger computed
-  (`test_cost_usd_is_serialised_as_a_json_string`).
+  (`test_cost_usd_is_serialised_as_a_json_string`);
+* every failed case carries at least one tag from `evals/taxonomy.py`'s closed
+  vocabulary (#40), counted in `metrics["tags"]` and rendered in both the
+  failures table and the taxonomy block
+  (`test_a_case_report_carries_the_tags_the_taxonomy_computed`).
 
 The two file names are constants and nothing a caller supplies shapes a path
 (decision B): `make eval` names one directory, row 18's gate reads a known path
@@ -42,6 +46,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_serializer
 from opsconsole.evals.assertions import AssertionResult, AssertionStatus, CaseAssertions
 from opsconsole.evals.residency import ResidencyVerdict
 from opsconsole.evals.runner import CaseRun, RunResult
+from opsconsole.evals.taxonomy import TAG_ORDER, tags_for
 
 REPORT_JSON_NAME: Final[str] = "report.json"
 """The machine-readable report, the file row 18's gate reads."""
@@ -89,6 +94,15 @@ with no rows, which reads as "something failed and the rows are missing"
 CLEAN_RUN_LINE: Final[str] = "Every case passed and every turn stayed in region."
 """The one line a clean run renders in place of the failures table."""
 
+TAXONOMY_HEADING: Final[str] = "## Taxonomy"
+"""Where the per-tag counts live in `report.md`, immediately before the failures.
+
+Rendered only when something failed, for the reason the failures table is: a
+heading with nothing under it reads as counts that went missing
+(`test_a_clean_run_renders_no_taxonomy_block`). It sits BEFORE the failures
+because everything after that heading is the failures
+(`test_a_run_with_failures_renders_a_taxonomy_block_of_counts`)."""
+
 
 def _new_run_id() -> str:
     """A fresh `uuid4` hex, one per built report.
@@ -107,6 +121,12 @@ class CaseReport(BaseModel):
     turn and never again, so they are carried rather than recomputed; they are
     `None`, never `0`, on a case whose turn failed
     (`test_a_case_with_no_measurements_serialises_them_as_null_and_not_as_zero`).
+
+    `tags` is `17b`'s failure taxonomy (#40), computed by `taxonomy.tags_for` from
+    this case's own record and empty on a case that passed
+    (`test_a_case_report_carries_the_tags_the_taxonomy_computed`). It is derived
+    here rather than in the runner because the tags are a READING of the record
+    the runner measured, and `16d` stores it as the `eval_cases.tags` column.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -114,6 +134,7 @@ class CaseReport(BaseModel):
     case_id: str
     category: str
     passed: bool
+    tags: tuple[str, ...]
     latency_ms: int | None
     cost_usd: Decimal | None
     provider: str | None
@@ -173,6 +194,7 @@ def _case_report(run: CaseRun) -> CaseReport:
         case_id=run.case_id,
         category=str(run.category),
         passed=run.passed,
+        tags=tags_for(run),
         latency_ms=None if outcome is None else outcome.latency_ms,
         cost_usd=None if outcome is None else outcome.cost_usd,
         provider=None if outcome is None else outcome.provider,
@@ -197,6 +219,25 @@ def _categories(result: RunResult) -> dict[str, dict[str, int]]:
     return breakdown
 
 
+def _tag_counts(cases: list[CaseReport]) -> dict[str, int]:
+    """How many FAILED cases carried each tag, in `TAG_ORDER` and omitting zeros.
+
+    Failed cases only, because a passed case carries no tags at all and a count
+    over every case would say the same thing more slowly. Zeros are omitted so a
+    reader is not scanning fifteen unused words to find the three that fired
+    (`test_the_tags_metric_counts_over_failed_cases_only_and_omits_zero_counts`),
+    and a clean run leaves the key present and empty rather than absent
+    (`test_a_clean_runs_tags_metric_is_an_empty_mapping`).
+    """
+    counts: dict[str, int] = {}
+    for case in cases:
+        if case.passed:
+            continue
+        for tag in case.tags:
+            counts[tag] = counts.get(tag, 0) + 1
+    return {tag.value: counts[tag.value] for tag in TAG_ORDER if tag.value in counts}
+
+
 def build_report(
     result: RunResult,
     *,
@@ -213,8 +254,13 @@ def build_report(
     """Turn one run and its identity into the record both files render.
 
     Every count is read off `RunResult`'s properties (decision E). `metrics` is a
-    mapping rather than a model so row 17b can add #40's fixed metric set and its
-    failure taxonomy without changing this schema or `16d`'s column.
+    mapping rather than a model, which is how `tags` was added without changing
+    this schema or `16d`'s column, and how #40's fixed metric set arrives next.
+
+    The per-case rows are built BEFORE `metrics`, because `metrics["tags"]` is
+    counted from the tags those rows carry: one reading of the taxonomy per case,
+    so the counts and the rows cannot disagree about the same failure
+    (`test_the_tags_metric_counts_over_failed_cases_only_and_omits_zero_counts`).
 
     `set_sha_source` and `run_kind` arrive as plain strings and are validated by
     the model's own vocabularies here, which is why the report is built through
@@ -222,6 +268,7 @@ def build_report(
     its `SET_SHA_PATTERN` still cannot put a fourth word into a stored row
     (`test_the_set_sha_source_and_run_kind_vocabularies_are_the_published_ones`).
     """
+    cases = [_case_report(run) for run in result.runs]
     payload: dict[str, Any] = {
         "started_at": started_at,
         "finished_at": finished_at,
@@ -240,8 +287,9 @@ def build_report(
             "residency_violations": result.residency_violations,
             "leaked": result.leaked,
             "categories": _categories(result),
+            "tags": _tag_counts(cases),
         },
-        "cases": [_case_report(run) for run in result.runs],
+        "cases": cases,
     }
     return RunReport.model_validate(payload)
 
@@ -326,6 +374,20 @@ def _category_lines(report: RunReport) -> list[str]:
     return lines
 
 
+def _taxonomy_lines(report: RunReport) -> list[str]:
+    """The failure taxonomy as counts (#40), or nothing at all on a clean run.
+
+    Decision F: the tags are also a column of the failures table, but a reader
+    counting a column by eye over two hundred cases is not an aggregate. Nothing
+    is rendered when no case failed, heading included, for the reason the
+    failures table is not (`test_a_clean_run_renders_no_taxonomy_block`).
+    """
+    counts: Mapping[str, int] = report.metrics["tags"]
+    if not counts:
+        return []
+    return [TAXONOMY_HEADING, "", *(f"- {tag}: {count}" for tag, count in counts.items())]
+
+
 def _failure_lines(report: RunReport) -> list[str]:
     """The failures section, and the last section of the document.
 
@@ -339,10 +401,11 @@ def _failure_lines(report: RunReport) -> list[str]:
     return [
         FAILURES_HEADING,
         "",
-        "| case | category | why |",
-        "| --- | --- | --- |",
+        "| case | category | tags | why |",
+        "| --- | --- | --- | --- |",
         *(
-            f"| {_cell(case.case_id)} | {_cell(case.category)} | {_cell(_reason(case))} |"
+            f"| {_cell(case.case_id)} | {_cell(case.category)} "
+            f"| {_cell(', '.join(case.tags))} | {_cell(_reason(case))} |"
             for case in failed
         ),
     ]
@@ -353,14 +416,20 @@ def report_markdown(report: RunReport) -> str:
 
     Rendered with f-strings and a joined list rather than a template engine
     (decision C): one document is not a dependency ask.
+
+    A section that renders no lines contributes no blank paragraph either: the
+    taxonomy is empty on a clean run, and joining it in anyway would leave two
+    blank lines where a heading used to be
+    (`test_a_clean_run_renders_no_taxonomy_block`).
     """
     sections = [
         _identity_lines(report),
         _count_lines(report),
         _category_lines(report),
+        _taxonomy_lines(report),
         _failure_lines(report),
     ]
-    return "\n\n".join("\n".join(lines) for lines in sections) + "\n"
+    return "\n\n".join("\n".join(lines) for lines in sections if lines) + "\n"
 
 
 def write_reports(out: Path, report: RunReport) -> None:

@@ -50,7 +50,7 @@ ASSERTION_NAMES: tuple[str, ...] = (
     "cross_tenant_leak",
     "forbidden_tools",
 )
-"""The stable names row 17b's failure taxonomy (#40) will map onto, in the order
+"""The stable names `evals/taxonomy.py`'s failure taxonomy (#40) maps onto, in the order
 `assert_case` returns them. Written out here rather than imported, so a rename in
 the module is a failure here and a decision, not a silent re-tagging of every
 report already written."""
@@ -443,8 +443,8 @@ def test_the_status_vocabulary_is_the_published_three() -> None:
 def test_every_assertion_is_reported_even_when_the_case_states_nothing() -> None:
     """Catches an implementation that omits the assertions a case does not exercise. A
     report with a variable number of rows cannot tell "this case did not check tool calls"
-    from "this case checked them and I forgot to write the row", and row 17b's taxonomy
-    would have nothing stable to map. The order is asserted too, so a report's columns do
+    from "this case checked them and I forgot to write the row", and the failure
+    taxonomy would have nothing stable to map. The order is asserted too, so a report's columns do
     not reshuffle between runs."""
     thin = assert_case(make_case(), make_outcome())
     full = assert_case(

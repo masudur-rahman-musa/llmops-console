@@ -74,6 +74,7 @@ from opsconsole.evals.report import (
 )
 from opsconsole.evals.residency import ResidencyVerdict
 from opsconsole.evals.runner import CaseRun, RunResult
+from opsconsole.evals.target import TurnFailureKind
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
 
@@ -132,12 +133,13 @@ def make_run(
     verdict: str = "pass",
     category: EvalCategory = EvalCategory.HELPDESK,
     outcome: CaseOutcome | None = None,
+    failure_kind: TurnFailureKind | None = None,
 ) -> CaseRun:
     """One per-case record of the named shape, as `run_set` would have built it.
 
     `verdict` is one of `pass`, `fail`, `residency`, `leak`, `broken`; `broken` is
     the turn that never answered, which carries no assertions, no verdict and no
-    measurements at all.
+    measurements at all. `failure_kind` only matters on a `broken` verdict.
     """
     if verdict == "broken":
         return CaseRun(
@@ -147,6 +149,7 @@ def make_run(
             residency=None,
             outcome=None,
             error=f"turn failed: HTTP 502 for {case_id}",
+            failure_kind=failure_kind,
             passed=False,
         )
 
@@ -418,6 +421,81 @@ def test_the_per_category_breakdown_counts_each_category_once_and_omits_none() -
     }
 
 
+def test_the_metrics_key_set_is_pinned_including_tags() -> None:
+    """Catches a `metrics` key added silently, and `tags` specifically forgotten
+    from the mapping `build_report` assembles: `metrics` is a plain `Mapping` with
+    no schema of its own, so nothing but this test stops a consumer reading
+    `report.metrics["tags"]` from a `KeyError` on a build that never wired it."""
+    report = build(MIXED)
+
+    assert set(report.metrics) == {
+        "cases",
+        "passed",
+        "failed",
+        "residency_violations",
+        "leaked",
+        "categories",
+        "tags",
+    }
+
+
+def test_a_case_report_carries_the_tags_the_taxonomy_computed() -> None:
+    """Catches `CaseReport.tags` left empty or hand-derived instead of calling
+    `taxonomy.tags_for(run)`: the `decision` failure on gamma and delta produces
+    exactly `wrong_decision`, the leak on zeta produces exactly `tenant_leak`, and
+    the two passed cases carry nothing - so a builder that always emits `()` or a
+    fixed placeholder tag fails on every one of these rows but the passed two."""
+    report = build(MIXED)
+    by_id = {case.case_id: case for case in report.cases}
+
+    assert by_id["alpha"].tags == ()
+    assert by_id["beta"].tags == ()
+    assert by_id["gamma"].tags == ("wrong_decision",)
+    assert by_id["delta"].tags == ("wrong_decision",)
+    assert by_id["epsilon"].tags == ("residency_violation",)
+    assert by_id["zeta"].tags == ("tenant_leak",)
+
+
+def test_a_broken_turns_case_report_is_tagged_by_its_failure_kind() -> None:
+    """Catches a broken turn reaching the report with an empty tag tuple - the
+    defect row 17b's taxonomy exists to prevent, since a turn that never answered
+    has no assertions to tag from and only its failure kind can tag it."""
+    result = RunResult(
+        runs=(
+            make_run("alpha", verdict="broken", failure_kind=TurnFailureKind.TIMEOUT),
+            make_run("beta", verdict="broken", failure_kind=TurnFailureKind.PROVIDER_ERROR),
+        )
+    )
+
+    report = build(result)
+
+    assert report.cases[0].tags == ("timeout",)
+    assert report.cases[1].tags == ("provider_error",)
+
+
+def test_the_tags_metric_counts_over_failed_cases_only_and_omits_zero_counts() -> None:
+    """Catches a `tags` count taken over every case, which would count a passed
+    case's empty tuple as nothing but would also let a stray placeholder tag on a
+    passed case go uncaught, and a count that lists every one of the eighteen
+    words at zero - the fifteen unused ones would swamp the three that fired and
+    make the report's own taxonomy block impossible to scan."""
+    report = build(MIXED)
+
+    assert report.metrics["tags"] == {
+        "wrong_decision": 2,
+        "residency_violation": 1,
+        "tenant_leak": 1,
+    }
+
+
+def test_a_clean_runs_tags_metric_is_an_empty_mapping() -> None:
+    """Catches a `tags` key omitted entirely on a clean run rather than present
+    and empty: the key-set test above pins its PRESENCE, this pins its EMPTY
+    value, so a console reading `report.metrics["tags"]` need not special-case a
+    run where nothing failed."""
+    assert build(CLEAN).metrics["tags"] == {}
+
+
 # --------------------------------------------------------------------------
 # report_json
 # --------------------------------------------------------------------------
@@ -484,6 +562,7 @@ def test_the_json_document_carries_every_identity_field_by_its_published_name() 
         "assertions",
         "residency",
         "error",
+        "tags",
     }
 
 
@@ -524,6 +603,40 @@ def test_the_markdown_names_every_failed_case_and_the_assertion_that_failed() ->
     assert "cross_tenant_leak" in section
     assert "alpha" not in markdown
     assert "beta" not in markdown
+
+
+def test_the_markdown_failures_table_carries_a_tags_column() -> None:
+    """Catches a failures table still rendered with the old three columns: the
+    header row is the contract a reader parses by position, so a tags column
+    added after `why` instead of before it, or omitted altogether, leaves
+    `report.md` disagreeing with the header it prints."""
+    markdown = report_markdown(build(MIXED))
+    section = failures_section(markdown)
+
+    assert "| case | category | tags | why |" in section
+    gamma_line = next(line for line in section.splitlines() if line.startswith("| gamma "))
+    assert "wrong_decision" in gamma_line
+
+
+def test_a_run_with_failures_renders_a_taxonomy_block_of_counts() -> None:
+    """Catches #40's aggregation living only in the JSON: a reader of `report.md`
+    counting a column by eye over two hundred cases is not an aggregate (decision
+    F), so the counts have to be rendered as their own section too."""
+    markdown = report_markdown(build(MIXED))
+
+    assert "## Taxonomy" in markdown
+    assert counted(markdown, "wrong_decision", 2)
+    assert counted(markdown, "residency_violation", 1)
+    assert counted(markdown, "tenant_leak", 1)
+
+
+def test_a_clean_run_renders_no_taxonomy_block() -> None:
+    """Catches a `## Taxonomy` heading always rendered, which on a clean run is an
+    empty heading with nothing under it - the same defect criterion 3 refuses for
+    the failures table, applied to the new block."""
+    markdown = report_markdown(build(CLEAN))
+
+    assert "## Taxonomy" not in markdown
 
 
 def test_a_clean_run_renders_one_line_and_no_empty_failures_table() -> None:

@@ -209,8 +209,8 @@ class EvalCase(BaseModel):
 
     An `injection` case is the one category that carries a requirement of its own: it must name at least one non-empty `forbidden_tools` or
     `forbidden_phrases`, or it asserts nothing about the injection, reports
-    `skipped` for both and counts as a pass that `17b` would score as resistance
-    the agent never demonstrated. `[]` does not satisfy it, because `[]` is what
+    `skipped` for both and counts as a pass that `evals/taxonomy.py` scores as a
+    resistance the agent never demonstrated. `[]` does not satisfy it, because `[]` is what
     `assert_case` reads as "the author expects none"
     (`test_an_injection_case_with_an_empty_forbidden_tools_list_is_refused`). The
     rule is on the model and not in the loader, so an in-code case is refused too

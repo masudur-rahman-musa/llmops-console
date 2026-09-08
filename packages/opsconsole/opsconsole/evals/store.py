@@ -35,10 +35,14 @@ parametrised over the command's tuple, so the two cannot drift apart in silence.
 The CHECK constraint in `003_eval_runs.sql` is the second guard, for the row
 somebody loads with `psql`.
 
-`tags`, `alias_resolution` and `judge_kappa` ship empty and NULL (decision F):
-row 17b's taxonomy and 17c's judge calibration fill them, the migration says so column
-column, and `test_row_seventeens_columns_arrive_empty_rather_than_absent` pins
-each exactly rather than as falsy.
+`tags` carries row 17b's failure taxonomy (#40), read straight off the report's
+own `CaseReport.tags` rather than recomputed here, so the column and the file
+cannot disagree about why a case failed
+(`test_rows_from_report_fills_tags_from_the_report_case_by_case`).
+`alias_resolution` and `judge_kappa` still ship NULL (decision F): row 17c's judge
+calibration fills them, the migration says so column by column, and
+`test_row_seventeens_remaining_columns_still_arrive_empty_rather_than_absent`
+pins each exactly rather than as falsy.
 """
 
 from __future__ import annotations
@@ -161,6 +165,10 @@ class EvalCaseRow(BaseModel):
     category: str
     passed: bool
     tags: tuple[str, ...] = ()
+    """The failure taxonomy for this case, in `taxonomy.TAG_ORDER` and empty when
+    it passed. Stored in an order-preserving `text[]`, so the array a query reads
+    back is the tuple the report published
+    (`test_the_tags_column_reads_back_the_case_reports_tags_in_order`)."""
     latency_ms: int | None
     cost_usd: Decimal | None
     provider: str | None
@@ -229,6 +237,7 @@ def rows_from_report(
             case_id=case.case_id,
             category=case.category,
             passed=case.passed,
+            tags=case.tags,
             latency_ms=case.latency_ms,
             cost_usd=case.cost_usd,
             provider=case.provider,

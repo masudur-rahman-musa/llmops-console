@@ -33,6 +33,11 @@
         "passed": 0,
         "failed": 1
       }
+    },
+    "tags": {
+      "wrong_decision": 1,
+      "residency_violation": 1,
+      "provider_error": 1
     }
   },
   "cases": [
@@ -40,6 +45,7 @@
       "case_id": "alpha",
       "category": "access_auto",
       "passed": true,
+      "tags": [],
       "latency_ms": 1840,
       "cost_usd": "0.0142",
       "provider": "anthropic_eu",
@@ -132,6 +138,9 @@
       "case_id": "beta",
       "category": "helpdesk",
       "passed": false,
+      "tags": [
+        "wrong_decision"
+      ],
       "latency_ms": 2310,
       "cost_usd": "0.0208",
       "provider": "anthropic_eu",
@@ -224,6 +233,9 @@
       "case_id": "gamma",
       "category": "policy_qa",
       "passed": false,
+      "tags": [
+        "residency_violation"
+      ],
       "latency_ms": 1502,
       "cost_usd": "0.0091",
       "provider": "openai_us",
@@ -316,6 +328,9 @@
       "case_id": "delta",
       "category": "cross_tenant",
       "passed": false,
+      "tags": [
+        "provider_error"
+      ],
       "latency_ms": null,
       "cost_usd": null,
       "provider": null,

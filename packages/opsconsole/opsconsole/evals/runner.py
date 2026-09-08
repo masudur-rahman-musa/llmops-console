@@ -29,7 +29,7 @@ from opsconsole.evals.assertions import AssertionStatus, CaseAssertions, assert_
 from opsconsole.evals.cases import EvalCase, EvalCategory
 from opsconsole.evals.outcome import CaseOutcome
 from opsconsole.evals.residency import EVAL_DATA_CLASS, ResidencyVerdict, check_residency
-from opsconsole.evals.target import TargetClient, TurnFailed
+from opsconsole.evals.target import TargetClient, TurnFailed, TurnFailureKind
 from opsconsole.routing.policy import Policy
 
 LEAK_ASSERTION: str = "cross_tenant_leak"
@@ -54,6 +54,12 @@ class CaseRun(BaseModel):
     report is built from this record and nothing else (`16c` decision E), and
     neither the golden set nor the turn is available to it
     (`test_a_case_report_carries_the_measured_fields_the_assertions_and_the_verdict`).
+
+    `failure_kind` is the raised `TurnFailed`'s own kind, carried for the same
+    reason and set in exactly the same place as `error`: `17b`'s taxonomy tags a
+    broken turn `timeout` or `provider_error` and has nothing else to read, since
+    a turn that never answered left no assertions behind. It is `None` on every
+    case that answered (`test_a_case_that_answered_carries_no_failure_kind`).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -64,6 +70,7 @@ class CaseRun(BaseModel):
     residency: ResidencyVerdict | None
     outcome: CaseOutcome | None = None
     error: str | None = None
+    failure_kind: TurnFailureKind | None = None
     passed: bool
 
 
@@ -144,6 +151,7 @@ def run_set(
                     residency=None,
                     outcome=None,
                     error=str(exc),
+                    failure_kind=exc.kind,
                     passed=False,
                 )
             )
@@ -165,6 +173,7 @@ def run_set(
                 residency=residency,
                 outcome=outcome,
                 error=None,
+                failure_kind=None,
                 passed=assertions.passed and not residency.violation,
             )
         )

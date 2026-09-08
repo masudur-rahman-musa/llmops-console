@@ -51,6 +51,7 @@ from opsconsole.evals.target import (
     TargetClient,
     TargetUnreachable,
     TurnFailed,
+    TurnFailureKind,
 )
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
@@ -348,6 +349,61 @@ def test_a_failed_turn_raises_turn_failed_naming_the_case(label: str, handler: H
         make_client(handler).run_case(case)
 
     assert "access-auto-001" in str(raised.value)
+
+
+def test_the_turn_failure_kind_vocabulary_is_the_published_two() -> None:
+    """Catches a third kind or a renamed one: row 17b's taxonomy maps exactly
+    `timeout` and `provider_error` off this enum, so a third value or a rename
+    here silently drops one of the two run-level failure tags from every future
+    report."""
+    assert {member.value for member in TurnFailureKind} == {"timeout", "provider_error"}
+    assert TurnFailureKind.TIMEOUT.value == "timeout"
+    assert TurnFailureKind.PROVIDER_ERROR.value == "provider_error"
+
+
+BAD_TURNS_KINDS: list[tuple[str, Handler, TurnFailureKind]] = [
+    ("an unknown envelope field", unknown_field_handler(), TurnFailureKind.PROVIDER_ERROR),
+    ("a malformed JSON body", malformed_json_handler(), TurnFailureKind.PROVIDER_ERROR),
+    (
+        "a 500 from the target",
+        responder(envelope_payload(), status=500),
+        TurnFailureKind.PROVIDER_ERROR,
+    ),
+    (
+        "a 404 from the target",
+        responder(envelope_payload(), status=404),
+        TurnFailureKind.PROVIDER_ERROR,
+    ),
+    ("a read timeout", raiser(httpx.ReadTimeout("timed out")), TurnFailureKind.TIMEOUT),
+    (
+        "a refused connection",
+        raiser(httpx.ConnectError("connection refused")),
+        TurnFailureKind.PROVIDER_ERROR,
+    ),
+]
+"""One row per `TurnFailed` raise site, covering all four: the two status rows
+and the unknown-field row all raise from the three sites after the POST
+succeeded, so only the last two rows exercise the `httpx.HTTPError` catch at the
+POST itself - and only `httpx.TimeoutException` there is a timeout (decision C)."""
+
+
+@pytest.mark.parametrize(
+    ("label", "handler", "kind"), BAD_TURNS_KINDS, ids=[row[0] for row in BAD_TURNS_KINDS]
+)
+def test_a_failed_turn_carries_the_kind_its_raise_site_determined(
+    label: str, handler: Handler, kind: TurnFailureKind
+) -> None:
+    """Catches a `TurnFailed` constructed with no kind, or a kind wired to a raise
+    site's ORDER rather than to what actually happened: an implementation that
+    hardcodes `provider_error` everywhere passes every row but the read-timeout
+    one, and an implementation that hardcodes `timeout` everywhere passes only
+    that one row and fails the other five."""
+    case = make_case("access-auto-001")
+
+    with pytest.raises(TurnFailed) as raised:
+        make_client(handler).run_case(case)
+
+    assert raised.value.kind == kind
 
 
 def test_a_failing_turn_is_attempted_exactly_once() -> None:

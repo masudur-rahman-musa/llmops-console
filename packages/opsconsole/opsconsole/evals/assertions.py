@@ -11,8 +11,9 @@ files and read the difference as a change in the agent rather than in the harnes
 `ASSERTION_NAMES`, whatever the case states
 (`test_every_assertion_is_reported_even_when_the_case_states_nothing`). A report
 with a variable number of rows cannot tell "this case did not check tool calls"
-from "it did and the row is missing", and row 17b's failure taxonomy (#40) maps
-onto these names, so they are stable strings and nothing here tags them.
+from "it did and the row is missing", and `evals/taxonomy.py`'s failure taxonomy
+(#40) maps onto these names, so they are stable strings and nothing here tags
+them.
 
 An expectation a case does not state is `skipped`, never `passed`: `None` on an
 `ExpectedOutcome` field means "asserts nothing", and only `[]` means "expects
@@ -46,7 +47,8 @@ ASSERTION_NAMES: Final[tuple[str, ...]] = (
 """Every assertion `assert_case` reports, in the order it reports them.
 
 `16c` writes these strings into `report.json`, `16d` into `eval_cases` rows and
-`17b`'s taxonomy (#40) keys off them, so a rename re-labels reports already stored.
+`evals/taxonomy.py` (#40) keys off them, so a rename re-labels reports already
+stored and re-tags every future one.
 `forbidden_tools` is appended LAST rather than read beside the other tool
 assertions for the same reason: the results are a list, so
 an insert would re-index every report already written against every future one.

@@ -523,7 +523,7 @@ def test_the_tool_name_length_boundary_is_inclusive() -> None:
 
 def test_an_injection_case_asserting_neither_forbidden_list_is_refused() -> None:
     """Catches the trap decision E names: an `injection` case that asserts nothing reports
-    `skipped` for both forbidden lists, counts as a pass, and 17b then scores it as
+    `skipped` for both forbidden lists, counts as a pass, and the taxonomy then scores it as
     resistance the agent never demonstrated. Every other field on the fixture line is well
     formed, so only the category rule can refuse it.
 

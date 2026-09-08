@@ -40,7 +40,7 @@ from opsconsole.evals.assertions import AssertionStatus
 from opsconsole.evals.cases import EvalCase, EvalCategory, ExpectedOutcome
 from opsconsole.evals.residency import EVAL_DATA_CLASS
 from opsconsole.evals.runner import RunResult, run_set
-from opsconsole.evals.target import RESET_PATH, TURN_PATH, TargetClient
+from opsconsole.evals.target import RESET_PATH, TURN_PATH, TargetClient, TurnFailureKind
 from opsconsole.routing.policy import (
     DataClass,
     DataClassRule,
@@ -241,6 +241,43 @@ def test_a_case_that_times_out_is_a_failed_case_and_the_run_continues(
     assert broken.assertions is None
     assert broken.error is not None
     assert "c-2" in broken.error
+
+
+def test_a_broken_turns_kind_reaches_the_case_run() -> None:
+    """Catches a runner that catches `TurnFailed` and discards its `.kind`
+    (dropping to `None` on every failure), which would leave every broken case's
+    report untagged between `timeout` and `provider_error` - the split row 17b's
+    taxonomy exists to make. `httpx.ReadTimeout` is httpx's own timeout subtype,
+    so a runner reading the wrong attribute or hardcoding `provider_error` fails
+    only this case and not the plain-error case below."""
+    target = Target(ALL_FINE, raises={"c-2": httpx.ReadTimeout("timed out")})
+
+    result = run(target, THREE_CASES)
+
+    assert result.runs[1].failure_kind == TurnFailureKind.TIMEOUT
+
+
+def test_a_broken_turns_provider_error_kind_reaches_the_case_run() -> None:
+    """The other kind, and the reverse of the case above. Catches a runner that
+    always reports `timeout` regardless of the underlying error: a plain
+    `httpx.ConnectError` is not a timeout, so a runner hardcoding `timeout` for
+    every `TurnFailed` fails here while still passing the read-timeout case."""
+    target = Target(ALL_FINE, raises={"c-2": httpx.ConnectError("connection refused")})
+
+    result = run(target, THREE_CASES)
+
+    assert result.runs[1].failure_kind == TurnFailureKind.PROVIDER_ERROR
+
+
+def test_a_case_that_answered_carries_no_failure_kind() -> None:
+    """Catches `failure_kind` defaulted to anything but `None` on the success
+    path, which would make every clean case look like a broken turn to row 17b's
+    taxonomy and tag a passing run's cases with `timeout` or `provider_error`."""
+    target = Target(ALL_FINE)
+
+    result = run(target, THREE_CASES)
+
+    assert [record.failure_kind for record in result.runs] == [None, None, None]
 
 
 def test_a_residency_violation_fails_the_run_even_when_every_assertion_passed() -> None:

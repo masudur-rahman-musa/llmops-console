@@ -89,6 +89,7 @@ from opsconsole.evals.store import (
     PostgresEvalStore,
     rows_from_report,
 )
+from opsconsole.evals.target import TurnFailureKind
 from opsconsole.routing.errors import IdentifierInvalid
 from opsconsole.routing.resolver import MAX_IDENTIFIER_LENGTH
 
@@ -139,12 +140,13 @@ def make_run(
     verdict: str = "pass",
     category: EvalCategory = EvalCategory.HELPDESK,
     outcome: CaseOutcome | None = None,
+    failure_kind: TurnFailureKind | None = None,
 ) -> CaseRun:
     """One per-case record, as `run_set` would have built it.
 
     `verdict` is one of `pass`, `fail`, `residency`, `broken`; `broken` is the
     turn that never answered, which carries no assertions, no verdict and no
-    measurements at all.
+    measurements at all. `failure_kind` only matters on a `broken` verdict.
     """
     if verdict == "broken":
         return CaseRun(
@@ -154,6 +156,7 @@ def make_run(
             residency=None,
             outcome=None,
             error=f"turn failed: HTTP 502 for {case_id}",
+            failure_kind=failure_kind,
             passed=False,
         )
 
@@ -207,7 +210,12 @@ MIXED = RunResult(
         make_run("alpha", verdict="pass"),
         make_run("beta", verdict="fail", category=EvalCategory.POLICY_QA),
         make_run("gamma", verdict="residency", category=EvalCategory.CROSS_TENANT),
-        make_run("delta", verdict="broken", category=EvalCategory.INJECTION),
+        make_run(
+            "delta",
+            verdict="broken",
+            category=EvalCategory.INJECTION,
+            failure_kind=TurnFailureKind.PROVIDER_ERROR,
+        ),
     )
 )
 """Four cases, one of each shape a real run produces, and no two alike in
@@ -473,19 +481,35 @@ def test_the_details_column_carries_the_three_things_no_column_holds() -> None:
     assert violated["assertions"] is not None
 
 
-def test_row_seventeens_columns_arrive_empty_rather_than_absent() -> None:
-    """Decision F, and the reason a NULL here reads as "not measured yet" rather than as a
-    bug. Catches `judge_kappa` or `alias_resolution` filled with `0.0`, which a dashboard
-    would render as a real, terrible score, and `tags` defaulted to `[""]` or to the
-    category, which would make row 17b's taxonomy look already populated. Each is asserted
-    exactly rather than as falsy, because `0.0`, `None` and `()` are all falsy."""
+def test_row_seventeens_remaining_columns_still_arrive_empty_rather_than_absent() -> None:
+    """Decision F, for the two columns row 17b leaves alone. Catches `judge_kappa`
+    or `alias_resolution` filled with `0.0`, which a dashboard would render as a
+    real, terrible score, on the run row a 17b-aware writer might otherwise touch
+    while filling `tags`. Asserted exactly rather than as falsy, because `0.0` and
+    `None` are both falsy."""
     report = build(MIXED)
 
-    run_row, case_rows = rows_from_report(report, report_path=Path("/tmp/report.json"))
+    run_row, _ = rows_from_report(report, report_path=Path("/tmp/report.json"))
 
     assert run_row.judge_kappa is None
     assert run_row.alias_resolution is None
-    assert all(row.tags == () for row in case_rows)
+
+
+def test_rows_from_report_fills_tags_from_the_report_case_by_case() -> None:
+    """The column row 17b is what fills. Catches `rows_from_report` still shipping
+    `tags=()` on every row - the prediction this plan repoints - and catches a
+    writer that emits the same non-empty placeholder tuple on every row: alpha
+    passed and carries nothing, beta failed a `decision` assertion and carries
+    exactly `wrong_decision`, and gamma is the residency-only failure that has no
+    failed assertion at all to derive a tag from otherwise."""
+    report = build(MIXED)
+
+    _, case_rows = rows_from_report(report, report_path=Path("/tmp/report.json"))
+
+    assert case_rows[0].tags == ()
+    assert case_rows[1].tags == ("wrong_decision",)
+    assert case_rows[2].tags == ("residency_violation",)
+    assert case_rows[3].tags == ("provider_error",)
 
 
 # --------------------------------------------------------------------------

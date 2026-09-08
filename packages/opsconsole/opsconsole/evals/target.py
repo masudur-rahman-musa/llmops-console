@@ -34,6 +34,7 @@ and would quietly lift the score
 from __future__ import annotations
 
 from decimal import Decimal
+from enum import StrEnum
 from typing import Any, Final
 
 import httpx
@@ -72,6 +73,20 @@ class TargetUnreachable(Exception):
     """
 
 
+class TurnFailureKind(StrEnum):
+    """Why a turn failed, in the two words `17b`'s taxonomy tags it by.
+
+    Two and no third: `timeout` is the clock running out on a target that never
+    answered, and `provider_error` is everything else - a non-2xx, a body that is
+    not JSON, an envelope the contract does not define, a refused connection. A
+    third value would silently drop out of the taxonomy, which maps exactly these
+    two (`test_the_turn_failure_kind_vocabulary_is_the_published_two`).
+    """
+
+    TIMEOUT = "timeout"
+    PROVIDER_ERROR = "provider_error"
+
+
 class TurnFailed(Exception):
     """One case's turn did not produce a usable envelope.
 
@@ -81,7 +96,17 @@ class TurnFailed(Exception):
     and a flaky case cannot abort the run. The message names the case id: with two
     hundred cases in a set, "read timeout" names nothing an author can open
     (`test_a_failed_turn_raises_turn_failed_naming_the_case`).
+
+    `kind` is set at the raise site rather than read back out of the message: the message is a human sentence naming a case id and a
+    URL, and a taxonomy deciding a stored tag by searching it for "timed out"
+    would depend on prose that is edited for readability. Each of the four raise
+    sites in `run_case` carries the kind its own cause determines, pinned one
+    site at a time by `test_a_failed_turn_carries_the_kind_its_raise_site_determined`.
     """
+
+    def __init__(self, message: str, *, kind: TurnFailureKind) -> None:
+        super().__init__(message)
+        self.kind = kind
 
 
 class EnvelopeToolCall(BaseModel):
@@ -216,15 +241,29 @@ class TargetClient:
         try:
             response = self._client.post(url, json=payload, timeout=self._timeout)
         except httpx.HTTPError as exc:
-            raise TurnFailed(f"{case.id}: {url} could not be reached: {exc}") from exc
+            kind = (
+                TurnFailureKind.TIMEOUT
+                if isinstance(exc, httpx.TimeoutException)
+                else TurnFailureKind.PROVIDER_ERROR
+            )
+            raise TurnFailed(f"{case.id}: {url} could not be reached: {exc}", kind=kind) from exc
         if not response.is_success:
-            raise TurnFailed(f"{case.id}: {url} answered {response.status_code}")
+            raise TurnFailed(
+                f"{case.id}: {url} answered {response.status_code}",
+                kind=TurnFailureKind.PROVIDER_ERROR,
+            )
         try:
             document = response.json()
         except ValueError as exc:
-            raise TurnFailed(f"{case.id}: the answer is not valid JSON: {exc}") from exc
+            raise TurnFailed(
+                f"{case.id}: the answer is not valid JSON: {exc}",
+                kind=TurnFailureKind.PROVIDER_ERROR,
+            ) from exc
         try:
             envelope = EvalEnvelope.model_validate(document)
         except ValidationError as exc:
-            raise TurnFailed(f"{case.id}: the answer is not a valid envelope: {exc}") from exc
+            raise TurnFailed(
+                f"{case.id}: the answer is not a valid envelope: {exc}",
+                kind=TurnFailureKind.PROVIDER_ERROR,
+            ) from exc
         return envelope, to_outcome(envelope, other_tenant_markers=other_tenant_markers)
