@@ -213,7 +213,7 @@ def build_report(
     """Turn one run and its identity into the record both files render.
 
     Every count is read off `RunResult`'s properties (decision E). `metrics` is a
-    mapping rather than a model so row 17 can add #40's fixed metric set and its
+    mapping rather than a model so row 17b can add #40's fixed metric set and its
     failure taxonomy without changing this schema or `16d`'s column.
 
     `set_sha_source` and `run_kind` arrive as plain strings and are validated by

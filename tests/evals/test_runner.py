@@ -245,7 +245,7 @@ def test_a_case_that_times_out_is_a_failed_case_and_the_run_continues(
 
 def test_a_residency_violation_fails_the_run_even_when_every_assertion_passed() -> None:
     """Catches residency checked only for cases that already failed, or not checked at all.
-    Every case here states nothing, so all ten assertions pass; the ONLY thing that can
+    Every case here states nothing, so all eleven assertions pass; the ONLY thing that can
     make this run non-clean is the `us` region on `c-2`, and `us` is a region the policy
     names under another data class, so a check reading the wrong rule passes it (#38,
     a project rule)."""

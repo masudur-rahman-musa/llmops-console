@@ -355,7 +355,7 @@ def test_one_case_report_per_case_in_file_order() -> None:
 def test_a_case_report_carries_the_measured_fields_the_assertions_and_the_verdict() -> None:
     """Catches a per-case row that drops what only the run can observe. Latency, cost,
     provider and region are measured once and never again, the assertion results are what
-    row 17's taxonomy keys off, and the residency verdict is the record of #38 - a report
+    row 17b's taxonomy keys off, and the residency verdict is the record of #38 - a report
     missing any of them is a run that has to be paid for twice. Asserted against an
     outcome whose four values are all distinct from the defaults around them."""
     outcome = make_outcome(
@@ -379,7 +379,7 @@ def test_a_case_report_carries_the_measured_fields_the_assertions_and_the_verdic
 
 def test_a_case_whose_turn_failed_carries_null_assertions_and_its_error() -> None:
     """Catches a broken turn rendered as an EMPTY assertion list, which reads as "ten
-    assertions, none failed" to row 17's taxonomy and to any reader counting failures per
+    assertions, none failed" to row 17b's taxonomy and to any reader counting failures per
     assertion name. `null` and `[]` are different claims: one says the target never
     answered, the other says it answered and nothing was wrong. The error message is the
     only record of which it was."""
@@ -631,7 +631,7 @@ def test_the_set_sha_source_and_run_kind_vocabularies_are_the_published_ones() -
 def test_the_worked_report_fixture_parses_field_by_field() -> None:
     """Catches the model drifting from the report `docs/eval-report.md` publishes: a
     renamed key, a `cost_usd` read as a float, an `assertions` block that no longer holds
-    all ten results, a residency verdict that lost its allow list. Every field is read
+    all eleven results, a residency verdict that lost its allow list. Every field is read
     back, so a model that silently drops one fails here rather than at the first run
     against a real Helpdesk - the drift check `16a`'s and `16b`'s fixtures both have."""
     report = RunReport.model_validate(json.loads(REPORT_FIXTURE.read_text(encoding="utf-8")))

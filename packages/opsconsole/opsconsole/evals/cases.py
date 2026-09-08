@@ -50,7 +50,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final
 
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
 from opsconsole.routing.errors import IdentifierInvalid
 from opsconsole.routing.resolver import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
@@ -104,6 +104,13 @@ class ExpectedToolCall(BaseModel):
     `args_subset` is a subset by design: a case names the
     arguments that carry its meaning and ignores the ticket ids and timestamps a
     real call also carries.
+
+    `name` is checked against the gateway's own identifier vocabulary before the
+    entry exists: it is compared to a name the target really
+    called and then written into `report.json` and `eval_cases.details`, so it is a
+    stored value and gets a project rule's pre-check. The check sits on this model
+    rather than on `EvalCase`, so a case built in code is refused exactly as a
+    loaded line is (`test_a_malformed_expected_tool_call_name_is_refused`).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -111,12 +118,26 @@ class ExpectedToolCall(BaseModel):
     name: str
     args_subset: dict[str, Any] = {}
 
+    @field_validator("name")
+    @classmethod
+    def _check_name(cls, value: str) -> str:
+        return _checked_tool_name(value, "tool_calls.name")
+
 
 class ExpectedOutcome(BaseModel):
     """What a case asserts about the answer. Every field is optional.
 
     `None` means "asserts nothing about this", which `assert_case` reports as
     `skipped`. It is never a pass, so a thin case cannot lift a run's score.
+
+    `forbidden_tools` is the tool half of #37: none of the names it lists may appear
+    anywhere in the observed sequence. It lives here beside `forbidden_phrases`
+    rather than at the top level because it is an assertion
+    about the answer, and every entry gets the same tool-name pre-check
+    `ExpectedToolCall.name` gets (`test_a_malformed_forbidden_tool_name_is_refused`).
+    The LIST has no length cap, deliberately and exactly as `forbidden_phrases` has
+    none: a golden set is an author's own file, and the per-entry cap is what
+    protects the stored value.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -129,10 +150,35 @@ class ExpectedOutcome(BaseModel):
     should_clarify: bool | None = None
     citation_documents: list[str] | None = None
     forbidden_phrases: list[str] | None = None
+    forbidden_tools: list[str] | None = None
+
+    @field_validator("forbidden_tools")
+    @classmethod
+    def _check_forbidden_tools(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return [_checked_tool_name(name, "forbidden_tools") for name in value]
 
 
 def _checked_identifier(value: str, field: str) -> str:
     """Validate an id or a tenant against the gateway's own identifier vocabulary."""
+    if len(value) > MAX_IDENTIFIER_LENGTH:
+        raise IdentifierInvalid(f"{field}: longer than {MAX_IDENTIFIER_LENGTH} characters")
+    if IDENTIFIER_PATTERN.fullmatch(value) is None:
+        raise IdentifierInvalid(f"{field}: not a lowercase slug")
+    return value
+
+
+def _checked_tool_name(value: str, field: str) -> str:
+    """Validate a tool name against the gateway's own identifier vocabulary.
+
+    Shared by `ExpectedToolCall.name` and every `forbidden_tools` entry (an earlier change
+    decision C), so the two tool-name fields cannot drift into two vocabularies.
+    Same constants and the same `re.fullmatch` as `_checked_identifier`: a name
+    ending in a newline would otherwise reach `report.json` and an `eval_cases`
+    row through an anchored `.match`. The inclusive boundary is
+    pinned by `test_the_tool_name_length_boundary_is_inclusive`.
+    """
     if len(value) > MAX_IDENTIFIER_LENGTH:
         raise IdentifierInvalid(f"{field}: longer than {MAX_IDENTIFIER_LENGTH} characters")
     if IDENTIFIER_PATTERN.fullmatch(value) is None:
@@ -160,6 +206,15 @@ class EvalCase(BaseModel):
     caller building an `EvalCase` in code gets the same refusal the loader gives
     a file (`test_a_malformed_id_is_refused`, `test_a_malformed_tenant_is_refused`,
     `test_a_malformed_principal_is_refused`).
+
+    An `injection` case is the one category that carries a requirement of its own: it must name at least one non-empty `forbidden_tools` or
+    `forbidden_phrases`, or it asserts nothing about the injection, reports
+    `skipped` for both and counts as a pass that `17b` would score as resistance
+    the agent never demonstrated. `[]` does not satisfy it, because `[]` is what
+    `assert_case` reads as "the author expects none"
+    (`test_an_injection_case_with_an_empty_forbidden_tools_list_is_refused`). The
+    rule is on the model and not in the loader, so an in-code case is refused too
+    (`test_an_injection_case_is_refused_when_built_in_code_too`).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -186,6 +241,17 @@ class EvalCase(BaseModel):
     @classmethod
     def _check_principal_user(cls, value: str) -> str:
         return _checked_principal(value)
+
+    @model_validator(mode="after")
+    def _check_injection_asserts_something(self) -> EvalCase:
+        if self.category is not EvalCategory.INJECTION:
+            return self
+        if not self.expected.forbidden_tools and not self.expected.forbidden_phrases:
+            raise ValueError(
+                "an injection case must name a non-empty forbidden_tools "
+                "or a non-empty forbidden_phrases"
+            )
+        return self
 
 
 class EvalSetInvalid(Exception):

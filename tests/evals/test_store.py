@@ -365,7 +365,7 @@ def test_the_run_row_carries_every_identity_field_from_the_report() -> None:
     into `git_sha` is a row PostgreSQL accepts without a murmur and a query nobody can
     tell is wrong. `id`, `passed` and `metrics` are asserted from the report too, because
     a store that generated its own run id would break the join every case row makes back
-    to it, and `metrics` is what row 17 reads."""
+    to it, and `metrics` is what row 17c reads."""
     report = build(MIXED)
 
     run_row, _ = rows_from_report(report, report_path=Path("/srv/evals/nightly/report.json"))
@@ -386,7 +386,7 @@ def test_the_run_row_carries_every_identity_field_from_the_report() -> None:
 
 def test_there_is_one_case_row_per_case_report_in_report_order() -> None:
     """Catches a store that writes only the failures, only the cases that answered, or
-    de-duplicates by category - row 17's per-category numbers are counted over these rows,
+    de-duplicates by category - row 17c's per-category numbers are counted over these rows,
     so a missing case shrinks the denominator every threshold is measured against. Order
     is asserted as the report's own, which is the golden set's file order, because a set
     keyed by nothing else is read back by `run_id` alone."""
@@ -439,7 +439,7 @@ def test_the_report_path_is_the_report_json_that_was_written() -> None:
 def test_a_case_whose_turn_failed_stores_no_measurements_and_its_error() -> None:
     """The criterion in one case. Catches a store filling the four measured columns with
     `0` and `""` on a turn that never answered: a broken case would then be averaged in as
-    a free, instant, EU-served case, which lifts every latency and cost number row 17
+    a free, instant, EU-served case, which lifts every latency and cost number row 17c
     reports exactly when the target is failing. `is None` on each, because `0 == None` is
     False but `not 0` is not, and the error text is asserted so the row still says why."""
     report = build(MIXED)
@@ -477,7 +477,7 @@ def test_row_seventeens_columns_arrive_empty_rather_than_absent() -> None:
     """Decision F, and the reason a NULL here reads as "not measured yet" rather than as a
     bug. Catches `judge_kappa` or `alias_resolution` filled with `0.0`, which a dashboard
     would render as a real, terrible score, and `tags` defaulted to `[""]` or to the
-    category, which would make row 17's taxonomy look already populated. Each is asserted
+    category, which would make row 17b's taxonomy look already populated. Each is asserted
     exactly rather than as falsy, because `0.0`, `None` and `()` are all falsy."""
     report = build(MIXED)
 

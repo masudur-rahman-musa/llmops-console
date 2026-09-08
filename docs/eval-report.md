@@ -69,7 +69,7 @@ a fixed schema: later work adds keys to it without changing the document's shape
 | `cost_usd` | string or `null` | the cost, as a decimal STRING |
 | `provider` | string or `null` | which provider served the turn |
 | `region` | string or `null` | where it was served |
-| `assertions` | object or `null` | the ten assertion results, or `null` |
+| `assertions` | object or `null` | the eleven assertion results, or `null` |
 | `residency` | object or `null` | the region verdict, or `null` |
 | `error` | string or `null` | why the turn never answered |
 
@@ -82,7 +82,7 @@ same one: the turn never answered. `null` is not an empty list. An empty list
 would say the target answered and nothing was wrong with it, which is the
 opposite claim, and `error` is then the only record of what happened.
 
-A case that answered always carries all ten assertion results, in the fixed
+A case that answered always carries all eleven assertion results, in the fixed
 order `docs/eval-format.md` publishes, with an unstated expectation reported as
 `skipped` rather than as a pass.
 
@@ -200,6 +200,12 @@ allowed regions with every assertion passing, and one never answered.
             "status": "skipped",
             "expected": null,
             "actual": null
+          },
+          {
+            "name": "forbidden_tools",
+            "status": "skipped",
+            "expected": null,
+            "actual": null
           }
         ]
       },
@@ -286,6 +292,12 @@ allowed regions with every assertion passing, and one never answered.
             "status": "skipped",
             "expected": null,
             "actual": null
+          },
+          {
+            "name": "forbidden_tools",
+            "status": "skipped",
+            "expected": null,
+            "actual": null
           }
         ]
       },
@@ -369,6 +381,12 @@ allowed regions with every assertion passing, and one never answered.
           },
           {
             "name": "cross_tenant_leak",
+            "status": "skipped",
+            "expected": null,
+            "actual": null
+          },
+          {
+            "name": "forbidden_tools",
             "status": "skipped",
             "expected": null,
             "actual": null

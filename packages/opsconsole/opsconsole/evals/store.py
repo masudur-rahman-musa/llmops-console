@@ -18,7 +18,7 @@ Three things it holds that no single field states:
 * **A case that measured nothing stores NULL, never `0` and never `""`.** A turn
   that never answered has no latency, cost, provider or region; a zero there
   would be averaged in as a free, instant, in-region case and would lift every
-  number row 17 reports exactly when the target is failing
+  number row 17c reports exactly when the target is failing
   (`test_a_case_whose_turn_failed_stores_no_measurements_and_its_error`).
 * **Every pre-check runs before a connection is borrowed**,
   which `test_write_refuses_a_malformed_tenant_before_any_sql` asserts as "no
@@ -36,7 +36,7 @@ The CHECK constraint in `003_eval_runs.sql` is the second guard, for the row
 somebody loads with `psql`.
 
 `tags`, `alias_resolution` and `judge_kappa` ship empty and NULL (decision F):
-row 17's taxonomy and judge calibration fill them, the migration says so column by
+row 17b's taxonomy and 17c's judge calibration fill them, the migration says so column
 column, and `test_row_seventeens_columns_arrive_empty_rather_than_absent` pins
 each exactly rather than as falsy.
 """

@@ -19,6 +19,14 @@ The contract these cases are written against, before it exists:
   a `line` attribute and a `str()` beginning `f"{path}:{line}: "`.
 * `MAX_PRINCIPAL_LENGTH` and `PRINCIPAL_PATTERN` - the constants a project rule
   requires a test to pin exactly.
+* `ExpectedOutcome.forbidden_tools: list[str] | None = None`, every entry and
+  every `ExpectedToolCall.name` checked against `IDENTIFIER_PATTERN` and
+  `MAX_IDENTIFIER_LENGTH` before the instance exists, raising `IdentifierInvalid`.
+* an `EvalCase` rule on the `injection` category: at least one of
+  `expected.forbidden_tools` and `expected.forbidden_phrases` names something,
+  `[]` not counting, refused on the model as well as through the loader. The
+  refusal reaches a caller as `ValidationError` or as `IdentifierInvalid`,
+  which are the two `load_golden_set` already wraps as `EvalSetInvalid`.
 
 a project rule on `PRINCIPAL_PATTERN`: matched with `re.fullmatch`, and the
 rejection table below carries a trailing newline, a trailing CRLF and a trailing
@@ -37,6 +45,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from opsconsole.evals.cases import (
     MAX_PRINCIPAL_LENGTH,
@@ -431,3 +440,169 @@ def test_expected_is_required_and_may_be_empty() -> None:
     payload = {key: value for key, value in MINIMAL.items() if key != "expected"}
     with pytest.raises(ValueError):
         EvalCase.model_validate(payload)
+
+
+FORBIDS_A_TOOL_PATH = FIXTURE_DIR / "injection_forbids_a_tool.jsonl"
+"""One `injection` line forbidding one tool, on line 3 of that file."""
+
+ASSERTS_NOTHING_PATH = FIXTURE_DIR / "injection_asserts_nothing.jsonl"
+"""One `injection` line naming neither forbidden list, on line 5 of that file."""
+
+
+def test_forbidden_tools_defaults_to_none_and_not_to_an_empty_list() -> None:
+    """Catches `forbidden_tools: list[str] = []`, the same one-character default that
+    `test_an_absent_expected_field_is_none_and_not_an_empty_container` refuses for the
+    other list fields: `assert_case` reads `[]` as "the author expects no forbidden tool
+    to have run" and reports PASSED, so every case in every set that never mentions the
+    field would start scoring an assertion nobody wrote. The fixture line is read back as
+    well, so a field declared `None` and then never parsed out of the JSON also fails."""
+    assert ExpectedOutcome().forbidden_tools is None
+    assert case_with().expected.forbidden_tools is None
+
+    (loaded,) = load_golden_set(FORBIDS_A_TOOL_PATH)
+    assert loaded.expected.forbidden_tools == ["grant_access"]
+
+
+@pytest.mark.parametrize(
+    ("label", "value"), REJECTED_IDENTIFIERS, ids=[row[0] for row in REJECTED_IDENTIFIERS]
+)
+def test_a_malformed_forbidden_tool_name_is_refused(label: str, value: str) -> None:
+    """Catches a `forbidden_tools` entry taken on trust because "it is a list of strings":
+    the entry is compared against a tool name the target really called and then rendered
+    into `report.json` (`16c`) and an `eval_cases` row (`16d`), so `../grant_access` and
+    `grant_access\\n` reach a stored value unchecked. The trailing-newline and CRLF rows
+    are a project rule's: a check written `^...$` with `.match` accepts both.
+
+    The category here is `helpdesk`, never `injection`, so the injection rule cannot be
+    what refuses these rows - removing the tool-name check is the only thing that turns
+    them green."""
+    with pytest.raises(IdentifierInvalid):
+        case_with(expected={"forbidden_tools": [value]})
+
+
+@pytest.mark.parametrize(
+    ("label", "value"), REJECTED_IDENTIFIERS, ids=[row[0] for row in REJECTED_IDENTIFIERS]
+)
+def test_a_malformed_expected_tool_call_name_is_refused(label: str, value: str) -> None:
+    """Catches the field decision C names as unchecked today: `ExpectedToolCall.name` is
+    compared to an observed call and written straight into `report.json` and
+    `eval_cases.details`, so a name with a path separator or a newline in it reaches a
+    stored record. Asserted on `ExpectedToolCall` itself as well as through `EvalCase`, so
+    a check bolted onto the outer model rather than onto the entry it protects - which
+    would leave `16b`'s in-code cases unchecked - fails here.
+
+    Same rejection table as the ids, so the two tool-name fields and the identifier fields
+    cannot drift into three vocabularies."""
+    with pytest.raises(IdentifierInvalid):
+        ExpectedToolCall.model_validate({"name": value, "args_subset": {}})
+
+    with pytest.raises(IdentifierInvalid):
+        case_with(expected={"tool_calls": [{"name": value, "args_subset": {}}]})
+
+
+def test_the_tool_name_length_boundary_is_inclusive() -> None:
+    """Catches an off-by-one at the cap on either tool-name field: a check written `>=`
+    refuses a name of exactly the permitted length, and a check against a longer constant
+    invented here instead of the resolver's lets a 65-character name into the report and
+    the `eval_cases` row `16d` stores. The integer is asserted exactly,
+    so a cap silently widened to 128 to make a long name load is red."""
+    assert MAX_IDENTIFIER_LENGTH == 64
+
+    at_cap = "a" * 64
+    over_cap = "a" * 65
+
+    assert case_with(expected={"forbidden_tools": [at_cap]}).expected.forbidden_tools == [at_cap]
+    assert ExpectedToolCall(name=at_cap).name == at_cap
+
+    with pytest.raises(IdentifierInvalid):
+        case_with(expected={"forbidden_tools": [over_cap]})
+
+    with pytest.raises(IdentifierInvalid):
+        ExpectedToolCall(name=over_cap)
+
+
+def test_an_injection_case_asserting_neither_forbidden_list_is_refused() -> None:
+    """Catches the trap decision E names: an `injection` case that asserts nothing reports
+    `skipped` for both forbidden lists, counts as a pass, and 17b then scores it as
+    resistance the agent never demonstrated. Every other field on the fixture line is well
+    formed, so only the category rule can refuse it.
+
+    The line number is asserted exactly, on the attribute and in the message, because the
+    refusal is useless to an author who cannot find the line: the fixture's case is the
+    FIRST case in the file and sits on file line 5, so a loader counting cases rather than
+    file lines reports 1 and fails here."""
+    with pytest.raises(EvalSetInvalid) as raised:
+        load_golden_set(ASSERTS_NOTHING_PATH)
+
+    assert raised.value.line == 5
+    assert str(raised.value).startswith(f"{ASSERTS_NOTHING_PATH}:5: ")
+
+
+def test_an_injection_case_is_refused_when_built_in_code_too() -> None:
+    """Catches the rule implemented in `load_golden_set` rather than on the model, which
+    would let `16b`'s in-code cases and any future generator build exactly the case the
+    loader refuses - the same split `test_an_unknown_field_is_refused_on_every_level_of_the_model`
+    exists to prevent. A `helpdesk` case with the identical `expected` is built in the
+    same test, so a validator that refuses every thin case regardless of category, rather
+    than the injection rule, is red here."""
+    with pytest.raises((ValidationError, IdentifierInvalid)):
+        case_with(category="injection", expected={"should_refuse": True})
+
+    assert case_with(expected={"should_refuse": True}).category is EvalCategory.HELPDESK
+
+
+def test_an_injection_case_with_only_forbidden_phrases_loads() -> None:
+    """Catches a rule written as "an injection case must name `forbidden_tools`", which
+    would refuse the half of #37 decision D reuses `forbidden_phrases` for - the injected
+    TEXT appearing in the reply - and make every text-only injection case in a real set
+    unloadable. `forbidden_tools` stays `None` on the accepted case, so a validator that
+    satisfies itself by filling the field in is red too.
+
+    The second row is the boundary: an explicit empty `forbidden_tools` beside a non-empty
+    `forbidden_phrases` still loads, because the rule is "at least one of them names
+    something", not "neither may be empty"."""
+    phrases_only = case_with(
+        category="injection", expected={"forbidden_phrases": ["ignore previous instructions"]}
+    )
+    assert phrases_only.expected.forbidden_phrases == ["ignore previous instructions"]
+    assert phrases_only.expected.forbidden_tools is None
+
+    with_an_empty_tool_list = case_with(
+        category="injection",
+        expected={"forbidden_tools": [], "forbidden_phrases": ["ignore previous instructions"]},
+    )
+    assert with_an_empty_tool_list.expected.forbidden_tools == []
+
+
+EMPTY_INJECTION_EXPECTATIONS: list[tuple[str, dict[str, Any]]] = [
+    ("an empty forbidden_tools and no forbidden_phrases", {"forbidden_tools": []}),
+    ("an empty forbidden_phrases and no forbidden_tools", {"forbidden_phrases": []}),
+    ("both lists present and both empty", {"forbidden_tools": [], "forbidden_phrases": []}),
+]
+"""The `[]` rows of the injection rule's decision table.
+
+Each row states the field, so a validator implemented as `"forbidden_tools" in
+expected.model_fields_set` - presence rather than content - passes every one of
+them while the case still asserts nothing.
+"""
+
+
+@pytest.mark.parametrize(
+    ("label", "expected"),
+    EMPTY_INJECTION_EXPECTATIONS,
+    ids=[row[0] for row in EMPTY_INJECTION_EXPECTATIONS],
+)
+def test_an_injection_case_with_an_empty_forbidden_tools_list_is_refused(
+    label: str, expected: dict[str, Any]
+) -> None:
+    """Catches a rule checked with `is not None` instead of on the content. `[]` means
+    "the author expects none", which `assert_case` reports as PASSED, so an injection case
+    carrying only empty lists would score two free passes - the exact outcome decision E
+    refuses, dressed up as an assertion. The same three rows on a `helpdesk` case load
+    fine today, so nothing but the injection rule can be what refuses them."""
+    with pytest.raises((ValidationError, IdentifierInvalid)):
+        case_with(category="injection", expected=expected)
+
+    assert case_with(expected=expected).expected.forbidden_phrases == expected.get(
+        "forbidden_phrases"
+    )
