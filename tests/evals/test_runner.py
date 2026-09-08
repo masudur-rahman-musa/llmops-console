@@ -7,9 +7,11 @@ body, which is also what lets a case be given its own answer.
 
 The contract these cases are written against, before it exists:
 
-* `CaseRun(case_id=..., assertions=..., residency=..., error=None, passed=...)`,
-  frozen and `extra="forbid"`; `assertions` is `None` exactly when the turn
-  failed, and `error` carries that failure's message.
+* `CaseRun(case_id=..., category=..., assertions=..., residency=...,
+  outcome=..., error=None, passed=...)`, frozen and `extra="forbid"`;
+  `assertions` and `outcome` are `None` exactly when the turn failed, and
+  `error` carries that failure's message. `category` and `outcome` were added by
+  `16c`, whose report is built from this record and nothing else.
 * `RunResult(runs=(...))`, frozen, with `cases`, `passed_count`, `failed_count`,
   `residency_violations` and `leaked` DERIVED from `runs`, so no caller can
   report a count the per-case records do not support.
