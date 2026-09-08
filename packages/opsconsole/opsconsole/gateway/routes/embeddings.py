@@ -73,6 +73,7 @@ from opsconsole.gateway.routes.chat import (
     absorb_failure,
     book_cost,
     check_budget,
+    check_rate_limit,
     gateway_headers,
     health_seam,
     label_candidate,
@@ -282,10 +283,14 @@ def create_embeddings(
     recorded `EmbeddingRequest` rather than the answer, because a route that
     redacted its response and sent the raw text would look identical from the body.
 
-    The monthly budget is checked FIRST, through the chat route's `check_budget`
-    and before the resolution, so a tenant over its cap is the same typed 429 here
-    as on a completion and no embedding provider is dialled for it
-    (`test_the_embeddings_route_refuses_over_cap_too`). The debit that follows is
+    The tenant's RATE LIMIT is checked first of all, through the chat route's
+    `check_rate_limit`, and its monthly budget immediately after, through the same
+    route's `check_budget` - both before the resolution, so a tenant over either
+    is the same typed 429 here as on a completion and no embedding provider is
+    dialled for it (`test_the_embeddings_route_refuses_over_rate_too`,
+    `test_the_embeddings_route_refuses_over_cap_too`). The rate check is the
+    earlier of the two by criterion 6: a tenant over both is told to slow down
+    rather than to top up. The debit that follows is
     inside `book_cost` below, so this route needs no second call to stay in step
     with the counter.
 
@@ -302,6 +307,7 @@ def create_embeddings(
     the adapters are synchronous `httpx` clients, so FastAPI runs this in a
     worker thread instead of blocking the event loop for the whole provider call.
     """
+    check_rate_limit(request.app.state, context)
     check_budget(request.app.state, context, override=request.headers.get(BUDGET_OVERRIDE_HEADER))
 
     store: PolicyStore = request.app.state.policy

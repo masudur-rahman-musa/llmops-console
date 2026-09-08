@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Self
 
 import yaml
-from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from opsconsole.routing.errors import PolicyInvalid
 
@@ -103,10 +103,20 @@ class DataClassRule(_Frozen):
 
 
 class RateLimit(_Frozen):
-    """Per-tenant request and token ceilings. Enforced by the limits package."""
+    """Per-tenant request and token ceilings. Enforced by the limits package.
 
-    rpm: int
-    tpm: int
+    Both are `ge=1`, so a ceiling of zero or below is refused at LOAD with its
+    field path named (an earlier change decision G,
+    `test_a_zero_rate_limit_is_refused_at_load`). Before enforcement existed a
+    zero parsed and was inert; enforced, it refuses every request that tenant
+    ever sends, with a typed 429 and a `Retry-After` that never comes true, and
+    nothing distinguishes that from the limiter working. A negative is a bucket
+    whose capacity is below its own empty level. One is admitted - a smoke-test
+    tenant is a real setting (`test_a_rate_limit_of_exactly_one_is_admitted`).
+    """
+
+    rpm: int = Field(ge=1)
+    tpm: int = Field(ge=1)
 
 
 class Tenant(_Frozen):

@@ -89,8 +89,34 @@ def error_body(
     }
 
 
+RETRY_AFTER_HEADER = "Retry-After"
+"""The one header a failure can add to its own response.
+
+Emitted for a typed error that carries a `retry_after_seconds` and for no other
+response, which today is `RateLimited` alone (an earlier change decision D,
+`test_the_429_carries_retry_after_in_whole_seconds`,
+`test_a_served_response_carries_no_retry_after`)."""
+
+
+def retry_after_headers(error: GatewayError) -> dict[str, str] | None:
+    """`Retry-After` when this error knows when to come back, otherwise nothing.
+
+    The condition is the ERROR carrying a wait, never its status. `if
+    http_status == 429` is the obvious implementation and is wrong: a budget
+    refusal is also a 429, and it would then tell a tenant that has spent its
+    month to retry in a second, for ever
+    (`test_a_budget_refusal_carries_no_retry_after`).
+
+    Whole seconds, because that is what the field is defined in - the rounding
+    up happens in `limits/ratelimit.retry_after`, where the bucket's own rate is
+    known (`test_the_retry_after_is_the_seconds_to_the_next_whole_token`).
+    """
+    wait = error.retry_after_seconds
+    return None if wait is None else {RETRY_AFTER_HEADER: str(wait)}
+
+
 def error_response(error: GatewayError) -> JSONResponse:
-    """Render a typed gateway failure as its status and its body."""
+    """Render a typed gateway failure as its status, its body and any wait it carries."""
     return JSONResponse(
         status_code=error.http_status,
         content=error_body(
@@ -99,6 +125,7 @@ def error_response(error: GatewayError) -> JSONResponse:
             http_status=error.http_status,
             param=error.param,
         ),
+        headers=retry_after_headers(error),
     )
 
 

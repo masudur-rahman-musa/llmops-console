@@ -1124,11 +1124,21 @@ tenants:
     data_class_rules:
       {EU_CLASS}: {{ allow_regions: [us, eu, self] }}
     budget_usd_month: "15.00"
-    rate_limit: {{ rpm: 60, tpm: 60000 }}
+    rate_limit: {{ rpm: 1000000, tpm: 1000000000 }}
 """
 """A policy an EU tenant can fall back INSIDE. The `us` in `allow_regions` is
 deliberate: it makes the residency clamp the only thing keeping
-`EU_EXCLUDED_PROVIDER` out of the candidate tuple."""
+`EU_EXCLUDED_PROVIDER` out of the candidate tuple.
+
+The rate limit is a ceiling no suite can reach, on purpose. It used to read
+`rpm: 60`, which was inert while nothing enforced it; per-tenant rate limits are
+now enforced on every request, and a parametrised module can cross sixty requests
+in well under a minute, so a realistic ceiling here would make unrelated
+fallback and residency cases fail on request count. What a DEPLOYMENT runs is
+pinned separately, against `routing.yaml` itself, by
+`test_the_shipped_rate_limit_for_this_tenant_is_the_one_these_cases_arrange_against`
+in tests/gateway/test_rate_limit_enforcement.py - so raising a fixture cannot
+quietly raise production, and this file is not where limits are tested."""
 
 
 @pytest.fixture(scope="session")

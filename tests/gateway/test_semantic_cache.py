@@ -468,8 +468,15 @@ tenants:
     data_class_rules:
       {DATA_CLASS}: {{ allow_regions: [us, eu, self] }}
     budget_usd_month: "15.00"
-    rate_limit: {{ rpm: 60, tpm: 60000 }}
+    rate_limit: {{ rpm: 1000000, tpm: 1000000000 }}
 """
+"""The residency-refusal policy. The rate limit is a ceiling this module cannot
+reach, on purpose: it used to read `rpm: 60`, which was inert while nothing
+enforced it, and these cases exist to exercise the semantic tier and the
+embedding refusal rather than limits. The values a deployment runs are pinned
+against `routing.yaml` itself by
+`test_the_shipped_rate_limit_for_this_tenant_is_the_one_these_cases_arrange_against`
+in tests/gateway/test_rate_limit_enforcement.py."""
 
 # The same policy with the `embed` alias deleted, which is what a deployment that
 # has not defined one looks like - and what the EU policy in this directory's

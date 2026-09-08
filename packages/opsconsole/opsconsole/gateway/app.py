@@ -64,6 +64,11 @@ from opsconsole.ledger import (
 )
 from opsconsole.limits.budget import BudgetStore, InProcessBudgetStore, RedisBudgetStore
 from opsconsole.limits.prices import PriceStore
+from opsconsole.limits.ratelimit import (
+    InProcessRateLimitStore,
+    RateLimitStore,
+    RedisRateLimitStore,
+)
 from opsconsole.providers.breaker import CircuitBreaker
 from opsconsole.providers.factory import build_adapters
 from opsconsole.providers.factory import close_adapters as close_adapters
@@ -266,6 +271,15 @@ def create_app(
     a Redis outage leaves the counter unknown, and an unknown counter serves the
     request.
 
+    The two rate-limit buckets are built from that same client and on the same
+    switch: `RedisRateLimitStore` when Redis is configured, so two
+    replicas cannot each grant a tenant the full `rpm`, and
+    `InProcessRateLimitStore` otherwise, which is what lets the suite and a bare
+    local run enforce a ceiling with no backing service
+    (`test_create_app_keeps_the_in_process_rate_limit_store_without_a_redis_url`,
+    `test_create_app_uses_the_redis_rate_limit_store_when_a_redis_url_is_configured`).
+    It never raises either: a limiter that cannot answer serves the request.
+
     The semantic cache is settings-driven on its OWN switch, `OPSCONSOLE_QDRANT_URL`: configured builds `QdrantSemanticCache` over a bounded `httpx`
     client, absent builds `InProcessSemanticCache`, so the suite and a bare local
     run take the semantic path with no Qdrant anywhere
@@ -334,6 +348,10 @@ def create_app(
         RedisBudgetStore(redis_client) if redis_client is not None else InProcessBudgetStore()
     )
     app.state.budget_store = budget_store
+    rate_limit_store: RateLimitStore = (
+        RedisRateLimitStore(redis_client) if redis_client is not None else InProcessRateLimitStore()
+    )
+    app.state.rate_limit_store = rate_limit_store
     semantic_cache: SemanticCache = (
         QdrantSemanticCache(build_qdrant_data_client(resolved.qdrant_url))
         if resolved.qdrant_url is not None

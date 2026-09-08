@@ -7,12 +7,10 @@ the whole table - each code's string, its HTTP status, and the requirement that
 exactly one concrete `GatewayError` subclass carries it - against a literal
 written out in the test, so any of those three drifting fails there.
 
-ONE of the classes below is still raised by nobody: `RateLimited`, whose
-subsystem is per-tenant rate limits. It ships here because a code with
-no class is a code nothing can raise, and because the exhaustive test measures
-the pairing rather than the usage. The other four are live, which these two
-answer - the class names are bracketed so this quotation of the commands is not
-itself a hit:
+EVERY class below is now raised by something: `RateLimited` was the last one that
+was not, and an earlier change's per-tenant rate limits raise it. These two commands
+answer where, the class names bracketed so this quotation of them is not itself a
+hit:
 
     grep -rE "raise (Unauth[o]rized|TenantMis[m]atch)" packages services
     grep -rE "raise (BudgetExc[e]eded|Rate[L]imited|ProviderE[r]ror)" packages services
@@ -21,7 +19,7 @@ with these files and no others:
 
     gateway/context.py              TenantMismatch, Unauthorized
     gateway/routes/admin.py         Unauthorized
-    gateway/routes/chat.py          BudgetExceeded, ProviderError
+    gateway/routes/chat.py          BudgetExceeded, ProviderError, RateLimited
     gateway/routes/directory.py     ProviderError
     gateway/routes/redact.py        ProviderError
     providers/anthropic.py          ProviderError
@@ -60,6 +58,17 @@ class GatewayError(Exception):
 
     code: ClassVar[ErrorCode]
     http_status: ClassVar[int]
+
+    retry_after_seconds: int | None = None
+    """Whole seconds a client should wait before retrying, or `None` for "do not".
+
+    A class attribute defaulting to `None`, so every existing failure carries no
+    wait and `gateway/errors.py` renders `Retry-After` for the ONE that does. Deliberately not derived from the status: a budget
+    refusal is also a 429, and telling a tenant that has spent its month to come
+    back in a second would be a header that is never true
+    (`test_a_budget_refusal_carries_no_retry_after`,
+    `test_a_residency_refusal_carries_no_retry_after`).
+    """
 
     def __init__(self, message: str, *, param: str | None = None) -> None:
         super().__init__(message)
@@ -108,10 +117,27 @@ class BudgetExceeded(GatewayError):
 
 
 class RateLimited(GatewayError):
-    """The tenant's request or token rate is exceeded. Raised from an earlier change."""
+    """The tenant has spent its minute's requests or its minute's tokens (#28).
+
+    Raised by `gateway/routes/chat.py::check_rate_limit`, at the top of both the
+    chat and the embeddings route and BEFORE `check_budget`, so a tenant over
+    both is told to slow down rather than to top up
+    (`test_a_tenant_over_its_request_rate_is_429_rate_limited`,
+    `test_the_rate_check_runs_before_the_budget_check`).
+
+    The only failure that carries a `retry_after_seconds`, and it is required
+    here rather than optional: a limiter that will not say when to come back
+    makes every client guess, and the bucket that refused already knows when its
+    next whole token lands (decision D,
+    `test_the_429_carries_retry_after_in_whole_seconds`).
+    """
 
     code: ClassVar[ErrorCode] = ErrorCode.RATE_LIMITED
     http_status: ClassVar[int] = 429
+
+    def __init__(self, message: str, *, retry_after_seconds: int, param: str | None = None) -> None:
+        super().__init__(message, param=param)
+        self.retry_after_seconds = retry_after_seconds
 
 
 class ProviderError(GatewayError):

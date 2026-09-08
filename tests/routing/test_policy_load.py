@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from opsconsole.routing.errors import PolicyInvalid
-from opsconsole.routing.policy import PolicyStore, load_policy
+from opsconsole.routing.policy import PolicyStore, RateLimit, load_policy
 
 from .conftest import SHIPPED_POLICY_PATH, DocFactory, PolicyWriter
 
@@ -272,3 +272,80 @@ def test_failed_reload_keeps_previous_policy(
 
     assert store.policy is before
     assert store.policy.tenants["acme"].rate_limit.rpm == 60
+
+
+# --------------------------------------------------------------------------
+# a rate limit that refuses everything
+# --------------------------------------------------------------------------
+
+
+def rate_limited_policy(*, rpm: str, tpm: str) -> str:
+    """One well-formed policy document whose only variable is the tenant's rate limit."""
+    return f"""
+providers:
+  eu-a: {{kind: anthropic, region: eu}}
+eu_regions: [eu]
+aliases:
+  chat:
+    candidates:
+      - {{provider: eu-a, model: m1}}
+tenants:
+  acme:
+    residency: eu
+    data_class_rules:
+      public: {{allow_regions: [eu]}}
+    budget_usd_month: "10.00"
+    rate_limit: {{rpm: {rpm}, tpm: {tpm}}}
+"""
+
+
+# (case id, rpm, tpm, the field path the message must name)
+BAD_RATE_LIMITS: list[tuple[str, str, str, str]] = [
+    ("rpm is zero", "0", "1000", "tenants.acme.rate_limit.rpm"),
+    ("rpm is negative", "-1", "1000", "tenants.acme.rate_limit.rpm"),
+    ("tpm is zero", "60", "0", "tenants.acme.rate_limit.tpm"),
+    ("tpm is negative", "60", "-1000", "tenants.acme.rate_limit.tpm"),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "rpm", "tpm", "field"), BAD_RATE_LIMITS, ids=[c[0] for c in BAD_RATE_LIMITS]
+)
+def test_a_zero_rate_limit_is_refused_at_load(
+    case: str, rpm: str, tpm: str, field: str, policy_file: PolicyWriter
+) -> None:
+    """A ceiling of zero is an operator error, not a policy.
+
+    Today `rpm: 0` parses and is inert because nothing enforces it. Once it IS enforced,
+    a zero refuses every request that tenant ever sends, with a typed 429 and a
+    `Retry-After` that never comes true - and nothing anywhere distinguishes that from
+    the limiter working. A negative is worse: it is a bucket whose capacity is below its
+    empty level, so it can never be refilled into a servable state at all.
+
+    Catches `rpm: int` left without `ge=1`, which is exactly the shape the field has
+    before this plan. The FIELD PATH is asserted rather than only the raise, because a
+    `PolicyInvalid` that says "validation failed" leaves an operator grepping a YAML file
+    during an outage - which is why every other row of this module's invalid table
+    asserts a path too. The four rows are two fields times two ways of being unservable,
+    so a `ge=1` applied to `rpm` alone fails the last two."""
+    path = policy_file(rate_limited_policy(rpm=rpm, tpm=tpm))
+
+    with pytest.raises(PolicyInvalid) as excinfo:
+        load_policy(path)
+
+    assert field in str(excinfo.value)
+
+
+def test_a_rate_limit_of_exactly_one_is_admitted() -> None:
+    """The inclusive boundary, and the row that stops the table above passing against a
+    bound written `gt=1` or `ge=2`.
+
+    One request a minute is a real setting - it is what a smoke-test tenant or a
+    throttled trial account looks like - so a bound that refuses it turns a legitimate
+    policy into a gateway that will not start. Asserted through `RateLimit` directly
+    rather than through a file, because the claim is about the field's bound and not
+    about the loader's error path."""
+    limit = RateLimit(rpm=1, tpm=1)
+
+    assert limit.rpm == 1
+    assert limit.tpm == 1

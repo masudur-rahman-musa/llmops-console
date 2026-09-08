@@ -75,7 +75,7 @@ from opsconsole.cache import (
     system_hash,
     tools_hash,
 )
-from opsconsole.core.errors import BudgetExceeded, GatewayError, ProviderError
+from opsconsole.core.errors import BudgetExceeded, GatewayError, ProviderError, RateLimited
 from opsconsole.core.metrics import (
     EXACT_CACHE_KIND,
     SEMANTIC_CACHE_KIND,
@@ -98,7 +98,13 @@ from opsconsole.gateway.routes.redact import (
     redaction_applies,
     tenant_directory,
 )
-from opsconsole.ledger import CostLedgerWriter, ResidencyLogWriter, record_cost, record_residency
+from opsconsole.ledger import (
+    CostLedgerRow,
+    CostLedgerWriter,
+    ResidencyLogWriter,
+    record_cost,
+    record_residency,
+)
 from opsconsole.limits.budget import (
     BUDGET_OVERRIDE_HEADER,
     BudgetDecision,
@@ -112,6 +118,11 @@ from opsconsole.limits.budget import (
 )
 from opsconsole.limits.cost import COST_QUANTUM
 from opsconsole.limits.prices import PriceStore
+from opsconsole.limits.ratelimit import (
+    SECONDS_PER_MINUTE,
+    RateDimension,
+    RateLimitStore,
+)
 from opsconsole.providers.base import (
     Adapter,
     ChatMessage,
@@ -690,6 +701,125 @@ def record_served(
     annotate(scope, SpanAttributes(fallback_count=failed))
 
 
+CHECK_COST = 1
+"""What one request costs each bucket at the check.
+
+One from the REQUEST bucket is decision C: unlike its tokens, a request is
+countable before it is served, so the check and the debit are one atomic take and
+a tenant's published `rpm` is exactly the number of requests it gets. One from the
+TOKEN bucket is a probe, and it is what makes "this tenant has spent its minute's
+tokens" expressible at all - the real usage is not known until the provider has
+answered (decision B), so the check asks whether a single token is left and the
+debit follows from `book_cost`. One token in a `tpm` of 120,000 is what that probe
+costs (`test_the_check_takes_one_from_each_bucket_at_the_tenants_own_ceiling`).
+"""
+
+
+def check_rate_limit(state: State, context: RequestContext) -> None:
+    """Refuse this request if the tenant has spent its minute's requests or tokens (#28).
+
+    Called at the top of BOTH routes and immediately BEFORE `check_budget`, after
+    `Context` has authenticated the tenant. The position carries two criteria at
+    once. A refusal must cost no provider call, no ledger row and no cache write,
+    and a streamed request must be refused before the 200 and the first frames
+    are on the wire, or the client gets an error inside a stream instead of a
+    typed 429 with a `Retry-After` no started response could carry
+    (`test_a_refused_request_dials_no_provider_and_books_no_row`,
+    `test_a_streamed_request_over_rate_is_refused_before_the_stream_opens`). And
+    being before the budget check is criterion 6: both refusals are 429s, so a
+    tenant over both is told to slow down rather than to top up
+    (`test_the_rate_check_runs_before_the_budget_check`).
+
+    A tenant the POLICY does not carry has no ceiling and is not this function's
+    to refuse. Its limit is read with `.get` and not `policy.tenants[tenant]`,
+    which would raise `KeyError` and turn the resolver's typed 451 into an
+    untyped 500; inventing a ceiling of zero for it would be worse, because the
+    429 would then hide the residency refusal that is the correct answer
+    (`test_a_tenant_the_policy_does_not_carry_is_still_the_resolvers_451`).
+
+    A store that cannot answer serves the request (decision E, argued in
+    `limits/ratelimit.py`): a `None` from either take refuses nobody, and the
+    store has already logged at ERROR by the time it is read here.
+
+    BOTH buckets are taken from, and the request bucket first, so a tenant over
+    both spends one token of each rather than being refused on a bucket it never
+    reached - which keeps the two ceilings independent of the order they are
+    checked in.
+    """
+    store: PolicyStore = state.policy
+    tenant_policy = store.policy.tenants.get(context.tenant)
+    if tenant_policy is None:
+        return
+    limits: RateLimitStore = state.rate_limit_store
+    limit = tenant_policy.rate_limit
+    requests = limits.take(
+        context.tenant,
+        RateDimension.REQUESTS,
+        cost=CHECK_COST,
+        capacity=limit.rpm,
+        rate=limit.rpm / SECONDS_PER_MINUTE,
+    )
+    tokens = limits.take(
+        context.tenant,
+        RateDimension.TOKENS,
+        cost=CHECK_COST,
+        capacity=limit.tpm,
+        rate=limit.tpm / SECONDS_PER_MINUTE,
+    )
+    for taken, ceiling, unit in (
+        (requests, limit.rpm, "requests"),
+        (tokens, limit.tpm, "tokens"),
+    ):
+        if taken is None or taken.allowed:
+            continue
+        raise RateLimited(
+            f"tenant {context.tenant!r} has reached its rate limit of {ceiling} {unit} per minute",
+            retry_after_seconds=taken.retry_after_seconds,
+        )
+
+
+def debit_tokens(state: State, context: RequestContext, *, row: CostLedgerRow) -> None:
+    """Take one served request's tokens out of its tenant's minute.
+
+    Called from `book_cost` and from nowhere else, beside `debit_budget`, which
+    is what makes criterion 2 structural rather than a list of call sites to keep
+    in step: every path that books a ledger row debits the bucket, by the tokens
+    of the row it just booked, because there is one place that does both
+    (`test_every_book_cost_site_debits_the_token_bucket`).
+
+    A CACHED ROW DEBITS ZERO, and this is the one branch here. A cached row keeps
+    the replayed answer's token counts on purpose
+    (`test_a_cached_row_keeps_the_replayed_answers_token_counts` in
+    tests/ledger/test_cost_ledger.py), so reading `input_tokens + output_tokens`
+    off it would charge a tenant's `tpm` again for every hit and make the cache
+    actively expensive in the one currency it saves. Zero is still a DEBIT: the
+    call happens, which is what separates a path that cost nothing from a path
+    the wiring missed, and no bucket level can tell those apart
+    (`test_a_cache_hit_debits_zero_tokens`).
+
+    The answer is ignored, which is decision B: the request that crosses `tpm`
+    completes and the NEXT one is refused, because a token count is not known
+    until the provider has answered and reserving an estimate up front would
+    refuse requests on a guess. Like everything else `book_cost` calls, this
+    cannot change the answer - the store swallows every `redis.RedisError`, and
+    the tenant was validated by `Context` before the key was built.
+    """
+    limits: RateLimitStore = state.rate_limit_store
+    store: PolicyStore = state.policy
+    tenant_policy = store.policy.tenants.get(context.tenant)
+    if tenant_policy is None:
+        return
+    limit = tenant_policy.rate_limit
+    spent = 0 if row.cached else row.input_tokens + row.output_tokens
+    limits.take(
+        context.tenant,
+        RateDimension.TOKENS,
+        cost=spent,
+        capacity=limit.tpm,
+        rate=limit.tpm / SECONDS_PER_MINUTE,
+    )
+
+
 def check_budget(state: State, context: RequestContext, *, override: str | None) -> None:
     """Refuse this request if the tenant has already spent its month, and warn it near.
 
@@ -866,6 +996,7 @@ def book_cost(
         tenant=context.tenant, provider=chosen.provider, model=chosen.model, usd=row.cost_usd
     )
     debit_budget(state, context, usd=row.cost_usd)
+    debit_tokens(state, context, row=row)
     return cost_header_value(row.cost_usd)
 
 
@@ -1746,6 +1877,7 @@ def create_chat_completion(
     `async def` would block the event loop for the whole provider call, and would
     hold it for the whole length of a stream.
     """
+    check_rate_limit(request.app.state, context)
     check_budget(request.app.state, context, override=request.headers.get(BUDGET_OVERRIDE_HEADER))
 
     store: PolicyStore = request.app.state.policy

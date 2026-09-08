@@ -61,10 +61,15 @@ class AllProvidersUnavailable(RoutingError):
 class IdentifierInvalid(RoutingError):
     """A client-supplied identifier failed its pre-check.
 
-    r`grep -rlE "raise Identifier[I]nvalid" packages/` returns TWELVE modules as
-    of an earlier change - the bracket is what keeps this quotation out of its own results,
-    so the command can be re-run here and compared:
+    r`grep -rlE "raise Identifier[I]nvalid" packages/` returns SEVENTEEN modules
+    as of an earlier change - the bracket is what keeps this quotation out of its own
+    results, so the command can be re-run here and compared. The list was last
+    re-derived whole rather than appended to: it read TWELVE
+    and named none of the four stores an earlier change added.
 
+        cache/store.py           a tenant and a cache key, before any command
+        cache/vectors.py         a tenant on its way into a Qdrant collection
+                                 name, which is a URL segment with no backstop
         gateway/context.py       the X-Tenant, X-Session and X-Data-Class headers
         gateway/routes/admin.py  the admin tenant parameter, and a reload whose
                                  routing.yaml will not parse
@@ -73,7 +78,11 @@ class IdentifierInvalid(RoutingError):
         gateway/routes/directory.py  the pushed tenant, and a directory cap
                                  breach converted out of DirectoryNameInvalid
         gateway/routes/redact.py the redact endpoint's own identifiers
+        ledger/cost_ledger.py    every identifier a cost row is keyed by, plus
+                                 the model, the trace id and the price version
         ledger/residency.py      the identifiers a residency row is keyed by
+        limits/budget.py         a tenant and a YYYY-MM month, before any command
+        limits/ratelimit.py      a tenant on its way into a rate-limit bucket key
         providers/anthropic.py   tool call arguments that will not parse as JSON
         providers/azure_openai.py  a deployment name on its way into a URL path
         providers/base.py        checked_tool_name, for any identifier on its way
@@ -82,9 +91,10 @@ class IdentifierInvalid(RoutingError):
         redaction/store.py       a tenant and a redaction_map_id
         routing/resolver.py      a tenant, an alias, a data class
 
-    A thirteenth module, `gateway.errors`, CONSTRUCTS one without raising it, to render
+    An eighteenth module, `gateway.errors`, CONSTRUCTS one without raising it, to render
     FastAPI's own `RequestValidationError` into the wire contract, so it answers a
-    grep for the constructor and not the one above.
+    grep for the constructor and not the one above. A nineteenth, `limits/errors.py`,
+    only quotes the command in prose.
 
     One code covers every rejected input. It lives in this package rather than in
     `core` because the resolver was the first raiser; a later plan may well move
