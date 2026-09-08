@@ -20,10 +20,10 @@ and 4) before any policy is consulted - the tenant against the gateway's OWN
 `report.SET_SHA_PATTERN`. The tenant selects a tenant's residency rules and both
 are written into `report.json` and into `16d`'s `eval_runs` row, so `acme\n` and
 `../a1b2c3d` are refused before anything runs. Neither shapes a path: the two
-report file names are constants (`16c` decision B). This module and `evals/residency.py` are two of
-the TWENTY `IdentifierInvalid` raisers that
-r`grep -rlE "raise Identifier[I]nvalid" packages/` returns as of an earlier change, and the
-enumeration in `routing/errors.py` was re-derived whole from that command.
+report file names are constants (`16c` decision B). This module, `evals/store.py`
+and `evals/residency.py` are three of the TWENTY-ONE `IdentifierInvalid` raisers
+that r`grep -rlE "raise Identifier[I]nvalid" packages/` returns as of an earlier change,
+and the enumeration in `routing/errors.py` was re-derived whole from that command.
 
 `--out` is validated and created before the run and written after it: exactly
 `report.json` and `report.md`, both named by `report.py`'s constants
@@ -34,6 +34,17 @@ a write that fails is `EXIT_USAGE` naming the path rather than a traceback over
 a run already paid for
 (`test_an_out_directory_that_cannot_be_written_exits_two_naming_the_path`). What
 this command prints is still ONE line naming the four counts.
+
+The `eval_runs` and `eval_cases` rows are stored AFTER those two files and never
+before: the artefact is what survives a failed insert, and
+row 18's gate reads it off disk. With no `OPSCONSOLE_DATABASE_URL` configured the
+run stores nothing, says so in one line on stderr and keeps its own exit code
+(decision B) - `make eval` is usually run on a machine with no PostgreSQL up, and
+refusing there would turn the whole harness off rather than turn storage off.
+When the store DOES fail, the exit code is `EXIT_USAGE` unless the run already
+answered `EXIT_RESIDENCY`, which wins: a boundary breach may never be downgraded
+to a storage complaint
+(`test_a_store_that_fails_reports_two_unless_the_run_already_answered_three`).
 """
 
 from __future__ import annotations
@@ -50,11 +61,19 @@ from urllib.parse import urlparse
 
 import httpx
 
-from opsconsole.core.settings import DEFAULT_ROUTING_POLICY_PATH
+from opsconsole.core.settings import DEFAULT_ROUTING_POLICY_PATH, Settings
 from opsconsole.evals.cases import EvalCase, EvalSetInvalid, load_golden_set
-from opsconsole.evals.report import SET_SHA_PATTERN, build_report, write_reports
+from opsconsole.evals.report import (
+    REPORT_JSON_NAME,
+    SET_SHA_PATTERN,
+    RunReport,
+    build_report,
+    write_reports,
+)
 from opsconsole.evals.runner import RunResult, run_set
+from opsconsole.evals.store import PostgresEvalStore, rows_from_report
 from opsconsole.evals.target import TargetClient, TargetUnreachable
+from opsconsole.ledger.db import build_pool
 from opsconsole.routing.errors import IdentifierInvalid, PolicyInvalid
 from opsconsole.routing.policy import Policy, load_policy
 from opsconsole.routing.resolver import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
@@ -89,6 +108,16 @@ DEFAULT_RUN_KIND: Final[str] = "manual"
 """What a run with no `--run-kind` is. An operator at a terminal is the common
 case, and defaulting to `ci` would label a laptop run as a gate run
 (`test_the_run_kind_defaults_to_manual`)."""
+
+UNSTORED_LINE: Final[str] = (
+    "no database URL configured: this run's rows were not stored, and its two report files were"
+)
+"""The ONE line an unstored run prints on stderr (decision B).
+
+Silence would leave an operator believing rows were written, a line per case is
+noise in a CI log, and refusing to run at all would break `make eval` on every
+machine without PostgreSQL up - which is where a golden set is usually run
+(`test_with_no_database_url_nothing_is_stored_and_the_run_keeps_its_own_exit_code`)."""
 
 
 class UsageError(Exception):
@@ -244,6 +273,30 @@ def _exit_code(result: RunResult) -> int:
     return EXIT_OK
 
 
+def _store_rows(report: RunReport, out: Path) -> str | None:
+    """Store the run and its cases, and answer what went wrong, or `None`.
+
+    Called AFTER both report files are written (decision E's ordering): the
+    artefact is what survives a failed insert, and row 18's gate reads it off
+    disk. The failure is answered rather than raised so the caller can apply
+    decision E's exit rule in one place, and a storage complaint never becomes a
+    traceback over a run already paid for.
+
+    With no `OPSCONSOLE_DATABASE_URL` configured nothing is stored, `UNSTORED_LINE`
+    is printed and the run keeps its own exit code (decision B).
+    """
+    database_url = Settings().database_url
+    if database_url is None:
+        print(UNSTORED_LINE, file=sys.stderr)
+        return None
+    try:
+        run_row, case_rows = rows_from_report(report, report_path=out / REPORT_JSON_NAME)
+        PostgresEvalStore(build_pool(database_url)).write(run_row, case_rows)
+    except Exception as exc:
+        return f"the eval store did not take this run: {exc}"
+    return None
+
+
 def _parser() -> argparse.ArgumentParser:
     """`ops-eval` and its one subcommand."""
     parser = argparse.ArgumentParser(prog="ops-eval", description="Run a golden set.")
@@ -331,5 +384,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"--out: {out} could not be written: {exc}", file=sys.stderr)
         return EXIT_USAGE
 
+    stored = _store_rows(report, out)
+
     print(_summary(result))
-    return _exit_code(result)
+    code = _exit_code(result)
+    if stored is not None:
+        print(stored, file=sys.stderr)
+        return EXIT_RESIDENCY if code == EXIT_RESIDENCY else EXIT_USAGE
+    return code

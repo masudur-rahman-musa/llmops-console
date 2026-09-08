@@ -1,4 +1,4 @@
-r"""`evals/report.py`: the two files a run writes, and the record `16d` will store.
+r"""`evals/report.py`: the two files a run writes, and the record `evals/store.py` stores.
 
 Pure: no network, no backing service, no clock of its own. `build_report` is
 handed the two timestamps (decision F), so every case here is deterministic and

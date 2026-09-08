@@ -27,6 +27,14 @@ The contract these cases are written against, before it exists:
 * `CaseRun` carrying `category` and `outcome` beside what `16b` shipped, which
   is where a `CaseReport`'s category and its four measured fields come from -
   `build_report` reads the `RunResult` and nothing else.
+* `16d`'s two seams, both resolved as attributes of `opsconsole.evals.cli`:
+  `cli.build_pool`, called with `Settings().database_url` only when that is set,
+  and `cli.PostgresEvalStore`, whose `write(run_row, case_rows)` is called AFTER
+  `write_reports` (decision E). The store cases below replace both, because a
+  real `build_pool` would open TCP connections from a suite that has no
+  PostgreSQL, and `OPSCONSOLE_DATABASE_URL` is cleared for the whole session by
+  the root conftest, so "no database URL configured" is the
+  arrangement every other case in this file already runs under.
 
 The tenant table below is arranged against the neighbouring guard: the generated
 policy DEFINES the exact tenant string each row passes, malformed ones included,
@@ -47,7 +55,7 @@ import subprocess
 from collections.abc import Sequence
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 
@@ -889,4 +897,156 @@ def test_an_out_directory_that_cannot_be_written_exits_two_naming_the_path(
     assert code == EXIT_USAGE
     assert runner.calls == ["acme"]
     assert str(out) in printed.err
+    assert "Traceback" not in printed.err
+
+
+# --------------------------------------------------------------------------
+# the eval rows: written after both reports, or not at all (16d)
+# --------------------------------------------------------------------------
+
+
+DATABASE_URL = "postgresql://opsconsole@localhost:5432/opsconsole"
+"""A URL that is never connected to: `cli.build_pool` is replaced in every case
+that sets it, so what is under test is the branch the setting decides."""
+
+
+class RecordingStore:
+    """Stands in for `PostgresEvalStore`, recording what it was handed and when.
+
+    `reports_on_disk` is the half that matters: "the store was called" would also
+    be true of a CLI that stored the rows and then failed to write the files, and
+    decision E's whole trade is that the artefact survives a failed insert.
+    """
+
+    def __init__(self, out: Path, *, failure: Exception | None = None) -> None:
+        self.out = out
+        self.failure = failure
+        self.calls: list[tuple[Any, tuple[Any, ...]]] = []
+        self.reports_on_disk: list[bool] = []
+
+    def write(self, run_row: Any, case_rows: Any) -> None:  # noqa: ANN401
+        self.calls.append((run_row, tuple(case_rows)))
+        self.reports_on_disk.append(
+            (self.out / REPORT_JSON_NAME).is_file() and (self.out / REPORT_MD_NAME).is_file()
+        )
+        if self.failure is not None:
+            raise self.failure
+
+
+def install_store(monkeypatch: pytest.MonkeyPatch, store: RecordingStore) -> list[str]:
+    """Configure a database URL and replace both seams, answering the URLs pooled.
+
+    The URL list is what tells "a pool was built from the configured setting" from
+    "a store was constructed out of nothing", which are two different bugs with
+    the same symptom.
+    """
+    pooled: list[str] = []
+
+    def fake_build_pool(database_url: str) -> object:
+        pooled.append(database_url)
+        return object()
+
+    def fake_store(pool: object, **kwargs: object) -> RecordingStore:
+        return store
+
+    monkeypatch.setenv("OPSCONSOLE_DATABASE_URL", DATABASE_URL)
+    monkeypatch.setattr(cli, "build_pool", fake_build_pool)
+    monkeypatch.setattr(cli, "PostgresEvalStore", fake_store)
+    return pooled
+
+
+def forbid_store(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clear the database URL and fail the test if either seam is reached anyway."""
+
+    def forbidden(*args: object, **kwargs: object) -> NoReturn:
+        raise AssertionError("a pool or a store was built with no database URL configured")
+
+    monkeypatch.delenv("OPSCONSOLE_DATABASE_URL", raising=False)
+    monkeypatch.setattr(cli, "build_pool", forbidden)
+    monkeypatch.setattr(cli, "PostgresEvalStore", forbidden)
+
+
+@pytest.mark.parametrize(
+    ("verdict", "expected"),
+    [("pass", EXIT_OK), ("fail", EXIT_FAILED), ("residency", EXIT_RESIDENCY)],
+    ids=["a clean run", "a failed assertion", "a residency violation"],
+)
+def test_with_no_database_url_nothing_is_stored_and_the_run_keeps_its_own_exit_code(
+    verdict: str,
+    expected: int,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Decision B. Catches a run that refuses to start, or exits 2, on a machine with no
+    PostgreSQL - which is every machine `make eval` is usually run on, and it would turn
+    the whole harness off rather than turn storage off. All three codes are covered
+    because a CLI that returned an unstored run's code correctly on the clean row could
+    still swallow the residency 3. ONE line on stderr is asserted exactly: silence leaves
+    an operator believing rows were written, and a line per case is noise in a CI log."""
+    forbid_store(monkeypatch)
+    out = tmp_path / "reports"
+
+    code = run_cli(monkeypatch, tmp_path, runner=RecordingRunner("pass", verdict, "pass"), out=out)
+
+    printed = capsys.readouterr()
+    assert code == expected
+    assert len(printed.err.strip().splitlines()) == 1
+    assert (out / REPORT_JSON_NAME).is_file()
+
+
+def test_the_rows_are_stored_once_after_both_report_files_exist(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Decision E's ordering. Catches a store called BEFORE `write_reports`, where an
+    insert that failed would cost the run both its rows and its two files - the artefact is
+    what survives a storage outage, and row 18's gate reads it off disk. Catches a store
+    called once per case, which would need a transaction per case and is decision G's
+    failure mode, and a store never called at all when a URL IS configured. The rows are
+    asserted against the report just written, so a CLI storing a second, freshly built
+    report fails here."""
+    out = tmp_path / "reports"
+    store = RecordingStore(out)
+    pooled = install_store(monkeypatch, store)
+
+    code = run_cli(monkeypatch, tmp_path, out=out)
+
+    assert code == EXIT_OK
+    assert pooled == [DATABASE_URL]
+    assert len(store.calls) == 1
+    assert store.reports_on_disk == [True]
+    run_row, case_rows = store.calls[0]
+    assert run_row.id == read_report(out)["id"]
+    assert len(case_rows) == 3
+
+
+@pytest.mark.parametrize(
+    ("verdict", "expected"),
+    [("pass", EXIT_USAGE), ("residency", EXIT_RESIDENCY)],
+    ids=["a passing run becomes exit 2", "a residency violation stays exit 3"],
+)
+def test_a_store_that_fails_reports_two_unless_the_run_already_answered_three(
+    verdict: str,
+    expected: int,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Decision E's exit rule, both halves in one shape. Catches a storage failure
+    swallowed into exit 0, which would let a gate report a run whose rows nobody can find,
+    and catches the opposite - a `2` written over a residency `3`, which downgrades a
+    boundary breach to a database complaint and is exactly what a project rule's spirit
+    forbids. The reports are asserted still on disk, because the run was paid for either
+    way, and the message is asserted as a message rather than a traceback."""
+    out = tmp_path / "reports"
+    store = RecordingStore(out, failure=RuntimeError("the eval store is unreachable"))
+    install_store(monkeypatch, store)
+
+    code = run_cli(monkeypatch, tmp_path, runner=RecordingRunner("pass", verdict, "pass"), out=out)
+
+    printed = capsys.readouterr()
+    assert code == expected
+    assert len(store.calls) == 1
+    assert (out / REPORT_JSON_NAME).is_file()
+    assert (out / REPORT_MD_NAME).is_file()
     assert "Traceback" not in printed.err

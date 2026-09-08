@@ -5,9 +5,10 @@ Two halves. The pure one came first: the format an adopter writes by hand
 scored by (`assertions`, #34), both pinned before anything could reach a network.
 The half that reaches one is `target`, `residency`, `runner` and `cli` (#33, #38,
 `docs/eval-target.md`) - the `ops-eval run` command, the seed reset, the turn and
-the per-turn residency check. `16c` adds `report`, the two files a run writes
-(#39, part, `docs/eval-report.md`), and `16d` adds the `eval_runs` and
-`eval_cases` rows.
+the per-turn residency check. `report` writes the two files a run leaves behind
+and `store` writes the `eval_runs` and `eval_cases` rows built from the same
+record (#39, `docs/eval-report.md`), the rows row 17's metrics and the console's
+eval page both read.
 """
 
 from __future__ import annotations

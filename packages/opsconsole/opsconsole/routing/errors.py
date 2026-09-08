@@ -61,7 +61,7 @@ class AllProvidersUnavailable(RoutingError):
 class IdentifierInvalid(RoutingError):
     """A client-supplied identifier failed its pre-check.
 
-    r`grep -rlE "raise Identifier[I]nvalid" packages/` returns TWENTY modules
+    r`grep -rlE "raise Identifier[I]nvalid" packages/` returns TWENTY-ONE modules
     as of an earlier change - the bracket is what keeps this quotation out of its own
     results, so the command can be re-run here and compared. The list is
     re-derived whole from that command rather than appended to.
@@ -75,6 +75,9 @@ class IdentifierInvalid(RoutingError):
                                  a residency rule and names a report directory
         evals/residency.py       a tenant no policy defines, and a data class the
                                  closed enum does not name
+        evals/store.py           every value an eval_runs or eval_cases row is
+                                 keyed by, plus the run kind, the category and
+                                 the three lengths nothing else caps
         gateway/context.py       the X-Tenant, X-Session and X-Data-Class headers
         gateway/routes/admin.py  the admin tenant parameter, and a reload whose
                                  routing.yaml will not parse

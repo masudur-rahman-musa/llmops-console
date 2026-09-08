@@ -22,8 +22,9 @@ The two file names are constants and nothing a caller supplies shapes a path
 inside it, and a rerun overwrites
 (`test_a_rerun_overwrites_the_two_files_rather_than_appending`).
 
-`16d` reads this record: it brings migration `003` and writes the `eval_runs` and
-`eval_cases` rows from the fields published here and in `docs/eval-report.md`.
+`evals/store.py` reads this record: migration `003` and the `eval_runs` and
+`eval_cases` rows are built from the fields published here and in
+`docs/eval-report.md`, and from no other source.
 """
 
 from __future__ import annotations

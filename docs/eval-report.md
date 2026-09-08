@@ -413,3 +413,68 @@ failed case names what was wrong with it - the assertions that failed, the
 residency verdict when the turn left its region, or the error when the turn
 never answered - so the JSON is for a machine and this file is enough for a
 person.
+
+## Storage
+
+The same run is also stored in PostgreSQL, in two tables `003_eval_runs.sql`
+creates in the `opsconsole` schema: one `eval_runs` row and one `eval_cases` row
+per case. The rows are written AFTER both files, in one transaction, so a
+storage outage costs a run its rows and never its report; a run whose cases only
+half-landed would be counted by every later query as a run with a shorter golden
+set, which is why it is one transaction rather than a statement per case.
+
+With no database URL configured a run stores nothing, says so in one line on
+stderr and keeps its own exit code: the golden set is usually run on a machine
+with no PostgreSQL up, and refusing there would turn the whole harness off
+rather than turn storage off. When a configured store does fail, the run exits
+`2` - unless it had already answered `3` for a residency violation, which wins.
+
+### eval_runs
+
+| column | type | what it is |
+|---|---|---|
+| `id` | `text` primary key | the report's own run id, a `uuid4` hex |
+| `started_at` | `timestamptz` | UTC, just before the first case |
+| `finished_at` | `timestamptz` | UTC, after the last one |
+| `set_name` | `text` | the golden set's file name |
+| `set_sha` | `text` | which version of the set this was |
+| `set_sha_source` | `text` | `commit` or `content` |
+| `run_kind` | `text` | `ci`, `nightly` or `manual`, with a CHECK |
+| `target` | `text` | the base URL evaluated |
+| `tenant` | `text` | the tenant the run was made as |
+| `git_sha` | `text` or NULL | this repo's `HEAD`, NULL when git cannot answer |
+| `metrics` | `jsonb` | the report's own `metrics` object |
+| `passed` | `boolean` | true when no case failed |
+| `report_path` | `text` | the `report.json` this run wrote |
+| `alias_resolution` | `jsonb` or NULL | which alias resolved where, filled later |
+| `judge_kappa` | `double precision` or NULL | judge calibration, filled later |
+
+The report's `run_kind` and the URL evaluated are two columns rather than one:
+the kind of run and the thing evaluated are different questions, and a stored
+number whose endpoint is unknown answers neither. `started_at DESC` is indexed,
+which is the order the console's eval page reads.
+
+### eval_cases
+
+| column | type | what it is |
+|---|---|---|
+| `run_id` | `text` | the `eval_runs.id` this case belongs to, ON DELETE CASCADE |
+| `case_id` | `text` | the case's id in the golden set |
+| `category` | `text` | one of the twelve categories |
+| `passed` | `boolean` | whether this case passed |
+| `tags` | `text[]` | the failure taxonomy, empty until it is filled |
+| `latency_ms` | `integer` or NULL | what the turn measured |
+| `cost_usd` | `numeric(18, 6)` or NULL | the same type and scale as `cost_ledger` |
+| `provider` | `text` or NULL | what served the turn |
+| `region` | `text` or NULL | where it was served |
+| `details` | `jsonb` | the assertion results, the residency verdict and the error |
+
+`run_id` is indexed. The four measured columns are NULL, never `0` and never
+`""`, on a case whose turn never answered: a zero there would be averaged in as
+a free, instant, in-region case and would lift every number reported from these
+rows exactly when the target is failing.
+
+Three columns ship empty and are filled by later work, not by a run: `tags`,
+`alias_resolution` and `judge_kappa`. They exist now because the shape is fixed
+and an applied migration is never edited, and each is commented in the SQL file
+with what fills it, so a NULL reads as "not measured yet" rather than as a bug.

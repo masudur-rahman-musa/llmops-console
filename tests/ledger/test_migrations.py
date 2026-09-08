@@ -41,7 +41,8 @@ from .conftest import Pool, new_schema_name, partitions, requires_postgres, tabl
 
 FIRST_VERSION = "001_residency_log"
 SECOND_VERSION = "002_cost_ledger"
-ALL_VERSIONS = (FIRST_VERSION, SECOND_VERSION)
+THIRD_VERSION = "003_eval_runs"
+ALL_VERSIONS = (FIRST_VERSION, SECOND_VERSION, THIRD_VERSION)
 """Every migration that ships, in the order the runner applies them. A stem is
 the version string, so a file renamed after it has been applied somewhere would
 re-run as a new version."""
