@@ -18,7 +18,7 @@ Three things it holds that no single field states:
 * **A case that measured nothing stores NULL, never `0` and never `""`.** A turn
   that never answered has no latency, cost, provider or region; a zero there
   would be averaged in as a free, instant, in-region case and would lift every
-  number row 17c reports exactly when the target is failing
+  number `evals/metrics.py` reports exactly when the target is failing
   (`test_a_case_whose_turn_failed_stores_no_measurements_and_its_error`).
 * **Every pre-check runs before a connection is borrowed**,
   which `test_write_refuses_a_malformed_tenant_before_any_sql` asserts as "no
@@ -43,8 +43,9 @@ cannot disagree about why a case failed
 JSON form: the two costs are `Decimal` in the mapping and decimal STRINGS in the
 column, exactly as they are in the file
 (`test_the_stored_metrics_are_the_json_the_report_file_carries`).
-`alias_resolution` and `judge_kappa` still ship NULL (decision F): row 17c's judge
-calibration fills them, the migration says so column by column, and
+`alias_resolution` and `judge_kappa` still ship NULL (decision F): row 17e's judge
+calibration fills `judge_kappa` - 17c added the judge and its verdict goes into
+`details`, not into a column of its own - the migration says so column by column, and
 `test_row_seventeens_remaining_columns_still_arrive_empty_rather_than_absent`
 pins each exactly rather than as falsy.
 """
@@ -195,16 +196,21 @@ class EvalStore(Protocol):
 
 
 def _details(case: CaseReport) -> dict[str, Any]:
-    """The three things a case carries that no column of its own holds.
+    """The four things a case carries that no column of its own holds.
 
     Dumped in JSON mode rather than as Python objects, because the column is
     `jsonb`: a `Decimal` or a `datetime` inside an assertion result would
     otherwise reach the adapter as an object it cannot serialise, at the end of a
-    run already paid for.
+    run already paid for. `17c`'s judge verdict is the fourth key and takes the
+    same treatment - a pydantic model handed to `Jsonb` raises inside
+    `json.dumps`, which is 17d's trap on this plan's field
+    (`test_the_details_carry_the_judge_verdict`). It is `null` and never absent on
+    a case nothing judged, so two rows of the same set answer one query.
     """
     return {
         "assertions": None if case.assertions is None else case.assertions.model_dump(mode="json"),
         "residency": None if case.residency is None else case.residency.model_dump(mode="json"),
+        "judge": None if case.judge is None else case.judge.model_dump(mode="json"),
         "error": case.error,
     }
 

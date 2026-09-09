@@ -42,6 +42,7 @@ from opsconsole.evals.assertions import (
     CaseAssertions,
 )
 from opsconsole.evals.cases import EvalCategory
+from opsconsole.evals.judge import JUDGE_LOW_SCORE, JudgeVerdict
 from opsconsole.evals.outcome import CaseOutcome
 from opsconsole.evals.residency import ResidencyVerdict
 from opsconsole.evals.runner import CaseRun
@@ -90,6 +91,7 @@ def make_run(
     failing: tuple[str, ...] = (),
     outcome: CaseOutcome | None = None,
     residency: ResidencyVerdict | None = None,
+    judge: JudgeVerdict | None = None,
     broken: bool = False,
     failure_kind: TurnFailureKind | None = None,
 ) -> CaseRun:
@@ -115,9 +117,14 @@ def make_run(
         assertions=CaseAssertions(case_id=case_id, results=_results(*failing)),
         residency=residency if residency is not None else clean_residency(case_id),
         outcome=outcome if outcome is not None else make_outcome(),
+        judge=judge,
         error=None,
         failure_kind=None,
-        passed=not failing and (residency is None or not residency.violation),
+        passed=(
+            not failing
+            and (residency is None or not residency.violation)
+            and (judge is None or judge.median >= JUDGE_LOW_SCORE)
+        ),
     )
 
 
@@ -414,3 +421,56 @@ def test_no_failed_case_in_a_run_covering_every_shape_has_an_empty_tag_tuple() -
 
     for run in runs:
         assert tags_for(run) != (), run.case_id
+
+
+# --------------------------------------------------------------------------
+# the judge's own tag (17c)
+# --------------------------------------------------------------------------
+
+
+def verdict(median: int) -> JudgeVerdict:
+    """One judge verdict of the given median, with three samples that produce it."""
+    return JudgeVerdict(median=median, samples=(median, median, median), reason="because")
+
+
+@pytest.mark.parametrize(
+    ("median", "tags"),
+    [
+        (1, (FailureTag.JUDGE_LOW.value,)),
+        (2, (FailureTag.JUDGE_LOW.value,)),
+        (JUDGE_LOW_SCORE, ()),
+        (4, ()),
+        (5, ()),
+    ],
+    ids=["one", "two", "three", "four", "five"],
+)
+def test_a_low_judge_score_is_tagged_judge_low(median: int, tags: tuple[str, ...]) -> None:
+    """The word `judge_low` was published by 17b and emitted by nothing until now, so this
+    is the case that turns it from a name into a tag. Every assertion passes and the
+    residency verdict is clean on every row, so no neighbouring guard can produce a tag
+    here - removing the judge branch is the only thing that flips the two low rows. The
+    three rows at and above `JUDGE_LOW_SCORE` are the other half of the boundary decision
+    D fixes at "1 and 2 fail, 3 and above do not": a `<=` in the tagger tags the median of
+    3 and fails the middle row alone."""
+    run = make_run(failing=(), judge=verdict(median))
+
+    assert tags_for(run) == tags
+
+
+def test_judge_low_follows_tag_order_beside_an_assertion_tag() -> None:
+    """Catches `judge_low` appended in the order the tagger happened to check things
+    rather than at its published position - `TAG_ORDER` puts it LAST, after the run-level
+    tags, so a tagger that emits the judge before the assertions produces a tuple that
+    diffs differently from every other report. Two tags in one case, which is also what
+    catches a judge branch written as an early return that discards the assertion tags."""
+    run = make_run(
+        failing=("decision",),
+        residency=clean_residency(violation=True, observed="us"),
+        judge=verdict(1),
+    )
+
+    assert tags_for(run) == (
+        FailureTag.WRONG_DECISION.value,
+        FailureTag.RESIDENCY_VIOLATION.value,
+        FailureTag.JUDGE_LOW.value,
+    )

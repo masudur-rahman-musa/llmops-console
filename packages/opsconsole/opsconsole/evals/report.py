@@ -20,7 +20,7 @@ Three things the module holds that no single field states:
   vocabulary (#40), counted in `metrics["tags"]` and rendered in both the
   failures table and the taxonomy block
   (`test_a_case_report_carries_the_tags_the_taxonomy_computed`).
-* `metrics` carries the SAME sixteen keys on every run, whatever the run held
+* `metrics` carries the SAME seventeen keys on every run, whatever the run held
   (#40), so a gate reads a threshold against a key that is always there and two
   reports diff (`test_the_metrics_key_set_is_pinned_including_tags`); a metric
   with no case behind it is `null` there and is left out of `report.md`
@@ -49,6 +49,7 @@ from typing import Any, Final, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 from opsconsole.evals.assertions import AssertionResult, AssertionStatus, CaseAssertions
+from opsconsole.evals.judge import JUDGE_LOW_SCORE, JUDGE_MAX_SCORE, JudgeVerdict
 from opsconsole.evals.metrics import METRIC_NAMES, compute_metrics
 from opsconsole.evals.residency import ResidencyVerdict
 from opsconsole.evals.runner import CaseRun, RunResult
@@ -146,6 +147,13 @@ class CaseReport(BaseModel):
     (`test_a_case_report_carries_the_tags_the_taxonomy_computed`). It is derived
     here rather than in the runner because the tags are a READING of the record
     the runner measured, and `16d` stores it as the `eval_cases.tags` column.
+
+    `judge` is `17c`'s verdict, carried whole rather than reduced to its median:
+    the three samples and the median sample's reason are the audit trail behind a
+    case an LLM failed, and a reader who cannot see them cannot tell a confident
+    judgement from three that disagreed
+    (`test_a_case_report_carries_the_judge_verdict`). It is `null` and never `{}`
+    on a case nothing judged.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -160,6 +168,7 @@ class CaseReport(BaseModel):
     region: str | None
     assertions: CaseAssertions | None
     residency: ResidencyVerdict | None
+    judge: JudgeVerdict | None
     error: str | None
 
     @field_serializer("cost_usd")
@@ -198,6 +207,12 @@ class RunReport(BaseModel):
     target: str
     passed: bool
     metrics: Mapping[str, Any]
+    judge_prompt_version: str | None
+    """The sha256 of the prompt file the judge scored this run with, or `null`
+    when nothing was judged (`17c` decision H). At the RUN level and not per case,
+    because one process reads one prompt file and a hash repeated on two hundred
+    rows is the same fact two hundred times
+    (`test_the_run_carries_the_judge_prompt_version_and_null_without_a_judge`)."""
     cases: tuple[CaseReport, ...]
 
 
@@ -220,6 +235,7 @@ def _case_report(run: CaseRun) -> CaseReport:
         region=None if outcome is None else outcome.region,
         assertions=run.assertions,
         residency=run.residency,
+        judge=run.judge,
         error=run.error,
     )
 
@@ -277,6 +293,7 @@ def build_report(
     git_sha: str | None,
     tenant: str,
     target: str,
+    judge_prompt_version: str | None = None,
 ) -> RunReport:
     """Turn one run and its identity into the record both files render.
 
@@ -285,7 +302,7 @@ def build_report(
     metric set were both added without changing this schema or `16d`'s column.
 
     The metric set is `compute_metrics` over the run's own records, spread into
-    the mapping as sixteen flat keys, and computed a second time per category
+    the mapping as seventeen flat keys, and computed a second time per category
     inside `_categories` - the same function over a subset, so the breakdown and
     the totals cannot drift
     (`test_the_run_level_metrics_are_the_metric_set_computed_over_every_run`).
@@ -313,6 +330,7 @@ def build_report(
         "tenant": tenant,
         "target": target,
         "passed": result.failed_count == 0,
+        "judge_prompt_version": judge_prompt_version,
         "metrics": {
             "cases": result.cases,
             "passed": result.passed_count,
@@ -350,6 +368,13 @@ def _reason(case: CaseReport) -> str:
     that failed and, when the turn left its region, the residency verdict too - a
     violation with every assertion passing has no failed assertion to name
     (`test_the_markdown_names_every_failed_case_and_the_assertion_that_failed`).
+
+    A low judge median is named here too, with the median sample's own reason,
+    because a case an LLM failed has nothing else to explain it - a row reading
+    `judge_low` and no more leaves the reader with the tag alone
+    (`test_the_markdown_renders_the_judge_verdict_of_a_failed_case`). A verdict at
+    or above `JUDGE_LOW_SCORE` is not a reason and is not printed: it failed for
+    something else, and the score that did not fail it is in `report.json`.
     """
     if case.assertions is None:
         return case.error or "the turn never answered"
@@ -363,11 +388,22 @@ def _reason(case: CaseReport) -> str:
     if case.residency is not None and case.residency.violation:
         allowed = ", ".join(case.residency.allowed)
         reasons.append(f"residency: served in {case.residency.observed}, allowed {allowed}")
+    if case.judge is not None and case.judge.median < JUDGE_LOW_SCORE:
+        reasons.append(
+            f"judge: median {case.judge.median} of {JUDGE_MAX_SCORE}, {case.judge.reason}"
+        )
     return "; ".join(reasons) if reasons else "failed with no stated reason"
 
 
 def _identity_lines(report: RunReport) -> list[str]:
-    """The header a reader needs before any count means anything: which run was this."""
+    """The header a reader needs before any count means anything: which run was this.
+
+    The judge prompt's sha256 is one of them (`17c` criterion 7): a score nobody
+    can trace to the wording that produced it is not reproducible, and a run that
+    judged nothing says `none` rather than carrying a stale hash
+    (`test_the_run_carries_the_judge_prompt_version_and_null_without_a_judge`,
+    `test_the_markdown_renders_the_judge_verdict_of_a_failed_case`).
+    """
     return [
         f"# Eval run {report.id}",
         "",
@@ -377,6 +413,7 @@ def _identity_lines(report: RunReport) -> list[str]:
         f"- git sha: {report.git_sha if report.git_sha is not None else 'unknown'}",
         f"- tenant: {report.tenant}",
         f"- target: {report.target}",
+        f"- judge prompt: {report.judge_prompt_version or 'none'}",
         f"- started: {report.started_at.isoformat()}",
         f"- finished: {report.finished_at.isoformat()}",
         f"- result: {'passed' if report.passed else 'FAILED'}",

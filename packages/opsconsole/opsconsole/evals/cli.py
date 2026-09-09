@@ -1,11 +1,11 @@
 r"""`ops-eval run`: the command `make eval` names, and the four exit codes (#33, #38).
 
 A thin shell over `runner.run_set`. Everything it owns happens BEFORE the target
-is touched - the three argument pre-checks, the policy, the golden set - because
+is touched - every argument pre-check, the policy, the golden set - because
 after the reset the seed has been spent and a refusal costs a whole run.
 
     ops-eval run --target URL --set PATH --tenant T --out DIR
-                 [--policy PATH] [--set-sha SHA] [--run-kind KIND]
+                 [--policy PATH] [--set-sha SHA] [--run-kind KIND] [--judge-url URL]
 
 The exit code is the interface, not the output (decision C). Row 18's PR gate has
 to tell an accuracy regression from a residency breach without parsing stdout,
@@ -13,6 +13,16 @@ so the four codes are module constants pinned exactly by
 `test_the_exit_codes_are_the_published_ones`, and a residency violation or a
 cross-tenant leak outranks a failed assertion
 (`test_a_residency_violation_exits_three_and_outranks_a_failed_assertion`).
+
+`--judge-url` is pre-checked by the same `_checked_target` the target URL is, in
+the same block and for the same reason: an unchecked judge URL surfaces as a
+transport error per rubric case after the seed has been reset
+(`test_the_judge_url_is_refused_before_the_target_is_touched`). The judge itself
+is OFF unless that URL and `OPSCONSOLE_EVAL_JUDGE_KEY` are BOTH present (17c
+decision B, the shape decision 16d took for the store): the run then judges
+nothing, prints `UNJUDGED_LINE` once on stderr, reports `judge_mean` as `null`
+and keeps its own exit code
+(`test_with_no_judge_key_the_run_judges_nothing_and_says_so_once`).
 
 `--tenant` and `--set-sha` are pre-checked with `re.fullmatch` (a project rule
 and 4) before any policy is consulted - the tenant against the gateway's OWN
@@ -63,6 +73,7 @@ import httpx
 
 from opsconsole.core.settings import DEFAULT_ROUTING_POLICY_PATH, Settings
 from opsconsole.evals.cases import EvalCase, EvalSetInvalid, load_golden_set
+from opsconsole.evals.judge import JudgeClient, judge_prompt_version
 from opsconsole.evals.report import (
     REPORT_JSON_NAME,
     SET_SHA_PATTERN,
@@ -120,6 +131,18 @@ machine without PostgreSQL up - which is where a golden set is usually run
 (`test_with_no_database_url_nothing_is_stored_and_the_run_keeps_its_own_exit_code`)."""
 
 
+UNJUDGED_LINE: Final[str] = (
+    "no judge URL or no OPSCONSOLE_EVAL_JUDGE_KEY: this run judged nothing, and judge_mean is null"
+)
+"""The ONE line an unjudged run prints on stderr (17c decision B).
+
+`UNSTORED_LINE`'s shape and its reasons: silence leaves an operator who passed
+`--judge-url` believing the rubric cases were scored, a line per case is noise in
+a CI log, and refusing to run would turn the harness off on every machine with no
+gateway up rather than turn the judge off
+(`test_with_no_judge_url_the_run_judges_nothing_and_keeps_its_exit_code`)."""
+
+
 class UsageError(Exception):
     """One argument was refused. Reported on stderr, and answered with `EXIT_USAGE`."""
 
@@ -151,6 +174,24 @@ def _checked_target(value: str) -> str:
     if parsed.scheme not in ALLOWED_TARGET_SCHEMES or not parsed.netloc:
         raise UsageError(f"--target: {value!r} is not an absolute http(s) URL")
     return value
+
+
+def _checked_judge_url(value: str | None) -> str | None:
+    """Validate `--judge-url` by `_checked_target`'s own rule, or answer `None`.
+
+    The same function and not a second copy of the rule: the two URLs this command
+    takes would otherwise drift, and a judge URL of `gateway.example` is the same
+    defect as a target of one
+    (`test_a_judge_url_that_is_not_an_absolute_http_url_is_refused` parametrises
+    the target's own rejection table). The message still names the flag the
+    operator typed.
+    """
+    if value is None:
+        return None
+    try:
+        return _checked_target(value)
+    except UsageError:
+        raise UsageError(f"--judge-url: {value!r} is not an absolute http(s) URL") from None
 
 
 def _checked_out(value: Path) -> Path:
@@ -297,6 +338,35 @@ def _store_rows(report: RunReport, out: Path) -> str | None:
     return None
 
 
+def _judge(judge_url: str | None, client: httpx.Client) -> JudgeClient | None:
+    """The judge this run scores with, or `None` with one line on stderr.
+
+    Both halves are required (decision B): a URL with no key would spend three
+    401s per rubric case, and a key with no URL has nowhere to send them. The
+    client is the run's own `httpx.Client`, so the judge opens no second pool and
+    the whole path is drivable through one `MockTransport`.
+    """
+    api_key = Settings().eval_judge_key
+    if judge_url is None or not api_key:
+        print(UNJUDGED_LINE, file=sys.stderr)
+        return None
+    return JudgeClient(judge_url, client=client, api_key=api_key)
+
+
+def _judged_prompt_version(result: RunResult) -> str | None:
+    """The prompt's sha256 when a case was actually judged, and `None` otherwise.
+
+    Read off the RECORDS rather than off whether a judge was built (criterion 7):
+    a run whose every judge sample failed, and a set with no rubric in it, both
+    judged nothing, and a hash recorded there would tell a later comparison the
+    two runs used a prompt neither of them scored anything with
+    (`test_with_no_judge_url_the_run_judges_nothing_and_keeps_its_exit_code`).
+    """
+    if any(run.judge is not None for run in result.runs):
+        return judge_prompt_version()
+    return None
+
+
 def _parser() -> argparse.ArgumentParser:
     """`ops-eval` and its one subcommand."""
     parser = argparse.ArgumentParser(prog="ops-eval", description="Run a golden set.")
@@ -324,6 +394,11 @@ def _parser() -> argparse.ArgumentParser:
         default=DEFAULT_RUN_KIND,
         help=f"why this run happened (default: {DEFAULT_RUN_KIND})",
     )
+    run.add_argument(
+        "--judge-url",
+        dest="judge_url",
+        help="base URL of the gateway that serves the judge alias; without it, no judging",
+    )
     return parser
 
 
@@ -343,6 +418,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         out = _checked_out(options.out)
         policy = _checked_policy(options.policy, tenant)
         supplied_sha = _checked_set_sha(options.set_sha)
+        judge_url = _checked_judge_url(options.judge_url)
         case_set = Path(options.case_set)
         cases = load_golden_set(case_set)
         set_sha, set_sha_source = _set_sha(supplied_sha, case_set)
@@ -360,6 +436,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 policy=policy,
                 tenant=tenant,
                 other_tenant_markers=_other_tenant_markers(cases, tenant),
+                judge=_judge(judge_url, http),
             )
         except TargetUnreachable as exc:
             print(exc, file=sys.stderr)
@@ -377,6 +454,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         git_sha=_git_sha(),
         tenant=tenant,
         target=target,
+        judge_prompt_version=_judged_prompt_version(result),
     )
     try:
         write_reports(out, report)

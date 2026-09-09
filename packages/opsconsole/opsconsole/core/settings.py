@@ -112,6 +112,19 @@ class Settings(BaseSettings):
     `test_create_app_keeps_the_in_process_cache_without_a_redis_url` and
     `test_create_app_uses_the_redis_cache_when_a_redis_url_is_configured`."""
 
+    eval_judge_key: str = ""
+    """The tenant API key `ops-eval --judge-url` authenticates the judge with, or
+    empty for a harness that judges nothing.
+
+    A key and not a digest, unlike `admin_key_sha256`: the harness is a CLIENT of
+    the gateway here and has to present the key, where authenticating one only
+    needs its hash. Empty is the shipped default and the common case - `make eval`
+    on a laptop with no gateway up runs the deterministic assertions and prints
+    `cli.UNJUDGED_LINE` (an earlier change decision B,
+    `test_with_no_judge_key_the_run_judges_nothing_and_says_so_once`). It lives in
+    `.env` locally and in a SOPS-encrypted secret in the cluster, never in this
+    repository."""
+
     database_url: str | None = None
     """Where PostgreSQL lives, or `None` for no `postgres` readiness probe.
 

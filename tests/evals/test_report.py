@@ -26,7 +26,7 @@ The contract these cases are written against, before it exists:
   the failures part.
 * `metrics` is a mapping (decision G) carrying `cases`, `passed`, `failed`,
   `residency_violations`, `leaked` and `categories`, the last being
-  `{category: {"passed": n, "failed": n}}` - plus, after `17d`, the sixteen of
+  `{category: {"passed": n, "failed": n}}` - plus, after `17d` and `17c`, the seventeen of
   `metrics.METRIC_NAMES` at BOTH levels, computed by `compute_metrics` over
   `result.runs` and over each category's own runs, and rendered into `report.md`
   as `METRICS_HEADING` and `CATEGORY_METRICS_HEADING` blocks between the
@@ -66,6 +66,7 @@ from opsconsole.evals.assertions import (
     CaseAssertions,
 )
 from opsconsole.evals.cases import EvalCategory
+from opsconsole.evals.judge import JudgeVerdict
 from opsconsole.evals.metrics import METRIC_NAMES, compute_metrics
 from opsconsole.evals.outcome import CaseOutcome
 from opsconsole.evals.report import (
@@ -144,6 +145,7 @@ def make_run(
     verdict: str = "pass",
     category: EvalCategory = EvalCategory.HELPDESK,
     outcome: CaseOutcome | None = None,
+    judge: JudgeVerdict | None = None,
     failure_kind: TurnFailureKind | None = None,
 ) -> CaseRun:
     """One per-case record of the named shape, as `run_set` would have built it.
@@ -197,13 +199,33 @@ def make_run(
             violation=verdict == "residency",
         ),
         outcome=outcome if outcome is not None else make_outcome(region=observed),
+        judge=judge,
         error=None,
         passed=verdict == "pass",
     )
 
 
-def build(result: RunResult) -> RunReport:
-    """`build_report` over one run, with the identity table above."""
+def build(result: RunResult, *, judge_prompt_version: str | None = None) -> RunReport:
+    """`build_report` over one run, with the identity table above.
+
+    `judge_prompt_version` is passed only where a case names it, which is what
+    lets the run-level case below tell "absent" from "passed as None" (17c
+    criterion 7).
+    """
+    if judge_prompt_version is not None:
+        return build_report(
+            result,
+            started_at=STARTED,
+            finished_at=FINISHED,
+            set_name=IDENTITY["set_name"],
+            set_sha=IDENTITY["set_sha"],
+            set_sha_source=IDENTITY["set_sha_source"],
+            run_kind=IDENTITY["run_kind"],
+            git_sha=IDENTITY["git_sha"],
+            tenant=IDENTITY["tenant"],
+            target=IDENTITY["target"],
+            judge_prompt_version=judge_prompt_version,
+        )
     return build_report(
         result,
         started_at=STARTED,
@@ -270,7 +292,7 @@ RUN_METRIC_KEYS: tuple[str, ...] = (
     "categories",
     "tags",
 )
-"""Every key `metrics` carries, in order: the five counts, the sixteen, then the two maps.
+"""Every key `metrics` carries, in order: the five counts, the seventeen, then the two maps.
 
 `metrics` is a plain `Mapping` with no schema of its own, so this tuple is the
 only published record of its shape - `16d` stores it as `jsonb` and row 18's gate
@@ -278,7 +300,7 @@ reads thresholds out of it by name.
 """
 
 CATEGORY_METRIC_KEYS: tuple[str, ...] = ("passed", "failed", *METRIC_NAMES)
-"""Every key one category's mapping carries (decision E): its two counts, then the sixteen."""
+"""Every key one category's mapping carries (decision E): its two counts, then the seventeen."""
 
 
 def section_lines(markdown: str, heading: str) -> list[str]:
@@ -452,7 +474,7 @@ def test_the_per_category_breakdown_counts_each_category_once_and_omits_none() -
     passes. Four categories, three of them mixed differently, so a builder that counts a
     case under the wrong bucket or double-counts one shows a wrong number here.
 
-    After `17d` the same mapping also carries the sixteen (decision E), so the two counts
+    After `17d` the same mapping also carries the seventeen (decision E), so the two counts
     are compared field by field rather than as the whole mapping, and the key tuple is
     asserted per category - which is what catches the breakdown gaining the metric set at
     the run level only, or gaining it in a different order from `METRIC_NAMES`."""
@@ -482,7 +504,7 @@ def test_the_per_category_breakdown_counts_each_category_once_and_omits_none() -
 
 
 def test_the_metrics_key_set_is_pinned_including_tags() -> None:
-    """Catches a `metrics` key added silently, and `tags` or one of `17d`'s sixteen
+    """Catches a `metrics` key added silently, and `tags` or one of the seventeen
     specifically forgotten from the mapping `build_report` assembles: `metrics` is a
     plain `Mapping` with no schema of its own, so nothing but this test stops a consumer
     reading `report.metrics["tags"]` or `report.metrics["injection_resistance"]` from a
@@ -554,7 +576,7 @@ def test_a_clean_runs_tags_metric_is_an_empty_mapping() -> None:
 
 
 def test_the_run_level_metrics_are_the_metric_set_computed_over_every_run() -> None:
-    """Catches `build_report` computing the sixteen a second way of its own, or over a
+    """Catches `build_report` computing the seventeen a second way of its own, or over a
     subset - the failed cases, or the `CaseReport` rows rather than the `CaseRun`s. Each
     value is compared with `compute_metrics(result.runs)`, and six are also asserted as
     hand-checked constants so the test cannot pass by both sides being wrong together:
@@ -1103,3 +1125,88 @@ def test_the_report_models_are_frozen() -> None:
         report.passed = True  # type: ignore[misc]
     with pytest.raises(ValueError):
         report.cases[0].case_id = "omega"  # type: ignore[misc]
+
+
+# --------------------------------------------------------------------------
+# the judge verdict and the prompt version (17c)
+# --------------------------------------------------------------------------
+
+
+JUDGE_VERSION = "3c9a1f0e8d7b6a5c4e3d2b1a0f9e8d7c6b5a4938271605f4e3d2c1b0a9f8e7d6"
+"""A sha256-shaped string that is nothing else in this file, so a builder wiring
+`judge_prompt_version` from the set SHA or the git SHA shows a wrong value."""
+
+
+def a_verdict(median: int = 2) -> JudgeVerdict:
+    """One verdict whose three samples are all different from each other and from the
+    median, so a report that stored the samples in the median's place is visible."""
+    return JudgeVerdict(median=median, samples=(5, 1, median), reason="the reply cites nothing")
+
+
+def test_a_case_report_carries_the_judge_verdict() -> None:
+    """Criterion 7 per case. Catches a report that keeps only the median - the three
+    samples and the reason are the whole audit trail behind a score that failed a case,
+    and a reader who cannot see `(5, 1, 2)` cannot tell a confident judgement from a
+    disagreeing one. Catches an unjudged case rendered as an empty object rather than
+    `null`, which reads as "judged, and it said nothing". Read back out of the JSON as
+    well as off the model, because `details` and the console both parse the document."""
+    judged = make_run("alpha", verdict="fail", judge=a_verdict())
+    unjudged = make_run("beta", verdict="pass")
+
+    report = build(RunResult(runs=(judged, unjudged)), judge_prompt_version=JUDGE_VERSION)
+    document = json.loads(report_json(report))
+
+    assert report.cases[0].judge == a_verdict()
+    assert report.cases[1].judge is None
+    assert document["cases"][0]["judge"] == {
+        "median": 2,
+        "samples": [5, 1, 2],
+        "reason": "the reply cites nothing",
+    }
+    assert document["cases"][1]["judge"] is None
+
+
+def test_the_run_carries_the_judge_prompt_version_and_null_without_a_judge() -> None:
+    """Decision H at the run level. Catches a prompt version recorded per CASE, which
+    would repeat a 64-character hash on every row of a two-hundred-case report, and one
+    that defaults to a placeholder on a run where nothing was judged - `null` is the claim
+    that no prompt was used, and a stale hash there would tell a future comparison the
+    runs are alike. The published worked report is held to the same shape in the same
+    breath: it is what `docs/eval-report.md` quotes byte for byte, so a fixture that never
+    grew the three new fields is a document teaching the old one."""
+    assert build(MIXED, judge_prompt_version=JUDGE_VERSION).judge_prompt_version == JUDGE_VERSION
+    assert build(MIXED).judge_prompt_version is None
+
+    payload = json.loads(REPORT_FIXTURE.read_text(encoding="utf-8"))
+    fixture = RunReport.model_validate(payload)
+    assert payload["judge_prompt_version"] is None
+    assert fixture.judge_prompt_version is None
+    assert payload["metrics"]["judge_mean"] is None
+    assert [case["judge"] for case in payload["cases"]] == [None, None, None, None]
+    assert [case.judge for case in fixture.cases] == [None, None, None, None]
+    for counts in payload["metrics"]["categories"].values():
+        assert counts["judge_mean"] is None
+
+
+def test_the_markdown_renders_the_judge_verdict_of_a_failed_case() -> None:
+    """Criterion 7's last clause, in the document a human opens after a red gate. Catches
+    a judge verdict that lives only in the JSON: a case failed by a score of 2 whose
+    Markdown row says only `judge_low` leaves the reader with the tag and no reason, which
+    is the one thing a rubric failure has to explain. The passed case's median is asserted
+    absent from the failures section, so a renderer printing every verdict there fails
+    too, and the prompt version is asserted in the identity block because a report whose
+    scores cannot be traced to a prompt is not reproducible."""
+    failed = make_run("gamma", verdict="fail", judge=a_verdict())
+    passed = make_run("alpha", verdict="pass", judge=a_verdict(median=4))
+
+    markdown = report_markdown(
+        build(RunResult(runs=(passed, failed)), judge_prompt_version=JUDGE_VERSION)
+    )
+    section = failures_section(markdown)
+    row = next(line for line in section.splitlines() if line.startswith("| gamma "))
+
+    assert JUDGE_VERSION in markdown
+    assert "judge_low" in row
+    assert "2" in row
+    assert "the reply cites nothing" in row
+    assert "alpha" not in section

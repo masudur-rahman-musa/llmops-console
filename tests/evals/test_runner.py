@@ -38,6 +38,7 @@ import pytest
 
 from opsconsole.evals.assertions import AssertionStatus
 from opsconsole.evals.cases import EvalCase, EvalCategory, ExpectedOutcome
+from opsconsole.evals.judge import JUDGE_LOW_SCORE, JUDGE_PATH, JUDGE_SAMPLES, JudgeClient
 from opsconsole.evals.residency import EVAL_DATA_CLASS
 from opsconsole.evals.runner import RunResult, run_set
 from opsconsole.evals.target import RESET_PATH, TURN_PATH, TargetClient, TurnFailureKind
@@ -80,8 +81,14 @@ def make_case(
     *,
     category: EvalCategory = EvalCategory.HELPDESK,
     expected: ExpectedOutcome | None = None,
+    rubric: str | None = None,
 ) -> EvalCase:
-    """One case; `expected` defaults to a thin case, which `assert_case` passes."""
+    """One case; `expected` defaults to a thin case, which `assert_case` passes.
+
+    `rubric` defaults to `None`, which is what keeps every case above out of the
+    judge's way: a rubric is the only thing that makes a case judgeable (17c
+    criterion 1), so the existing cases assert the unjudged path unchanged.
+    """
     return EvalCase(
         id=case_id,
         category=category,
@@ -89,7 +96,7 @@ def make_case(
         principal_user="dana.okafor",
         messages=[{"role": "user", "content": f"question for {case_id}"}],
         expected=expected if expected is not None else ExpectedOutcome(),
-        judge_rubric=None,
+        judge_rubric=rubric,
     )
 
 
@@ -142,14 +149,25 @@ class Target:
         return TargetClient(BASE_URL, client=httpx.Client(transport=httpx.MockTransport(self)))
 
 
-def run(target: Target, cases: tuple[EvalCase, ...], *, markers: tuple[str, ...] = ()) -> RunResult:
-    """Run a set against a recording target, with the fixed tenant and policy."""
+def run(
+    target: Target,
+    cases: tuple[EvalCase, ...],
+    *,
+    markers: tuple[str, ...] = (),
+    judge: JudgeClient | None = None,
+) -> RunResult:
+    """Run a set against a recording target, with the fixed tenant and policy.
+
+    `judge` defaults to `None`, which is the run every case above this line makes:
+    the judge is off unless a case hands one in (17c decision B).
+    """
     return run_set(
         client=target.client(),
         cases=cases,
         policy=POLICY,
         tenant=TENANT,
         other_tenant_markers=markers,
+        judge=judge,
     )
 
 
@@ -356,3 +374,174 @@ def test_a_clean_cross_tenant_case_does_not_report_a_leak() -> None:
 
     assert result.leaked is False
     assert result.passed_count == 1
+
+
+# --------------------------------------------------------------------------
+# the judge, on the cases that carry a rubric (17c)
+# --------------------------------------------------------------------------
+
+
+class Judge:
+    """A recording in-process judge, answering one score per rubric it is shown.
+
+    Keyed by rubric text rather than by case id, because the case id is exactly
+    what a judge request does NOT carry: the rubric and the reply reach it as
+    data (17c criterion 5), so matching on the rubric is the only thing that can
+    tell which case a sample belongs to - and it is also what proves the runner
+    handed the judge the right case's rubric rather than the first one's.
+
+    A rubric with a `None` score answers 500, which is the judge outage of
+    decision E; a rubric this map does not know is an error, so a runner that
+    judged a case with no rubric fails loudly rather than quietly.
+    """
+
+    def __init__(self, scores: Mapping[str, int | None]) -> None:
+        self.scores = scores
+        self.requests: list[str] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        assert request.url.path == JUDGE_PATH
+        body: dict[str, Any] = json.loads(request.content)
+        sent = json.dumps(body["messages"])
+        matched = [rubric for rubric in self.scores if rubric in sent]
+        assert len(matched) == 1, f"the judge was shown {len(matched)} known rubrics"
+        self.requests.append(matched[0])
+        score = self.scores[matched[0]]
+        if score is None:
+            return httpx.Response(500, json={"error": "the judge is down"})
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps({"score": score, "reason": "because"}),
+                        },
+                    }
+                ]
+            },
+        )
+
+    def client(self) -> JudgeClient:
+        return JudgeClient(
+            "https://gateway.example",
+            client=httpx.Client(transport=httpx.MockTransport(self)),
+            api_key="sk-eval-judge-not-a-real-key",
+        )
+
+
+def test_only_a_case_with_a_rubric_is_judged() -> None:
+    """Catches a runner that judges every case in the set, which triples the spend of a
+    two-hundred-case run and puts a score on cases no author ever wrote a standard for.
+    The judged case is the MIDDLE one, so a runner judging only the first, or only the
+    last, fails; and the samples are counted, so a runner that judged the right case once
+    instead of three times fails here rather than in `test_judge.py`."""
+    cases = (make_case("c-1"), make_case("c-2", rubric="rubric for c-2"), make_case("c-3"))
+    judge = Judge({"rubric for c-2": 4})
+
+    result = run(Target(ALL_FINE), cases, judge=judge.client())
+
+    assert judge.requests == ["rubric for c-2"] * JUDGE_SAMPLES
+    assert [record.judge is None for record in result.runs] == [True, False, True]
+    verdict = result.runs[1].judge
+    assert verdict is not None
+    assert verdict.median == 4
+    assert verdict.samples == (4, 4, 4)
+
+
+def test_a_case_with_no_rubric_is_not_judged_at_all() -> None:
+    """Risk 1, asserted where it costs money: the transport saw NO request. Catches a
+    runner that calls the judge for every case and lets the judge decide, which would still
+    produce `judge is None` on these records - the verdict alone cannot tell "not judged"
+    from "judged and discarded", and only one of those two is free."""
+    judge = Judge({"a rubric no case carries": 4})
+
+    result = run(Target(ALL_FINE), THREE_CASES, judge=judge.client())
+
+    assert judge.requests == []
+    assert [record.judge for record in result.runs] == [None, None, None]
+    assert result.passed_count == 3
+
+
+def test_a_case_that_passed_every_assertion_fails_on_a_low_judge_score() -> None:
+    """Risk 4 and criterion 6. Catches a judge whose verdict is recorded and never read:
+    every assertion here passes and the residency check is clean, so the ONLY thing that
+    can fail this case is the median of 2 - and a runner that stores `judge` without
+    folding it into `passed` reports a clean run beside a case the judge failed. The
+    assertions are asserted passed in the same breath, so a run that failed for the wrong
+    reason cannot be mistaken for this one."""
+    case = make_case("c-1", rubric="a rubric")
+    judge = Judge({"a rubric": 2})
+
+    result = run(Target(ALL_FINE), (case,), judge=judge.client())
+
+    record = result.runs[0]
+    assert record.judge is not None
+    assert record.judge.median == 2
+    assert record.assertions is not None
+    assert record.assertions.passed is True
+    assert record.residency is not None
+    assert record.residency.violation is False
+    assert record.passed is False
+    assert result.failed_count == 1
+
+
+@pytest.mark.parametrize("score", [JUDGE_LOW_SCORE, 4, 5], ids=["three", "four", "five"])
+def test_a_score_of_three_does_not_fail_the_case(score: int) -> None:
+    """The inclusive boundary of `JUDGE_LOW_SCORE`, which decision D fixes at "1 and 2
+    fail, 3 and above do not". Catches `<=` where `<` belongs - an implementation failing
+    every merely-adequate case would turn the judge into a gate nobody can pass - and
+    catches a judge that overrides a verdict the assertions already settled: the second
+    case in this run failed its `decision` assertion and is scored 5, so a runner that let
+    a good score PASS a failed case fails here."""
+    cases = (
+        make_case("c-1", rubric="the adequate case"),
+        make_case(
+            "c-2", expected=ExpectedOutcome(decision="auto_approved"), rubric="the wrong case"
+        ),
+    )
+    target = Target({**ALL_FINE, "c-2": envelope(decision="escalated")})
+    judge = Judge({"the adequate case": score, "the wrong case": 5})
+
+    result = run(target, cases, judge=judge.client())
+
+    assert [record.passed for record in result.runs] == [True, False]
+    assert result.passed_count == 1
+
+
+def test_a_judge_that_never_answered_leaves_the_verdict_the_assertions_gave_it() -> None:
+    """Decision E, in the runner. Catches a judge outage counted as a case failure, which
+    would turn every run made while the gateway was down into a red gate that says nothing
+    about the agent under test, and catches the opposite - an unjudged case recorded with a
+    fabricated median. The failing case is here too, so a runner that answered "everything
+    passes when the judge is down" fails as well."""
+    cases = (
+        make_case("c-1", rubric="the unreachable case"),
+        make_case(
+            "c-2", expected=ExpectedOutcome(decision="auto_approved"), rubric="the failing case"
+        ),
+    )
+    target = Target({**ALL_FINE, "c-2": envelope(decision="escalated")})
+    judge = Judge({"the unreachable case": None, "the failing case": None})
+
+    result = run(target, cases, judge=judge.client())
+
+    assert [record.judge for record in result.runs] == [None, None]
+    assert [record.passed for record in result.runs] == [True, False]
+    assert result.passed_count == 1
+
+
+def test_a_run_with_no_judge_configured_judges_nothing() -> None:
+    """Criterion 6's last clause and decision B. Catches a runner that builds its own
+    judge from the environment when none was handed in, which is how a `make eval` on a
+    laptop with no gateway up starts making paid calls - and how the harness's behaviour
+    starts depending on a shell variable rather than on its arguments. The cases DO carry
+    rubrics, so a runner that judges whenever a rubric exists fails here."""
+    cases = (make_case("c-1", rubric="a rubric"), make_case("c-2", rubric="another rubric"))
+
+    result = run(Target(ALL_FINE), cases)
+
+    assert [record.judge for record in result.runs] == [None, None]
+    assert result.passed_count == 2

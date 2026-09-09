@@ -62,7 +62,14 @@ import pytest
 from opsconsole.evals import cli
 from opsconsole.evals.assertions import AssertionResult, AssertionStatus, CaseAssertions
 from opsconsole.evals.cases import EvalCase, EvalCategory
-from opsconsole.evals.cli import EXIT_FAILED, EXIT_OK, EXIT_RESIDENCY, EXIT_USAGE
+from opsconsole.evals.cli import (
+    EXIT_FAILED,
+    EXIT_OK,
+    EXIT_RESIDENCY,
+    EXIT_USAGE,
+    UNJUDGED_LINE,
+    UNSTORED_LINE,
+)
 from opsconsole.evals.outcome import CaseOutcome
 from opsconsole.evals.report import REPORT_JSON_NAME, REPORT_MD_NAME
 from opsconsole.evals.residency import ResidencyVerdict
@@ -186,6 +193,7 @@ class RecordingRunner:
     def __init__(self, *verdicts: str) -> None:
         self.verdicts = verdicts
         self.calls: list[str] = []
+        self.judges: list[object] = []
 
     def __call__(
         self,
@@ -195,8 +203,10 @@ class RecordingRunner:
         policy: Policy,
         tenant: str,
         other_tenant_markers: tuple[str, ...] = (),
+        judge: object | None = None,
     ) -> RunResult:
         self.calls.append(tenant)
+        self.judges.append(judge)
         verdicts = self.verdicts if self.verdicts else ("pass",) * len(cases)
         return RunResult(
             runs=tuple(
@@ -220,11 +230,13 @@ def argv(
     policy: Path | None = None,
     set_sha: str | None = None,
     run_kind: str | None = None,
+    judge_url: str | None = None,
 ) -> list[str]:
     """One `ops-eval run` command line.
 
-    `--set-sha` and `--run-kind` are omitted unless a case names one, which is
-    what lets the default cases below tell "absent" from "passed as empty".
+    `--set-sha`, `--run-kind` and `--judge-url` are omitted unless a case names
+    one, which is what lets the default cases below tell "absent" from "passed as
+    empty" - and, for the judge, "off because no URL" from "off because no key".
     """
     arguments = ["run", "--target", target, "--set", str(case_set), "--tenant", tenant]
     if out is not None:
@@ -235,6 +247,8 @@ def argv(
         arguments += ["--set-sha", set_sha]
     if run_kind is not None:
         arguments += ["--run-kind", run_kind]
+    if judge_url is not None:
+        arguments += ["--judge-url", judge_url]
     return arguments
 
 
@@ -250,10 +264,22 @@ def run_cli(
     policy_tenants: Sequence[str] | None = None,
     set_sha: str | None = None,
     run_kind: str | None = None,
+    judge_url: str | None = None,
+    judge_key: str | None = None,
 ) -> int:
-    """Run the CLI with a stand-in runner and a policy defining the tenant under test."""
+    """Run the CLI with a stand-in runner and a policy defining the tenant under test.
+
+    `judge_key` is written to (or cleared from) the environment rather than
+    passed, because that is where `Settings().eval_judge_key` reads it and a
+    developer's own shell must not decide whether a case judges anything
+    (a project rule's reason, applied to the one variable this plan adds).
+    """
     installed = runner if runner is not None else RecordingRunner()
     install(monkeypatch, installed)
+    if judge_key is None:
+        monkeypatch.delenv("OPSCONSOLE_EVAL_JUDGE_KEY", raising=False)
+    else:
+        monkeypatch.setenv("OPSCONSOLE_EVAL_JUDGE_KEY", judge_key)
     tenants = tuple(policy_tenants) if policy_tenants is not None else (tenant,)
     return cli.main(
         argv(
@@ -264,6 +290,7 @@ def run_cli(
             policy=write_policy(tmp_path, *tenants),
             set_sha=set_sha,
             run_kind=run_kind,
+            judge_url=judge_url,
         )
     )
 
@@ -982,8 +1009,11 @@ def test_with_no_database_url_nothing_is_stored_and_the_run_keeps_its_own_exit_c
     PostgreSQL - which is every machine `make eval` is usually run on, and it would turn
     the whole harness off rather than turn storage off. All three codes are covered
     because a CLI that returned an unstored run's code correctly on the clean row could
-    still swallow the residency 3. ONE line on stderr is asserted exactly: silence leaves
-    an operator believing rows were written, and a line per case is noise in a CI log."""
+    still swallow the residency 3. ONE `UNSTORED_LINE` on stderr is asserted exactly: silence
+    leaves an operator believing rows were written, and a line per case is noise in a CI
+    log. TWO lines in total since 17c, because a run with no `--judge-url` also prints
+    `UNJUDGED_LINE` once - the count is asserted so a third line nobody decided on is a
+    failure here rather than a surprise in a CI log."""
     forbid_store(monkeypatch)
     out = tmp_path / "reports"
 
@@ -991,7 +1021,9 @@ def test_with_no_database_url_nothing_is_stored_and_the_run_keeps_its_own_exit_c
 
     printed = capsys.readouterr()
     assert code == expected
-    assert len(printed.err.strip().splitlines()) == 1
+    assert printed.err.count(UNSTORED_LINE) == 1
+    assert printed.err.count(UNJUDGED_LINE) == 1
+    assert len(printed.err.strip().splitlines()) == 2
     assert (out / REPORT_JSON_NAME).is_file()
 
 
@@ -1050,3 +1082,117 @@ def test_a_store_that_fails_reports_two_unless_the_run_already_answered_three(
     assert (out / REPORT_JSON_NAME).is_file()
     assert (out / REPORT_MD_NAME).is_file()
     assert "Traceback" not in printed.err
+
+
+# --------------------------------------------------------------------------
+# --judge-url and the key: off unless both are present (17c)
+# --------------------------------------------------------------------------
+
+
+JUDGE_URL = "https://gateway.example"
+
+JUDGE_KEY = "sk-eval-judge-not-a-real-key"
+
+
+@pytest.mark.parametrize(
+    ("label", "judge_url"), REJECTED_TARGETS, ids=[row[0] for row in REJECTED_TARGETS]
+)
+def test_a_judge_url_that_is_not_an_absolute_http_url_is_refused(
+    label: str, judge_url: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Criterion 10, against `_checked_target`'s own table so the two URLs this command
+    takes cannot drift apart - a `--judge-url` of `target.example` or `file:///etc/passwd`
+    is the same defect as a `--target` of one. Catches a judge URL handed to httpx
+    unchecked, which surfaces as a transport error per rubric case after the seed is reset
+    and the run is being paid for. The key IS configured on every row, so the judge is
+    meant to be ON and "there is no key, so nothing was checked" cannot be what refuses
+    them - removing the pre-check is the only thing that flips this table."""
+    runner = RecordingRunner()
+
+    code = run_cli(monkeypatch, tmp_path, runner=runner, judge_url=judge_url, judge_key=JUDGE_KEY)
+
+    assert code == EXIT_USAGE
+    assert runner.calls == []
+
+
+def test_the_judge_url_is_refused_before_the_target_is_touched(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The ordering half of criterion 10, which the exit code alone cannot see: the check
+    belongs in the pre-check block that runs BEFORE the reset, not beside the first
+    judge call. Catches a CLI that resets the seed, runs two hundred cases and then
+    refuses the judge URL at the end - the run is spent either way, and the report is not
+    written. Everything else on this command line is valid, so only the judge URL can
+    produce the 2."""
+    out = tmp_path / "reports"
+    runner = RecordingRunner()
+
+    code = run_cli(
+        monkeypatch,
+        tmp_path,
+        runner=runner,
+        out=out,
+        judge_url="not-a-url",
+        judge_key=JUDGE_KEY,
+    )
+
+    assert code == EXIT_USAGE
+    assert runner.calls == []
+    assert not (out / REPORT_JSON_NAME).exists()
+
+
+@pytest.mark.parametrize(
+    ("verdict", "expected"),
+    [("pass", EXIT_OK), ("fail", EXIT_FAILED), ("residency", EXIT_RESIDENCY)],
+    ids=["a clean run", "a failed assertion", "a residency violation"],
+)
+def test_with_no_judge_url_the_run_judges_nothing_and_keeps_its_exit_code(
+    verdict: str,
+    expected: int,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Decision B, the shape 16d took for the store. Catches a CLI that refuses to run
+    without a judge - which would turn the whole harness off on every machine with no
+    gateway up rather than turning the judge off - and catches a judge built anyway from
+    a key alone, which would make paid calls nobody asked for: the key IS configured here
+    and no URL is given, so `judge=None` is the only correct hand-off. All three codes are
+    covered because a CLI that returned the clean code correctly could still swallow the
+    residency 3 while reporting the judge was skipped."""
+    out = tmp_path / "reports"
+
+    runner = RecordingRunner("pass", verdict, "pass")
+
+    code = run_cli(monkeypatch, tmp_path, runner=runner, out=out, judge_key=JUDGE_KEY)
+
+    document = read_report(out)
+    assert code == expected
+    assert runner.judges == [None]
+    assert document["metrics"]["judge_mean"] is None
+    assert document["judge_prompt_version"] is None
+    assert capsys.readouterr().err.count(UNJUDGED_LINE) == 1
+
+
+def test_with_no_judge_key_the_run_judges_nothing_and_says_so_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The other half of decision B, and the one an operator actually hits: the URL is on
+    the command line, so they believe the judge ran. Catches silence, which leaves a run
+    that scored nothing looking like a run that scored everything well; catches a line per
+    CASE, which is noise in a CI log and the reason the count is asserted as exactly one;
+    and catches a judge constructed with an empty key, which every rubric case would then
+    spend three 401s on. The exit code is the run's own, so the missing key is not an
+    error - it is a fact the report records as `null`."""
+    runner = RecordingRunner("pass", "fail", "pass")
+    out = tmp_path / "reports"
+
+    code = run_cli(
+        monkeypatch, tmp_path, runner=runner, out=out, judge_url=JUDGE_URL, judge_key=None
+    )
+
+    printed = capsys.readouterr()
+    assert code == EXIT_FAILED
+    assert runner.judges == [None]
+    assert printed.err.count(UNJUDGED_LINE) == 1
+    assert read_report(out)["metrics"]["judge_mean"] is None

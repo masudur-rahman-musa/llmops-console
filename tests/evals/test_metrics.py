@@ -8,14 +8,14 @@ run and the whole file is well under a second. The input is the record `16b`'s
 
 The contract these cases are written against, before it exists:
 
-* `METRIC_NAMES: tuple[str, ...]` - the SIXTEEN published words in their
+* `METRIC_NAMES: tuple[str, ...]` - the SEVENTEEN published words in their
   published order, the tuple a report's `metrics` mapping is keyed by and row
   18's gate reads thresholds against.
 * `ACCURACY_SCALE = 2` and `COST_SCALE = 6` - the two rounding scales standing
   rule 2 requires a test to pin exactly, because the design gates in "points"
   and a ledger cost is exact to six places.
 * `compute_metrics(runs: Sequence[CaseRun]) -> dict[str, object]`, returning
-  exactly those sixteen keys in that order whatever the run held.
+  exactly those seventeen keys in that order whatever the run held.
 
 Four properties are worth more than the arithmetic.
 
@@ -46,6 +46,7 @@ import pytest
 
 from opsconsole.evals.assertions import AssertionResult, AssertionStatus, CaseAssertions
 from opsconsole.evals.cases import EvalCategory
+from opsconsole.evals.judge import JudgeVerdict
 from opsconsole.evals.metrics import ACCURACY_SCALE, COST_SCALE, METRIC_NAMES, compute_metrics
 from opsconsole.evals.outcome import CaseOutcome
 from opsconsole.evals.residency import ResidencyVerdict
@@ -103,6 +104,7 @@ def make_run(
     results: tuple[AssertionResult, ...] = (),
     category: EvalCategory = EvalCategory.HELPDESK,
     outcome: CaseOutcome | None = None,
+    judge: JudgeVerdict | None = None,
     violation: bool = False,
     passed: bool = True,
 ) -> CaseRun:
@@ -125,6 +127,7 @@ def make_run(
             violation=violation,
         ),
         outcome=outcome if outcome is not None else CaseOutcome(reply="Done."),
+        judge=judge,
         error=None,
         failure_kind=None,
         passed=passed,
@@ -238,13 +241,15 @@ def others_are_none(metrics: dict[str, object], *stated_names: str) -> list[str]
 # --------------------------------------------------------------------------
 
 
-def test_the_metric_names_are_the_published_sixteen_in_order() -> None:
+def test_the_metric_names_are_the_published_seventeen_in_order() -> None:
     """Catches a name renamed, dropped or reordered under row 18's gate and `16d`'s stored
     `jsonb`: the gate reads thresholds by key and the console groups by position, so
-    `tool_accuracy` for `tool_selection_accuracy` or the two judge metrics of the design
-    creeping in before `17c` exists is a silently different published set. Asserted as the
-    whole tuple rather than as a set, because the ORDER is what a report diff and a
-    Markdown block are read in."""
+    `tool_accuracy` for `tool_selection_accuracy` is a silently different published set.
+    `judge_mean` is asserted in the one position the design groups it in - immediately
+    after `errored` and before the latencies - so a seventeenth name appended at the end
+    fails here, and `judge_kappa_vs_human` creeping in before 17e exists does too.
+    Asserted as the whole tuple rather than as a set, because the ORDER is what a report
+    diff and a Markdown block are read in."""
     assert METRIC_NAMES == (
         "intent_accuracy",
         "tool_selection_accuracy",
@@ -258,13 +263,15 @@ def test_the_metric_names_are_the_published_sixteen_in_order() -> None:
         "injection_resistance",
         "cross_tenant_leaks",
         "errored",
+        "judge_mean",
         "p50_latency_ms",
         "p95_latency_ms",
         "cost_usd_total",
         "cost_usd_per_turn",
     )
-    assert len(METRIC_NAMES) == 16
-    assert len(set(METRIC_NAMES)) == 16
+    assert len(METRIC_NAMES) == 17
+    assert len(set(METRIC_NAMES)) == 17
+    assert METRIC_NAMES.index("judge_mean") == METRIC_NAMES.index("errored") + 1
 
 
 def test_the_two_rounding_scales_are_the_published_ones() -> None:
@@ -283,12 +290,12 @@ def test_the_two_rounding_scales_are_the_published_ones() -> None:
         pytest.param(rate_runs("intent"), id="one-assertion-stated"),
     ],
 )
-def test_every_run_shape_returns_the_sixteen_keys_in_order(runs: Sequence[CaseRun]) -> None:
+def test_every_run_shape_returns_the_seventeen_keys_in_order(runs: Sequence[CaseRun]) -> None:
     """Catches a mapping built by adding a key only when there was something to put in it -
     the defect that makes a gate reading `metrics["risk_class_accuracy"]` raise `KeyError`
     on the run where it mattered, and makes two reports of the same set impossible to diff
     because they carry different keys. Asserted as a tuple, so a mapping that carries the
-    sixteen in a different order per run fails too."""
+    seventeen in a different order per run fails too."""
     assert tuple(compute_metrics(runs)) == METRIC_NAMES
 
 
@@ -724,3 +731,63 @@ def test_a_run_where_every_turn_failed_reports_nulls_and_the_two_counts() -> Non
     assert metrics["cost_usd_per_turn"] is None
     assert as_int(metrics["errored"]) == 3
     assert as_int(metrics["cross_tenant_leaks"]) == 0
+
+
+# --------------------------------------------------------------------------
+# judge_mean, over the cases actually judged (17c)
+# --------------------------------------------------------------------------
+
+
+def judged(case_id: str, median: int) -> CaseRun:
+    """One case that answered and was judged, stating no assertion at all.
+
+    Nothing else about the run is stated, so a `judge_mean` that read a pass rate,
+    a latency or an assertion result has nothing to read and cannot agree with
+    these numbers by accident.
+    """
+    return make_run(
+        case_id,
+        judge=JudgeVerdict(median=median, samples=(median, median, median), reason="because"),
+    )
+
+
+def test_judge_mean_is_the_mean_of_the_medians_actually_judged() -> None:
+    """Catches the two wrong denominators, each of which produces a different number here:
+    counting every case gives `1.75` and counting every case that ANSWERED gives `2.33`,
+    while the mean over the two judged medians is `3.5`. Catches a metric that reads the
+    samples rather than the median too - the samples are (5,5,5) and (2,2,2), which happen
+    to agree here, so the unjudged and broken rows are what make the row discriminating.
+    Asserted as a `float`, because `16d` stores this mapping as `jsonb` and a `Decimal`
+    would serialise as a string no threshold can compare."""
+    runs = (judged("a", 5), judged("b", 2), make_run("c"), broken_run("d"))
+
+    metrics = compute_metrics(runs)
+
+    assert as_float(metrics["judge_mean"]) == 3.5
+    assert as_int(metrics["errored"]) == 1
+
+
+def test_judge_mean_is_null_when_no_case_was_judged() -> None:
+    """Criterion 7's `null`, which is also every run made with the judge off (decision B).
+    Catches a mean defaulting to `0.0`, which is not a score the rubric can produce and
+    would read on a dashboard as "every case was judged terrible" - and would give row
+    18's future gate a number to compare against where there is no evidence at all. The
+    key is asserted PRESENT, because a mapping that omits it breaks the diff between two
+    reports of the same set."""
+    metrics = compute_metrics((make_run("a"), make_run("b"), broken_run("c")))
+
+    assert "judge_mean" in metrics
+    assert metrics["judge_mean"] is None
+
+
+def test_judge_mean_rounds_half_up_at_two_places() -> None:
+    """a project rule on the scale, and decision F's "the same `ACCURACY_SCALE`". Seven
+    medians of 1 and one of 2 is exactly `1.125`, the one input that separates the three
+    plausible implementations: HALF UP gives `1.13`, Python's own `round` (banker's) gives
+    `1.12`, and truncation gives `1.12` as well. Two places exactly, so a mean left at full
+    precision (`1.125`) fails here rather than in a report nobody diffs."""
+    runs = (*(judged(f"c-{index}", 1) for index in range(7)), judged("c-7", 2))
+
+    metrics = compute_metrics(runs)
+
+    assert as_float(metrics["judge_mean"]) == 1.13

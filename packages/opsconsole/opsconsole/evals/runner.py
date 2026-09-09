@@ -27,6 +27,7 @@ from pydantic import BaseModel, ConfigDict
 
 from opsconsole.evals.assertions import AssertionStatus, CaseAssertions, assert_case
 from opsconsole.evals.cases import EvalCase, EvalCategory
+from opsconsole.evals.judge import JUDGE_LOW_SCORE, JudgeClient, JudgeVerdict
 from opsconsole.evals.outcome import CaseOutcome
 from opsconsole.evals.residency import EVAL_DATA_CLASS, ResidencyVerdict, check_residency
 from opsconsole.evals.target import TargetClient, TurnFailed, TurnFailureKind
@@ -71,6 +72,7 @@ class CaseRun(BaseModel):
     outcome: CaseOutcome | None = None
     error: str | None = None
     failure_kind: TurnFailureKind | None = None
+    judge: JudgeVerdict | None = None
     passed: bool
 
 
@@ -125,6 +127,7 @@ def run_set(
     policy: Policy,
     tenant: str,
     other_tenant_markers: tuple[str, ...] = (),
+    judge: JudgeClient | None = None,
 ) -> RunResult:
     """Reset the target, run every case in file order, and answer what happened.
 
@@ -135,6 +138,14 @@ def run_set(
 
     Residency is checked on every case that answered, not on the first one and
     then trusted (`test_residency_is_checked_on_every_case_and_not_only_the_first`).
+
+    The judge is optional and OFF unless the CLI built one (`17c` decision B), and
+    it scores only the cases that carry a `judge_rubric`, after `assert_case` and
+    on the same loop - so a set with no rubric anywhere costs exactly what it cost
+    before this row (`test_a_case_with_no_rubric_is_not_judged_at_all`). A median
+    below `JUDGE_LOW_SCORE` fails the case (decision D), which is the one thing
+    that makes `passed` more than a statement about assertions and residency
+    (`test_a_case_that_passed_every_assertion_fails_on_a_low_judge_score`).
     """
     client.reset()
 
@@ -158,6 +169,11 @@ def run_set(
             continue
 
         assertions = assert_case(case, outcome)
+        verdict = (
+            judge.score(case, outcome)
+            if judge is not None and case.judge_rubric is not None
+            else None
+        )
         residency = check_residency(
             policy,
             case_id=case.id,
@@ -174,7 +190,12 @@ def run_set(
                 outcome=outcome,
                 error=None,
                 failure_kind=None,
-                passed=assertions.passed and not residency.violation,
+                judge=verdict,
+                passed=(
+                    assertions.passed
+                    and not residency.violation
+                    and (verdict is None or verdict.median >= JUDGE_LOW_SCORE)
+                ),
             )
         )
     return RunResult(runs=tuple(runs))

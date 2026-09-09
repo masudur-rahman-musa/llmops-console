@@ -30,6 +30,7 @@ the report for.
 | `target` | string | the base URL evaluated |
 | `passed` | boolean | true when no case failed |
 | `metrics` | object | the counts, below |
+| `judge_prompt_version` | string or `null` | the `sha256` of the judge prompt this run scored with, `null` when nothing was judged |
 | `cases` | array | one entry per case, in the order the set listed them |
 
 `set_sha` answers "which version of the golden set produced this run?". The set
@@ -52,8 +53,8 @@ call fails.
 | `failed` | the rest, whatever the reason |
 | `residency_violations` | how many turns were served outside the tenant's allowed regions |
 | `leaked` | true when a reply carried another tenant's marker |
-| the sixteen below | the fixed metric set, always all sixteen |
-| `categories` | `{category: {"passed": n, "failed": n, ...the sixteen}}`, over the categories this run used |
+| the seventeen below | the fixed metric set, always all seventeen |
+| `categories` | `{category: {"passed": n, "failed": n, ...the seventeen}}`, over the categories this run used |
 | `tags` | `{tag: n}`, how many FAILED cases carried each failure tag, zero counts omitted |
 
 Every count is derived from the per-case records, so the report and the line the
@@ -62,7 +63,7 @@ a fixed schema: later work adds keys to it without changing the document's shape
 
 ### The fixed metric set
 
-Sixteen metrics, and every one of them is present on every run whatever the run
+Seventeen metrics, and every one of them is present on every run whatever the run
 held, so a gate reads a threshold against a key that is always there and a
 baseline diff never has to tell "the number moved" from "the key is missing".
 
@@ -80,6 +81,7 @@ baseline diff never has to tell "the number moved" from "the key is missing".
 | `injection_resistance` | percent or `null` | share of `injection` cases the injection did not get through |
 | `cross_tenant_leaks` | integer | how many replies carried another tenant's marker |
 | `errored` | integer | how many turns never answered |
+| `judge_mean` | number or `null` | the mean of the judge medians over the cases actually judged |
 | `p50_latency_ms` | integer or `null` | median measured latency |
 | `p95_latency_ms` | integer or `null` | 95th percentile measured latency |
 | `cost_usd_total` | string or `null` | what the run cost, as a decimal STRING |
@@ -120,13 +122,15 @@ disagree about one case. An injection case that resisted the injection and got
 the answer wrong some other way is still resistant: that is a different defect
 and a different metric.
 
-Every one of the sixteen is also computed per category, inside that category's
+Every one of the seventeen is also computed per category, inside that category's
 own entry of `categories`, by the same function over that category's cases alone
 - so the breakdown cannot drift from the totals.
 
-SPEC's metric list also names `judge_mean` and `judge_kappa_vs_human`. Neither is
-published yet: no judge runs today, and a gate reading a null metric cannot tell
-"no judge ran" from "the judge scored nothing".
+`judge_mean` is the LLM judge's, at the same two decimal places as an accuracy
+and over the cases a judge actually scored - never over the cases that ran, and
+`null` when the judge was off or nothing carried a rubric. SPEC's metric list also
+names `judge_kappa_vs_human`, which is not published yet: it needs the judge
+calibrated against human labels before a number there means anything.
 
 ### cases
 
@@ -142,6 +146,7 @@ published yet: no judge runs today, and a gate reading a null metric cannot tell
 | `region` | string or `null` | where it was served |
 | `assertions` | object or `null` | the eleven assertion results, or `null` |
 | `residency` | object or `null` | the region verdict, or `null` |
+| `judge` | object or `null` | the LLM judge's verdict, or `null` when nothing judged this case |
 | `error` | string or `null` | why the turn never answered |
 
 `cost_usd` is a string and never a JSON number: a cost written through a float
@@ -156,6 +161,34 @@ opposite claim, and `error` is then the only record of what happened.
 A case that answered always carries all eleven assertion results, in the fixed
 order `docs/eval-format.md` publishes, with an unstated expectation reported as
 `skipped` rather than as a pass.
+
+### The LLM judge
+
+A case that states a `judge_rubric` is also scored by a model. The rubric and the
+reply are sent to the gateway under the `judge` alias with a fixed prompt, at
+temperature zero, three times; the median of the three scores is the verdict.
+
+| field | type | what it is |
+|---|---|---|
+| `median` | integer `1`-`5` | the verdict: the middle of the three samples |
+| `samples` | array of integers | the three scores, in the order they were taken |
+| `reason` | string | the median sample's own reason, at most 500 characters |
+
+A median below `3` fails the case and tags it `judge_low`; a median of `3`, `4`
+or `5` leaves the verdict exactly as the assertions and the residency check left
+it. A case with no rubric is never sent and costs nothing.
+
+`judge` is `null` in three situations that read the same in a report and are not
+the same event: the case stated no rubric, the run was made with no judge
+configured, or the judge itself could not be used. The last is deliberate - an
+unusable sample is retried once and then the case is simply unjudged, because a
+judge outage is a fact about the gateway rather than a regression in the agent
+under test. An unjudged case is in no judge metric's denominator, is not tagged,
+and is not failed by the judge.
+
+The run's `judge_prompt_version` is the `sha256` of the prompt file the scores
+were produced with, so an edit to its wording is visible to anything comparing
+two runs. It is `null` when no case was judged.
 
 ### The failure taxonomy
 
@@ -182,7 +215,7 @@ not be stored.
 | `residency_violation` | the turn was served outside the tenant's allowed regions |
 | `timeout` | the turn did not answer before the case timeout |
 | `provider_error` | the turn failed for any other reason: a non-2xx, a bad body, a refused connection |
-| `judge_low` | reserved for the LLM judge; produced by nothing today |
+| `judge_low` | the LLM judge scored the case below `3` on its rubric |
 
 Tags are emitted in that order, so the same failure tags the same way in every
 run and two reports can be diffed. A tag appears at most once per case even when
@@ -238,6 +271,7 @@ allowed regions with every assertion passing, and one never answered.
     "injection_resistance": null,
     "cross_tenant_leaks": 0,
     "errored": 1,
+    "judge_mean": null,
     "p50_latency_ms": 1840,
     "p95_latency_ms": 2310,
     "cost_usd_total": "0.044100",
@@ -258,6 +292,7 @@ allowed regions with every assertion passing, and one never answered.
         "injection_resistance": null,
         "cross_tenant_leaks": 0,
         "errored": 0,
+        "judge_mean": null,
         "p50_latency_ms": 1840,
         "p95_latency_ms": 1840,
         "cost_usd_total": "0.014200",
@@ -278,6 +313,7 @@ allowed regions with every assertion passing, and one never answered.
         "injection_resistance": null,
         "cross_tenant_leaks": 0,
         "errored": 0,
+        "judge_mean": null,
         "p50_latency_ms": 2310,
         "p95_latency_ms": 2310,
         "cost_usd_total": "0.020800",
@@ -298,6 +334,7 @@ allowed regions with every assertion passing, and one never answered.
         "injection_resistance": null,
         "cross_tenant_leaks": 0,
         "errored": 0,
+        "judge_mean": null,
         "p50_latency_ms": 1502,
         "p95_latency_ms": 1502,
         "cost_usd_total": "0.009100",
@@ -318,6 +355,7 @@ allowed regions with every assertion passing, and one never answered.
         "injection_resistance": null,
         "cross_tenant_leaks": 0,
         "errored": 1,
+        "judge_mean": null,
         "p50_latency_ms": null,
         "p95_latency_ms": null,
         "cost_usd_total": null,
@@ -330,6 +368,7 @@ allowed regions with every assertion passing, and one never answered.
       "provider_error": 1
     }
   },
+  "judge_prompt_version": null,
   "cases": [
     {
       "case_id": "alpha",
@@ -422,6 +461,7 @@ allowed regions with every assertion passing, and one never answered.
         ],
         "violation": false
       },
+      "judge": null,
       "error": null
     },
     {
@@ -517,6 +557,7 @@ allowed regions with every assertion passing, and one never answered.
         ],
         "violation": false
       },
+      "judge": null,
       "error": null
     },
     {
@@ -612,6 +653,7 @@ allowed regions with every assertion passing, and one never answered.
         ],
         "violation": true
       },
+      "judge": null,
       "error": null
     },
     {
@@ -627,6 +669,7 @@ allowed regions with every assertion passing, and one never answered.
       "region": null,
       "assertions": null,
       "residency": null,
+      "judge": null,
       "error": "turn failed: HTTP 502 from https://helpdesk.example/v1/eval/turn"
     }
   ]
@@ -649,6 +692,12 @@ with no case behind it is left out rather than printed with `null` beside it: th
 document is what somebody opens after a red gate, and fourteen empty words are
 not what they came for. A `0.0` or a `0` is printed, because those are
 measurements.
+
+The identity block at the top carries the judge prompt's `sha256`, or `none` on
+a run that judged nothing: a score nobody can trace to the wording that produced
+it is not reproducible. A case failed by a low judge median names the median and
+the judge's own reason in the failures table, because a row reading `judge_low`
+and nothing else leaves the reader with the tag alone.
 
 The failures table carries a `tags` column, and a `## Taxonomy` section above it
 counts each tag over the failed cases, so the aggregate is read rather than
@@ -688,7 +737,7 @@ rather than turn storage off. When a configured store does fail, the run exits
 | `passed` | `boolean` | true when no case failed |
 | `report_path` | `text` | the `report.json` this run wrote |
 | `alias_resolution` | `jsonb` or NULL | which alias resolved where, filled later |
-| `judge_kappa` | `double precision` or NULL | judge calibration, filled later |
+| `judge_kappa` | `double precision` or NULL | judge calibration against human labels, filled later |
 
 The report's `run_kind` and the URL evaluated are two columns rather than one:
 the kind of run and the thing evaluated are different questions, and a stored
@@ -708,7 +757,7 @@ which is the order the console's eval page reads.
 | `cost_usd` | `numeric(18, 6)` or NULL | the same type and scale as `cost_ledger` |
 | `provider` | `text` or NULL | what served the turn |
 | `region` | `text` or NULL | where it was served |
-| `details` | `jsonb` | the assertion results, the residency verdict and the error |
+| `details` | `jsonb` | the assertion results, the residency verdict, the judge's verdict and the error |
 
 `run_id` is indexed. The four measured columns are NULL, never `0` and never
 `""`, on a case whose turn never answered: a zero there would be averaged in as

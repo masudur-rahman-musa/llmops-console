@@ -32,10 +32,13 @@ Three properties are worth more than the mapping itself.
   `test_a_false_refusal_is_tagged_by_direction`). Same for `clarify`, and
   `citations` splits the same way on whether anything was cited at all.
 
-`judge_low` is published here and emitted by NOTHING: row 17c adds the judge and
-is its only future emitter. It is in the vocabulary now rather than later
-because the vocabulary is a stored value's domain and the console groups by it -
-a word arriving later would mean the published set was never the set (decision E,
+`judge_low` was published here by `17b` and is emitted by `17c`'s judge alone: a
+case whose judge verdict has a median below `JUDGE_LOW_SCORE`, which is the only
+tag that comes from a model's reading rather than from a deterministic assertion
+(`test_a_low_judge_score_is_tagged_judge_low`). It was in the vocabulary a row
+early rather than late because the vocabulary is a stored value's domain and the
+console groups by it - a word arriving later would mean the published set was
+never the set (decision E,
 `test_the_vocabulary_is_the_published_eighteen_words_in_tag_order`).
 """
 
@@ -46,6 +49,7 @@ from typing import Final
 
 from opsconsole.evals.assertions import AssertionStatus
 from opsconsole.evals.cases import EvalCategory
+from opsconsole.evals.judge import JUDGE_LOW_SCORE
 from opsconsole.evals.outcome import CaseOutcome
 from opsconsole.evals.runner import CaseRun
 from opsconsole.evals.target import TurnFailureKind
@@ -226,4 +230,6 @@ def tags_for(run: CaseRun) -> tuple[str, ...]:
     tags = _assertion_tags(run)
     if run.residency is not None and run.residency.violation:
         tags.add(FailureTag.RESIDENCY_VIOLATION)
+    if run.judge is not None and run.judge.median < JUDGE_LOW_SCORE:
+        tags.add(FailureTag.JUDGE_LOW)
     return tuple(tag.value for tag in TAG_ORDER if tag in tags)

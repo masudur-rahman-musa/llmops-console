@@ -79,6 +79,7 @@ from psycopg_pool import ConnectionPool
 from opsconsole.evals.assertions import AssertionResult, AssertionStatus, CaseAssertions
 from opsconsole.evals.cases import EvalCategory
 from opsconsole.evals.cli import RUN_KINDS
+from opsconsole.evals.judge import JudgeVerdict
 from opsconsole.evals.outcome import CaseOutcome
 from opsconsole.evals.report import REPORT_JSON_NAME, RunReport, build_report
 from opsconsole.evals.residency import ResidencyVerdict
@@ -143,6 +144,7 @@ def make_run(
     verdict: str = "pass",
     category: EvalCategory = EvalCategory.HELPDESK,
     outcome: CaseOutcome | None = None,
+    judge: JudgeVerdict | None = None,
     failure_kind: TurnFailureKind | None = None,
 ) -> CaseRun:
     """One per-case record, as `run_set` would have built it.
@@ -187,6 +189,7 @@ def make_run(
             violation=verdict == "residency",
         ),
         outcome=outcome if outcome is not None else make_outcome(region=observed),
+        judge=judge,
         error=None,
         passed=verdict == "pass",
     )
@@ -376,7 +379,7 @@ def test_the_run_row_carries_every_identity_field_from_the_report() -> None:
     into `git_sha` is a row PostgreSQL accepts without a murmur and a query nobody can
     tell is wrong. `id`, `passed` and `metrics` are asserted from the report too, because
     a store that generated its own run id would break the join every case row makes back
-    to it, and `metrics` is what row 17c reads. Since 17d that mapping is compared against
+    to it, and `metrics` is what row 18's gate reads. Since 17d that mapping is compared against
     the report's JSON form and not against the live `report.metrics`, because the two
     costs in it are `Decimal` objects in the mapping and decimal strings in the column."""
     report = build(MIXED)
@@ -399,7 +402,7 @@ def test_the_run_row_carries_every_identity_field_from_the_report() -> None:
 
 def test_there_is_one_case_row_per_case_report_in_report_order() -> None:
     """Catches a store that writes only the failures, only the cases that answered, or
-    de-duplicates by category - row 17c's per-category numbers are counted over these rows,
+    de-duplicates by category - the per-category numbers are counted over these rows,
     so a missing case shrinks the denominator every threshold is measured against. Order
     is asserted as the report's own, which is the golden set's file order, because a set
     keyed by nothing else is read back by `run_id` alone."""
@@ -452,7 +455,7 @@ def test_the_report_path_is_the_report_json_that_was_written() -> None:
 def test_a_case_whose_turn_failed_stores_no_measurements_and_its_error() -> None:
     """The criterion in one case. Catches a store filling the four measured columns with
     `0` and `""` on a turn that never answered: a broken case would then be averaged in as
-    a free, instant, EU-served case, which lifts every latency and cost number row 17c
+    a free, instant, EU-served case, which lifts every latency and cost number `evals/metrics.py`
     reports exactly when the target is failing. `is None` on each, because `0 == None` is
     False but `not 0` is not, and the error text is asserted so the row still says why."""
     report = build(MIXED)
@@ -469,21 +472,25 @@ def test_a_case_whose_turn_failed_stores_no_measurements_and_its_error() -> None
     assert broken.details["assertions"] is None
 
 
-def test_the_details_column_carries_the_three_things_no_column_holds() -> None:
+def test_the_details_column_carries_the_four_things_no_column_holds() -> None:
     """Catches a `details` that drops the residency verdict or the assertion results,
     which is everything a reader needs to tell an accuracy failure from a boundary breach
     once `report.json` has been rotated away - the row is what survives. The residency
     case is used because a verdict with every assertion passing is the shape a store that
-    derived `details` from the failed assertions alone would leave empty."""
+    derived `details` from the failed assertions alone would leave empty. The judge is the
+    fourth key since 17c and is asserted here as PRESENT on a case nothing judged: a key
+    that appears only on judged rows makes two rows of the same set unqueryable by one
+    expression (`test_the_details_carry_the_judge_verdict` asserts its value)."""
     report = build(MIXED)
 
     _, case_rows = rows_from_report(report, report_path=Path("/tmp/report.json"))
 
     violated = case_rows[2].details
-    assert set(violated) == {"assertions", "residency", "error"}
+    assert set(violated) == {"assertions", "residency", "judge", "error"}
     assert violated["residency"]["violation"] is True
     assert violated["error"] is None
     assert violated["assertions"] is not None
+    assert violated["judge"] is None
 
 
 def test_row_seventeens_remaining_columns_still_arrive_empty_rather_than_absent() -> None:
@@ -841,3 +848,38 @@ def test_the_run_row_and_its_cases_are_written_in_one_transaction() -> None:
     assert len(pool.inserts()) >= 1
     assert len(pool.executemany_calls) == 1
     assert len(pool.executemany_calls[0][1]) == len(case_rows)
+
+
+# --------------------------------------------------------------------------
+# the judge verdict in `details` (17c)
+# --------------------------------------------------------------------------
+
+
+def test_the_details_carry_the_judge_verdict() -> None:
+    """The fourth thing no column of its own holds. Catches a `details` that kept the
+    assertions and the residency verdict and dropped the judge, which is the only record
+    of WHY a case with eleven passing assertions was failed - once `report.json` has been
+    rotated away the row is all there is. Catches a verdict stored as the model object
+    rather than through `model_dump(mode="json")` too: psycopg's `Jsonb` dumps through
+    `json.dumps`, which raises on a pydantic model, and the whole run's rows are lost at
+    INSERT time after the report was already written (17d's trap, on this plan's field).
+    The unjudged case is asserted `null` and not absent, because a key that comes and goes
+    makes two rows of the same set unqueryable by the same expression."""
+    judged = make_run(
+        "alpha",
+        verdict="fail",
+        judge=JudgeVerdict(median=2, samples=(5, 1, 2), reason="the reply cites nothing"),
+    )
+    result = RunResult(runs=(judged, make_run("beta", verdict="pass")))
+
+    _, case_rows = rows_from_report(build(result), report_path=Path("/tmp/report.json"))
+
+    assert set(case_rows[0].details) == {"assertions", "residency", "error", "judge"}
+    assert case_rows[0].details["judge"] == {
+        "median": 2,
+        "samples": [5, 1, 2],
+        "reason": "the reply cites nothing",
+    }
+    assert case_rows[1].details["judge"] is None
+    dumper = JsonbBinaryDumper(Jsonb, Transformer())
+    assert dumper.dump(Jsonb(dict(case_rows[0].details))) is not None
