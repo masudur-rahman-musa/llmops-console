@@ -26,7 +26,14 @@ The contract these cases are written against, before it exists:
   the failures part.
 * `metrics` is a mapping (decision G) carrying `cases`, `passed`, `failed`,
   `residency_violations`, `leaked` and `categories`, the last being
-  `{category: {"passed": n, "failed": n}}`.
+  `{category: {"passed": n, "failed": n}}` - plus, after `17d`, the sixteen of
+  `metrics.METRIC_NAMES` at BOTH levels, computed by `compute_metrics` over
+  `result.runs` and over each category's own runs, and rendered into `report.md`
+  as `METRICS_HEADING` and `CATEGORY_METRICS_HEADING` blocks between the
+  categories table and the taxonomy. The per-category values are asserted against
+  `compute_metrics` over that category's subset AND against a hand-checked value
+  the run-level mapping does not carry, so a breakdown filled from the totals
+  fails rather than agreeing with itself.
 
 TWO THINGS THIS MODULE NEEDS THAT `16b`'s `RunResult` DOES NOT CARRY, reported
 before any of this was written: a `CaseReport` states the case's `category` and
@@ -59,12 +66,16 @@ from opsconsole.evals.assertions import (
     CaseAssertions,
 )
 from opsconsole.evals.cases import EvalCategory
+from opsconsole.evals.metrics import METRIC_NAMES, compute_metrics
 from opsconsole.evals.outcome import CaseOutcome
 from opsconsole.evals.report import (
+    CATEGORY_METRICS_HEADING,
+    METRICS_HEADING,
     REPORT_JSON_NAME,
     REPORT_MD_NAME,
     RUN_ID_LENGTH,
     SET_SHA_PATTERN,
+    TAXONOMY_HEADING,
     CaseReport,
     RunReport,
     build_report,
@@ -249,6 +260,45 @@ def failures_section(markdown: str) -> str:
     return tail
 
 
+RUN_METRIC_KEYS: tuple[str, ...] = (
+    "cases",
+    "passed",
+    "failed",
+    "residency_violations",
+    "leaked",
+    *METRIC_NAMES,
+    "categories",
+    "tags",
+)
+"""Every key `metrics` carries, in order: the five counts, the sixteen, then the two maps.
+
+`metrics` is a plain `Mapping` with no schema of its own, so this tuple is the
+only published record of its shape - `16d` stores it as `jsonb` and row 18's gate
+reads thresholds out of it by name.
+"""
+
+CATEGORY_METRIC_KEYS: tuple[str, ...] = ("passed", "failed", *METRIC_NAMES)
+"""Every key one category's mapping carries (decision E): its two counts, then the sixteen."""
+
+
+def section_lines(markdown: str, heading: str) -> list[str]:
+    """The non-blank lines under this EXACT heading line, up to the next `## ` heading.
+
+    Matched against whole lines rather than by substring, because `## Metrics` is
+    a prefix of `## Metrics by category` and an `in markdown` check would be
+    satisfied by the wrong block - the neighbouring-guard trap.
+    """
+    lines = markdown.splitlines()
+    start = lines.index(heading)
+    section: list[str] = []
+    for line in lines[start + 1 :]:
+        if line.startswith("## "):
+            break
+        if line:
+            section.append(line)
+    return section
+
+
 # --------------------------------------------------------------------------
 # the constants
 # --------------------------------------------------------------------------
@@ -400,7 +450,12 @@ def test_the_per_category_breakdown_counts_each_category_once_and_omits_none() -
     """Catches a breakdown built from a fixed list of categories (the twelve, most of them
     zero) or from the first case's category alone, and one that loses the category with no
     passes. Four categories, three of them mixed differently, so a builder that counts a
-    case under the wrong bucket or double-counts one shows a wrong number here."""
+    case under the wrong bucket or double-counts one shows a wrong number here.
+
+    After `17d` the same mapping also carries the sixteen (decision E), so the two counts
+    are compared field by field rather than as the whole mapping, and the key tuple is
+    asserted per category - which is what catches the breakdown gaining the metric set at
+    the run level only, or gaining it in a different order from `METRIC_NAMES`."""
     result = RunResult(
         runs=(
             make_run("a", verdict="pass", category=EvalCategory.HELPDESK),
@@ -413,30 +468,32 @@ def test_the_per_category_breakdown_counts_each_category_once_and_omits_none() -
 
     categories = build(result).metrics["categories"]
 
-    assert categories == {
+    assert {
+        name: {"passed": counts["passed"], "failed": counts["failed"]}
+        for name, counts in categories.items()
+    } == {
         "helpdesk": {"passed": 1, "failed": 1},
         "policy_qa": {"passed": 1, "failed": 0},
         "access_auto": {"passed": 0, "failed": 1},
         "cross_tenant": {"passed": 0, "failed": 1},
     }
+    for counts in categories.values():
+        assert tuple(counts) == CATEGORY_METRIC_KEYS
 
 
 def test_the_metrics_key_set_is_pinned_including_tags() -> None:
-    """Catches a `metrics` key added silently, and `tags` specifically forgotten
-    from the mapping `build_report` assembles: `metrics` is a plain `Mapping` with
-    no schema of its own, so nothing but this test stops a consumer reading
-    `report.metrics["tags"]` from a `KeyError` on a build that never wired it."""
+    """Catches a `metrics` key added silently, and `tags` or one of `17d`'s sixteen
+    specifically forgotten from the mapping `build_report` assembles: `metrics` is a
+    plain `Mapping` with no schema of its own, so nothing but this test stops a consumer
+    reading `report.metrics["tags"]` or `report.metrics["injection_resistance"]` from a
+    `KeyError` on a build that never wired it. The ORDER is asserted too, because
+    `report.json` is diffed between two runs and `docs/eval-report.md` publishes the
+    document as it is written."""
     report = build(MIXED)
 
-    assert set(report.metrics) == {
-        "cases",
-        "passed",
-        "failed",
-        "residency_violations",
-        "leaked",
-        "categories",
-        "tags",
-    }
+    assert tuple(report.metrics) == RUN_METRIC_KEYS
+    assert set(report.metrics) == set(RUN_METRIC_KEYS)
+    assert len(RUN_METRIC_KEYS) == 23
 
 
 def test_a_case_report_carries_the_tags_the_taxonomy_computed() -> None:
@@ -494,6 +551,82 @@ def test_a_clean_runs_tags_metric_is_an_empty_mapping() -> None:
     value, so a console reading `report.metrics["tags"]` need not special-case a
     run where nothing failed."""
     assert build(CLEAN).metrics["tags"] == {}
+
+
+def test_the_run_level_metrics_are_the_metric_set_computed_over_every_run() -> None:
+    """Catches `build_report` computing the sixteen a second way of its own, or over a
+    subset - the failed cases, or the `CaseReport` rows rather than the `CaseRun`s. Each
+    value is compared with `compute_metrics(result.runs)`, and six are also asserted as
+    hand-checked constants so the test cannot pass by both sides being wrong together:
+    six cases all stating `intent` (`100.0`), two of them failing `decision` (`0.0`, not
+    omitted and not `null`), one leak, no broken turn, and 120ms / $0.001 measured six
+    times over."""
+    report = build(MIXED)
+    expected = compute_metrics(MIXED.runs)
+
+    for name in METRIC_NAMES:
+        assert report.metrics[name] == expected[name]
+    assert report.metrics["intent_accuracy"] == 100.0
+    assert report.metrics["decision_accuracy"] == 0.0
+    assert report.metrics["cross_tenant_leaks"] == 1
+    assert report.metrics["errored"] == 0
+    assert report.metrics["p50_latency_ms"] == 120
+    assert report.metrics["cost_usd_total"] == Decimal("0.006000")
+
+
+def test_each_category_carries_the_metric_set_computed_over_its_own_cases() -> None:
+    """Catches the breakdown filled from the RUN-level values - the one defect a
+    per-category mapping that merely exists cannot show. `policy_qa` states no `decision`
+    assertion at all, so its `decision_accuracy` is `null` while the run's is `0.0`, and
+    its cost is one turn's rather than three; a builder that copied the totals into every
+    category would agree with itself and fail here. The subset comparison then pins that
+    the breakdown is the SAME function over a subset (approach), not a second
+    implementation."""
+    result = RunResult(
+        runs=(
+            make_run("a", verdict="pass", category=EvalCategory.HELPDESK),
+            make_run("b", verdict="fail", category=EvalCategory.HELPDESK),
+            make_run("c", verdict="pass", category=EvalCategory.POLICY_QA),
+        )
+    )
+    helpdesk_runs = tuple(run for run in result.runs if run.category is EvalCategory.HELPDESK)
+
+    categories = build(result).metrics["categories"]
+
+    assert categories["helpdesk"]["decision_accuracy"] == 0.0
+    assert categories["policy_qa"]["decision_accuracy"] is None
+    assert categories["helpdesk"]["cost_usd_total"] == Decimal("0.002000")
+    assert categories["policy_qa"]["cost_usd_total"] == Decimal("0.001000")
+    for name in METRIC_NAMES:
+        assert categories["helpdesk"][name] == compute_metrics(helpdesk_runs)[name]
+
+
+def test_a_category_of_one_case_stating_nothing_is_present_counted_and_null() -> None:
+    """Catches a category dropped from the breakdown because it had nothing to measure,
+    and one whose empty accuracies came back as `0.0` (decision B) - criterion 12's
+    unhappy path. The `review` case states no assertion at all: it is still a row with its
+    own counts, its accuracies are `null`, and its two counts are `0` rather than
+    `null`."""
+    run = CaseRun(
+        case_id="only",
+        category=EvalCategory.REVIEW,
+        assertions=CaseAssertions(case_id="only", results=()),
+        residency=None,
+        outcome=make_outcome(),
+        error=None,
+        passed=True,
+    )
+
+    review = build(RunResult(runs=(run,))).metrics["categories"]["review"]
+
+    assert tuple(review) == CATEGORY_METRIC_KEYS
+    assert review["passed"] == 1
+    assert review["failed"] == 0
+    assert review["intent_accuracy"] is None
+    assert review["decision_accuracy"] is None
+    assert review["injection_resistance"] is None
+    assert review["errored"] == 0
+    assert review["cross_tenant_leaks"] == 0
 
 
 # --------------------------------------------------------------------------
@@ -668,6 +801,127 @@ def test_a_run_where_every_turn_failed_still_renders_both_documents() -> None:
     assert [case["assertions"] for case in document["cases"]] == [None, None]
 
 
+def test_the_two_metric_headings_are_the_published_ones() -> None:
+    """Catches either heading renamed: `docs/eval-report.md` publishes the shape of
+    `report.md`, and a reader who was told to look under `## Metrics` after a red gate
+    finds nothing under `## Numbers` (a project rule applied to the two strings this
+    plan introduces)."""
+    assert METRICS_HEADING == "## Metrics"
+    assert CATEGORY_METRICS_HEADING == "## Metrics by category"
+
+
+def test_the_markdown_renders_the_metric_set_and_omits_the_metrics_with_no_cases() -> None:
+    """Catches the three renderer defects at once, and each one alone flips this list.
+    A metric with no case behind it rendered as `- risk_class_accuracy: None` is what
+    criterion 11 refuses, so the eight metrics MIXED measured are the whole block; a
+    renderer that omitted falsy values instead of `None` ones would drop
+    `- decision_accuracy: 0.0` and `- errored: 0`, which are real measurements; and a
+    cost printed through `str` rather than `format(value, "f")` would read `0.006` or
+    `6E-3` instead of the six places `report.json` carries. Asserted as the exact ordered
+    list, so `METRIC_NAMES` order is pinned in the document too."""
+    lines = section_lines(report_markdown(build(MIXED)), METRICS_HEADING)
+
+    assert lines == [
+        "- intent_accuracy: 100.0",
+        "- decision_accuracy: 0.0",
+        "- cross_tenant_leaks: 1",
+        "- errored: 0",
+        "- p50_latency_ms: 120",
+        "- p95_latency_ms: 120",
+        "- cost_usd_total: 0.006000",
+        "- cost_usd_per_turn: 0.001000",
+    ]
+
+
+def test_the_markdown_renders_one_metric_block_per_category_under_its_own_heading() -> None:
+    """Catches a per-category block that renders the run-level numbers under every
+    category heading, and one that renders the categories without naming them. The two
+    categories differ in three visible ways - `policy_qa` has no `decision_accuracy` line
+    at all, and the two costs differ - so a block filled from the totals, or one that
+    rendered a single merged list, cannot produce this document. A category heading is
+    `### <name>` and not `## `, which is what keeps the block one section rather than
+    twelve."""
+    result = RunResult(
+        runs=(
+            make_run("a", verdict="pass", category=EvalCategory.HELPDESK),
+            make_run("b", verdict="fail", category=EvalCategory.HELPDESK),
+            make_run("c", verdict="pass", category=EvalCategory.POLICY_QA),
+        )
+    )
+
+    lines = section_lines(report_markdown(build(result)), CATEGORY_METRICS_HEADING)
+
+    assert lines == [
+        "### helpdesk",
+        "- intent_accuracy: 100.0",
+        "- decision_accuracy: 0.0",
+        "- cross_tenant_leaks: 0",
+        "- errored: 0",
+        "- p50_latency_ms: 120",
+        "- p95_latency_ms: 120",
+        "- cost_usd_total: 0.002000",
+        "- cost_usd_per_turn: 0.001000",
+        "### policy_qa",
+        "- intent_accuracy: 100.0",
+        "- cross_tenant_leaks: 0",
+        "- errored: 0",
+        "- p50_latency_ms: 120",
+        "- p95_latency_ms: 120",
+        "- cost_usd_total: 0.001000",
+        "- cost_usd_per_turn: 0.001000",
+    ]
+
+
+def test_the_two_metric_blocks_sit_between_the_categories_table_and_the_taxonomy() -> None:
+    """Catches the blocks appended after the failures table, which is the last section by
+    design - everything after `## Failures` is the failures, and a metrics block down
+    there breaks `failures_section` for every other case in this file as well as the
+    document a reader scans top to bottom. Whole-line lookups, because `## Metrics` is a
+    prefix of `## Metrics by category`."""
+    lines = report_markdown(build(MIXED)).splitlines()
+
+    assert (
+        lines.index("## Categories")
+        < lines.index(METRICS_HEADING)
+        < lines.index(CATEGORY_METRICS_HEADING)
+        < lines.index(TAXONOMY_HEADING)
+        < lines.index(FAILURES_HEADING)
+    )
+
+
+def test_a_run_where_every_turn_failed_still_renders_the_two_counts_and_no_nulls() -> None:
+    """Catches criterion 12's unhappy path in the document: with every turn broken the
+    only metrics with anything behind them are the two counts, so a renderer that prints
+    `None` for the other fourteen fills the page with nothing, and one that omits a zero
+    count hides the fact that both turns errored. Both blocks still render, which is the
+    other half of the claim - a run where the target was down is exactly when somebody
+    opens this file."""
+    markdown = report_markdown(build(ALL_BROKEN))
+
+    assert section_lines(markdown, METRICS_HEADING) == [
+        "- cross_tenant_leaks: 0",
+        "- errored: 2",
+    ]
+    assert section_lines(markdown, CATEGORY_METRICS_HEADING) == [
+        "### helpdesk",
+        "- cross_tenant_leaks: 0",
+        "- errored: 2",
+    ]
+
+
+def test_a_run_of_no_cases_renders_no_per_category_metric_block_at_all() -> None:
+    """Catches a `## Metrics by category` heading rendered with nothing under it, the
+    same defect `_taxonomy_lines` avoids on a clean run: with no case there is no
+    category, so the block has no line to render and the heading goes too. The run-level
+    block is asserted still present, because its two counts always have a value - which
+    is the ONLY run shape where the block-level omission can fire, and the reason it
+    needs its own case."""
+    markdown = report_markdown(build(RunResult(runs=())))
+
+    assert CATEGORY_METRICS_HEADING not in markdown
+    assert METRICS_HEADING in markdown.splitlines()
+
+
 # --------------------------------------------------------------------------
 # write_reports
 # --------------------------------------------------------------------------
@@ -746,7 +1000,17 @@ def test_the_worked_report_fixture_parses_field_by_field() -> None:
     renamed key, a `cost_usd` read as a float, an `assertions` block that no longer holds
     all eleven results, a residency verdict that lost its allow list. Every field is read
     back, so a model that silently drops one fails here rather than at the first run
-    against a real Helpdesk - the drift check `16a`'s and `16b`'s fixtures both have."""
+    against a real Helpdesk - the drift check `16a`'s and `16b`'s fixtures both have.
+
+    After `17d` the fixture also carries the metric set at both levels, and it is asserted
+    as VALUES and not only as keys: the fixture is what `docs/eval-report.md` publishes
+    byte for byte, so a worked example whose numbers do not follow from its own four cases
+    is a document that teaches the wrong thing. `cross_tenant` is the case that matters -
+    its only case never answered, so it carries `errored: 1` and a null cost while the run
+    carries a real one. `cost_usd_total` comes back as the STRING it was written as and
+    not as a `Decimal`: `metrics` is a plain `Mapping` with no schema, so nothing coerces
+    it on the way back in - which is exactly why the value is written at six places and
+    never through a float."""
     report = RunReport.model_validate(json.loads(REPORT_FIXTURE.read_text(encoding="utf-8")))
 
     assert report.id == "9f2c1d8b4a6e47c3a1b05e7d2f83c4a6"
@@ -767,12 +1031,24 @@ def test_the_worked_report_fixture_parses_field_by_field() -> None:
     assert report.metrics["failed"] == 3
     assert report.metrics["residency_violations"] == 1
     assert report.metrics["leaked"] is False
-    assert report.metrics["categories"] == {
+    assert {
+        name: {"passed": counts["passed"], "failed": counts["failed"]}
+        for name, counts in report.metrics["categories"].items()
+    } == {
         "access_auto": {"passed": 1, "failed": 0},
         "helpdesk": {"passed": 0, "failed": 1},
         "policy_qa": {"passed": 0, "failed": 1},
         "cross_tenant": {"passed": 0, "failed": 1},
     }
+    assert tuple(report.metrics) == RUN_METRIC_KEYS
+    assert report.metrics["decision_accuracy"] == 50.0
+    assert report.metrics["clarify_accuracy"] is None
+    assert report.metrics["errored"] == 1
+    assert report.metrics["cost_usd_total"] == "0.044100"
+    for counts in report.metrics["categories"].values():
+        assert tuple(counts) == CATEGORY_METRIC_KEYS
+    assert report.metrics["categories"]["cross_tenant"]["errored"] == 1
+    assert report.metrics["categories"]["cross_tenant"]["cost_usd_total"] is None
 
     alpha, beta, gamma, delta = report.cases
     assert [case.case_id for case in report.cases] == ["alpha", "beta", "gamma", "delta"]

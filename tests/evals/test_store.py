@@ -61,6 +61,7 @@ the two agree.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -70,7 +71,9 @@ from typing import Any, NoReturn, cast
 
 import pytest
 from psycopg import Connection
+from psycopg.adapt import Transformer
 from psycopg.rows import TupleRow
+from psycopg.types.json import Jsonb, JsonbBinaryDumper
 from psycopg_pool import ConnectionPool
 
 from opsconsole.evals.assertions import AssertionResult, AssertionStatus, CaseAssertions
@@ -373,7 +376,9 @@ def test_the_run_row_carries_every_identity_field_from_the_report() -> None:
     into `git_sha` is a row PostgreSQL accepts without a murmur and a query nobody can
     tell is wrong. `id`, `passed` and `metrics` are asserted from the report too, because
     a store that generated its own run id would break the join every case row makes back
-    to it, and `metrics` is what row 17c reads."""
+    to it, and `metrics` is what row 17c reads. Since 17d that mapping is compared against
+    the report's JSON form and not against the live `report.metrics`, because the two
+    costs in it are `Decimal` objects in the mapping and decimal strings in the column."""
     report = build(MIXED)
 
     run_row, _ = rows_from_report(report, report_path=Path("/srv/evals/nightly/report.json"))
@@ -389,7 +394,7 @@ def test_the_run_row_carries_every_identity_field_from_the_report() -> None:
     assert run_row.tenant == TENANT
     assert run_row.git_sha == GIT_SHA
     assert run_row.passed is False
-    assert run_row.metrics == report.metrics
+    assert run_row.metrics == json.loads(report.model_dump_json())["metrics"]
 
 
 def test_there_is_one_case_row_per_case_report_in_report_order() -> None:
@@ -515,6 +520,27 @@ def test_rows_from_report_fills_tags_from_the_report_case_by_case() -> None:
 # --------------------------------------------------------------------------
 # the caps this module publishes
 # --------------------------------------------------------------------------
+
+
+def test_the_stored_metrics_are_the_json_the_report_file_carries() -> None:
+    """Catches the one way 17d's metric set can break storage rather than a number: the
+    two costs are `Decimal`, psycopg's `Jsonb` dumps through `json.dumps`, and a `Decimal`
+    there is a `TypeError` at INSERT time - a whole run's rows lost after the report was
+    already written. The dump is exercised for real rather than reasoned about, and the
+    mapping is asserted equal to `report.json`'s own `metrics` so the column and the file
+    cannot state different numbers. `dict(report.metrics)` fails both halves."""
+    report = build(MIXED)
+
+    run_row, _ = rows_from_report(report, report_path=Path("/tmp/report.json"))
+
+    assert run_row.metrics["cost_usd_total"] == "0.003600"
+    assert run_row.metrics["categories"]["helpdesk"]["cost_usd_total"] == "0.001200"
+    assert run_row.metrics["categories"]["injection"]["cost_usd_total"] is None
+    assert run_row.metrics == json.loads(report.model_dump_json())["metrics"]
+    dumper = JsonbBinaryDumper(Jsonb, Transformer())
+    assert dumper.dump(Jsonb(dict(run_row.metrics))) is not None
+    with pytest.raises(TypeError):
+        dumper.dump(Jsonb(dict(report.metrics)))
 
 
 def test_the_length_caps_are_the_published_ones() -> None:

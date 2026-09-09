@@ -20,6 +20,11 @@ Three things the module holds that no single field states:
   vocabulary (#40), counted in `metrics["tags"]` and rendered in both the
   failures table and the taxonomy block
   (`test_a_case_report_carries_the_tags_the_taxonomy_computed`).
+* `metrics` carries the SAME sixteen keys on every run, whatever the run held
+  (#40), so a gate reads a threshold against a key that is always there and two
+  reports diff (`test_the_metrics_key_set_is_pinned_including_tags`); a metric
+  with no case behind it is `null` there and is left out of `report.md`
+  entirely (`test_the_markdown_renders_the_metric_set_and_omits_the_metrics_with_no_cases`).
 
 The two file names are constants and nothing a caller supplies shapes a path
 (decision B): `make eval` names one directory, row 18's gate reads a known path
@@ -44,6 +49,7 @@ from typing import Any, Final, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 from opsconsole.evals.assertions import AssertionResult, AssertionStatus, CaseAssertions
+from opsconsole.evals.metrics import METRIC_NAMES, compute_metrics
 from opsconsole.evals.residency import ResidencyVerdict
 from opsconsole.evals.runner import CaseRun, RunResult
 from opsconsole.evals.taxonomy import TAG_ORDER, tags_for
@@ -102,6 +108,19 @@ heading with nothing under it reads as counts that went missing
 (`test_a_clean_run_renders_no_taxonomy_block`). It sits BEFORE the failures
 because everything after that heading is the failures
 (`test_a_run_with_failures_renders_a_taxonomy_block_of_counts`)."""
+
+METRICS_HEADING: Final[str] = "## Metrics"
+"""Where the fixed metric set lives in `report.md` (#40), one line per metric.
+
+`docs/eval-report.md` publishes this heading, so a reader sent to look under it
+after a red gate finds the numbers there
+(`test_the_two_metric_headings_are_the_published_ones`)."""
+
+CATEGORY_METRICS_HEADING: Final[str] = "## Metrics by category"
+"""Where the same set, per category, lives - the breakdown decision E stores in
+`metrics["categories"]`. It is a prefix-sharing neighbour of `METRICS_HEADING`,
+so both are matched as whole lines and never by substring
+(`test_the_two_metric_blocks_sit_between_the_categories_table_and_the_taxonomy`)."""
 
 
 def _new_run_id() -> str:
@@ -205,18 +224,26 @@ def _case_report(run: CaseRun) -> CaseReport:
     )
 
 
-def _categories(result: RunResult) -> dict[str, dict[str, int]]:
-    """Passes and failures per category, over the categories this run actually used.
+def _categories(result: RunResult) -> dict[str, dict[str, object]]:
+    """The two counts and the whole metric set per category this run actually used.
 
     Built from the run rather than from `EvalCategory`'s twelve, so a report does
     not carry ten empty buckets, and a category with no passes is still present
     (`test_the_per_category_breakdown_counts_each_category_once_and_omits_none`).
+
+    The metrics are `compute_metrics` over that category's own records and never
+    the run-level values narrowed or copied (17d decision E), which is what stops
+    the breakdown drifting from the totals: one function, two subsets
+    (`test_each_category_carries_the_metric_set_computed_over_its_own_cases`).
     """
-    breakdown: dict[str, dict[str, int]] = {}
+    grouped: dict[str, list[CaseRun]] = {}
+    counts: dict[str, dict[str, int]] = {}
     for run in result.runs:
-        counts = breakdown.setdefault(str(run.category), {"passed": 0, "failed": 0})
-        counts["passed" if run.passed else "failed"] += 1
-    return breakdown
+        name = str(run.category)
+        grouped.setdefault(name, []).append(run)
+        tally = counts.setdefault(name, {"passed": 0, "failed": 0})
+        tally["passed" if run.passed else "failed"] += 1
+    return {name: {**counts[name], **compute_metrics(runs)} for name, runs in grouped.items()}
 
 
 def _tag_counts(cases: list[CaseReport]) -> dict[str, int]:
@@ -254,8 +281,14 @@ def build_report(
     """Turn one run and its identity into the record both files render.
 
     Every count is read off `RunResult`'s properties (decision E). `metrics` is a
-    mapping rather than a model, which is how `tags` was added without changing
-    this schema or `16d`'s column, and how #40's fixed metric set arrives next.
+    mapping rather than a model, which is how `17b`'s `tags` and `17d`'s fixed
+    metric set were both added without changing this schema or `16d`'s column.
+
+    The metric set is `compute_metrics` over the run's own records, spread into
+    the mapping as sixteen flat keys, and computed a second time per category
+    inside `_categories` - the same function over a subset, so the breakdown and
+    the totals cannot drift
+    (`test_the_run_level_metrics_are_the_metric_set_computed_over_every_run`).
 
     The per-case rows are built BEFORE `metrics`, because `metrics["tags"]` is
     counted from the tags those rows carry: one reading of the taxonomy per case,
@@ -286,6 +319,7 @@ def build_report(
             "failed": result.failed_count,
             "residency_violations": result.residency_violations,
             "leaked": result.leaked,
+            **compute_metrics(result.runs),
             "categories": _categories(result),
             "tags": _tag_counts(cases),
         },
@@ -366,12 +400,83 @@ def _count_lines(report: RunReport) -> list[str]:
 def _category_lines(report: RunReport) -> list[str]:
     """The per-category breakdown, one row per category the run used."""
     lines = ["## Categories", "", "| category | passed | failed |", "| --- | --- | --- |"]
-    categories: Mapping[str, Mapping[str, int]] = report.metrics["categories"]
+    categories: Mapping[str, Mapping[str, object]] = report.metrics["categories"]
     lines += [
         f"| {name} | {counts['passed']} | {counts['failed']} |"
         for name, counts in categories.items()
     ]
     return lines
+
+
+def _metric_value(value: object) -> str:
+    """One metric as `report.md` prints it: a cost through `format`, anything else plainly.
+
+    `format(value, "f")` and not `str(value)` for a `Decimal`, for the reason
+    `CaseReport._serialise_cost` does the same: Decimal's own text goes
+    scientific below six places, so a real per-turn cost would print as `1E-7`
+    beside a `report.json` that carries `0.000000`
+    (`test_the_markdown_renders_the_metric_set_and_omits_the_metrics_with_no_cases`).
+    """
+    return format(value, "f") if isinstance(value, Decimal) else str(value)
+
+
+def _metric_lines(metrics: Mapping[str, object]) -> list[str]:
+    """One line per metric that has a case behind it, in `METRIC_NAMES` order.
+
+    A metric whose value is `None` is OMITTED and never rendered as `- name: None`
+    (17d criterion 11): a document a human opens after a red gate should carry the
+    numbers the run measured, not fourteen words with nothing beside them. The
+    test is `is None` and not falsiness - `0.0` accuracy and `0` errored are
+    measurements and both render.
+    """
+    return [
+        f"- {name}: {_metric_value(metrics[name])}"
+        for name in METRIC_NAMES
+        if metrics.get(name) is not None
+    ]
+
+
+def _metrics_lines(report: RunReport) -> list[str]:
+    """The run-level metric set (#40), or nothing at all when nothing rendered.
+
+    The empty case cannot be reached by any run that HAS a case, because
+    `cross_tenant_leaks` and `errored` are counts and never `None`; the guard is
+    kept for symmetry with `_taxonomy_lines` and because an empty block is the
+    defect `_category_lines` was written to avoid. Untestable by design at this
+    level - `test_a_run_of_no_cases_renders_no_per_category_metric_block_at_all`
+    exercises the same guard on the block below, which is the only one a run shape
+    can empty.
+    """
+    lines = _metric_lines(report.metrics)
+    return [METRICS_HEADING, "", *lines] if lines else []
+
+
+def _category_metric_lines(report: RunReport) -> list[str]:
+    """The same metric set per category, each under its own `###` sub-heading.
+
+    A `###` and not a `##`, so the whole breakdown is one section of the document
+    rather than twelve, and so `_taxonomy_lines` and the failures still read as
+    the top-level sections a reader scans for
+    (`test_the_markdown_renders_one_metric_block_per_category_under_its_own_heading`).
+
+    Rendered from `metrics["categories"]` rather than from the runs, which is what
+    makes the document and `report.json` the same numbers by construction.
+
+    The per-category `if rendered` is untestable by design, for the reason
+    `_metrics_lines`'s guard is: a category exists because a case is in it, and
+    `cross_tenant_leaks` and `errored` are counts that always have a value, so no
+    run shape produces a category with nothing to render. It is kept rather than
+    dropped because it is what stops a bare `### name` heading if a later metric
+    set is ever all-nullable. The BLOCK-level guard below is the reachable one
+    (`test_a_run_of_no_cases_renders_no_per_category_metric_block_at_all`).
+    """
+    categories: Mapping[str, Mapping[str, object]] = report.metrics["categories"]
+    lines: list[str] = []
+    for name, values in categories.items():
+        rendered = _metric_lines(values)
+        if rendered:
+            lines += [f"### {name}", *rendered]
+    return [CATEGORY_METRICS_HEADING, "", *lines] if lines else []
 
 
 def _taxonomy_lines(report: RunReport) -> list[str]:
@@ -426,6 +531,8 @@ def report_markdown(report: RunReport) -> str:
         _identity_lines(report),
         _count_lines(report),
         _category_lines(report),
+        _metrics_lines(report),
+        _category_metric_lines(report),
         _taxonomy_lines(report),
         _failure_lines(report),
     ]

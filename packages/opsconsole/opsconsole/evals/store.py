@@ -39,6 +39,10 @@ somebody loads with `psql`.
 own `CaseReport.tags` rather than recomputed here, so the column and the file
 cannot disagree about why a case failed
 (`test_rows_from_report_fills_tags_from_the_report_case_by_case`).
+`metrics` carries row 17d's fixed metric set the same way, in the report's own
+JSON form: the two costs are `Decimal` in the mapping and decimal STRINGS in the
+column, exactly as they are in the file
+(`test_the_stored_metrics_are_the_json_the_report_file_carries`).
 `alias_resolution` and `judge_kappa` still ship NULL (decision F): row 17c's judge
 calibration fills them, the migration says so column by column, and
 `test_row_seventeens_remaining_columns_still_arrive_empty_rather_than_absent`
@@ -215,6 +219,14 @@ def rows_from_report(
     `report_path` is the `report.json` that was WRITTEN rather than the `--out`
     directory - the gate and the console open it expecting a document
     (`test_the_report_path_is_the_report_json_that_was_written`).
+
+    `metrics` is taken in JSON mode and never as the live mapping: since 17d it
+    carries two `Decimal` costs, and psycopg's `Jsonb` dumper is `json.dumps`,
+    which raises `TypeError` on a `Decimal` - so the live mapping would fail the
+    INSERT rather than store a wrong number
+    (`test_the_stored_metrics_are_the_json_the_report_file_carries`). Taken this
+    way the column is byte for byte what `report.json` holds, which is the same
+    property `_case_details` keeps for `details`.
     """
     run_row = EvalRunRow(
         id=report.id,
@@ -227,7 +239,7 @@ def rows_from_report(
         target=report.target,
         tenant=report.tenant,
         git_sha=report.git_sha,
-        metrics=report.metrics,
+        metrics=report.model_dump(mode="json")["metrics"],
         passed=report.passed,
         report_path=str(report_path),
     )
