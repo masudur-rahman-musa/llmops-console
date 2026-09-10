@@ -64,6 +64,7 @@ import os
 import re
 import subprocess
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, NoReturn
@@ -73,7 +74,13 @@ import pytest
 
 from opsconsole.evals import cli
 from opsconsole.evals.assertions import AssertionResult, AssertionStatus, CaseAssertions
-from opsconsole.evals.calibration import CALIBRATION_JSON_NAME, MIN_CALIBRATION_LABELS
+from opsconsole.evals.calibration import (
+    CALIBRATION_JSON_NAME,
+    MIN_CALIBRATION_LABELS,
+    CalibrationReport,
+    CalibrationRow,
+    write_calibration,
+)
 from opsconsole.evals.cases import EvalCase, EvalCategory
 from opsconsole.evals.cli import (
     EXIT_FAILED,
@@ -82,10 +89,19 @@ from opsconsole.evals.cli import (
     EXIT_USAGE,
     UNJUDGED_LINE,
     UNSTORED_LINE,
+    UNTRUSTED_JUDGE_LINE,
 )
-from opsconsole.evals.judge import DEFAULT_JUDGE_TIMEOUT_SECONDS, JudgeClient
+from opsconsole.evals.judge import (
+    DEFAULT_JUDGE_TIMEOUT_SECONDS,
+    JudgeClient,
+    judge_prompt_version,
+)
 from opsconsole.evals.outcome import CaseOutcome
-from opsconsole.evals.report import REPORT_JSON_NAME, REPORT_MD_NAME
+from opsconsole.evals.report import (
+    REPORT_JSON_NAME,
+    REPORT_MD_NAME,
+    UNTRUSTED_METRIC_SUFFIX,
+)
 from opsconsole.evals.residency import ResidencyVerdict
 from opsconsole.evals.runner import CaseRun, RunResult
 from opsconsole.evals.target import TargetClient
@@ -245,12 +261,16 @@ def argv(
     set_sha: str | None = None,
     run_kind: str | None = None,
     judge_url: str | None = None,
+    calibration: Path | None = None,
 ) -> list[str]:
     """One `ops-eval run` command line.
 
-    `--set-sha`, `--run-kind` and `--judge-url` are omitted unless a case names
-    one, which is what lets the default cases below tell "absent" from "passed as
-    empty" - and, for the judge, "off because no URL" from "off because no key".
+    `--set-sha`, `--run-kind`, `--judge-url` and `--calibration` are omitted unless
+    a case names one, which is what lets the default cases below tell "absent" from
+    "passed as empty" - and, for the judge, "off because no URL" from "off because
+    no key". Every case written before `17f` therefore runs the command line it
+    always ran, which is criterion 1's "without the flag a run behaves exactly as
+    it does today".
     """
     arguments = ["run", "--target", target, "--set", str(case_set), "--tenant", tenant]
     if out is not None:
@@ -263,6 +283,8 @@ def argv(
         arguments += ["--run-kind", run_kind]
     if judge_url is not None:
         arguments += ["--judge-url", judge_url]
+    if calibration is not None:
+        arguments += ["--calibration", str(calibration)]
     return arguments
 
 
@@ -280,6 +302,7 @@ def run_cli(
     run_kind: str | None = None,
     judge_url: str | None = None,
     judge_key: str | None = None,
+    calibration: Path | None = None,
 ) -> int:
     """Run the CLI with a stand-in runner and a policy defining the tenant under test.
 
@@ -305,6 +328,7 @@ def run_cli(
             set_sha=set_sha,
             run_kind=run_kind,
             judge_url=judge_url,
+            calibration=calibration,
         )
     )
 
@@ -1445,3 +1469,245 @@ def test_a_labels_path_that_does_not_exist_is_a_usage_refusal(
     assert len(printed.err.strip().splitlines()) == 1
     assert str(missing) in printed.err
     assert not (out / CALIBRATION_JSON_NAME).exists()
+
+
+# --------------------------------------------------------------------------
+# ops-eval run --calibration: the trust a run publishes (17f)
+# --------------------------------------------------------------------------
+
+
+OTHER_PROMPT_VERSION = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0"
+"""A sha256-shaped prompt version that is not this repo's.
+
+Written as a literal rather than as `judge_prompt_version() + "x"`, so the
+mismatch case states a whole, well-formed hash - a check that merely compared
+lengths, or that truncated before comparing, still has to refuse it.
+"""
+
+
+def calibration_artifact(
+    tmp_path: Path,
+    *,
+    kappa: float | None = 0.83,
+    trusted: bool = True,
+    prompt_version: str | None = None,
+    directory: str = "calibrated",
+) -> Path:
+    """One `calibration.json` in `--out`'s shape, written by `write_calibration` itself.
+
+    Written through the real writer rather than hand-typed, so a run refusing an
+    artifact is refusing the exact bytes `ops-eval calibrate` produces - the two
+    halves of this flag cannot drift apart and still pass.
+    """
+    report = CalibrationReport(
+        judge_prompt_version=(judge_prompt_version() if prompt_version is None else prompt_version),
+        labels_name="labels.jsonl",
+        labels_sha=hashlib.sha256(b"the labels file").hexdigest(),
+        computed_at=datetime(2026, 3, 3, 8, 0, tzinfo=UTC),
+        pairs=MIN_CALIBRATION_LABELS,
+        dropped=0,
+        kappa=kappa,
+        reason=None,
+        trusted=trusted,
+        rows=tuple(
+            CalibrationRow(
+                id=f"label-{index:03d}",
+                human_score=1 if index % 2 else 5,
+                judge_median=1 if index % 2 else 5,
+            )
+            for index in range(MIN_CALIBRATION_LABELS)
+        ),
+    )
+    out = tmp_path / directory
+    out.mkdir()
+    write_calibration(out, report)
+    return out / CALIBRATION_JSON_NAME
+
+
+def test_a_calibration_publishes_its_kappa_in_the_report_and_on_the_stored_row(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Criteria 1, 3 and 5 end to end, off DISK and off the row that was stored. Catches an
+    artifact read and then dropped - the whole flag doing nothing, which every unhappy path
+    below would still pass; catches `eval_runs.judge_kappa` filled by a lookup into the
+    `metrics` mapping that came back `None`; and catches the record published without its
+    provenance, since `labels_name` and `pairs` are what make a stored run auditable. The
+    trusted run is asserted SILENT on stderr, which is the other half of decision I: a
+    notice printed on every calibrated run is a notice nobody reads on the run that
+    matters."""
+    CalibrationJudge().install(monkeypatch)
+    out = tmp_path / "reports"
+    store = RecordingStore(out)
+    install_store(monkeypatch, store)
+
+    code = run_cli(
+        monkeypatch,
+        tmp_path,
+        out=out,
+        judge_url=JUDGE_URL,
+        judge_key=JUDGE_KEY,
+        calibration=calibration_artifact(tmp_path),
+    )
+
+    printed = capsys.readouterr()
+    document = read_report(out)
+    run_row, _ = store.calls[0]
+    assert code == EXIT_OK
+    assert document["calibration"] == {
+        "judge_prompt_version": judge_prompt_version(),
+        "labels_name": "labels.jsonl",
+        "labels_sha": hashlib.sha256(b"the labels file").hexdigest(),
+        "pairs": MIN_CALIBRATION_LABELS,
+        "kappa": 0.83,
+        "trusted": True,
+    }
+    assert document["metrics"]["judge_kappa_vs_human"] == 0.83
+    assert run_row.judge_kappa == 0.83
+    assert printed.err.strip() == ""
+
+
+@pytest.mark.parametrize(
+    "shape",
+    ["missing", "unparsable"],
+    ids=["a path that does not exist", "a file that does not parse"],
+)
+def test_a_calibration_path_that_does_not_exist_or_does_not_parse_is_refused(
+    shape: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Criterion 8's first refusal, both shapes: the mistyped path and the file a killed
+    calibration left half written. Catches the read placed beside the first judge call
+    instead of in the pre-check block - the empty runner log is the only thing that can see
+    that, and by then two hundred cases have been paid for - and catches an `OSError` or a
+    `JSONDecodeError` reaching the operator as a traceback. Everything else on this command
+    line is valid and the judge IS configured, so nothing but the calibration can produce
+    the 2."""
+    CalibrationJudge().install(monkeypatch)
+    forbid_store(monkeypatch)
+    out = tmp_path / "reports"
+    path = tmp_path / "nowhere" / CALIBRATION_JSON_NAME
+    if shape == "unparsable":
+        path = tmp_path / CALIBRATION_JSON_NAME
+        path.write_text('{"judge_prompt_version": ', encoding="utf-8")
+    runner = RecordingRunner()
+
+    code = run_cli(
+        monkeypatch,
+        tmp_path,
+        runner=runner,
+        out=out,
+        judge_url=JUDGE_URL,
+        judge_key=JUDGE_KEY,
+        calibration=path,
+    )
+
+    printed = capsys.readouterr()
+    assert code == EXIT_USAGE
+    assert runner.calls == []
+    assert len(printed.err.strip().splitlines()) == 1
+    assert "Traceback" not in printed.err
+    assert str(path) in printed.err
+    assert not (out / REPORT_JSON_NAME).exists()
+    assert not (out / REPORT_MD_NAME).exists()
+
+
+def test_a_calibration_computed_against_another_prompt_is_refused_before_the_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Decision D, which is 17e's risk 2 arriving: a kappa measured against one rubric worn
+    as trust by a run scored with another. Catches the mismatch warned about and then
+    ignored - a warning nobody keeps is how a stale number becomes trust - and catches the
+    check made after the run, when the operator's fix (recalibrate) costs a whole run
+    twice. The artifact is otherwise the exact document `ops-eval calibrate` writes, so the
+    prompt version is the only field that can refuse it."""
+    CalibrationJudge().install(monkeypatch)
+    forbid_store(monkeypatch)
+    out = tmp_path / "reports"
+    runner = RecordingRunner()
+
+    code = run_cli(
+        monkeypatch,
+        tmp_path,
+        runner=runner,
+        out=out,
+        judge_url=JUDGE_URL,
+        judge_key=JUDGE_KEY,
+        calibration=calibration_artifact(tmp_path, prompt_version=OTHER_PROMPT_VERSION),
+    )
+
+    printed = capsys.readouterr()
+    assert code == EXIT_USAGE
+    assert runner.calls == []
+    assert len(printed.err.strip().splitlines()) == 1
+    assert "Traceback" not in printed.err
+    assert not (out / REPORT_JSON_NAME).exists()
+    assert not (out / REPORT_MD_NAME).exists()
+
+
+def test_a_calibration_with_no_judge_url_is_refused_before_the_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Decision E: a run that judged nothing reports `judge_mean` as `null`, so a kappa
+    published beside it is agreement about scores this run never produced. Catches the
+    contradiction accepted and published, and catches it accepted SILENTLY - without the
+    check this command line is entirely valid and exits 0 after printing `UNJUDGED_LINE`
+    and `UNSTORED_LINE`, so the two-lines-to-one-line difference is what the count below
+    reads. The key is configured, so "there is no key" cannot be what refuses this."""
+    forbid_store(monkeypatch)
+    out = tmp_path / "reports"
+    runner = RecordingRunner()
+
+    code = run_cli(
+        monkeypatch,
+        tmp_path,
+        runner=runner,
+        out=out,
+        judge_key=JUDGE_KEY,
+        calibration=calibration_artifact(tmp_path),
+    )
+
+    printed = capsys.readouterr()
+    assert code == EXIT_USAGE
+    assert runner.calls == []
+    assert len(printed.err.strip().splitlines()) == 1
+    assert UNJUDGED_LINE not in printed.err
+    assert not (out / REPORT_JSON_NAME).exists()
+    assert not (out / REPORT_MD_NAME).exists()
+
+
+def test_an_untrusted_calibration_still_runs_and_says_so_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Decision I and criterion 7: a kappa under the floor is a weaker fact, not a refusal.
+    Catches an untrusted artifact turned into a fourth exit code or an `EXIT_USAGE`, which
+    would stop the run row 18 needs the evidence from; catches the run's own `EXIT_FAILED`
+    overwritten by the notice; catches the notice printed per case, which is why the count
+    is exactly one; and catches a report that publishes the low kappa with nothing beside
+    it, which is how a number a gate excluded gets quoted six months later as a
+    measurement. Both files are asserted on disk because the run was paid for either
+    way."""
+    CalibrationJudge().install(monkeypatch)
+    forbid_store(monkeypatch)
+    out = tmp_path / "reports"
+
+    code = run_cli(
+        monkeypatch,
+        tmp_path,
+        runner=RecordingRunner("pass", "fail", "pass"),
+        out=out,
+        judge_url=JUDGE_URL,
+        judge_key=JUDGE_KEY,
+        calibration=calibration_artifact(tmp_path, kappa=0.699, trusted=False),
+    )
+
+    printed = capsys.readouterr()
+    document = read_report(out)
+    assert code == EXIT_FAILED
+    assert printed.err.count(UNTRUSTED_JUDGE_LINE) == 1
+    assert printed.err.count(UNSTORED_LINE) == 1
+    assert len(printed.err.strip().splitlines()) == 2
+    assert document["calibration"]["trusted"] is False
+    assert document["metrics"]["judge_kappa_vs_human"] == 0.699
+    assert UNTRUSTED_METRIC_SUFFIX in (out / REPORT_MD_NAME).read_text(encoding="utf-8")

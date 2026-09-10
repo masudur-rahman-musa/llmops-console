@@ -29,6 +29,7 @@
     "cross_tenant_leaks": 0,
     "errored": 1,
     "judge_mean": null,
+    "judge_kappa_vs_human": null,
     "p50_latency_ms": 1840,
     "p95_latency_ms": 2310,
     "cost_usd_total": "0.044100",
@@ -50,6 +51,7 @@
         "cross_tenant_leaks": 0,
         "errored": 0,
         "judge_mean": null,
+        "judge_kappa_vs_human": null,
         "p50_latency_ms": 1840,
         "p95_latency_ms": 1840,
         "cost_usd_total": "0.014200",
@@ -71,6 +73,7 @@
         "cross_tenant_leaks": 0,
         "errored": 0,
         "judge_mean": null,
+        "judge_kappa_vs_human": null,
         "p50_latency_ms": 2310,
         "p95_latency_ms": 2310,
         "cost_usd_total": "0.020800",
@@ -92,6 +95,7 @@
         "cross_tenant_leaks": 0,
         "errored": 0,
         "judge_mean": null,
+        "judge_kappa_vs_human": null,
         "p50_latency_ms": 1502,
         "p95_latency_ms": 1502,
         "cost_usd_total": "0.009100",
@@ -113,6 +117,7 @@
         "cross_tenant_leaks": 0,
         "errored": 1,
         "judge_mean": null,
+        "judge_kappa_vs_human": null,
         "p50_latency_ms": null,
         "p95_latency_ms": null,
         "cost_usd_total": null,
@@ -126,6 +131,7 @@
     }
   },
   "judge_prompt_version": null,
+  "calibration": null,
   "cases": [
     {
       "case_id": "alpha",

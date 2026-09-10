@@ -31,7 +31,10 @@ The contract these cases are written against, before it exists:
   `finished_at`, `set_name`, `set_sha`, `set_sha_source`, `run_kind`, `target`,
   `tenant`, `git_sha`, `metrics`, `passed`, `report_path` (a `str`, the text the
   `text` column stores), and decision F's `alias_resolution` and `judge_kappa`,
-  both defaulting to `None`. `EvalCaseRow` carries `run_id`, `case_id`,
+  both defaulting to `None`. Since `17f`, `judge_kappa` is filled from
+  `RunReport.calibration.kappa` - a typed field, never a lookup into the
+  `metrics` mapping - and stays `None` on a run that supplied no calibration.
+  `EvalCaseRow` carries `run_id`, `case_id`,
   `category`, `passed`, `tags` (defaulting to `()`), `latency_ms`, `cost_usd`,
   `provider`, `region` and `details`.
 * `rows_from_report(report, *, report_path) -> tuple[EvalRunRow,
@@ -81,7 +84,7 @@ from opsconsole.evals.cases import EvalCategory
 from opsconsole.evals.cli import RUN_KINDS
 from opsconsole.evals.judge import JudgeVerdict
 from opsconsole.evals.outcome import CaseOutcome
-from opsconsole.evals.report import REPORT_JSON_NAME, RunReport, build_report
+from opsconsole.evals.report import REPORT_JSON_NAME, RunCalibration, RunReport, build_report
 from opsconsole.evals.residency import ResidencyVerdict
 from opsconsole.evals.runner import CaseRun, RunResult
 from opsconsole.evals.store import (
@@ -494,11 +497,15 @@ def test_the_details_column_carries_the_four_things_no_column_holds() -> None:
 
 
 def test_row_seventeens_remaining_columns_still_arrive_empty_rather_than_absent() -> None:
-    """Decision F, for the two columns row 17b leaves alone. Catches `judge_kappa`
+    """Decision F, for the two columns nothing fills on THIS path. Catches `judge_kappa`
     or `alias_resolution` filled with `0.0`, which a dashboard would render as a
     real, terrible score, on the run row a 17b-aware writer might otherwise touch
-    while filling `tags`. Asserted exactly rather than as falsy, because `0.0` and
-    `None` are both falsy."""
+    while filling `tags`. Since 17f `judge_kappa` is filled from the report's own
+    `calibration` record, and this report carries none - so the column stops shipping
+    NULL only when a calibration was supplied, and a writer that fills the column from
+    the `metrics` mapping (where the key now always exists) fails here rather than
+    storing a `None` that looks deliberate. Asserted exactly rather than as falsy,
+    because `0.0` and `None` are both falsy."""
     report = build(MIXED)
 
     run_row, _ = rows_from_report(report, report_path=Path("/tmp/report.json"))
@@ -883,3 +890,58 @@ def test_the_details_carry_the_judge_verdict() -> None:
     assert case_rows[1].details["judge"] is None
     dumper = JsonbBinaryDumper(Jsonb, Transformer())
     assert dumper.dump(Jsonb(dict(case_rows[0].details))) is not None
+
+
+# --------------------------------------------------------------------------
+# judge_kappa, filled from the run's own calibration record (17f)
+# --------------------------------------------------------------------------
+
+
+def calibrated_report(kappa: float | None) -> RunReport:
+    """The same MIXED run, built with a calibration record carrying that kappa."""
+    return build_report(
+        MIXED,
+        started_at=STARTED,
+        finished_at=FINISHED,
+        set_name=SET_NAME,
+        set_sha=SET_SHA,
+        set_sha_source="commit",
+        run_kind="ci",
+        git_sha=GIT_SHA,
+        tenant=TENANT,
+        target=TARGET,
+        judge_prompt_version=SIXTY_FOUR_HEX,
+        calibration=RunCalibration(
+            judge_prompt_version=SIXTY_FOUR_HEX,
+            labels_name="labels.jsonl",
+            labels_sha=SIXTY_FOUR_HEX,
+            pairs=40,
+            kappa=kappa,
+            trusted=kappa is not None and kappa >= 0.7,
+        ),
+    )
+
+
+def test_the_judge_kappa_column_is_filled_from_the_reports_calibration_record() -> None:
+    """Criterion 5, the column 16d declared and left NULL on every run since. Catches
+    `rows_from_report` still shipping `judge_kappa=None` while the report carries a number -
+    the prediction this row fills - and catches the value read out of the `metrics` mapping
+    instead of off the typed field: `metrics` is `dict[str, object]`, so that route needs a
+    cast `mypy --strict` cannot check and puts whatever the key holds into a `double
+    precision` column. `0.699` is a value nothing else in this file carries, so a column
+    filled from another number shows a wrong one."""
+    run_row, _ = rows_from_report(calibrated_report(0.699), report_path=Path("/tmp/report.json"))
+
+    assert run_row.judge_kappa == 0.699
+
+
+def test_a_calibration_whose_own_kappa_is_null_stores_null_rather_than_zero() -> None:
+    """17e's undefined kappa arriving on the stored row, and the state the two neighbouring
+    cases cannot see: the report DOES carry a calibration, so "no calibration" is not what
+    empties the column. Catches `report.calibration.kappa or 0.0` and any other falsy
+    coalescing, which would publish "the judge agrees no better than chance" as a
+    measurement in a `double precision` column a dashboard reads, and catches an
+    `AttributeError` from a record read without checking its kappa."""
+    run_row, _ = rows_from_report(calibrated_report(None), report_path=Path("/tmp/report.json"))
+
+    assert run_row.judge_kappa is None

@@ -6,15 +6,17 @@ Pure: `compute_metrics` reads the `CaseRun` records it is handed and nothing els
 That is what lets `16c`'s `build_report` call it while it builds a document, and
 what makes two reports of the same run diff.
 
-The names are SEVENTEEN and the set is FIXED: every key is present on every run
+The names are EIGHTEEN and the set is FIXED: every key is present on every run
 whatever the run held, so row 18's gate reads a threshold against a key that is
 always there and a baseline diff never has to tell "the metric moved" from "the
-metric is missing" (`test_every_run_shape_returns_the_seventeen_keys_in_order`).
+metric is missing" (`test_every_run_shape_returns_the_eighteen_keys_in_order`).
 `judge_mean` is `17c`'s, inserted where the design groups it - after the counts
-and before the latencies (17c decision F); `judge_kappa_vs_human` is the
-eighteenth and arrives with row 17f, which reads the artifact row 17e's
-`ops-eval calibrate` writes. `errored` is 17d's addition
-and the other half of decision C.
+and before the latencies (17c decision F); `judge_kappa_vs_human` sits
+immediately after it and is the one metric this module does not COMPUTE - it is
+the kappa a `calibration.json` already carries, handed in by the caller and
+published unchanged (17f decision A,
+`test_the_kappa_is_the_artifacts_own_number_and_is_neither_rerounded_nor_recomputed`).
+`errored` is 17d's addition and the other half of decision C.
 
 Four properties are worth more than the arithmetic.
 
@@ -72,6 +74,7 @@ METRIC_NAMES: Final[tuple[str, ...]] = (
     "cross_tenant_leaks",
     "errored",
     "judge_mean",
+    "judge_kappa_vs_human",
     "p50_latency_ms",
     "p95_latency_ms",
     "cost_usd_total",
@@ -83,8 +86,9 @@ The order is fixed for the reason `assertions.ASSERTION_NAMES` and
 `taxonomy.TAG_ORDER` are: `16c` writes these strings into `report.json` at two
 levels and `16d` stores that document as `jsonb`, so a rename re-labels reports
 already stored and a reorder makes two reports of the same run diff. Pinned name
-for name by `test_the_metric_names_are_the_published_seventeen_in_order`, which
-also asserts `judge_mean`'s position rather than only its presence.
+for name by `test_the_metric_names_are_the_published_eighteen_in_order`, which
+also asserts `judge_mean`'s and `judge_kappa_vs_human`'s positions rather than
+only their presence.
 """
 
 ACCURACY_SCALE: Final[int] = 2
@@ -313,8 +317,10 @@ def _costs(runs: Sequence[CaseRun]) -> tuple[Decimal | None, Decimal | None]:
     return _quantized(total), _quantized(total / Decimal(len(measured)))
 
 
-def compute_metrics(runs: Sequence[CaseRun]) -> dict[str, object]:
-    """The seventeen metrics over one set of case records, always all seventeen.
+def compute_metrics(
+    runs: Sequence[CaseRun], *, judge_kappa: float | None = None
+) -> dict[str, object]:
+    """The eighteen metrics over one set of case records, always all eighteen.
 
     Called twice by `16c`'s `build_report`: once over every run for the run-level
     keys, and once per category over that category's runs alone. The breakdown
@@ -325,6 +331,19 @@ def compute_metrics(runs: Sequence[CaseRun]) -> dict[str, object]:
     The two counts are never `None`: `0` leaks and `0` errors are facts a run
     established, unlike an accuracy nothing stated
     (`test_a_clean_run_reports_zero_leaks_and_never_null`).
+
+    `judge_kappa` is the exception to "reads the records it is handed": no
+    sequence of `CaseRun`s carries the agreement between the judge and a human,
+    so it arrives from the caller - `16c`'s `build_report`, out of the
+    `calibration.json` an operator passed - and is published unchanged rather
+    than re-rounded here, because 17e already quantized it at `KAPPA_SCALE` and a
+    second rounding at `ACCURACY_SCALE` would move `0.699` onto the trust floor
+    (`test_the_kappa_is_the_artifacts_own_number_and_is_neither_rerounded_nor_recomputed`).
+    It is `None` on every run made without one, and `None` in every CATEGORY of
+    every run (17f decision B): `build_report` passes it at the run level only,
+    so a category's `null` is what this default produces rather than a second
+    code path
+    (`test_a_calibrated_run_carries_the_kappa_at_the_run_level_and_null_in_every_category`).
     """
     precision, recall = _refusal_rates(runs)
     total_cost, per_turn_cost = _costs(runs)
@@ -344,6 +363,7 @@ def compute_metrics(runs: Sequence[CaseRun]) -> dict[str, object]:
     )
     metrics["errored"] = sum(1 for run in runs if run.assertions is None)
     metrics["judge_mean"] = _judge_mean(runs)
+    metrics["judge_kappa_vs_human"] = judge_kappa
     metrics["p50_latency_ms"] = _percentile(latencies, P50)
     metrics["p95_latency_ms"] = _percentile(latencies, P95)
     metrics["cost_usd_total"] = total_cost

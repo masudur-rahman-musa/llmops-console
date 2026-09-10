@@ -26,7 +26,7 @@ The contract these cases are written against, before it exists:
   the failures part.
 * `metrics` is a mapping (decision G) carrying `cases`, `passed`, `failed`,
   `residency_violations`, `leaked` and `categories`, the last being
-  `{category: {"passed": n, "failed": n}}` - plus, after `17d` and `17c`, the seventeen of
+  `{category: {"passed": n, "failed": n}}` - plus, after `17d` and `17c`, the eighteen of
   `metrics.METRIC_NAMES` at BOTH levels, computed by `compute_metrics` over
   `result.runs` and over each category's own runs, and rendered into `report.md`
   as `METRICS_HEADING` and `CATEGORY_METRICS_HEADING` blocks between the
@@ -34,6 +34,13 @@ The contract these cases are written against, before it exists:
   `compute_metrics` over that category's subset AND against a hand-checked value
   the run-level mapping does not carry, so a breakdown filled from the totals
   fails rather than agreeing with itself.
+
+After `17f` a run may also carry `calibration: RunCalibration | None = None` -
+`judge_prompt_version`, `labels_name`, `labels_sha`, `pairs`, `kappa` and
+`trusted` - which is the ONLY source of the run-level `judge_kappa_vs_human`
+(every category's is `null`, decision B) and the only thing that marks the two
+judge lines of `## Metrics` with `UNTRUSTED_METRIC_SUFFIX` under an
+`UNTRUSTED_JUDGE_NOTE`.
 
 TWO THINGS THIS MODULE NEEDS THAT `16b`'s `RunResult` DOES NOT CARRY, reported
 before any of this was written: a `CaseReport` states the case's `category` and
@@ -65,6 +72,7 @@ from opsconsole.evals.assertions import (
     AssertionStatus,
     CaseAssertions,
 )
+from opsconsole.evals.calibration import JUDGE_TRUST_MIN
 from opsconsole.evals.cases import EvalCategory
 from opsconsole.evals.judge import JudgeVerdict
 from opsconsole.evals.metrics import METRIC_NAMES, compute_metrics
@@ -77,7 +85,10 @@ from opsconsole.evals.report import (
     RUN_ID_LENGTH,
     SET_SHA_PATTERN,
     TAXONOMY_HEADING,
+    UNTRUSTED_JUDGE_NOTE,
+    UNTRUSTED_METRIC_SUFFIX,
     CaseReport,
+    RunCalibration,
     RunReport,
     build_report,
     report_json,
@@ -292,7 +303,7 @@ RUN_METRIC_KEYS: tuple[str, ...] = (
     "categories",
     "tags",
 )
-"""Every key `metrics` carries, in order: the five counts, the seventeen, then the two maps.
+"""Every key `metrics` carries, in order: the five counts, the eighteen, then the two maps.
 
 `metrics` is a plain `Mapping` with no schema of its own, so this tuple is the
 only published record of its shape - `16d` stores it as `jsonb` and row 18's gate
@@ -300,7 +311,7 @@ reads thresholds out of it by name.
 """
 
 CATEGORY_METRIC_KEYS: tuple[str, ...] = ("passed", "failed", *METRIC_NAMES)
-"""Every key one category's mapping carries (decision E): its two counts, then the seventeen."""
+"""Every key one category's mapping carries (decision E): its two counts, then the eighteen."""
 
 
 def section_lines(markdown: str, heading: str) -> list[str]:
@@ -474,7 +485,7 @@ def test_the_per_category_breakdown_counts_each_category_once_and_omits_none() -
     passes. Four categories, three of them mixed differently, so a builder that counts a
     case under the wrong bucket or double-counts one shows a wrong number here.
 
-    After `17d` the same mapping also carries the seventeen (decision E), so the two counts
+    After `17d` the same mapping also carries the eighteen (decision E), so the two counts
     are compared field by field rather than as the whole mapping, and the key tuple is
     asserted per category - which is what catches the breakdown gaining the metric set at
     the run level only, or gaining it in a different order from `METRIC_NAMES`."""
@@ -504,7 +515,7 @@ def test_the_per_category_breakdown_counts_each_category_once_and_omits_none() -
 
 
 def test_the_metrics_key_set_is_pinned_including_tags() -> None:
-    """Catches a `metrics` key added silently, and `tags` or one of the seventeen
+    """Catches a `metrics` key added silently, and `tags` or one of the eighteen
     specifically forgotten from the mapping `build_report` assembles: `metrics` is a
     plain `Mapping` with no schema of its own, so nothing but this test stops a consumer
     reading `report.metrics["tags"]` or `report.metrics["injection_resistance"]` from a
@@ -515,7 +526,7 @@ def test_the_metrics_key_set_is_pinned_including_tags() -> None:
 
     assert tuple(report.metrics) == RUN_METRIC_KEYS
     assert set(report.metrics) == set(RUN_METRIC_KEYS)
-    assert len(RUN_METRIC_KEYS) == 23
+    assert len(RUN_METRIC_KEYS) == 25
 
 
 def test_a_case_report_carries_the_tags_the_taxonomy_computed() -> None:
@@ -576,7 +587,7 @@ def test_a_clean_runs_tags_metric_is_an_empty_mapping() -> None:
 
 
 def test_the_run_level_metrics_are_the_metric_set_computed_over_every_run() -> None:
-    """Catches `build_report` computing the seventeen a second way of its own, or over a
+    """Catches `build_report` computing the eighteen a second way of its own, or over a
     subset - the failed cases, or the `CaseReport` rows rather than the `CaseRun`s. Each
     value is compared with `compute_metrics(result.runs)`, and six are also asserted as
     hand-checked constants so the test cannot pass by both sides being wrong together:
@@ -688,7 +699,10 @@ def test_the_json_document_carries_every_identity_field_by_its_published_name() 
     """Catches a serialiser that renames or drops a field on the way out - an alias, an
     exclusion of `None`, a nested `run` object - while `RunReport` itself still looks
     right. `docs/eval-report.md` publishes these key names and `16d` reads them, so the
-    document's own keys are the contract rather than the model's attributes."""
+    document's own keys are the contract rather than the model's attributes. Fifteen keys:
+    `judge_prompt_version` is 17c's and `calibration` is 17f's, and both are published in
+    every document whatever the run held, so a reader never has to tell an absent key from
+    a null one."""
     document = json.loads(report_json(build(MIXED)))
 
     assert set(document) == {
@@ -704,6 +718,8 @@ def test_the_json_document_carries_every_identity_field_by_its_published_name() 
         "target",
         "passed",
         "metrics",
+        "judge_prompt_version",
+        "calibration",
         "cases",
     }
     assert set(document["cases"][0]) == {
@@ -1032,7 +1048,12 @@ def test_the_worked_report_fixture_parses_field_by_field() -> None:
     carries a real one. `cost_usd_total` comes back as the STRING it was written as and
     not as a `Decimal`: `metrics` is a plain `Mapping` with no schema, so nothing coerces
     it on the way back in - which is exactly why the value is written at six places and
-    never through a float."""
+    never through a float.
+
+    After `17f` the same drift check covers the eighteenth metric in all FIVE places the
+    fixture carries a metric set, and the `calibration` field the document now publishes as
+    `null`: the worked run was made with no `--calibration`, so a fixture whose five metric
+    sets did not grow the key is a published document teaching the seventeen."""
     report = RunReport.model_validate(json.loads(REPORT_FIXTURE.read_text(encoding="utf-8")))
 
     assert report.id == "9f2c1d8b4a6e47c3a1b05e7d2f83c4a6"
@@ -1071,6 +1092,10 @@ def test_the_worked_report_fixture_parses_field_by_field() -> None:
         assert tuple(counts) == CATEGORY_METRIC_KEYS
     assert report.metrics["categories"]["cross_tenant"]["errored"] == 1
     assert report.metrics["categories"]["cross_tenant"]["cost_usd_total"] is None
+    assert report.calibration is None
+    assert report.metrics["judge_kappa_vs_human"] is None
+    for counts in report.metrics["categories"].values():
+        assert counts["judge_kappa_vs_human"] is None
 
     alpha, beta, gamma, delta = report.cases
     assert [case.case_id for case in report.cases] == ["alpha", "beta", "gamma", "delta"]
@@ -1210,3 +1235,255 @@ def test_the_markdown_renders_the_judge_verdict_of_a_failed_case() -> None:
     assert "2" in row
     assert "the reply cites nothing" in row
     assert "alpha" not in section
+
+
+# --------------------------------------------------------------------------
+# the calibration record and the untrusted marking (17f)
+# --------------------------------------------------------------------------
+
+
+LABELS_SHA = "5d4c3b2a1908f7e6d5c4b3a2910f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d"
+"""The sha256 of the labels file a calibration was computed from.
+
+A different 64-character string from `JUDGE_VERSION`, from the set SHA and from
+the git SHA, so a record that wired `labels_sha` from any of the three shows a
+wrong value rather than a plausible one.
+"""
+
+
+def a_calibration(*, kappa: float | None, trusted: bool) -> RunCalibration:
+    """One calibration record, with the two fields a case varies stated and the rest fixed."""
+    return RunCalibration(
+        judge_prompt_version=JUDGE_VERSION,
+        labels_name="labels.jsonl",
+        labels_sha=LABELS_SHA,
+        pairs=40,
+        kappa=kappa,
+        trusted=trusted,
+    )
+
+
+TRUSTED = a_calibration(kappa=0.83, trusted=True)
+
+UNTRUSTED = a_calibration(kappa=0.699, trusted=False)
+"""17e's untrusted table exactly: `0.699` is one thousandth under the floor, which
+is the only distance at which a note rendered from a rounded number is visible."""
+
+UNDEFINED = a_calibration(kappa=None, trusted=False)
+"""17e's undefined kappa: nothing disagreed, so there is no number to publish and
+`trusted` is false anyway."""
+
+
+JUDGED = RunResult(
+    runs=(
+        make_run("alpha", verdict="pass", judge=a_verdict(median=2)),
+        make_run("beta", verdict="pass", judge=a_verdict(median=5)),
+    )
+)
+"""Two judged cases of one category, medians 2 and 5, so `judge_mean` is `3.5`.
+
+A judged run is what makes the marking cases discriminating: `judge_mean` has a
+value to be suffixed, and `3.5` is nothing like either kappa, so a renderer that
+printed one number in the other's line cannot pass a line-for-line comparison.
+"""
+
+
+def build_calibrated(result: RunResult, calibration: RunCalibration | None) -> RunReport:
+    """`build_report` over one run, with the identity table above and a calibration."""
+    return build_report(
+        result,
+        started_at=STARTED,
+        finished_at=FINISHED,
+        set_name=IDENTITY["set_name"],
+        set_sha=IDENTITY["set_sha"],
+        set_sha_source=IDENTITY["set_sha_source"],
+        run_kind=IDENTITY["run_kind"],
+        git_sha=IDENTITY["git_sha"],
+        tenant=IDENTITY["tenant"],
+        target=IDENTITY["target"],
+        judge_prompt_version=JUDGE_VERSION,
+        calibration=calibration,
+    )
+
+
+def test_the_untrusted_note_and_suffix_are_the_published_strings() -> None:
+    """a project rule on the two strings this row introduces, the way the two headings are
+    pinned above. Catches a note that stops naming the kappa or the floor - a reader told
+    only "untrusted" cannot tell 0.699 from 0.1 and has nothing to recalibrate against -
+    and catches a suffix that is not the word row 18's operator was told to look for.
+    Asserted as the format TEMPLATE, so the two placeholders are pinned too: a note
+    hard-coding `0.7` in its text would render the right line today and lie the day
+    `JUDGE_TRUST_MIN` moves."""
+    assert UNTRUSTED_JUDGE_NOTE == (
+        "judge metrics below are UNTRUSTED: kappa {kappa} against human labels is under "
+        "the {floor} floor"
+    )
+    assert UNTRUSTED_METRIC_SUFFIX == " (untrusted)"
+
+
+def test_a_calibrated_run_carries_the_kappa_at_the_run_level_and_null_in_every_category() -> None:
+    """Criterion 3 and decision B in one row, and the only arrangement that separates them:
+    the run carries `0.83` and every category carries `null` for the SAME key. Catches
+    `build_report` passing its kappa down into each category's `compute_metrics`, which
+    would repeat one agreement measurement under three headings and invite a reader to diff
+    two categories that cannot differ; catches the key dropped from the category mappings
+    altogether, which a run-level assertion cannot see; and catches a run-level value
+    computed from the cases rather than taken from the record, since no `CaseRun` here
+    carries a human label. Both key sets are asserted by equality, because `metrics` has no
+    schema of its own."""
+    result = RunResult(
+        runs=(
+            make_run("a", verdict="pass", category=EvalCategory.HELPDESK),
+            make_run("b", verdict="fail", category=EvalCategory.HELPDESK),
+            make_run("c", verdict="pass", category=EvalCategory.POLICY_QA),
+        )
+    )
+
+    report = build_calibrated(result, TRUSTED)
+
+    assert tuple(report.metrics) == RUN_METRIC_KEYS
+    assert report.metrics["judge_kappa_vs_human"] == 0.83
+    categories = report.metrics["categories"]
+    assert set(categories) == {"helpdesk", "policy_qa"}
+    for counts in categories.values():
+        assert tuple(counts) == CATEGORY_METRIC_KEYS
+        assert counts["judge_kappa_vs_human"] is None
+
+
+def test_a_run_with_no_calibration_carries_null_in_the_field_and_in_the_metric() -> None:
+    """The default half of criterion 4, which is every run made without `--calibration` and
+    every report written before this row existed. Catches a `calibration` field that is
+    required rather than defaulted - which would make the worked fixture and every stored
+    report unparseable under `extra="forbid"` - and catches an empty `RunCalibration`
+    manufactured for such a run, which reads as "calibrated, against nothing" and would
+    hand row 18 a `trusted` flag nobody measured. The run IS judged, so `judge_mean` has a
+    value and a kappa cannot arrive from it."""
+    report = build(JUDGED, judge_prompt_version=JUDGE_VERSION)
+    document = json.loads(report_json(report))
+
+    assert report.calibration is None
+    assert report.metrics["judge_kappa_vs_human"] is None
+    assert document["calibration"] is None
+    assert document["metrics"]["judge_mean"] == 3.5
+
+
+def test_the_json_document_publishes_the_calibration_record_field_by_field() -> None:
+    """Criterion 4's published key set, asserted by EQUALITY on both levels so a seventh
+    calibration field added quietly and one of the six dropped are both red - `report.json`
+    is what row 18's gate, the console and an auditor six months later read, and a record
+    missing `labels_name` or `pairs` is a trust claim nobody can retrace to a file. Catches
+    the record flattened into two top-level fields (decision F), which would change the
+    document's key set for every run that has no calibration at all. Each value differs
+    from every other value in the document, so a serialiser wiring `labels_sha` from the
+    set SHA or `judge_prompt_version` from the git SHA shows a wrong string."""
+    document = json.loads(report_json(build_calibrated(JUDGED, UNTRUSTED)))
+
+    assert set(document) == {
+        "id",
+        "started_at",
+        "finished_at",
+        "set_name",
+        "set_sha",
+        "set_sha_source",
+        "run_kind",
+        "git_sha",
+        "tenant",
+        "target",
+        "passed",
+        "metrics",
+        "judge_prompt_version",
+        "calibration",
+        "cases",
+    }
+    assert document["calibration"] == {
+        "judge_prompt_version": JUDGE_VERSION,
+        "labels_name": "labels.jsonl",
+        "labels_sha": LABELS_SHA,
+        "pairs": 40,
+        "kappa": 0.699,
+        "trusted": False,
+    }
+    assert document["metrics"]["judge_kappa_vs_human"] == 0.699
+
+
+def test_a_trusted_calibration_marks_nothing_in_the_metrics_block() -> None:
+    """The first half of criterion 6, and the row that stops the marking from being
+    unconditional: a judge that MET the published bar has numbers a reader may quote as
+    they stand, and a note or a suffix on them would train every reader to ignore both.
+    Asserted line for line, so a note rendered with an empty kappa, a suffix appended to
+    every metric, or a blank line left where the note used to be all fail here. `0.83` is
+    above `JUDGE_TRUST_MIN` and `trusted` is true, so only the flag can decide this
+    block."""
+    lines = section_lines(report_markdown(build_calibrated(JUDGED, TRUSTED)), METRICS_HEADING)
+
+    assert lines == [
+        "- intent_accuracy: 100.0",
+        "- cross_tenant_leaks: 0",
+        "- errored: 0",
+        "- judge_mean: 3.5",
+        "- judge_kappa_vs_human: 0.83",
+        "- p50_latency_ms: 120",
+        "- p95_latency_ms: 120",
+        "- cost_usd_total: 0.002000",
+        "- cost_usd_per_turn: 0.001000",
+    ]
+
+
+def test_an_untrusted_calibration_notes_the_kappa_and_suffixes_the_two_judge_lines() -> None:
+    """The second half of criterion 6, decision H's whole shape in one block. Catches a
+    kappa published as a bare number with nothing beside it, which is exactly how a low
+    agreement gets quoted in a report six months later; catches the note rendered without
+    the kappa or without the floor; catches the suffix on the wrong lines - every
+    non-judge metric here is a real measurement the judge had no part in, so a renderer
+    that marked the whole block fails, and one that marked only `judge_mean` fails on the
+    kappa line. The per-category block is asserted in the same breath because it is where
+    the marking must NOT appear: its `judge_kappa_vs_human` is `null` and therefore has no
+    line, and its `judge_mean` is not the run-level number a reader quotes."""
+    markdown = report_markdown(build_calibrated(JUDGED, UNTRUSTED))
+
+    assert section_lines(markdown, METRICS_HEADING) == [
+        UNTRUSTED_JUDGE_NOTE.format(kappa=0.699, floor=JUDGE_TRUST_MIN),
+        "- intent_accuracy: 100.0",
+        "- cross_tenant_leaks: 0",
+        "- errored: 0",
+        "- judge_mean: 3.5 (untrusted)",
+        "- judge_kappa_vs_human: 0.699 (untrusted)",
+        "- p50_latency_ms: 120",
+        "- p95_latency_ms: 120",
+        "- cost_usd_total: 0.002000",
+        "- cost_usd_per_turn: 0.001000",
+    ]
+    assert section_lines(markdown, CATEGORY_METRICS_HEADING) == [
+        "### helpdesk",
+        "- intent_accuracy: 100.0",
+        "- cross_tenant_leaks: 0",
+        "- errored: 0",
+        "- judge_mean: 3.5",
+        "- p50_latency_ms: 120",
+        "- p95_latency_ms: 120",
+        "- cost_usd_total: 0.002000",
+        "- cost_usd_per_turn: 0.001000",
+    ]
+
+
+def test_an_untrusted_calibration_with_no_kappa_at_all_still_notes_it_as_null() -> None:
+    """17e's undefined kappa reaching a run: nothing disagreed, so there is no number to
+    publish and `trusted` is false regardless. Catches a note rendered only when there is a
+    kappa - the run whose judge agreement could not be measured at all is the one a reader
+    most needs warned about - and catches Python's `None` printed into a document
+    `docs/eval-report.md` publishes as JSON-shaped, where the word is `null`. The
+    `judge_kappa_vs_human` line is absent because its value is `None`, which is the
+    renderer's existing rule and is why `judge_mean` is the only suffixed line here."""
+    lines = section_lines(report_markdown(build_calibrated(JUDGED, UNDEFINED)), METRICS_HEADING)
+
+    assert lines == [
+        UNTRUSTED_JUDGE_NOTE.format(kappa="null", floor=JUDGE_TRUST_MIN),
+        "- intent_accuracy: 100.0",
+        "- cross_tenant_leaks: 0",
+        "- errored: 0",
+        "- judge_mean: 3.5 (untrusted)",
+        "- p50_latency_ms: 120",
+        "- p95_latency_ms: 120",
+        "- cost_usd_total: 0.002000",
+        "- cost_usd_per_turn: 0.001000",
+    ]

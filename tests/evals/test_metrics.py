@@ -8,14 +8,17 @@ run and the whole file is well under a second. The input is the record `16b`'s
 
 The contract these cases are written against, before it exists:
 
-* `METRIC_NAMES: tuple[str, ...]` - the SEVENTEEN published words in their
+* `METRIC_NAMES: tuple[str, ...]` - the EIGHTEEN published words in their
   published order, the tuple a report's `metrics` mapping is keyed by and row
   18's gate reads thresholds against.
 * `ACCURACY_SCALE = 2` and `COST_SCALE = 6` - the two rounding scales standing
   rule 2 requires a test to pin exactly, because the design gates in "points"
   and a ledger cost is exact to six places.
 * `compute_metrics(runs: Sequence[CaseRun]) -> dict[str, object]`, returning
-  exactly those seventeen keys in that order whatever the run held.
+  exactly those eighteen keys in that order whatever the run held, plus
+  `compute_metrics(runs, *, judge_kappa: float | None = None)` from `17f`: the
+  keyword is the ONLY source of `judge_kappa_vs_human`, so a run computed without
+  one carries `null` there and a category subset carries `null` by construction.
 
 Four properties are worth more than the arithmetic.
 
@@ -241,13 +244,14 @@ def others_are_none(metrics: dict[str, object], *stated_names: str) -> list[str]
 # --------------------------------------------------------------------------
 
 
-def test_the_metric_names_are_the_published_seventeen_in_order() -> None:
+def test_the_metric_names_are_the_published_eighteen_in_order() -> None:
     """Catches a name renamed, dropped or reordered under row 18's gate and `16d`'s stored
     `jsonb`: the gate reads thresholds by key and the console groups by position, so
     `tool_accuracy` for `tool_selection_accuracy` is a silently different published set.
     `judge_mean` is asserted in the one position the design groups it in - immediately
-    after `errored` and before the latencies - so a seventeenth name appended at the end
-    fails here, and `judge_kappa_vs_human` creeping in before 17f exists does too.
+    after `errored` and before the latencies - so an eighteenth name appended at the end
+    fails here, and so does `judge_kappa_vs_human` landing anywhere but immediately after
+    `judge_mean`, which is the one position the design groups 17f's metric in.
     Asserted as the whole tuple rather than as a set, because the ORDER is what a report
     diff and a Markdown block are read in."""
     assert METRIC_NAMES == (
@@ -264,14 +268,16 @@ def test_the_metric_names_are_the_published_seventeen_in_order() -> None:
         "cross_tenant_leaks",
         "errored",
         "judge_mean",
+        "judge_kappa_vs_human",
         "p50_latency_ms",
         "p95_latency_ms",
         "cost_usd_total",
         "cost_usd_per_turn",
     )
-    assert len(METRIC_NAMES) == 17
-    assert len(set(METRIC_NAMES)) == 17
+    assert len(METRIC_NAMES) == 18
+    assert len(set(METRIC_NAMES)) == 18
     assert METRIC_NAMES.index("judge_mean") == METRIC_NAMES.index("errored") + 1
+    assert METRIC_NAMES.index("judge_kappa_vs_human") == METRIC_NAMES.index("judge_mean") + 1
 
 
 def test_the_two_rounding_scales_are_the_published_ones() -> None:
@@ -290,12 +296,12 @@ def test_the_two_rounding_scales_are_the_published_ones() -> None:
         pytest.param(rate_runs("intent"), id="one-assertion-stated"),
     ],
 )
-def test_every_run_shape_returns_the_seventeen_keys_in_order(runs: Sequence[CaseRun]) -> None:
+def test_every_run_shape_returns_the_eighteen_keys_in_order(runs: Sequence[CaseRun]) -> None:
     """Catches a mapping built by adding a key only when there was something to put in it -
     the defect that makes a gate reading `metrics["risk_class_accuracy"]` raise `KeyError`
     on the run where it mattered, and makes two reports of the same set impossible to diff
     because they carry different keys. Asserted as a tuple, so a mapping that carries the
-    seventeen in a different order per run fails too."""
+    eighteen in a different order per run fails too."""
     assert tuple(compute_metrics(runs)) == METRIC_NAMES
 
 
@@ -791,3 +797,62 @@ def test_judge_mean_rounds_half_up_at_two_places() -> None:
     metrics = compute_metrics(runs)
 
     assert as_float(metrics["judge_mean"]) == 1.13
+
+
+# --------------------------------------------------------------------------
+# judge_kappa_vs_human, the artifact's own number (17f)
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "runs",
+    [
+        pytest.param((), id="no-cases"),
+        pytest.param((broken_run("a"),), id="only-a-broken-turn"),
+        pytest.param(rate_runs("intent"), id="one-assertion-stated"),
+    ],
+)
+def test_a_supplied_kappa_changes_neither_the_key_set_nor_its_order(
+    runs: Sequence[CaseRun],
+) -> None:
+    """Catches the eighteenth key added to the mapping only on the runs a kappa was passed
+    for - the defect that makes two reports of the same set carry different keys and makes
+    row 18's gate raise `KeyError` on the run with no calibration - and catches a kappa
+    appended at the END of the mapping instead of at its published position, which the
+    no-kappa case cannot see because a `None` value looks the same wherever it sits.
+    Asserted as the whole tuple against `METRIC_NAMES`, so only the ORDER of the mapping
+    `compute_metrics` builds can flip this row."""
+    assert tuple(compute_metrics(runs, judge_kappa=0.83)) == METRIC_NAMES
+
+
+def test_the_kappa_is_null_when_no_calibration_was_supplied() -> None:
+    """Criterion 3's `null` where `compute_metrics` decides it, which is also every
+    category of every run (decision B): the keyword defaults to `None` and nothing in a
+    `CaseRun` can supply one. Catches a default of `0.0`, which is the publishable claim
+    "the judge agrees with the human no better than chance" and would give row 18's gate a
+    number to exclude on where there is no measurement at all, and catches the key omitted
+    on a run with no calibration. These runs ARE judged, so a value cannot arrive from
+    `judge_mean` and pass this row by coincidence."""
+    metrics = compute_metrics((judged("a", 5), judged("b", 2)))
+
+    assert "judge_kappa_vs_human" in metrics
+    assert metrics["judge_kappa_vs_human"] is None
+    assert as_float(metrics["judge_mean"]) == 3.5
+
+
+def test_the_kappa_is_the_artifacts_own_number_and_is_neither_rerounded_nor_recomputed() -> None:
+    """Catches the three ways the eighteenth metric stops being the artifact's number.
+    A value re-rounded through `ACCURACY_SCALE` reads `0.7` for `0.699`, and 17e's entire
+    trust boundary lives at that third place - `0.699` is the untrusted table and `0.700`
+    is the trusted one. A kappa written over `judge_mean`, or `judge_mean` over the kappa,
+    cannot agree with both numbers here: these two judged cases give `3.5` and the kappa
+    given is `0.699`. And a kappa recomputed from the run's own verdicts would have to
+    invent the human labels no run carries - the second call proves the value tracks the
+    argument rather than the runs, which are identical across the two."""
+    runs = (judged("a", 5), judged("b", 2))
+
+    metrics = compute_metrics(runs, judge_kappa=0.699)
+
+    assert as_float(metrics["judge_kappa_vs_human"]) == 0.699
+    assert as_float(metrics["judge_mean"]) == 3.5
+    assert as_float(compute_metrics(runs, judge_kappa=0.83)["judge_kappa_vs_human"]) == 0.83

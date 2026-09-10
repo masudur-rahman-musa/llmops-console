@@ -102,10 +102,38 @@ trusted, and `0.699` is not (`test_a_kappa_of_exactly_the_trust_floor_is_trusted
 `test_a_kappa_below_the_trust_floor_is_not_trusted`). A `None` kappa is never
 trusted, whatever the comparison would do with it."""
 
+MAX_LABELS_NAME_LENGTH: Final[int] = 128
+"""The longest `labels_name` a READ artifact may carry, inclusive.
+
+a project rule on the one string in this document an operator chose: it is the
+name of the file they calibrated from, and 17f copies it into `report.json` and
+into the `eval_runs.metrics` `jsonb` - neither of which has a length of its own.
+`MAX_LABEL_ID_LENGTH`'s integer and not its constant, because the two cap
+different things and sharing one would tie a file name to an id vocabulary
+(`test_a_labels_name_of_exactly_the_cap_is_accepted_and_one_over_is_refused`)."""
+
+KAPPA_MIN: Final[float] = -1.0
+"""The lowest kappa a read artifact may carry, INCLUSIVE.
+
+`-1.0` is a real weighted kappa - a judge that inverts the human every time - and
+the most informative calibration there is, so the floor is the scale's own end
+and never `JUDGE_TRUST_MIN` (`test_a_kappa_at_either_bound_is_accepted`)."""
+
+KAPPA_MAX: Final[float] = 1.0
+"""The highest kappa a read artifact may carry, INCLUSIVE.
+
+Both bounds are checked on the way IN rather than trusted from the file: the
+number lands in `eval_runs.judge_kappa`, a `double precision` column with no
+bounds of its own, so a hand-edited `9.9` would otherwise publish a judge as
+superhumanly agreeing and row 18 would read it as evidence
+(`test_a_kappa_one_thousandth_past_either_bound_is_refused`)."""
+
 CALIBRATION_JSON_NAME: Final[str] = "calibration.json"
 """The one file a calibration writes, named by a constant and never derived from
-a label id or a clock - 17f reads it by this name
-(`test_the_artifact_carries_exactly_the_published_keys`)."""
+a label id or a clock - `read_calibration` and `ops-eval run --calibration` read
+it back by this name
+(`test_the_artifact_carries_exactly_the_published_keys`,
+`test_read_calibration_round_trips_what_write_calibration_wrote`)."""
 
 CALIBRATION_INDENT: Final[int] = 2
 """How `calibration.json` is indented, `report.py`'s `REPORT_INDENT` again: the
@@ -250,8 +278,9 @@ class CalibrationReport(BaseModel):
     `judge_prompt_version` is 17c's sha256 of the prompt file's bytes, and it is
     the field that keeps this document honest across time: a calibration computed
     under one prompt and read against a run made under another is a stale number
-    worn as trust. Nothing checks that here, because nothing reads this artifact
-    yet; 17f's pre-check is where the mismatch is refused.
+    worn as trust. Nothing checks that HERE - `read_calibration` validates the
+    document and `evals/cli.py` refuses the mismatch, before the run starts (17f
+    decision D, `test_a_calibration_computed_against_another_prompt_is_refused_before_the_run`).
 
     `kappa` is `None` when chance agreement was total, and `reason` says so;
     `trusted` is `False` whenever `kappa` is `None`, whatever the comparison
@@ -435,6 +464,56 @@ def calibrate(
         trusted=kappa is not None and kappa >= JUDGE_TRUST_MIN,
         rows=tuple(rows),
     )
+
+
+def read_calibration(path: Path) -> CalibrationReport:
+    """Read one `calibration.json` back, or raise `CalibrationSetInvalid` naming the path.
+
+    The other half of `write_calibration`, and the only reader this artifact has:
+    17f's `ops-eval run --calibration` hands a run what a calibration measured, so
+    every way the file can be wrong has to become ONE typed refusal the CLI's
+    existing pre-check block prints as a single line - a missing file, a
+    half-written one, a document from a schema nobody can identify, and a number
+    outside the scale
+    (`test_an_artifact_that_does_not_exist_is_refused_naming_the_path`,
+    `test_an_artifact_that_is_not_json_is_refused_naming_the_path`,
+    `test_an_artifact_with_a_field_the_model_forbids_is_refused`).
+
+    Validated through `CalibrationReport` itself with its `extra="forbid"`, and
+    never by picking the two fields a run needs out of the document: a reader that
+    took `kappa` and `trusted` alone would accept a hand-edited file and publish
+    trust computed by something nobody can retrace
+    (`test_read_calibration_round_trips_what_write_calibration_wrote`).
+
+    The two bounds are applied AFTER that validation, because both are facts about
+    values the model's own types admit: `kappa` is a `float` and `labels_name` a
+    `str`, and both land in a stored column - `eval_runs.judge_kappa` and the
+    `metrics` `jsonb` - that has no bound of its own.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise CalibrationSetInvalid(f"cannot be read: {exc.strerror}", path=path) from exc
+
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise CalibrationSetInvalid(f"is not valid JSON: {exc.msg}", path=path) from exc
+
+    try:
+        report = CalibrationReport.model_validate(payload)
+    except ValidationError as exc:
+        raise CalibrationSetInvalid(f"is not a calibration: {exc}", path=path) from exc
+
+    if report.kappa is not None and not KAPPA_MIN <= report.kappa <= KAPPA_MAX:
+        raise CalibrationSetInvalid(
+            f"carries a kappa of {report.kappa}, outside {KAPPA_MIN}..{KAPPA_MAX}", path=path
+        )
+    if len(report.labels_name) > MAX_LABELS_NAME_LENGTH:
+        raise CalibrationSetInvalid(
+            f"names a labels file longer than {MAX_LABELS_NAME_LENGTH} characters", path=path
+        )
+    return report
 
 
 def write_calibration(out: Path, report: CalibrationReport) -> None:

@@ -6,6 +6,7 @@ after the reset the seed has been spent and a refusal costs a whole run.
 
     ops-eval run --target URL --set PATH --tenant T --out DIR
                  [--policy PATH] [--set-sha SHA] [--run-kind KIND] [--judge-url URL]
+                 [--calibration PATH]
     ops-eval calibrate --labels PATH --judge-url URL --out DIR
 
 `calibrate` (17e) is the same shell over `calibration.calibrate`: it scores a
@@ -17,8 +18,18 @@ judge that scored too few labels, are one line on stderr and `EXIT_USAGE`. The
 one place it deliberately differs from `run` is the key: `run` turns the judge
 OFF without `OPSCONSOLE_EVAL_JUDGE_KEY` and keeps its own exit code, while a
 calibration with no judge has nothing left to do and refuses
-(`test_calibrate_with_no_judge_key_is_a_usage_refusal`). Nothing READS
-`calibration.json` yet; 17f wires it into a run.
+(`test_calibrate_with_no_judge_key_is_a_usage_refusal`).
+
+`run --calibration` (17f) is the other end of that file: it reads one artifact
+back through `read_calibration`, refuses it when the judge prompt it was computed
+under is not the one this run scores with (decision D) and when there is no
+`--judge-url` to judge with at all (decision E), and otherwise publishes what it
+says - the kappa as the eighteenth metric, the `RunCalibration` record on
+`report.json`, and `eval_runs.judge_kappa`. An artifact whose kappa is under
+17e's `JUDGE_TRUST_MIN` does not refuse the run: it prints `UNTRUSTED_JUDGE_LINE`
+once and the two reports mark the judge metrics untrusted (decision I,
+`test_an_untrusted_calibration_still_runs_and_says_so_once`). Row 18's gate is
+what EXCLUDES those metrics; this command only publishes the number it reads.
 
 The exit code is the interface, not the output (decision C). Row 18's PR gate has
 to tell an accuracy regression from a residency breach without parsing stdout,
@@ -91,6 +102,7 @@ from opsconsole.evals.calibration import (
     CalibrationSetInvalid,
     calibrate,
     load_labels,
+    read_calibration,
     write_calibration,
 )
 from opsconsole.evals.cases import EvalCase, EvalSetInvalid, load_golden_set
@@ -98,6 +110,7 @@ from opsconsole.evals.judge import JudgeClient, judge_prompt_version
 from opsconsole.evals.report import (
     REPORT_JSON_NAME,
     SET_SHA_PATTERN,
+    RunCalibration,
     RunReport,
     build_report,
     write_reports,
@@ -162,6 +175,20 @@ UNJUDGED_LINE: Final[str] = (
 a CI log, and refusing to run would turn the harness off on every machine with no
 gateway up rather than turn the judge off
 (`test_with_no_judge_url_the_run_judges_nothing_and_keeps_its_exit_code`)."""
+
+
+UNTRUSTED_JUDGE_LINE: Final[str] = (
+    "the calibration supplied is not trusted: this run's judge metrics are marked "
+    "untrusted in both reports"
+)
+"""The ONE line a run carrying an untrusted calibration prints on stderr (17f decision I).
+
+`UNSTORED_LINE`'s and `UNJUDGED_LINE`'s shape and their reason: a CI log is where
+this is noticed, and the two existing notices set the precedent that a run
+reporting a weaker fact than the operator asked for says so exactly once. It is
+not a refusal - row 18 excludes the judge metrics BY reading the kappa, so the
+run still writes both reports, still stores its rows and keeps its own exit code
+(`test_an_untrusted_calibration_still_runs_and_says_so_once`)."""
 
 
 class UsageError(Exception):
@@ -241,6 +268,50 @@ def _checked_judge_key() -> str:
             "OPSCONSOLE_EVAL_JUDGE_KEY: not set, and a calibration cannot be made without the judge"
         )
     return api_key
+
+
+def _checked_calibration(value: Path | None, judge_url: str | None) -> RunCalibration | None:
+    """Read `--calibration`, or answer `None` when the caller passed none.
+
+    Three refusals, all of them here in the pre-check block and none of them after
+    a request has been made: the file cannot be read or is not a calibration
+    (`read_calibration`'s own `CalibrationSetInvalid`, printed as one line by the
+    caller's guard); the artifact was computed under a DIFFERENT judge prompt than
+    this run will score with, which is a stale number worn as trust and whose fix
+    is to recalibrate (decision D,
+    `test_a_calibration_computed_against_another_prompt_is_refused_before_the_run`);
+    and `--calibration` with no `--judge-url`, where the run judges nothing and a
+    kappa beside a null `judge_mean` is agreement about scores this run never
+    produced (decision E,
+    `test_a_calibration_with_no_judge_url_is_refused_before_the_run`).
+
+    What comes back is the narrowed `RunCalibration` a report publishes, not 17e's
+    whole document: the rows, the drop count and the clock stay in
+    `calibration.json`, which is the file a reader is sent to by `labels_name` and
+    `labels_sha`.
+    """
+    if value is None:
+        return None
+    if judge_url is None:
+        raise UsageError(
+            "--calibration: needs --judge-url, or the run judges nothing and the kappa "
+            "would stand beside a null judge_mean"
+        )
+    report = read_calibration(value)
+    if report.judge_prompt_version != judge_prompt_version():
+        raise UsageError(
+            f"--calibration: {value} was computed under judge prompt "
+            f"{report.judge_prompt_version}, and this run scores with "
+            f"{judge_prompt_version()}"
+        )
+    return RunCalibration(
+        judge_prompt_version=report.judge_prompt_version,
+        labels_name=report.labels_name,
+        labels_sha=report.labels_sha,
+        pairs=report.pairs,
+        kappa=report.kappa,
+        trusted=report.trusted,
+    )
 
 
 def _checked_out(value: Path) -> Path:
@@ -448,6 +519,11 @@ def _parser() -> argparse.ArgumentParser:
         dest="judge_url",
         help="base URL of the gateway that serves the judge alias; without it, no judging",
     )
+    run.add_argument(
+        "--calibration",
+        type=Path,
+        help="a calibration.json from `ops-eval calibrate`; publishes its kappa and trust",
+    )
     calibrate_command = subcommands.add_parser(
         "calibrate", help="score human labels through the judge and report the agreement"
     )
@@ -558,12 +634,16 @@ def _run(options: argparse.Namespace) -> int:
         policy = _checked_policy(options.policy, tenant)
         supplied_sha = _checked_set_sha(options.set_sha)
         judge_url = _checked_judge_url(options.judge_url)
+        calibration = _checked_calibration(options.calibration, judge_url)
         case_set = Path(options.case_set)
         cases = load_golden_set(case_set)
         set_sha, set_sha_source = _set_sha(supplied_sha, case_set)
-    except (IdentifierInvalid, UsageError, EvalSetInvalid) as exc:
+    except (IdentifierInvalid, UsageError, EvalSetInvalid, CalibrationSetInvalid) as exc:
         print(exc, file=sys.stderr)
         return EXIT_USAGE
+
+    if calibration is not None and not calibration.trusted:
+        print(UNTRUSTED_JUDGE_LINE, file=sys.stderr)
 
     started_at = datetime.now(UTC)
     with httpx.Client() as http:
@@ -594,6 +674,7 @@ def _run(options: argparse.Namespace) -> int:
         tenant=tenant,
         target=target,
         judge_prompt_version=_judged_prompt_version(result),
+        calibration=calibration,
     )
     try:
         write_reports(out, report)

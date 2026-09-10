@@ -43,12 +43,18 @@ cannot disagree about why a case failed
 JSON form: the two costs are `Decimal` in the mapping and decimal STRINGS in the
 column, exactly as they are in the file
 (`test_the_stored_metrics_are_the_json_the_report_file_carries`).
-`alias_resolution` and `judge_kappa` still ship NULL (decision F): row 17f fills
-`judge_kappa` from the artifact 17e's `ops-eval calibrate` writes - 17c added the
-judge and its verdict goes into `details`, not into a column of its own - the
-migration says so column by column, and
-`test_row_seventeens_remaining_columns_still_arrive_empty_rather_than_absent`
-pins each exactly rather than as falsy.
+`alias_resolution` still ships NULL (decision F), and the migration says so
+column by column. `judge_kappa` is filled since 17f, off the report's own
+`RunCalibration` record and never out of the `metrics` mapping - a typed field is
+what keeps `mypy --strict` honest about a value going into a `double precision`
+column, and a mapping lookup that came back `None` would ship NULL on a
+calibrated run and nothing would notice
+(`test_the_judge_kappa_column_is_filled_from_the_reports_calibration_record`). A
+run made with no `--calibration` still stores `None` there, which is the column's
+"nothing measured this" and not a zero agreement
+(`test_a_calibration_whose_own_kappa_is_null_stores_null_rather_than_zero`,
+`test_row_seventeens_remaining_columns_still_arrive_empty_rather_than_absent`).
+17c's judge verdict goes into `details` and never into a column of its own.
 """
 
 from __future__ import annotations
@@ -249,6 +255,7 @@ def rows_from_report(
         metrics=report.model_dump(mode="json")["metrics"],
         passed=report.passed,
         report_path=str(report_path),
+        judge_kappa=None if report.calibration is None else report.calibration.kappa,
     )
     case_rows = tuple(
         EvalCaseRow(

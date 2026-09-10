@@ -20,11 +20,18 @@ Three things the module holds that no single field states:
   vocabulary (#40), counted in `metrics["tags"]` and rendered in both the
   failures table and the taxonomy block
   (`test_a_case_report_carries_the_tags_the_taxonomy_computed`).
-* `metrics` carries the SAME seventeen keys on every run, whatever the run held
+* `metrics` carries the SAME eighteen keys on every run, whatever the run held
   (#40), so a gate reads a threshold against a key that is always there and two
   reports diff (`test_the_metrics_key_set_is_pinned_including_tags`); a metric
   with no case behind it is `null` there and is left out of `report.md`
   entirely (`test_the_markdown_renders_the_metric_set_and_omits_the_metrics_with_no_cases`).
+* a run handed a `calibration.json` publishes what it was told about its judge -
+  the `RunCalibration` record, the kappa as the eighteenth metric, and, when that
+  calibration is not trusted, one `UNTRUSTED_JUDGE_NOTE` and a suffix on the two
+  judge lines of `report.md` (17f decisions F and H,
+  `test_the_json_document_publishes_the_calibration_record_field_by_field`,
+  `test_an_untrusted_calibration_notes_the_kappa_and_suffixes_the_two_judge_lines`).
+  Nothing here applies the trust floor: 17e decided it and this module renders it.
 
 The two file names are constants and nothing a caller supplies shapes a path
 (decision B): `make eval` names one directory, row 18's gate reads a known path
@@ -49,6 +56,7 @@ from typing import Any, Final, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 from opsconsole.evals.assertions import AssertionResult, AssertionStatus, CaseAssertions
+from opsconsole.evals.calibration import JUDGE_TRUST_MIN
 from opsconsole.evals.judge import JUDGE_LOW_SCORE, JUDGE_MAX_SCORE, JudgeVerdict
 from opsconsole.evals.metrics import METRIC_NAMES, compute_metrics
 from opsconsole.evals.residency import ResidencyVerdict
@@ -124,6 +132,37 @@ so both are matched as whole lines and never by substring
 (`test_the_two_metric_blocks_sit_between_the_categories_table_and_the_taxonomy`)."""
 
 
+JUDGE_METRIC_NAMES: Final[tuple[str, ...]] = ("judge_mean", "judge_kappa_vs_human")
+"""The two metrics a judge produced, and the only two an untrusted calibration marks.
+
+Every other name in `METRIC_NAMES` is measured from the turn's own record and had
+no judge in it, so marking the whole block would train a reader to ignore all
+eighteen (17f decision H,
+`test_an_untrusted_calibration_notes_the_kappa_and_suffixes_the_two_judge_lines`)."""
+
+UNTRUSTED_JUDGE_NOTE: Final[str] = (
+    "judge metrics below are UNTRUSTED: kappa {kappa} against human labels is under "
+    "the {floor} floor"
+)
+"""The ONE line `## Metrics` carries when the run's calibration is not trusted.
+
+A format template rather than a finished sentence, so both numbers are rendered
+from the values that decided them: a note hard-coding `0.7` would read correctly
+today and lie the day `JUDGE_TRUST_MIN` moves, and a note naming no kappa leaves a
+reader unable to tell `0.699` from `0.1`
+(`test_the_untrusted_note_and_suffix_are_the_published_strings`). `{kappa}` is the
+word `null` when the artifact carried none - `report.md` sits beside a JSON
+document and Python's `None` is not what that document says
+(`test_an_untrusted_calibration_with_no_kappa_at_all_still_notes_it_as_null`)."""
+
+UNTRUSTED_METRIC_SUFFIX: Final[str] = " (untrusted)"
+"""What each judge metric line ends with under an untrusted calibration.
+
+Beside the number a reader is about to quote, which is what "greyed out" means in
+a document with no colour (17f decision H,
+`test_the_untrusted_note_and_suffix_are_the_published_strings`)."""
+
+
 def _new_run_id() -> str:
     """A fresh `uuid4` hex, one per built report.
 
@@ -183,6 +222,37 @@ class CaseReport(BaseModel):
         return None if value is None else format(value, "f")
 
 
+class RunCalibration(BaseModel):
+    """What a run was told about its judge: which labels, how well they agreed, trust.
+
+    17e's `CalibrationReport` narrowed to the six fields a RUN publishes. The rows,
+    the drop count and the clock stay in `calibration.json`, which is the audit
+    trail; what a report owes its reader is the number, the flag, and enough to
+    find the file the two came from - `labels_name` and `labels_sha` are how a
+    stored run is retraced six months later, and `pairs` is how a reader tells a
+    kappa over forty labels from one over four hundred
+    (`test_the_json_document_publishes_the_calibration_record_field_by_field`).
+
+    `judge_prompt_version` is repeated here rather than read off `RunReport`: the
+    run's own field is the prompt this run SCORED with, and this one is the prompt
+    the calibration was COMPUTED under. `evals/cli.py` refuses a run where the two
+    differ (17f decision D), and the two fields are what makes that refusal
+    checkable in a stored document rather than only in the process that made it.
+
+    `kappa` is `None` exactly where 17e's is - chance agreement was total - and
+    `trusted` is then `False` whatever a comparison would have done with it.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    judge_prompt_version: str
+    labels_name: str
+    labels_sha: str
+    pairs: int
+    kappa: float | None
+    trusted: bool
+
+
 class RunReport(BaseModel):
     """One run: its identity, its counts, and one `CaseReport` per case.
 
@@ -213,6 +283,17 @@ class RunReport(BaseModel):
     because one process reads one prompt file and a hash repeated on two hundred
     rows is the same fact two hundred times
     (`test_the_run_carries_the_judge_prompt_version_and_null_without_a_judge`)."""
+    calibration: RunCalibration | None = None
+    """The calibration this run was handed, or `null` when it was given none (17f).
+
+    Defaulted rather than required, which is what keeps every report written
+    before this row - the worked fixture included - parseable under
+    `extra="forbid"`, and what stops an uncalibrated run manufacturing an empty
+    record that reads as "calibrated, against nothing"
+    (`test_a_run_with_no_calibration_carries_null_in_the_field_and_in_the_metric`).
+    `evals/store.py` reads `kappa` off this field and never out of the `metrics`
+    mapping, so `mypy --strict` still sees the type going into a
+    `double precision` column."""
     cases: tuple[CaseReport, ...]
 
 
@@ -294,6 +375,7 @@ def build_report(
     tenant: str,
     target: str,
     judge_prompt_version: str | None = None,
+    calibration: RunCalibration | None = None,
 ) -> RunReport:
     """Turn one run and its identity into the record both files render.
 
@@ -302,10 +384,16 @@ def build_report(
     metric set were both added without changing this schema or `16d`'s column.
 
     The metric set is `compute_metrics` over the run's own records, spread into
-    the mapping as seventeen flat keys, and computed a second time per category
+    the mapping as eighteen flat keys, and computed a second time per category
     inside `_categories` - the same function over a subset, so the breakdown and
     the totals cannot drift
     (`test_the_run_level_metrics_are_the_metric_set_computed_over_every_run`).
+
+    The eighteenth of those keys is the exception, and the only one that comes
+    from a caller: `judge_kappa_vs_human` is the supplied calibration's own kappa
+    and is passed at the RUN level only, so every category reports `null` for it
+    by construction rather than through a second code path (17f decision B,
+    `test_a_calibrated_run_carries_the_kappa_at_the_run_level_and_null_in_every_category`).
 
     The per-case rows are built BEFORE `metrics`, because `metrics["tags"]` is
     counted from the tags those rows carry: one reading of the taxonomy per case,
@@ -331,13 +419,16 @@ def build_report(
         "target": target,
         "passed": result.failed_count == 0,
         "judge_prompt_version": judge_prompt_version,
+        "calibration": calibration,
         "metrics": {
             "cases": result.cases,
             "passed": result.passed_count,
             "failed": result.failed_count,
             "residency_violations": result.residency_violations,
             "leaked": result.leaked,
-            **compute_metrics(result.runs),
+            **compute_metrics(
+                result.runs, judge_kappa=None if calibration is None else calibration.kappa
+            ),
             "categories": _categories(result),
             "tags": _tag_counts(cases),
         },
@@ -457,7 +548,7 @@ def _metric_value(value: object) -> str:
     return format(value, "f") if isinstance(value, Decimal) else str(value)
 
 
-def _metric_lines(metrics: Mapping[str, object]) -> list[str]:
+def _metric_lines(metrics: Mapping[str, object], *, untrusted: bool = False) -> list[str]:
     """One line per metric that has a case behind it, in `METRIC_NAMES` order.
 
     A metric whose value is `None` is OMITTED and never rendered as `- name: None`
@@ -465,16 +556,45 @@ def _metric_lines(metrics: Mapping[str, object]) -> list[str]:
     numbers the run measured, not fourteen words with nothing beside them. The
     test is `is None` and not falsiness - `0.0` accuracy and `0` errored are
     measurements and both render.
+
+    `untrusted` suffixes the two `JUDGE_METRIC_NAMES` lines and nothing else (17f
+    decision H). It is passed only for the RUN-level block: the per-category
+    blocks report the judge's mean over a subset and never the number a reader
+    quotes out of a gate, and their `judge_kappa_vs_human` is `None` and so has no
+    line at all
+    (`test_an_untrusted_calibration_notes_the_kappa_and_suffixes_the_two_judge_lines`).
     """
     return [
         f"- {name}: {_metric_value(metrics[name])}"
+        + (UNTRUSTED_METRIC_SUFFIX if untrusted and name in JUDGE_METRIC_NAMES else "")
         for name in METRIC_NAMES
         if metrics.get(name) is not None
     ]
 
 
+def _untrusted_note(calibration: RunCalibration | None) -> list[str]:
+    """The one note an untrusted calibration puts at the top of `## Metrics`, or nothing.
+
+    Rendered from the calibration's own `trusted` flag and never from a comparison
+    made here: 17e is where `JUDGE_TRUST_MIN` is applied, and a second `>=` in this
+    module is a second place the floor can be got wrong. A kappa of `None` still
+    notes, as the word `null`, because a run whose judge agreement could not be
+    measured at all is the one a reader most needs warned about
+    (`test_an_untrusted_calibration_with_no_kappa_at_all_still_notes_it_as_null`).
+    """
+    if calibration is None or calibration.trusted:
+        return []
+    kappa = "null" if calibration.kappa is None else calibration.kappa
+    return [UNTRUSTED_JUDGE_NOTE.format(kappa=kappa, floor=JUDGE_TRUST_MIN)]
+
+
 def _metrics_lines(report: RunReport) -> list[str]:
     """The run-level metric set (#40), or nothing at all when nothing rendered.
+
+    Under an untrusted calibration the block opens with `UNTRUSTED_JUDGE_NOTE` and
+    the two judge lines carry `UNTRUSTED_METRIC_SUFFIX`; under a trusted one, and
+    under no calibration at all, neither appears anywhere
+    (`test_a_trusted_calibration_marks_nothing_in_the_metrics_block`).
 
     The empty case cannot be reached by any run that HAS a case, because
     `cross_tenant_leaks` and `errored` are counts and never `None`; the guard is
@@ -484,8 +604,9 @@ def _metrics_lines(report: RunReport) -> list[str]:
     exercises the same guard on the block below, which is the only one a run shape
     can empty.
     """
-    lines = _metric_lines(report.metrics)
-    return [METRICS_HEADING, "", *lines] if lines else []
+    untrusted = _untrusted_note(report.calibration)
+    lines = _metric_lines(report.metrics, untrusted=bool(untrusted))
+    return [METRICS_HEADING, "", *untrusted, *lines] if lines else []
 
 
 def _category_metric_lines(report: RunReport) -> list[str]:

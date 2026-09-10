@@ -31,6 +31,7 @@ the report for.
 | `passed` | boolean | true when no case failed |
 | `metrics` | object | the counts, below |
 | `judge_prompt_version` | string or `null` | the `sha256` of the judge prompt this run scored with, `null` when nothing was judged |
+| `calibration` | object or `null` | what this run was told about its judge, below; `null` when the run was given no calibration |
 | `cases` | array | one entry per case, in the order the set listed them |
 
 `set_sha` answers "which version of the golden set produced this run?". The set
@@ -53,8 +54,8 @@ call fails.
 | `failed` | the rest, whatever the reason |
 | `residency_violations` | how many turns were served outside the tenant's allowed regions |
 | `leaked` | true when a reply carried another tenant's marker |
-| the seventeen below | the fixed metric set, always all seventeen |
-| `categories` | `{category: {"passed": n, "failed": n, ...the seventeen}}`, over the categories this run used |
+| the eighteen below | the fixed metric set, always all eighteen |
+| `categories` | `{category: {"passed": n, "failed": n, ...the eighteen}}`, over the categories this run used |
 | `tags` | `{tag: n}`, how many FAILED cases carried each failure tag, zero counts omitted |
 
 Every count is derived from the per-case records, so the report and the line the
@@ -63,7 +64,7 @@ a fixed schema: later work adds keys to it without changing the document's shape
 
 ### The fixed metric set
 
-Seventeen metrics, and every one of them is present on every run whatever the run
+Eighteen metrics, and every one of them is present on every run whatever the run
 held, so a gate reads a threshold against a key that is always there and a
 baseline diff never has to tell "the number moved" from "the key is missing".
 
@@ -82,6 +83,7 @@ baseline diff never has to tell "the number moved" from "the key is missing".
 | `cross_tenant_leaks` | integer | how many replies carried another tenant's marker |
 | `errored` | integer | how many turns never answered |
 | `judge_mean` | number or `null` | the mean of the judge medians over the cases actually judged |
+| `judge_kappa_vs_human` | number or `null` | how well the judge agreed with human labels, from the calibration this run was given |
 | `p50_latency_ms` | integer or `null` | median measured latency |
 | `p95_latency_ms` | integer or `null` | 95th percentile measured latency |
 | `cost_usd_total` | string or `null` | what the run cost, as a decimal STRING |
@@ -122,15 +124,42 @@ disagree about one case. An injection case that resisted the injection and got
 the answer wrong some other way is still resistant: that is a different defect
 and a different metric.
 
-Every one of the seventeen is also computed per category, inside that category's
+Every one of the eighteen is also computed per category, inside that category's
 own entry of `categories`, by the same function over that category's cases alone
-- so the breakdown cannot drift from the totals.
+- so the breakdown cannot drift from the totals. `judge_kappa_vs_human` is the
+one exception, and it is `null` in every category of every run: agreement between
+a judge and a human is measured over a label set, not over a category's cases,
+and repeating one number under every heading would invite a reader to diff two
+categories that cannot differ.
 
 `judge_mean` is the LLM judge's, at the same two decimal places as an accuracy
 and over the cases a judge actually scored - never over the cases that ran, and
-`null` when the judge was off or nothing carried a rubric. SPEC's metric list also
-names `judge_kappa_vs_human`, which is not published yet: it needs the judge
-calibrated against human labels before a number there means anything.
+`null` when the judge was off or nothing carried a rubric.
+
+### The judge calibration
+
+`judge_kappa_vs_human` is the one metric a run does not measure. It is read out
+of a `calibration.json` the operator passes to `ops-eval run --calibration`, the
+file `ops-eval calibrate` writes when it scores human-graded replies through the
+same judge, and it is published exactly as that file states it - at three decimal
+places, never re-rounded, and `null` on a run given no calibration.
+
+| field of `calibration` | type | what it is |
+|---|---|---|
+| `judge_prompt_version` | string | the `sha256` of the prompt the CALIBRATION was computed under |
+| `labels_name` | string | the labels file it was computed from |
+| `labels_sha` | string | that file's `sha256`, so the number can be retraced |
+| `pairs` | integer | how many labels were scored - a kappa over forty is not one over four hundred |
+| `kappa` | number or `null` | Cohen's kappa with quadratic weights over the 1-5 scale |
+| `trusted` | boolean | whether that kappa met the published floor |
+
+A run is REFUSED before it starts, with exit code `2`, when the calibration was
+computed under a different judge prompt than the run will score with, and when
+`--calibration` is given with no `--judge-url`: the first is a stale number worn
+as trust and the fix is to recalibrate, the second is agreement about scores the
+run never produced. A calibration whose kappa is `null` is not a refusal - it
+means the two raters never disagreed enough to measure agreement at all, and
+`trusted` is then false.
 
 ### cases
 
@@ -272,6 +301,7 @@ allowed regions with every assertion passing, and one never answered.
     "cross_tenant_leaks": 0,
     "errored": 1,
     "judge_mean": null,
+    "judge_kappa_vs_human": null,
     "p50_latency_ms": 1840,
     "p95_latency_ms": 2310,
     "cost_usd_total": "0.044100",
@@ -293,6 +323,7 @@ allowed regions with every assertion passing, and one never answered.
         "cross_tenant_leaks": 0,
         "errored": 0,
         "judge_mean": null,
+        "judge_kappa_vs_human": null,
         "p50_latency_ms": 1840,
         "p95_latency_ms": 1840,
         "cost_usd_total": "0.014200",
@@ -314,6 +345,7 @@ allowed regions with every assertion passing, and one never answered.
         "cross_tenant_leaks": 0,
         "errored": 0,
         "judge_mean": null,
+        "judge_kappa_vs_human": null,
         "p50_latency_ms": 2310,
         "p95_latency_ms": 2310,
         "cost_usd_total": "0.020800",
@@ -335,6 +367,7 @@ allowed regions with every assertion passing, and one never answered.
         "cross_tenant_leaks": 0,
         "errored": 0,
         "judge_mean": null,
+        "judge_kappa_vs_human": null,
         "p50_latency_ms": 1502,
         "p95_latency_ms": 1502,
         "cost_usd_total": "0.009100",
@@ -356,6 +389,7 @@ allowed regions with every assertion passing, and one never answered.
         "cross_tenant_leaks": 0,
         "errored": 1,
         "judge_mean": null,
+        "judge_kappa_vs_human": null,
         "p50_latency_ms": null,
         "p95_latency_ms": null,
         "cost_usd_total": null,
@@ -369,6 +403,7 @@ allowed regions with every assertion passing, and one never answered.
     }
   },
   "judge_prompt_version": null,
+  "calibration": null,
   "cases": [
     {
       "case_id": "alpha",
@@ -693,6 +728,13 @@ document is what somebody opens after a red gate, and fourteen empty words are
 not what they came for. A `0.0` or a `0` is printed, because those are
 measurements.
 
+When the run was given a calibration the judge did not pass, `## Metrics` opens
+with one line saying so - naming the kappa and the floor it is under - and the
+`judge_mean` and `judge_kappa_vs_human` lines each end in `(untrusted)`. Nothing
+else in the block is marked: every other metric was measured from the turn's own
+record and had no judge in it. A trusted calibration marks nothing at all, and
+the per-category blocks are never marked.
+
 The identity block at the top carries the judge prompt's `sha256`, or `none` on
 a run that judged nothing: a score nobody can trace to the wording that produced
 it is not reproducible. A case failed by a low judge median names the median and
@@ -737,7 +779,7 @@ rather than turn storage off. When a configured store does fail, the run exits
 | `passed` | `boolean` | true when no case failed |
 | `report_path` | `text` | the `report.json` this run wrote |
 | `alias_resolution` | `jsonb` or NULL | which alias resolved where, filled later |
-| `judge_kappa` | `double precision` or NULL | judge calibration against human labels, filled later |
+| `judge_kappa` | `double precision` or NULL | the calibration's kappa, or NULL on a run given no calibration |
 
 The report's `run_kind` and the URL evaluated are two columns rather than one:
 the kind of run and the thing evaluated are different questions, and a stored
@@ -766,8 +808,10 @@ rows exactly when the target is failing.
 
 `tags` is the report's own per-case tag list, written straight through rather
 than recomputed, so the column and the report file cannot disagree about why a
-case failed. `alias_resolution` and `judge_kappa` still ship NULL and are filled
-by the judge calibration work rather than by a run. They exist now because the
-shape is fixed and an applied migration is never edited, and each is commented in
+case failed. `judge_kappa` is the report's own `calibration.kappa`, read off that
+record and never out of the `metrics` object, and it is NULL on every run made
+without `--calibration` - "no calibration was supplied", not "the judge agreed
+with nobody". `alias_resolution` still ships NULL. It exists now because the
+shape is fixed and an applied migration is never edited, and it is commented in
 the SQL file with what fills it, so a NULL reads as "not measured yet" rather
 than as a bug.

@@ -59,15 +59,19 @@ import pytest
 from opsconsole.evals.calibration import (
     CALIBRATION_JSON_NAME,
     JUDGE_TRUST_MIN,
+    KAPPA_MAX,
+    KAPPA_MIN,
     KAPPA_SCALE,
     MAX_LABEL_ID_LENGTH,
     MAX_LABEL_TEXT_LENGTH,
+    MAX_LABELS_NAME_LENGTH,
     MIN_CALIBRATION_LABELS,
     CalibrationRefused,
     CalibrationReport,
     CalibrationSetInvalid,
     calibrate,
     load_labels,
+    read_calibration,
     weighted_kappa,
     write_calibration,
 )
@@ -740,3 +744,156 @@ def test_score_still_delegates_to_score_reply() -> None:
     ]
     assert verdict is not None
     assert verdict.median == 4
+
+
+# --------------------------------------------------------------------------
+# read_calibration: the artifact on its way back INTO a run (17f)
+# --------------------------------------------------------------------------
+
+
+def written_artifact(tmp_path: Path, **overrides: object) -> Path:
+    """A real `calibration.json`, written by `write_calibration`, with fields replaced.
+
+    Built from the trusted table through `calibrate` rather than hand-typed, so a
+    case that expects the reader to ACCEPT a document is reading the exact bytes
+    this module writes - a round trip that assumed a hand-written shape would go
+    green while the two halves drifted apart.
+    """
+    report, _ = calibrated(tmp_path, table_pairs(TRUSTED_TABLE))
+    out = tmp_path / "written"
+    out.mkdir()
+    write_calibration(out, report)
+    path = out / CALIBRATION_JSON_NAME
+    if overrides:
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document.update(overrides)
+        path.write_text(json.dumps(document), encoding="utf-8")
+    return path
+
+
+def test_the_artifact_bounds_are_the_published_ones() -> None:
+    """a project rule on the three bounds this row adds, each of which guards a value that
+    lands in a stored column: the kappa in `eval_runs.judge_kappa` (`double precision`) and
+    the labels name in two `jsonb` documents. Catches a cap widened to make a real
+    operator's file load, and catches the kappa bounds written as the trust floor by
+    mistake - `-1.0` is a perfectly legal weighted kappa (a judge that inverts the human
+    every time) and refusing it would hide the most informative calibration there is."""
+    assert MAX_LABELS_NAME_LENGTH == 128
+    assert KAPPA_MIN == -1.0
+    assert KAPPA_MAX == 1.0
+
+
+def test_read_calibration_round_trips_what_write_calibration_wrote(tmp_path: Path) -> None:
+    """The pair this row exists to close: 17e writes the artifact, 17f reads it back, and
+    nothing else in the repo has ever read one. Catches a reader that returns the raw
+    document or a differently shaped record, catches a `computed_at` that comes back naive
+    or as a string - it is the only field whose JSON form is not its Python one - and
+    catches rows re-ordered or de-duplicated on the way in, which would silently change
+    which human score sits against which judge median."""
+    report, _ = calibrated(tmp_path, table_pairs(TRUSTED_TABLE))
+    out = tmp_path / "written"
+    out.mkdir()
+    write_calibration(out, report)
+
+    read_back = read_calibration(out / CALIBRATION_JSON_NAME)
+
+    assert read_back == report
+    assert read_back.kappa == 0.7
+    assert read_back.trusted is True
+    assert read_back.judge_prompt_version == judge_prompt_version()
+    assert read_back.computed_at == report.computed_at
+    assert [row.id for row in read_back.rows] == [row.id for row in report.rows]
+
+
+@pytest.mark.parametrize("kappa", [-1.0, 1.0], ids=["the floor", "the ceiling"])
+def test_a_kappa_at_either_bound_is_accepted(kappa: float, tmp_path: Path) -> None:
+    """The INCLUSIVE half of criterion 8's first bound. `-1.0` is total inversion and `1.0`
+    is total agreement, and both are values `weighted_kappa` itself produces - two cases
+    above assert exactly those numbers - so a check written `-1 < kappa < 1` would refuse
+    an artifact this repo can write. Catches a bound compared with `<`/`>` rather than with
+    `<=`/`>=`, the boundary no band-style assertion can see."""
+    path = written_artifact(tmp_path, kappa=kappa)
+
+    assert read_calibration(path).kappa == kappa
+
+
+@pytest.mark.parametrize(
+    "kappa", [-1.001, 1.001], ids=["one thousandth under", "one thousandth over"]
+)
+def test_a_kappa_one_thousandth_past_either_bound_is_refused(kappa: float, tmp_path: Path) -> None:
+    """The other side of the same bound, one `KAPPA_SCALE` step out so nothing but the
+    check can separate the two rows. Catches an unvalidated number reaching
+    `eval_runs.judge_kappa`, where a hand-edited `9.9` would publish a judge as
+    superhumanly agreeing and a gate would read it as evidence. The path is named because
+    an operator passing two files needs to know which one was refused."""
+    path = written_artifact(tmp_path, kappa=kappa)
+
+    with pytest.raises(CalibrationSetInvalid) as raised:
+        read_calibration(path)
+
+    assert str(path) in str(raised.value)
+
+
+def test_a_labels_name_of_exactly_the_cap_is_accepted_and_one_over_is_refused(
+    tmp_path: Path,
+) -> None:
+    """Criterion 8's second bound, both sides in one row because one character is the whole
+    difference between them. `labels_name` comes from a file an operator names and lands
+    unbounded in the `metrics` and report `jsonb` columns, which a project rule covers
+    even though a `jsonb` column has no length of its own. Catches a cap applied to the
+    wrong field - the sha and the prompt version are fixed-length and would never fire -
+    and catches a cap compared with `<`, which would refuse the name that exactly meets
+    it."""
+    at_cap = "n" * MAX_LABELS_NAME_LENGTH
+    over_cap = "n" * (MAX_LABELS_NAME_LENGTH + 1)
+
+    assert read_calibration(written_artifact(tmp_path, labels_name=at_cap)).labels_name == at_cap
+
+    other = tmp_path / "over"
+    other.mkdir()
+    path = written_artifact(other, labels_name=over_cap)
+    with pytest.raises(CalibrationSetInvalid) as raised:
+        read_calibration(path)
+
+    assert str(path) in str(raised.value)
+
+
+def test_an_artifact_that_is_not_json_is_refused_naming_the_path(tmp_path: Path) -> None:
+    """The half-written file, which is what a calibration killed mid-write leaves behind.
+    Catches a `JSONDecodeError` escaping to the operator as a traceback rather than as the
+    typed refusal `cli.py`'s pre-check block already catches and prints as one line."""
+    path = tmp_path / "calibration.json"
+    path.write_text('{"judge_prompt_version": "abc",', encoding="utf-8")
+
+    with pytest.raises(CalibrationSetInvalid) as raised:
+        read_calibration(path)
+
+    assert str(path) in str(raised.value)
+
+
+def test_an_artifact_with_a_field_the_model_forbids_is_refused(tmp_path: Path) -> None:
+    """`extra="forbid"` reached through the READER, which is criterion 1's "validated by
+    17e's `CalibrationReport`". Catches a reader that picks the fields it wants out of the
+    document - a `kappa` and a `trusted` and nothing else - which would accept a file from
+    a future or hand-edited schema and publish trust computed by something nobody can
+    identify. The document is otherwise the exact one this module writes, so the extra key
+    is the only thing that can refuse it."""
+    path = written_artifact(tmp_path, note="hand edited to look better")
+
+    with pytest.raises(CalibrationSetInvalid) as raised:
+        read_calibration(path)
+
+    assert str(path) in str(raised.value)
+
+
+def test_an_artifact_that_does_not_exist_is_refused_naming_the_path(tmp_path: Path) -> None:
+    """The mistyped `--calibration`, the commonest way the flag is used wrong. Catches an
+    `OSError` escaping as a traceback, and catches a missing file read as "no calibration
+    supplied" - a run that silently drops the trust it was asked to publish is the one
+    defect this flag exists to prevent."""
+    missing = tmp_path / "nowhere" / CALIBRATION_JSON_NAME
+
+    with pytest.raises(CalibrationSetInvalid) as raised:
+        read_calibration(missing)
+
+    assert str(missing) in str(raised.value)
