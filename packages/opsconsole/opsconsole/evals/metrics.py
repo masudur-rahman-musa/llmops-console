@@ -12,7 +12,8 @@ always there and a baseline diff never has to tell "the metric moved" from "the
 metric is missing" (`test_every_run_shape_returns_the_seventeen_keys_in_order`).
 `judge_mean` is `17c`'s, inserted where the design groups it - after the counts
 and before the latencies (17c decision F); `judge_kappa_vs_human` is the
-eighteenth and arrives with row 17e's calibration. `errored` is 17d's addition
+eighteenth and arrives with row 17f, which reads the artifact row 17e's
+`ops-eval calibrate` writes. `errored` is 17d's addition
 and the other half of decision C.
 
 Four properties are worth more than the arithmetic.

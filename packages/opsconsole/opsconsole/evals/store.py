@@ -43,9 +43,10 @@ cannot disagree about why a case failed
 JSON form: the two costs are `Decimal` in the mapping and decimal STRINGS in the
 column, exactly as they are in the file
 (`test_the_stored_metrics_are_the_json_the_report_file_carries`).
-`alias_resolution` and `judge_kappa` still ship NULL (decision F): row 17e's judge
-calibration fills `judge_kappa` - 17c added the judge and its verdict goes into
-`details`, not into a column of its own - the migration says so column by column, and
+`alias_resolution` and `judge_kappa` still ship NULL (decision F): row 17f fills
+`judge_kappa` from the artifact 17e's `ops-eval calibrate` writes - 17c added the
+judge and its verdict goes into `details`, not into a column of its own - the
+migration says so column by column, and
 `test_row_seventeens_remaining_columns_still_arrive_empty_rather_than_absent`
 pins each exactly rather than as falsy.
 """

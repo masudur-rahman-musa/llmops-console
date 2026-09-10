@@ -312,8 +312,14 @@ class JudgeClient:
             return answer
         return self._sample(rubric, reply)
 
-    def score(self, case: EvalCase, outcome: CaseOutcome) -> JudgeVerdict | None:
-        """Score one rubric case, or answer `None` when the judge could not be used.
+    def score_reply(self, rubric: str, reply: str) -> JudgeVerdict | None:
+        """Score one reply against one rubric, or `None` when the judge could not be used.
+
+        The whole sampling rule, and the seam 17e's calibration reaches it through
+        (17e decision E): `calibrate` has no `EvalCase` and no `CaseOutcome`, and
+        a second copy of the retry rule and the median would drift from this one
+        (`test_calibrate_reaches_the_judge_through_score_reply_with_the_labels_own_strings`
+        in `tests/evals/test_calibration.py`).
 
         Sequential samples on the caller's own client (decision G): `run_set` is
         synchronous, and three calls on the cases that carry a rubric is not
@@ -322,16 +328,11 @@ class JudgeClient:
         A sample that failed twice ends the case there and no further request is
         made - a verdict built from two samples is not the median of three
         (`test_a_sample_that_fails_twice_leaves_the_case_unjudged` counts the
-        requests). Callers hand in a case that HAS a rubric; one without is not
-        judged and never reaches here (`runner.run_set`).
+        requests).
         """
-        rubric = case.judge_rubric
-        if rubric is None:
-            return None
-
         answers: list[JudgeAnswer] = []
         for _ in range(JUDGE_SAMPLES):
-            answer = self._sample_once_retried(rubric, outcome.reply)
+            answer = self._sample_once_retried(rubric, reply)
             if answer is None:
                 return None
             answers.append(answer)
@@ -342,3 +343,18 @@ class JudgeClient:
             samples=tuple(answer.score for answer in answers),
             reason=median.reason[:MAX_JUDGE_REASON_LENGTH],
         )
+
+    def score(self, case: EvalCase, outcome: CaseOutcome) -> JudgeVerdict | None:
+        """Score one rubric case, or answer `None` when the judge could not be used.
+
+        Two lines over `score_reply` and nothing else (17e decision E), which is
+        what keeps every 17c case true while the calibration path never learns
+        the shape of these two records
+        (`test_score_still_delegates_to_score_reply` in
+        `tests/evals/test_calibration.py`). Callers hand in a case that HAS a
+        rubric; one without is not judged and never reaches here
+        (`runner.run_set`).
+        """
+        if case.judge_rubric is None:
+            return None
+        return self.score_reply(case.judge_rubric, outcome.reply)

@@ -1,4 +1,4 @@
-"""`evals/cli.py`: `ops-eval run` - the pre-checks, the four exit codes, one line.
+"""`evals/cli.py`: `ops-eval run` and `ops-eval calibrate` - the pre-checks, the codes.
 
 No network and no backing service: `run_set` is replaced by a recording stand-in,
 so what is under test here is the SHELL - what the CLI refuses before anything
@@ -36,6 +36,17 @@ The contract these cases are written against, before it exists:
   the root conftest, so "no database URL configured" is the
   arrangement every other case in this file already runs under.
 
+* 17e's one seam, resolved the same way: `cli.JudgeClient` as an attribute of
+  `opsconsole.evals.cli`. The `calibrate` subcommand opens its own
+  `httpx.Client`, so replacing the client would mean doubling `httpx` itself;
+  replacing the CLIENT CLASS with a factory over an `httpx.MockTransport` keeps
+  a real `JudgeClient` - 17c's three samples, its one retry and its median all
+  still run - and is the only seam the calibrate cases below use.
+* `calibrate --labels PATH --judge-url URL --out DIR`, all three required, with
+  `--judge-url` checked by `_checked_judge_url` and `--out` by `_checked_out`
+  before any request, `OPSCONSOLE_EVAL_JUDGE_KEY` required rather than optional,
+  and every refusal reported as ONE line on stderr answered with `EXIT_USAGE`.
+
 The tenant table below is arranged against the neighbouring guard: the generated
 policy DEFINES the exact tenant string each row passes, malformed ones included,
 so the only control that can refuse a row is the `IDENTIFIER_PATTERN` pre-check
@@ -57,10 +68,12 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, NoReturn
 
+import httpx
 import pytest
 
 from opsconsole.evals import cli
 from opsconsole.evals.assertions import AssertionResult, AssertionStatus, CaseAssertions
+from opsconsole.evals.calibration import CALIBRATION_JSON_NAME, MIN_CALIBRATION_LABELS
 from opsconsole.evals.cases import EvalCase, EvalCategory
 from opsconsole.evals.cli import (
     EXIT_FAILED,
@@ -70,6 +83,7 @@ from opsconsole.evals.cli import (
     UNJUDGED_LINE,
     UNSTORED_LINE,
 )
+from opsconsole.evals.judge import DEFAULT_JUDGE_TIMEOUT_SECONDS, JudgeClient
 from opsconsole.evals.outcome import CaseOutcome
 from opsconsole.evals.report import REPORT_JSON_NAME, REPORT_MD_NAME
 from opsconsole.evals.residency import ResidencyVerdict
@@ -1196,3 +1210,238 @@ def test_with_no_judge_key_the_run_judges_nothing_and_says_so_once(
     assert runner.judges == [None]
     assert printed.err.count(UNJUDGED_LINE) == 1
     assert read_report(out)["metrics"]["judge_mean"] is None
+
+
+# --------------------------------------------------------------------------
+# ops-eval calibrate: the labels, the artifact, the refusals (17e)
+# --------------------------------------------------------------------------
+
+
+def calibration_labels(
+    tmp_path: Path, *, count: int = MIN_CALIBRATION_LABELS, name: str = "labels.jsonl"
+) -> Path:
+    """A well-formed labels file of `count` lines, one JSON object each.
+
+    The shape `evals/calibration.py` loads, written here rather than shipped as a
+    fixture: a forty-line file of fabricated grading data is exactly what an earlier change
+    decision G kept out of the repo.
+    """
+    path = tmp_path / name
+    lines = [
+        json.dumps(
+            {
+                "id": f"label-{index:03d}",
+                "output": f"reply for label-{index:03d}",
+                "human_score": 1 if index % 2 else 5,
+                "judge_rubric": f"rubric for label-{index:03d}",
+            }
+        )
+        for index in range(count)
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+class CalibrationJudge:
+    """The gateway `calibrate` scores against, and the seam that puts it there.
+
+    `install` replaces `cli.JudgeClient` - the module attribute, exactly as
+    `cli.run_set`, `cli.build_pool` and `cli.PostgresEvalStore` are replaced above -
+    with a factory that hands back a real `JudgeClient` over an
+    `httpx.MockTransport`. The CLI's calibrate path opens its own `httpx.Client`,
+    so this is the one seam that keeps the suite off the network without doubling
+    the client itself; the `JudgeClient` is real, so 17c's sampling, retry and
+    median all still run.
+
+    `requests` is what the pre-check cases assert on: a CLI that validated its
+    arguments AFTER the first request would still exit 2 and would still leave no
+    file behind.
+    """
+
+    def __init__(self, *, status: int = 200, score: int = 4) -> None:
+        self.status = status
+        self.score = score
+        self.requests: list[httpx.Request] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append(request)
+        if self.status != 200:
+            return httpx.Response(self.status, json={"error": "the judge is down"})
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {"score": self.score, "reason": "It meets the rubric."}
+                            ),
+                        }
+                    }
+                ]
+            },
+        )
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def build(
+            base_url: str,
+            *,
+            client: httpx.Client,
+            api_key: str,
+            timeout: float = DEFAULT_JUDGE_TIMEOUT_SECONDS,
+        ) -> JudgeClient:
+            return JudgeClient(
+                base_url,
+                client=httpx.Client(transport=httpx.MockTransport(self)),
+                api_key=api_key,
+                timeout=timeout,
+            )
+
+        monkeypatch.setattr(cli, "JudgeClient", build)
+
+
+def run_calibrate(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    judge: CalibrationJudge,
+    labels: Path | None = None,
+    judge_url: str = JUDGE_URL,
+    out: Path | None = None,
+    judge_key: str | None = JUDGE_KEY,
+) -> tuple[int, Path]:
+    """Run `ops-eval calibrate` against a doubled gateway, and answer the code and `--out`.
+
+    The key is written to (or cleared from) the environment for the reason the run
+    cases clear it: `Settings().eval_judge_key` reads it there, and a developer's
+    own shell must not decide whether a calibration is refused.
+    """
+    judge.install(monkeypatch)
+    if judge_key is None:
+        monkeypatch.delenv("OPSCONSOLE_EVAL_JUDGE_KEY", raising=False)
+    else:
+        monkeypatch.setenv("OPSCONSOLE_EVAL_JUDGE_KEY", judge_key)
+    directory = out if out is not None else tmp_path / "calibration"
+    path = labels if labels is not None else calibration_labels(tmp_path)
+    code = cli.main(
+        [
+            "calibrate",
+            "--labels",
+            str(path),
+            "--judge-url",
+            judge_url,
+            "--out",
+            str(directory),
+        ]
+    )
+    return code, directory
+
+
+def test_calibrate_writes_the_artifact_into_out_and_exits_zero(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The happy path of the second subcommand, read off DISK rather than off a doubled
+    writer: catches a CLI that computes a calibration and never writes it, which leaves 17f
+    and row 18 with nothing to read, and catches a file written somewhere other than
+    `--out`. One line on stdout, because `make eval`'s output is read in a CI log and the
+    exit code is the interface. The forty labels are scored through a real `JudgeClient`,
+    so a subcommand that skipped the judge entirely could not produce forty rows."""
+    judge = CalibrationJudge()
+
+    code, out = run_calibrate(monkeypatch, tmp_path, judge=judge)
+
+    printed = capsys.readouterr()
+    document = json.loads((out / CALIBRATION_JSON_NAME).read_text(encoding="utf-8"))
+    assert code == EXIT_OK
+    assert len(printed.out.strip().splitlines()) == 1
+    assert document["pairs"] == MIN_CALIBRATION_LABELS
+    assert document["dropped"] == 0
+    assert judge.requests != []
+
+
+@pytest.mark.parametrize(
+    ("label", "judge_url"), REJECTED_TARGETS, ids=[row[0] for row in REJECTED_TARGETS]
+)
+def test_a_calibrate_judge_url_that_is_not_an_absolute_http_url_is_refused(
+    label: str,
+    judge_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--judge-url` on this subcommand is checked by `_checked_judge_url`, the same rule the
+    run path uses, BEFORE anything is sent. Catches a second copy of the URL rule that
+    drifts, catches the flag not being named in the message - an operator who typed two
+    URLs needs to know which one was refused - and catches a check placed after the first
+    request, which the empty request log is the only thing that can see. Everything else on
+    this command line is valid, so only the judge URL can produce the 2."""
+    judge = CalibrationJudge()
+
+    code, out = run_calibrate(monkeypatch, tmp_path, judge=judge, judge_url=judge_url)
+
+    printed = capsys.readouterr()
+    assert code == EXIT_USAGE
+    assert judge.requests == []
+    assert "--judge-url" in printed.err
+    assert not (out / CALIBRATION_JSON_NAME).exists()
+
+
+def test_calibrate_with_no_judge_key_is_a_usage_refusal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Where `run` turns the judge OFF with no key, `calibrate` has nothing left to do, so it
+    refuses. Catches a calibrate that borrows the run path's decision B and prints
+    `UNJUDGED_LINE` while writing an artifact with no kappa in it - a `calibration.json`
+    that exists is read by 17f as trust - and catches a `JudgeClient` built with an empty
+    key, which would spend forty labels' worth of 401s. One line, on stderr, and no file."""
+    judge = CalibrationJudge()
+
+    code, out = run_calibrate(monkeypatch, tmp_path, judge=judge, judge_key=None)
+
+    printed = capsys.readouterr()
+    assert code == EXIT_USAGE
+    assert judge.requests == []
+    assert len(printed.err.strip().splitlines()) == 1
+    assert not (out / CALIBRATION_JSON_NAME).exists()
+
+
+def test_a_judge_that_answers_five_hundred_throughout_writes_nothing_and_exits_two(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An earlier change's unhappy path. Every sample fails, so every label is dropped and no pairs
+    survive the floor: catches an artifact written with `pairs: 0` and a null kappa, which
+    is a file a later run trusts more than the warning nobody kept, and catches the
+    `CalibrationRefused` reaching the operator as a traceback rather than as one line. The
+    labels file and the URL are both valid here, so only the judge outage can produce the
+    2 - the pre-check cases above cannot be what fails this row."""
+    judge = CalibrationJudge(status=500)
+
+    code, out = run_calibrate(monkeypatch, tmp_path, judge=judge)
+
+    printed = capsys.readouterr()
+    assert code == EXIT_USAGE
+    assert judge.requests != []
+    assert len(printed.err.strip().splitlines()) == 1
+    assert "Traceback" not in printed.err
+    assert not (out / CALIBRATION_JSON_NAME).exists()
+
+
+def test_a_labels_path_that_does_not_exist_is_a_usage_refusal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The mistyped path, which is the commonest way this command is run wrong. Catches an
+    `OSError` from the loader escaping as a traceback, and catches the refusal being taken
+    for a failed calibration: `EXIT_USAGE` is the code that tells a gate the harness never
+    ran. The message is one line and names the path an operator typed."""
+    missing = tmp_path / "labels" / "nothing-here.jsonl"
+    judge = CalibrationJudge()
+
+    code, out = run_calibrate(monkeypatch, tmp_path, judge=judge, labels=missing)
+
+    printed = capsys.readouterr()
+    assert code == EXIT_USAGE
+    assert judge.requests == []
+    assert len(printed.err.strip().splitlines()) == 1
+    assert str(missing) in printed.err
+    assert not (out / CALIBRATION_JSON_NAME).exists()

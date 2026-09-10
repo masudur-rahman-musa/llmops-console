@@ -1,4 +1,4 @@
-r"""`ops-eval run`: the command `make eval` names, and the four exit codes (#33, #38).
+r"""`ops-eval`: `run`, the command `make eval` names, and `calibrate` (#33, #38, #36).
 
 A thin shell over `runner.run_set`. Everything it owns happens BEFORE the target
 is touched - every argument pre-check, the policy, the golden set - because
@@ -6,6 +6,19 @@ after the reset the seed has been spent and a refusal costs a whole run.
 
     ops-eval run --target URL --set PATH --tenant T --out DIR
                  [--policy PATH] [--set-sha SHA] [--run-kind KIND] [--judge-url URL]
+    ops-eval calibrate --labels PATH --judge-url URL --out DIR
+
+`calibrate` (17e) is the same shell over `calibration.calibrate`: it scores a
+file of human-labelled replies through the SAME `JudgeClient` a run uses and
+writes one `calibration.json` into `--out`. Its two flags in common with `run`
+are checked by the same two functions - `_checked_judge_url_value` and
+`_checked_out` - and both refusals it can end in, an unloadable labels file and a
+judge that scored too few labels, are one line on stderr and `EXIT_USAGE`. The
+one place it deliberately differs from `run` is the key: `run` turns the judge
+OFF without `OPSCONSOLE_EVAL_JUDGE_KEY` and keeps its own exit code, while a
+calibration with no judge has nothing left to do and refuses
+(`test_calibrate_with_no_judge_key_is_a_usage_refusal`). Nothing READS
+`calibration.json` yet; 17f wires it into a run.
 
 The exit code is the interface, not the output (decision C). Row 18's PR gate has
 to tell an accuracy regression from a residency breach without parsing stdout,
@@ -72,6 +85,14 @@ from urllib.parse import urlparse
 import httpx
 
 from opsconsole.core.settings import DEFAULT_ROUTING_POLICY_PATH, Settings
+from opsconsole.evals.calibration import (
+    CalibrationRefused,
+    CalibrationReport,
+    CalibrationSetInvalid,
+    calibrate,
+    load_labels,
+    write_calibration,
+)
 from opsconsole.evals.cases import EvalCase, EvalSetInvalid, load_golden_set
 from opsconsole.evals.judge import JudgeClient, judge_prompt_version
 from opsconsole.evals.report import (
@@ -176,22 +197,50 @@ def _checked_target(value: str) -> str:
     return value
 
 
-def _checked_judge_url(value: str | None) -> str | None:
-    """Validate `--judge-url` by `_checked_target`'s own rule, or answer `None`.
+def _checked_judge_url_value(value: str) -> str:
+    """Validate a `--judge-url` that was given, by `_checked_target`'s own rule.
 
     The same function and not a second copy of the rule: the two URLs this command
     takes would otherwise drift, and a judge URL of `gateway.example` is the same
     defect as a target of one
-    (`test_a_judge_url_that_is_not_an_absolute_http_url_is_refused` parametrises
-    the target's own rejection table). The message still names the flag the
-    operator typed.
+    (`test_a_judge_url_that_is_not_an_absolute_http_url_is_refused` and
+    `test_a_calibrate_judge_url_that_is_not_an_absolute_http_url_is_refused` both
+    parametrise the target's own rejection table). The message still names the
+    flag the operator typed.
+
+    Split from `_checked_judge_url` because the flag is OPTIONAL on `run` and
+    REQUIRED on `calibrate` (17e): one function answering `str | None` would
+    leave the required caller narrowing a value argparse already guaranteed.
     """
-    if value is None:
-        return None
     try:
         return _checked_target(value)
     except UsageError:
         raise UsageError(f"--judge-url: {value!r} is not an absolute http(s) URL") from None
+
+
+def _checked_judge_url(value: str | None) -> str | None:
+    """`--judge-url` on `run`, where absent means the judge is simply off."""
+    if value is None:
+        return None
+    return _checked_judge_url_value(value)
+
+
+def _checked_judge_key() -> str:
+    """The judge key `calibrate` cannot run without.
+
+    Where `run` turns the judge OFF with no key and keeps its own exit code
+    (17c decision B), a calibration with no judge has nothing left to do, so it
+    refuses rather than writing an artifact with no kappa in it - a
+    `calibration.json` that exists is read by 17f as trust
+    (`test_calibrate_with_no_judge_key_is_a_usage_refusal`). An empty string is
+    the same as absent: a `JudgeClient` built on one would spend a 401 per sample.
+    """
+    api_key = Settings().eval_judge_key
+    if not api_key:
+        raise UsageError(
+            "OPSCONSOLE_EVAL_JUDGE_KEY: not set, and a calibration cannot be made without the judge"
+        )
+    return api_key
 
 
 def _checked_out(value: Path) -> Path:
@@ -368,7 +417,7 @@ def _judged_prompt_version(result: RunResult) -> str | None:
 
 
 def _parser() -> argparse.ArgumentParser:
-    """`ops-eval` and its one subcommand."""
+    """`ops-eval` and its two subcommands."""
     parser = argparse.ArgumentParser(prog="ops-eval", description="Run a golden set.")
     subcommands = parser.add_subparsers(dest="command", required=True)
     run = subcommands.add_parser("run", help="run a golden set against a target")
@@ -399,10 +448,101 @@ def _parser() -> argparse.ArgumentParser:
         dest="judge_url",
         help="base URL of the gateway that serves the judge alias; without it, no judging",
     )
+    calibrate_command = subcommands.add_parser(
+        "calibrate", help="score human labels through the judge and report the agreement"
+    )
+    calibrate_command.add_argument(
+        "--labels", required=True, type=Path, help="the human-labelled replies, JSONL"
+    )
+    calibrate_command.add_argument(
+        "--judge-url",
+        dest="judge_url",
+        required=True,
+        help="base URL of the gateway that serves the judge alias",
+    )
+    calibrate_command.add_argument(
+        "--out", required=True, type=Path, help="where calibration.json is written"
+    )
     return parser
 
 
+def _calibration_summary(report: CalibrationReport) -> str:
+    """The one line `calibrate` prints, in the order a reader asks the questions.
+
+    One line for `_summary`'s reason - this output is read in a CI log - and the
+    trust flag is on it because that is the whole point of the command: a kappa
+    with no verdict beside it makes every reader apply the threshold themselves
+    (`test_calibrate_writes_the_artifact_into_out_and_exits_zero`).
+    """
+    kappa = "null" if report.kappa is None else report.kappa
+    return (
+        f"pairs {report.pairs} · dropped {report.dropped} · "
+        f"kappa {kappa} · trusted {str(report.trusted).lower()}"
+    )
+
+
+def _calibrate(options: argparse.Namespace) -> int:
+    """Calibrate the judge against a labels file and answer the process exit code.
+
+    Every pre-check happens before a request is made, for `run`'s own reason one
+    level along: the spend here is `MIN_CALIBRATION_LABELS` times `JUDGE_SAMPLES`
+    calls, and a URL refused afterwards has already cost all of it
+    (`test_a_calibrate_judge_url_that_is_not_an_absolute_http_url_is_refused`
+    asserts the request log is empty).
+
+    Both refusals a calibration can end in - an unloadable file and a judge that
+    scored too few labels - are reported as their own single line and answered
+    with `EXIT_USAGE`, never as a traceback and never as `EXIT_FAILED`: a gate
+    reads `2` as "the harness never ran", which is exactly what a judge outage is
+    (`test_a_judge_that_answers_five_hundred_throughout_writes_nothing_and_exits_two`).
+    The artifact is written LAST, so nothing on disk can be read as trust unless
+    the whole calibration succeeded.
+    """
+    try:
+        judge_url = _checked_judge_url_value(options.judge_url)
+        out = _checked_out(options.out)
+        api_key = _checked_judge_key()
+        labels_path = Path(options.labels)
+        labels = load_labels(labels_path)
+    except (UsageError, CalibrationSetInvalid) as exc:
+        print(exc, file=sys.stderr)
+        return EXIT_USAGE
+
+    with httpx.Client() as http:
+        try:
+            report = calibrate(
+                labels,
+                judge=JudgeClient(judge_url, client=http, api_key=api_key),
+                labels_name=labels_path.name,
+                labels_sha=hashlib.sha256(labels_path.read_bytes()).hexdigest(),
+            )
+        except CalibrationRefused as exc:
+            print(exc, file=sys.stderr)
+            return EXIT_USAGE
+
+    try:
+        write_calibration(out, report)
+    except OSError as exc:
+        print(f"--out: {out} could not be written: {exc}", file=sys.stderr)
+        return EXIT_USAGE
+
+    print(_calibration_summary(report))
+    return EXIT_OK
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    """Answer the process exit code for whichever subcommand was named.
+
+    Argparse's own `required=True` on the subparsers is what refuses a bare
+    `ops-eval`, so this dispatch never has a third branch to write.
+    """
+    options = _parser().parse_args(argv)
+    if options.command == "calibrate":
+        return _calibrate(options)
+    return _run(options)
+
+
+def _run(options: argparse.Namespace) -> int:
     """Run one golden set and answer the process exit code.
 
     Every refusal goes to stderr and never to stdout, which is the stream the
@@ -411,7 +551,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     `EvalSetInvalid` and `TargetUnreachable` are reported as their own message
     rather than as a traceback: an operator who mistyped a path needs the path.
     """
-    options = _parser().parse_args(argv)
     try:
         tenant = _checked_tenant(options.tenant)
         target = _checked_target(options.target)

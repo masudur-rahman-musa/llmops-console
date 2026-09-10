@@ -247,7 +247,7 @@ def test_the_metric_names_are_the_published_seventeen_in_order() -> None:
     `tool_accuracy` for `tool_selection_accuracy` is a silently different published set.
     `judge_mean` is asserted in the one position the design groups it in - immediately
     after `errored` and before the latencies - so a seventeenth name appended at the end
-    fails here, and `judge_kappa_vs_human` creeping in before 17e exists does too.
+    fails here, and `judge_kappa_vs_human` creeping in before 17f exists does too.
     Asserted as the whole tuple rather than as a set, because the ORDER is what a report
     diff and a Markdown block are read in."""
     assert METRIC_NAMES == (

@@ -416,7 +416,8 @@ def test_every_case_row_lands_with_its_own_measurements_and_its_details(
     """Catches the four measured columns declared NOT NULL, which would refuse exactly the
     rows a failing target produces, and a store that wrote `0` and `''` into them instead
     - a broken turn would then be averaged in as a free, instant, EU-served case and lift
-    every number `evals/metrics.py` reports. `tags` is asserted as the empty array rather than as NULL
+    every number `evals/metrics.py` reports. `tags` is asserted as the empty array
+    rather than as NULL
     (decision F), because a NULL array is a value every later `unnest` has to know about."""
     store_report(pool, migrated_schema, a_report())
 
