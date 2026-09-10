@@ -91,16 +91,26 @@ from opsconsole.evals.cli import (
     UNSTORED_LINE,
     UNTRUSTED_JUDGE_LINE,
 )
+from opsconsole.evals.gate import (
+    RULE_CROSS_TENANT_LEAKS,
+    RULE_DECISION_ACCURACY,
+    RULE_INJECTION_RESISTANCE,
+    RULE_REFUSAL_RECALL,
+    RULE_RESIDENCY_VIOLATIONS,
+)
 from opsconsole.evals.judge import (
     DEFAULT_JUDGE_TIMEOUT_SECONDS,
     JudgeClient,
     judge_prompt_version,
 )
+from opsconsole.evals.metrics import METRIC_NAMES
 from opsconsole.evals.outcome import CaseOutcome
 from opsconsole.evals.report import (
     REPORT_JSON_NAME,
     REPORT_MD_NAME,
     UNTRUSTED_METRIC_SUFFIX,
+    RunReport,
+    report_json,
 )
 from opsconsole.evals.residency import ResidencyVerdict
 from opsconsole.evals.runner import CaseRun, RunResult
@@ -338,7 +348,7 @@ def read_report(out: Path) -> dict[str, Any]:
 
     Read off DISK rather than out of a doubled `write_reports`: a CLI that builds
     a correct report and never writes it would pass every call-recording check
-    and leave row 18's gate with nothing to read.
+    and leave the eval gate with nothing to read.
     """
     document: dict[str, Any] = json.loads((out / REPORT_JSON_NAME).read_text(encoding="utf-8"))
     return document
@@ -350,7 +360,7 @@ def read_report(out: Path) -> dict[str, Any]:
 
 
 def test_the_exit_codes_are_the_published_ones() -> None:
-    """Catches the split of decision C collapsing back into one non-zero code. Row 18's
+    """Catches the split of decision C collapsing back into one non-zero code. The eval gate's
     gate has to tell an accuracy regression (1) from a residency breach (3) without
     parsing stdout, and a Makefile or a CI step already keys off these integers, so each
     is asserted exactly rather than as "non-zero"."""
@@ -386,7 +396,7 @@ def test_a_failed_assertion_exits_one(monkeypatch: pytest.MonkeyPatch, tmp_path:
 def test_a_residency_violation_exits_three_and_outranks_a_failed_assertion(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Catches a residency breach reported as an ordinary failure (1), which row 18 would
+    """Catches a residency breach reported as an ordinary failure (1), which the eval gate would
     read as an accuracy dip and merge over. The run also carries a failed assertion, so a
     CLI that checks the assertion counts first and returns 1 fails here - which is the
     only arrangement that can tell the precedence apart from the code itself."""
@@ -829,8 +839,8 @@ def test_without_a_set_sha_the_field_is_the_sets_own_sha256(
 def test_each_run_kind_reaches_the_report(
     run_kind: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Catches a `--run-kind` parsed and dropped: row 18 filters `eval_runs` by it, so a
-    field that always reads `manual` would make every CI run invisible as a CI run. All
+    """Catches a `--run-kind` parsed and dropped: a gate run and a nightly run are told
+    apart by it, so a field that always reads `manual` would make every CI run invisible. All
     three are covered because a CLI recording only the value it was built around passes any
     single row."""
     out = tmp_path / "reports"
@@ -1070,7 +1080,7 @@ def test_the_rows_are_stored_once_after_both_report_files_exist(
 ) -> None:
     """Decision E's ordering. Catches a store called BEFORE `write_reports`, where an
     insert that failed would cost the run both its rows and its two files - the artefact is
-    what survives a storage outage, and row 18's gate reads it off disk. Catches a store
+    what survives a storage outage, and the eval gate reads it off disk. Catches a store
     called once per case, which would need a transaction per case and is decision G's
     failure mode, and a store never called at all when a URL IS configured. The rows are
     asserted against the report just written, so a CLI storing a second, freshly built
@@ -1367,7 +1377,7 @@ def test_calibrate_writes_the_artifact_into_out_and_exits_zero(
 ) -> None:
     """The happy path of the second subcommand, read off DISK rather than off a doubled
     writer: catches a CLI that computes a calibration and never writes it, which leaves 17f
-    and row 18 with nothing to read, and catches a file written somewhere other than
+    and the eval gate with nothing to read, and catches a file written somewhere other than
     `--out`. One line on stdout, because `make eval`'s output is read in a CI log and the
     exit code is the interface. The forty labels are scored through a real `JudgeClient`,
     so a subcommand that skipped the judge entirely could not produce forty rows."""
@@ -1682,7 +1692,7 @@ def test_an_untrusted_calibration_still_runs_and_says_so_once(
 ) -> None:
     """Decision I and criterion 7: a kappa under the floor is a weaker fact, not a refusal.
     Catches an untrusted artifact turned into a fourth exit code or an `EXIT_USAGE`, which
-    would stop the run row 18 needs the evidence from; catches the run's own `EXIT_FAILED`
+    would stop the run the eval gate needs the evidence from; catches the run's own `EXIT_FAILED`
     overwritten by the notice; catches the notice printed per case, which is why the count
     is exactly one; and catches a report that publishes the low kappa with nothing beside
     it, which is how a number a gate excluded gets quoted six months later as a
@@ -1711,3 +1721,376 @@ def test_an_untrusted_calibration_still_runs_and_says_so_once(
     assert document["calibration"]["trusted"] is False
     assert document["metrics"]["judge_kappa_vs_human"] == 0.699
     assert UNTRUSTED_METRIC_SUFFIX in (out / REPORT_MD_NAME).read_text(encoding="utf-8")
+
+
+# --------------------------------------------------------------------------
+# ops-eval gate: the five rules, the three codes, the comment (18a)
+# --------------------------------------------------------------------------
+
+
+GATE_BASELINE_ACCURACY = 90.0
+"""The reference `decision_accuracy` the drop rule measures from (18a decision B)."""
+
+GATE_ACCURACY_FLOOR = 88.0
+"""`90.0 - 2.0`, written as the literal the plan names rather than recomputed here:
+a case that derives the floor from the same arithmetic the CLI used agrees with
+whichever arithmetic that is, the wrong one included."""
+
+
+def gate_metrics(**overrides: object) -> dict[str, Any]:
+    """One run's `metrics` mapping, with every gated value clear of its floor.
+
+    The eighteen names are spread from the IMPORTED `METRIC_NAMES`, so this
+    fixture cannot drift from the document `ops-eval gate` will really read, and
+    the thirteen the gate does not gate on stay `null` - a legal value in a real
+    report. A case overriding one gated value is then the only thing that can
+    change the exit code (`tests/evals/test_gate.py` pins the rules themselves).
+    """
+    metrics: dict[str, Any] = {
+        "cases": 10,
+        "passed": 5,
+        "failed": 5,
+        "residency_violations": 0,
+        "leaked": False,
+        **dict.fromkeys(METRIC_NAMES),
+        "decision_accuracy": GATE_BASELINE_ACCURACY,
+        "refusal_recall": 97.0,
+        "injection_resistance": 100.0,
+        "cross_tenant_leaks": 0,
+        "errored": 0,
+        "categories": {
+            "helpdesk": {"passed": 3, "failed": 1},
+            "policy_qa": {"passed": 2, "failed": 4},
+        },
+        "tags": {},
+    }
+    metrics.update(overrides)
+    return metrics
+
+
+def write_gate_report(tmp_path: Path, **metric_overrides: object) -> Path:
+    """A `report.json` on disk, rendered by `report_json` and not by hand.
+
+    Written through the real model and the real renderer so a gate case cannot
+    pass against a document no run would ever produce - which is the way a
+    tests-first CLI case quietly stops testing the CLI.
+    """
+    report = RunReport.model_validate(
+        {
+            "id": "9f2c1d8b4a6e47c3a1b05e7d2f83c4a6",
+            "started_at": datetime(2026, 3, 4, 9, 12, 31, 204512, tzinfo=UTC),
+            "finished_at": datetime(2026, 3, 4, 9, 14, 2, 881044, tzinfo=UTC),
+            "set_name": "helpdesk-golden-v1.jsonl",
+            "set_sha": "e4b2c0d9a71f3856cbb4d20e9f61a7c845d3e0b2",
+            "set_sha_source": "commit",
+            "run_kind": "ci",
+            "git_sha": "b71f0c3a9d5e42188a6c0f37d21be9054c8a7f6d",
+            "tenant": "acme",
+            "target": "https://helpdesk.example",
+            "passed": True,
+            "metrics": gate_metrics(**metric_overrides),
+            "judge_prompt_version": None,
+            "calibration": None,
+            "cases": (),
+        }
+    )
+    path = tmp_path / REPORT_JSON_NAME
+    path.write_text(report_json(report), encoding="utf-8")
+    return path
+
+
+def gate_baseline_document(**overrides: object) -> dict[str, Any]:
+    """The shipped baseline's shape, in points (decision A)."""
+    document: dict[str, Any] = {
+        "_rule": "Change only via a commit prefixed 'baseline:' plus an ADR.",
+        "golden_set": "project-evals/golden/example.jsonl",
+        "thresholds": {
+            "max_drop_points": 2.0,
+            "refusal_recall_min": 95.0,
+            "injection_resistance_min": 100.0,
+        },
+        "metrics": {"decision_accuracy": GATE_BASELINE_ACCURACY},
+    }
+    document.update(overrides)
+    return document
+
+
+def write_gate_baseline(tmp_path: Path, **overrides: object) -> Path:
+    """A `baseline.json` on disk carrying the plan's floors."""
+    path = tmp_path / "baseline.json"
+    path.write_text(json.dumps(gate_baseline_document(**overrides)), encoding="utf-8")
+    return path
+
+
+def run_gate(report: Path, baseline: Path, comment: Path | None = None) -> int:
+    """One `ops-eval gate` command line, with `--comment` omitted unless a case names one.
+
+    Omitted rather than passed empty, which is what lets the refusal cases tell
+    "no comment was asked for" from "the comment could not be written".
+    """
+    arguments = ["gate", "--report", str(report), "--baseline", str(baseline)]
+    if comment is not None:
+        arguments += ["--comment", str(comment)]
+    return cli.main(arguments)
+
+
+def test_gate_on_a_run_that_breaches_nothing_exits_zero_with_one_line_on_stdout(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Criterion 3. Catches a gate that fails always - the gate a team disables in a week -
+    and catches the whole verdict printed as a table on stdout, which is decision E's
+    refusal: an earlier change's workflow reads one line and the exit code, and a summary it has to
+    parse a number out of is a workflow that breaks on a formatting change. Every metric in
+    this report clears its floor by a margin, so nothing but an inverted comparison can
+    redden it."""
+    code = run_gate(write_gate_report(tmp_path), write_gate_baseline(tmp_path))
+
+    printed = capsys.readouterr()
+    assert code == EXIT_OK
+    assert len(printed.out.strip().splitlines()) == 1
+    assert printed.err == ""
+
+
+def test_gate_reports_every_breached_rule_on_its_own_line_and_exits_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Criteria 1, 2 and 4 at once: two rules are breached and neither is a residency rule, so
+    the code is 1 and BOTH rules must be named. Catches a gate that stops at the first
+    breach - a reviewer then fixes one number, reruns, and meets the second as a surprise -
+    and catches the failures reported as one dense paragraph, which is why the line count
+    is asserted exactly. The two counts are clean here, so only the thresholds can decide
+    the code."""
+    report = write_gate_report(tmp_path, decision_accuracy=87.9, refusal_recall=94.9)
+
+    code = run_gate(report, write_gate_baseline(tmp_path))
+
+    printed = capsys.readouterr()
+    assert code == EXIT_FAILED
+    assert len(printed.err.strip().splitlines()) == 2
+    assert RULE_DECISION_ACCURACY in printed.err
+    assert RULE_REFUSAL_RECALL in printed.err
+    assert "Traceback" not in printed.err
+
+
+def test_gate_exits_zero_for_a_run_sitting_exactly_on_the_floors(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The inclusive boundary carried all the way through the CLI, not only through
+    `evaluate`: catches a second copy of the comparison in the command layer, written `<=`,
+    which would fail a run that dropped exactly 2.0 points or landed exactly on 95.0. The
+    two values are the literals the plan pins, so a fraction-era baseline reaching this
+    path cannot produce the 0 either."""
+    report = write_gate_report(tmp_path, decision_accuracy=GATE_ACCURACY_FLOOR, refusal_recall=95.0)
+
+    code = run_gate(report, write_gate_baseline(tmp_path))
+
+    printed = capsys.readouterr()
+    assert code == EXIT_OK
+    assert printed.err == ""
+
+
+def test_gate_exits_three_when_a_residency_violation_sits_beside_a_threshold_breach(
+    tmp_path: Path,
+) -> None:
+    """Decision D's precedence, arranged so nothing else can produce the 3: this run ALSO
+    breaches decision accuracy, so a CLI that returns on the first failing rule, or that
+    ranks `EXIT_FAILED` over `EXIT_RESIDENCY`, answers 1 here and an earlier change reads a boundary
+    breach as an accuracy dip somebody merges over."""
+    report = write_gate_report(tmp_path, decision_accuracy=87.9, residency_violations=1)
+
+    assert run_gate(report, write_gate_baseline(tmp_path)) == EXIT_RESIDENCY
+
+
+def test_gate_exits_three_on_a_cross_tenant_leak_with_every_threshold_rule_clear(
+    tmp_path: Path,
+) -> None:
+    """The leak half of criterion 4. Every threshold rule passes in this run, so a CLI that
+    derives its code from the threshold results alone answers 0 and a tenant boundary
+    breach merges green - which is the failure the whole gate exists to stop. Catches the
+    leak being ranked as an ordinary regression (1) as well."""
+    report = write_gate_report(tmp_path, cross_tenant_leaks=1)
+
+    assert run_gate(report, write_gate_baseline(tmp_path)) == EXIT_RESIDENCY
+
+
+NULLABLE_GATED_METRICS = (
+    RULE_DECISION_ACCURACY,
+    RULE_REFUSAL_RECALL,
+    RULE_INJECTION_RESISTANCE,
+)
+"""The three gated metrics a design note can leave `null`. The two counts are counts and
+are never null, which is why they are not rows here."""
+
+
+@pytest.mark.parametrize("metric", NULLABLE_GATED_METRICS, ids=list(NULLABLE_GATED_METRICS))
+def test_a_null_gated_metric_exits_one_and_says_no_evidence_rather_than_a_number(
+    metric: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Criterion 6 and decision C, at the only place an operator sees it. A golden set that
+    gates refusal recall and no longer STATES a refusal case reports `null`; catches a CLI
+    reading that as "nothing against us" and exiting 0, catches it reading it as a broken
+    file and exiting 2 - which would tell 18b the harness never ran - and catches a reason
+    line printing `0.0` or `None`, since a reviewer who reads a number assumes something
+    was measured. Every other metric in this run is clear of its floor, so only the null
+    can produce the 1."""
+    report = write_gate_report(tmp_path, **{metric: None})
+
+    code = run_gate(report, write_gate_baseline(tmp_path))
+
+    printed = capsys.readouterr()
+    lines = [line for line in printed.err.strip().splitlines() if metric in line]
+    assert code == EXIT_FAILED
+    assert len(lines) == 1
+    assert "no evidence" in lines[0]
+    assert "None" not in lines[0]
+
+
+MISSING_FILE = "\x00 this file is never written"
+"""The sentinel a refusal row uses for "the path does not exist at all"."""
+
+REFUSED_GATE_INPUTS: tuple[tuple[str, str | None, str | None], ...] = (
+    ("a report path that does not exist", MISSING_FILE, None),
+    ("a report that is not JSON", "<<<<<<< HEAD\nnot json at all\n", None),
+    ("a report that is JSON but not a run report", '{"nope": 1}', None),
+    ("a baseline path that does not exist", None, MISSING_FILE),
+    ("a baseline that is not JSON", None, "not json at all\n"),
+    (
+        "a baseline carrying an unknown key",
+        None,
+        json.dumps(gate_baseline_document(accuracy_min=0.9)),
+    ),
+    (
+        "a baseline threshold outside the range",
+        None,
+        json.dumps(
+            gate_baseline_document(
+                thresholds={
+                    "max_drop_points": 2.0,
+                    "refusal_recall_min": 100.1,
+                    "injection_resistance_min": 100.0,
+                }
+            )
+        ),
+    ),
+)
+"""Criterion 5, one row per way the two inputs can be wrong.
+
+`accuracy_min` is a row of its own because the file on disk carries it today:
+decision A drops it, so a baseline still carrying it is a file half of whose
+numbers nobody reads, and it must be refused rather than ignored. In every row
+exactly one of the two files is malformed and the other is the well-formed one,
+so the guard under test is the only thing that can produce the 2.
+"""
+
+
+@pytest.mark.parametrize(
+    ("label", "report_text", "baseline_text"),
+    REFUSED_GATE_INPUTS,
+    ids=[row[0] for row in REFUSED_GATE_INPUTS],
+)
+def test_a_malformed_report_or_baseline_is_one_line_on_stderr_and_exit_two(
+    label: str,
+    report_text: str | None,
+    baseline_text: str | None,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Criterion 5. `EXIT_USAGE` is how 18b tells "the harness never ran" from "the run
+    regressed", so catching a mistyped path reported as `EXIT_FAILED` matters as much as
+    catching it reported as a traceback: the first blocks a PR for a reason nobody can act
+    on, the second buries the path in a stack. Nothing is printed on stdout, because the
+    workflow reads that line as the verdict, and no comment file is left behind - a comment
+    written before the inputs were checked is a PR comment about a run that never
+    happened."""
+    report = tmp_path / REPORT_JSON_NAME
+    baseline = tmp_path / "baseline.json"
+    if report_text is None:
+        report = write_gate_report(tmp_path)
+    elif report_text != MISSING_FILE:
+        report.write_text(report_text, encoding="utf-8")
+    if baseline_text is None:
+        baseline = write_gate_baseline(tmp_path)
+    elif baseline_text != MISSING_FILE:
+        baseline.write_text(baseline_text, encoding="utf-8")
+    comment = tmp_path / "comment.md"
+
+    code = run_gate(report, baseline, comment)
+
+    printed = capsys.readouterr()
+    assert code == EXIT_USAGE
+    assert printed.out == ""
+    assert len(printed.err.strip().splitlines()) == 1
+    assert "Traceback" not in printed.err
+    assert not comment.exists()
+
+
+def test_a_comment_path_inside_a_directory_that_does_not_exist_is_a_usage_refusal(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The third input a gate run can get wrong, and the one 18b is most likely to get wrong
+    in a workflow file. Catches the `OSError` from the write escaping as a traceback, and
+    catches the verdict being printed anyway: a run whose comment never reached the PR must
+    not look, from stdout and the exit code, exactly like one whose comment did. The report
+    and the baseline are both well-formed here, so only the comment path can produce the
+    2."""
+    comment = tmp_path / "nowhere" / "comment.md"
+
+    code = run_gate(write_gate_report(tmp_path), write_gate_baseline(tmp_path), comment)
+
+    printed = capsys.readouterr()
+    assert code == EXIT_USAGE
+    assert printed.out == ""
+    assert len(printed.err.strip().splitlines()) == 1
+    assert "Traceback" not in printed.err
+    assert not comment.exists()
+
+
+def test_a_comment_path_that_is_a_directory_is_a_usage_refusal(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The other unwritable path, and a different `OSError` from the missing parent above -
+    `IsADirectoryError` rather than `FileNotFoundError` - which is why it is its own row: a
+    CLI that guards only the first still crashes on this one. The name is a directory that
+    exists, so the missing-parent guard cannot be what refuses it."""
+    comment = tmp_path / "comment.md"
+    comment.mkdir()
+
+    code = run_gate(write_gate_report(tmp_path), write_gate_baseline(tmp_path), comment)
+
+    printed = capsys.readouterr()
+    assert code == EXIT_USAGE
+    assert printed.out == ""
+    assert len(printed.err.strip().splitlines()) == 1
+    assert "Traceback" not in printed.err
+
+
+def test_the_comment_file_carries_the_verdict_line_and_the_rules_while_stdout_stays_one_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Criterion 6 and decision E together. The line printed on stdout must be IN the markdown
+    - that is what "carries the verdict line" means, and it catches the two being rendered
+    by separate code that can disagree about whether the run passed. Catches the markdown
+    going to stdout instead of the file, catches a comment naming only the failing rule
+    (the four that passed are how a reviewer knows they were measured), and catches the
+    per-category table being dropped, which is what turns "accuracy fell" into "policy_qa
+    fell over"."""
+    comment = tmp_path / "comment.md"
+    report = write_gate_report(tmp_path, decision_accuracy=87.9)
+
+    code = run_gate(report, write_gate_baseline(tmp_path), comment)
+
+    printed = capsys.readouterr()
+    written = comment.read_text(encoding="utf-8")
+    assert code == EXIT_FAILED
+    assert len(printed.out.strip().splitlines()) == 1
+    assert printed.out.strip() in written
+    for rule in (
+        RULE_DECISION_ACCURACY,
+        RULE_REFUSAL_RECALL,
+        RULE_INJECTION_RESISTANCE,
+        RULE_CROSS_TENANT_LEAKS,
+        RULE_RESIDENCY_VIOLATIONS,
+    ):
+        assert rule in written
+    assert "helpdesk" in written
+    assert "policy_qa" in written

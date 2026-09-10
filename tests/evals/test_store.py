@@ -382,7 +382,7 @@ def test_the_run_row_carries_every_identity_field_from_the_report() -> None:
     into `git_sha` is a row PostgreSQL accepts without a murmur and a query nobody can
     tell is wrong. `id`, `passed` and `metrics` are asserted from the report too, because
     a store that generated its own run id would break the join every case row makes back
-    to it, and `metrics` is what row 18's gate reads. Since 17d that mapping is compared against
+    to it, and `metrics` is what the eval gate reads. Since 17d that mapping is compared against
     the report's JSON form and not against the live `report.metrics`, because the two
     costs in it are `Decimal` objects in the mapping and decimal strings in the column."""
     report = build(MIXED)
@@ -443,7 +443,7 @@ def test_the_measured_columns_come_from_the_case_that_measured_them() -> None:
 
 
 def test_the_report_path_is_the_report_json_that_was_written() -> None:
-    """Catches a store recording the `--out` DIRECTORY rather than the file: row 18's gate
+    """Catches a store recording the `--out` DIRECTORY rather than the file: the eval gate
     and the console both open `report_path` expecting a document, and a directory there is
     a link that never resolves. Catches the other end too - a path invented from the run
     id or from a constant - because the path asserted is the one the caller passed."""
@@ -785,9 +785,10 @@ REJECTED_RUN_KINDS: list[tuple[str, str]] = [
     ("label", "value"), REJECTED_RUN_KINDS, ids=[row[0] for row in REJECTED_RUN_KINDS]
 )
 def test_write_refuses_a_run_kind_outside_the_three_before_any_sql(label: str, value: str) -> None:
-    r"""Catches a `run_kind` reaching the column as free text. Row 18 filters `eval_runs`
-    by it, so `CI` and `ci\n` are gate runs that no query for `ci` ever finds - the gate
-    would report on a subset of its own history and say nothing. The CHECK constraint in
+    r"""Catches a `run_kind` reaching the column as free text. A gate run and a nightly run
+    are told apart by it, so `CI` and `ci\n` are gate runs that no query for `ci` ever
+    finds - the gate would report on a subset of its own history and say nothing. The
+    CHECK constraint in
     `003_eval_runs.sql` is the second guard and it is pinned in
     tests/ledger/test_eval_store_postgres.py; this is the one that refuses before a
     connection is borrowed at all."""

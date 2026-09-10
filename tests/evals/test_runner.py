@@ -184,7 +184,7 @@ def test_every_case_runs_once_in_file_order() -> None:
     """Catches a runner that reorders the set (a dict keyed by id, a set, a sort), which
     would make a report's rows disagree with the file an author reads, and one that drops
     or repeats a case - either of which silently changes the denominator every threshold
-    in row 18 is measured against. Order and counts are both asserted, so a runner that
+    in the eval gate is measured against. Order and counts are both asserted, so a runner that
     runs all three in the wrong order still fails."""
     target = Target(ALL_FINE)
 

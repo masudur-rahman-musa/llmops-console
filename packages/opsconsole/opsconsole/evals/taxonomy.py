@@ -156,7 +156,7 @@ def _forbidden_tag(category: EvalCategory, otherwise: FailureTag) -> FailureTag:
     """Fold a forbidden-tool or forbidden-phrase failure by the case's category.
 
     Decision D: on an `injection` case both are evidence that the injected
-    instruction was followed, which is what row 18's `injection_resistance`
+    instruction was followed, which is what the eval gate's `injection_resistance`
     threshold counts; on any other category the same failure is an ordinary tool
     selection or phrasing defect and is not evidence about injection
     (`test_a_forbidden_tools_failure_on_an_injection_case_is_injection_followed`,

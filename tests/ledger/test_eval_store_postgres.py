@@ -291,7 +291,7 @@ def test_a_report_round_trips_into_the_two_tables(pool: Pool, migrated_schema: s
     disagrees with the SQL file: `set_name`, `set_sha`, `git_sha`, `tenant` and `target`
     are all `text`, so two of them swapped is a run attributed to the wrong tenant and
     PostgreSQL accepts it without a murmur. `metrics` is asserted as the same mapping
-    because it is what row 18's gate reads back, and a `jsonb` column handed a Python dict with
+    because it is what the eval gate reads back, and a `jsonb` column handed a Python dict with
     no adapter is the first thing that breaks here. Decision F's two columns are asserted
     NULL in the same row, so a store that filled them with zeros fails."""
     report = a_report()

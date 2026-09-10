@@ -36,7 +36,7 @@ Four properties are worth more than the arithmetic.
   rate - which is why a false refusal and a missed refusal are two separate runs
   here, each asserting the value the OTHER metric does not move.
 * **A turn that never answered is in no accuracy denominator** (decision C) and
-  is visible only as `errored`, so a timeout cannot move a number row 18
+  is visible only as `errored`, so a timeout cannot move a number the eval gate
   compares against a baseline.
 """
 
@@ -245,7 +245,7 @@ def others_are_none(metrics: dict[str, object], *stated_names: str) -> list[str]
 
 
 def test_the_metric_names_are_the_published_eighteen_in_order() -> None:
-    """Catches a name renamed, dropped or reordered under row 18's gate and `16d`'s stored
+    """Catches a name renamed, dropped or reordered under the eval gate and `16d`'s stored
     `jsonb`: the gate reads thresholds by key and the console groups by position, so
     `tool_accuracy` for `tool_selection_accuracy` is a silently different published set.
     `judge_mean` is asserted in the one position the design groups it in - immediately
@@ -330,7 +330,7 @@ def test_each_accuracy_is_its_own_assertions_pass_rate_excluding_skips(
 
 def test_an_accuracy_over_no_stated_case_is_null_and_never_zero() -> None:
     """Catches decision B inverted: a metric that reports `0.0` when nothing stated the
-    assertion. `0.0` means every case got it wrong, and row 18's gate would fail a run for
+    assertion. `0.0` means every case got it wrong, and the eval gate would fail a run for
     a category the set never covered. The run states `intent` only, so `risk_class` has an
     empty denominator while the neighbouring metric still has a real value - a builder
     that defaults the whole mapping to `0.0` fails here and not on the accuracy above."""
@@ -453,7 +453,7 @@ def test_an_injection_case_failing_some_other_assertion_is_still_resistant() -> 
     """Catches resistance computed from the case's `passed` flag, or from "any failed
     assertion": an injection case that got the decision wrong while ignoring the injected
     instruction DID resist, and folding it in would report an injection defect that never
-    happened - the number row 18 gates hardest on. Both cases resisted, so the answer is
+    happened - the number the eval gate gates hardest on. Both cases resisted, so the answer is
     `100.0` and not `50.0`."""
     runs = (injection_run("clean"), injection_run("other", "decision"))
 
@@ -514,7 +514,7 @@ def test_cross_tenant_leaks_is_a_count_that_agrees_with_the_leaked_flag() -> Non
 def test_a_clean_run_reports_zero_leaks_and_never_null() -> None:
     """Catches a count that follows decision B's `null` rule, which belongs to the
     accuracies alone: "no case leaked" is a fact every run has, and a `null` here would
-    make row 18's gate unable to tell a clean run from an unmeasured one. Asserted as the
+    make the eval gate unable to tell a clean run from an unmeasured one. Asserted as the
     integer `0` beside `leaked is False`, so a count returning `None` fails."""
     runs = (
         make_run("a", results=(stated("cross_tenant_leak", AssertionStatus.PASSED),)),
@@ -544,7 +544,7 @@ def test_a_broken_turn_does_not_move_an_accuracy_it_only_moves_errored() -> None
     """Catches decision C's whole point: a turn that never answered folded into an
     accuracy denominator as a miss. The two runs differ by two broken cases and nothing
     else, so `intent_accuracy` is asserted EQUAL across them - a builder counting a
-    timeout as a failure would report `66.67` then `40.0` and move a number row 18
+    timeout as a failure would report `66.67` then `40.0` and move a number the eval gate
     compares against a baseline for a reason that has nothing to do with the model."""
     answered = rate_runs("intent")
     with_broken = (*answered, broken_run("e"), broken_run("f"))
@@ -817,7 +817,7 @@ def test_a_supplied_kappa_changes_neither_the_key_set_nor_its_order(
 ) -> None:
     """Catches the eighteenth key added to the mapping only on the runs a kappa was passed
     for - the defect that makes two reports of the same set carry different keys and makes
-    row 18's gate raise `KeyError` on the run with no calibration - and catches a kappa
+    the eval gate raise `KeyError` on the run with no calibration - and catches a kappa
     appended at the END of the mapping instead of at its published position, which the
     no-kappa case cannot see because a `None` value looks the same wherever it sits.
     Asserted as the whole tuple against `METRIC_NAMES`, so only the ORDER of the mapping
@@ -829,7 +829,7 @@ def test_the_kappa_is_null_when_no_calibration_was_supplied() -> None:
     """Criterion 3's `null` where `compute_metrics` decides it, which is also every
     category of every run (decision B): the keyword defaults to `None` and nothing in a
     `CaseRun` can supply one. Catches a default of `0.0`, which is the publishable claim
-    "the judge agrees with the human no better than chance" and would give row 18's gate a
+    "the judge agrees with the human no better than chance" and would give the eval gate a
     number to exclude on where there is no measurement at all, and catches the key omitted
     on a run with no calibration. These runs ARE judged, so a value cannot arrive from
     `judge_mean` and pass this row by coincidence."""

@@ -34,7 +34,7 @@ Three things the module holds that no single field states:
   Nothing here applies the trust floor: 17e decided it and this module renders it.
 
 The two file names are constants and nothing a caller supplies shapes a path
-(decision B): `make eval` names one directory, row 18's gate reads a known path
+(decision B): `make eval` names one directory, the eval gate reads a known path
 inside it, and a rerun overwrites
 (`test_a_rerun_overwrites_the_two_files_rather_than_appending`).
 
@@ -64,7 +64,7 @@ from opsconsole.evals.runner import CaseRun, RunResult
 from opsconsole.evals.taxonomy import TAG_ORDER, tags_for
 
 REPORT_JSON_NAME: Final[str] = "report.json"
-"""The machine-readable report, the file row 18's gate reads."""
+"""The machine-readable report, the file the eval gate reads."""
 
 REPORT_MD_NAME: Final[str] = "report.md"
 """The human-readable report, the file somebody opens after a red gate.
@@ -97,7 +97,7 @@ Recorded beside the SHA (decision A) so no reader is ever told a content hash is
 a commit (`test_the_set_sha_source_and_run_kind_vocabularies_are_the_published_ones`)."""
 
 RunKind = Literal["ci", "nightly", "manual"]
-"""Why the run happened. Row 18 filters `eval_runs` by it."""
+"""Why the run happened. A gate run and a nightly run are told apart by it."""
 
 FAILURES_HEADING: Final[str] = "## Failures"
 """Where the per-case rows live in `report.md`, and the last section of it.
@@ -701,7 +701,7 @@ def write_reports(out: Path, report: RunReport) -> None:
     """Write both files into `out`, overwriting whatever a previous run left.
 
     Exactly two files, both named by the constants above and neither derived from
-    a case id, a tenant or a clock (decision B), so row 18's gate reads a known
+    a case id, a tenant or a clock (decision B), so the eval gate reads a known
     path and a rerun into the same directory leaves two documents that parse
     (`test_write_reports_writes_exactly_the_two_published_files`).
 

@@ -28,10 +28,11 @@ says - the kappa as the eighteenth metric, the `RunCalibration` record on
 `report.json`, and `eval_runs.judge_kappa`. An artifact whose kappa is under
 17e's `JUDGE_TRUST_MIN` does not refuse the run: it prints `UNTRUSTED_JUDGE_LINE`
 once and the two reports mark the judge metrics untrusted (decision I,
-`test_an_untrusted_calibration_still_runs_and_says_so_once`). Row 18's gate is
-what EXCLUDES those metrics; this command only publishes the number it reads.
+`test_an_untrusted_calibration_still_runs_and_says_so_once`). The eval gate excludes
+those metrics from every rule by construction (18a decision F); this command
+only publishes the number it reads.
 
-The exit code is the interface, not the output (decision C). Row 18's PR gate has
+The exit code is the interface, not the output (decision C). The PR gate (18a) has
 to tell an accuracy regression from a residency breach without parsing stdout,
 so the four codes are module constants pinned exactly by
 `test_the_exit_codes_are_the_published_ones`, and a residency violation or a
@@ -71,7 +72,7 @@ this command prints is still ONE line naming the four counts.
 
 The `eval_runs` and `eval_cases` rows are stored AFTER those two files and never
 before: the artefact is what survives a failed insert, and
-row 18's gate reads it off disk. With no `OPSCONSOLE_DATABASE_URL` configured the
+the eval gate reads it off disk. With no `OPSCONSOLE_DATABASE_URL` configured the
 run stores nothing, says so in one line on stderr and keeps its own exit code
 (decision B) - `make eval` is usually run on a machine with no PostgreSQL up, and
 refusing there would turn the whole harness off rather than turn storage off.
@@ -106,6 +107,15 @@ from opsconsole.evals.calibration import (
     write_calibration,
 )
 from opsconsole.evals.cases import EvalCase, EvalSetInvalid, load_golden_set
+from opsconsole.evals.gate import (
+    GateInputInvalid,
+    evaluate,
+    gate_comment,
+    load_baseline,
+    load_report,
+    reason_line,
+    verdict_line,
+)
 from opsconsole.evals.judge import JudgeClient, judge_prompt_version
 from opsconsole.evals.report import (
     REPORT_JSON_NAME,
@@ -186,8 +196,9 @@ UNTRUSTED_JUDGE_LINE: Final[str] = (
 `UNSTORED_LINE`'s and `UNJUDGED_LINE`'s shape and their reason: a CI log is where
 this is noticed, and the two existing notices set the precedent that a run
 reporting a weaker fact than the operator asked for says so exactly once. It is
-not a refusal - row 18 excludes the judge metrics BY reading the kappa, so the
-run still writes both reports, still stores its rows and keeps its own exit code
+not a refusal - the eval gate excludes the judge metrics from every rule whatever
+the kappa says (18a decision F), so the run still writes both reports, still stores
+its rows and keeps its own exit code
 (`test_an_untrusted_calibration_still_runs_and_says_so_once`)."""
 
 
@@ -422,7 +433,7 @@ def _summary(result: RunResult) -> str:
 
 
 def _exit_code(result: RunResult) -> int:
-    """Turn one run into the integer row 18's gate reads.
+    """Turn one run into the integer the eval gate reads.
 
     Residency and a leak outrank the assertion counts: a boundary breach read as
     an accuracy dip is a breach somebody merges over.
@@ -438,7 +449,7 @@ def _store_rows(report: RunReport, out: Path) -> str | None:
     """Store the run and its cases, and answer what went wrong, or `None`.
 
     Called AFTER both report files are written (decision E's ordering): the
-    artefact is what survives a failed insert, and row 18's gate reads it off
+    artefact is what survives a failed insert, and the eval gate reads it off
     disk. The failure is answered rather than raised so the caller can apply
     decision E's exit rule in one place, and a storage complaint never becomes a
     traceback over a run already paid for.
@@ -539,6 +550,16 @@ def _parser() -> argparse.ArgumentParser:
     calibrate_command.add_argument(
         "--out", required=True, type=Path, help="where calibration.json is written"
     )
+    gate_command = subcommands.add_parser(
+        "gate", help="compare a published run against the baseline (SPEC 12.6)"
+    )
+    gate_command.add_argument("--report", required=True, type=Path, help="the run's report.json")
+    gate_command.add_argument(
+        "--baseline", required=True, type=Path, help="the checked-in project-evals/baseline.json"
+    )
+    gate_command.add_argument(
+        "--comment", type=Path, help="where the PR comment markdown is written; without it, none"
+    )
     return parser
 
 
@@ -610,11 +631,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Answer the process exit code for whichever subcommand was named.
 
     Argparse's own `required=True` on the subparsers is what refuses a bare
-    `ops-eval`, so this dispatch never has a third branch to write.
+    `ops-eval`, so this dispatch never needs a branch for "no subcommand at all".
     """
     options = _parser().parse_args(argv)
     if options.command == "calibrate":
         return _calibrate(options)
+    if options.command == "gate":
+        return _gate(options)
     return _run(options)
 
 
@@ -690,3 +713,52 @@ def _run(options: argparse.Namespace) -> int:
         print(stored, file=sys.stderr)
         return EXIT_RESIDENCY if code == EXIT_RESIDENCY else EXIT_USAGE
     return code
+
+
+def _gate(options: argparse.Namespace) -> int:
+    """Compare one published run against the baseline and answer the exit code (18a).
+
+    `_run`'s shape with no run in it: every refusal is one line on stderr answered
+    with `EXIT_USAGE`, stdout carries exactly the one verdict line an earlier change reads
+    (decision E), and the breached rules go to stderr one line each so a reviewer
+    sees all of them at once
+    (`test_gate_reports_every_breached_rule_on_its_own_line_and_exits_one`).
+
+    The order here is the contract. Both inputs are validated before anything is
+    written, so a malformed report never leaves a comment file behind claiming a
+    run that never happened; the comment is written before the verdict is printed,
+    so a run whose comment could not be written does not look, from stdout and the
+    code, exactly like one whose comment reached the PR
+    (`test_a_comment_path_inside_a_directory_that_does_not_exist_is_a_usage_refusal`).
+
+    `EXIT_RESIDENCY` outranks `EXIT_FAILED` exactly as `_exit_code` ranks them for
+    `run` (decision D): a boundary breach read as an accuracy dip is a breach
+    somebody merges over
+    (`test_gate_exits_three_when_a_residency_violation_sits_beside_a_threshold_breach`).
+    """
+    try:
+        report = load_report(options.report)
+        baseline = load_baseline(options.baseline)
+    except GateInputInvalid as exc:
+        print(str(exc), file=sys.stderr)
+        return EXIT_USAGE
+
+    verdict = evaluate(report, baseline)
+
+    if options.comment is not None:
+        try:
+            options.comment.write_text(gate_comment(verdict, report), encoding="utf-8")
+        except OSError as exc:
+            print(
+                f"--comment: {options.comment} could not be written: {exc.strerror}",
+                file=sys.stderr,
+            )
+            return EXIT_USAGE
+
+    print(verdict_line(verdict))
+    for breach in verdict.breaches:
+        print(reason_line(breach), file=sys.stderr)
+
+    if verdict.residency_breached:
+        return EXIT_RESIDENCY
+    return EXIT_OK if verdict.passed else EXIT_FAILED

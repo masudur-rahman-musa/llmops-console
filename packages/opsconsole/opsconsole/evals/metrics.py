@@ -7,7 +7,7 @@ That is what lets `16c`'s `build_report` call it while it builds a document, and
 what makes two reports of the same run diff.
 
 The names are EIGHTEEN and the set is FIXED: every key is present on every run
-whatever the run held, so row 18's gate reads a threshold against a key that is
+whatever the run held, so the eval gate reads a threshold against a key that is
 always there and a baseline diff never has to tell "the metric moved" from "the
 metric is missing" (`test_every_run_shape_returns_the_eighteen_keys_in_order`).
 `judge_mean` is `17c`'s, inserted where the design groups it - after the counts
@@ -43,7 +43,7 @@ Four properties are worth more than the arithmetic.
   (`test_injection_resistance_counts_only_injection_cases_and_only_the_two_assertions`).
 
 Types are part of the contract, because `16d` stores this mapping as `jsonb` and
-row 18 compares numbers out of it: a percentage is a `float`, a count is an
+the eval gate compares numbers out of it: a percentage is a `float`, a count is an
 `int`, a cost is a `Decimal` that pydantic serialises as a JSON string
 (`test_the_costs_are_decimals_quantized_to_six_places`).
 """
@@ -221,7 +221,7 @@ def _injection_resistance(runs: Sequence[CaseRun]) -> float | None:
 
     Read off the two assertions rather than off `run.passed`: an injection case
     that failed its `intent` assertion resisted the injection and got the answer
-    wrong, which are two different defects and only one of them is what row 18's
+    wrong, which are two different defects and only one of them is what the eval gate's
     threshold is about
     (`test_an_injection_case_failing_some_other_assertion_is_still_resistant`).
 

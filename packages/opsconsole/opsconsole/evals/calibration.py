@@ -65,7 +65,7 @@ MIN_CALIBRATION_LABELS: Final[int] = 40
 The file must carry this many records before anything is sent, and this many
 pairs must survive the judge's drops before an artifact is written. Forty is the
 number #36 states; what matters here is that it is a floor rather than a hint,
-because 17f and row 18 read a written `calibration.json` as trust
+because 17f reads a written `calibration.json` as trust and publishes it
 (`test_the_calibration_constants_are_the_published_ones`)."""
 
 MAX_LABEL_ID_LENGTH: Final[int] = 128
@@ -125,7 +125,7 @@ KAPPA_MAX: Final[float] = 1.0
 Both bounds are checked on the way IN rather than trusted from the file: the
 number lands in `eval_runs.judge_kappa`, a `double precision` column with no
 bounds of its own, so a hand-edited `9.9` would otherwise publish a judge as
-superhumanly agreeing and row 18 would read it as evidence
+superhumanly agreeing and the eval gate's comment would carry it as evidence
 (`test_a_kappa_one_thousandth_past_either_bound_is_refused`)."""
 
 CALIBRATION_JSON_NAME: Final[str] = "calibration.json"

@@ -306,7 +306,7 @@ RUN_METRIC_KEYS: tuple[str, ...] = (
 """Every key `metrics` carries, in order: the five counts, the eighteen, then the two maps.
 
 `metrics` is a plain `Mapping` with no schema of its own, so this tuple is the
-only published record of its shape - `16d` stores it as `jsonb` and row 18's gate
+only published record of its shape - `16d` stores it as `jsonb` and the eval gate
 reads thresholds out of it by name.
 """
 
@@ -338,7 +338,7 @@ def section_lines(markdown: str, heading: str) -> list[str]:
 
 
 def test_the_report_file_names_and_the_run_id_length_are_the_published_ones() -> None:
-    """Catches a timestamped or renamed report file (decision B): row 18's gate reads a
+    """Catches a timestamped or renamed report file (decision B): the eval gate reads a
     known path under `--out`, and a file name that moves turns that gate into a glob that
     picks "the newest", which is a rule nobody wrote down. `RUN_ID_LENGTH` is asserted as
     the integer 32 rather than as "the length of a uuid4 hex", so a builder that switches
@@ -424,7 +424,7 @@ def test_a_run_with_a_failed_case_is_not_a_passed_run() -> None:
 def test_one_case_report_per_case_in_file_order() -> None:
     """Catches a builder that groups, sorts or de-duplicates the per-case rows: the golden
     set's order is the order a reader diffs two runs in, and a report holding fewer rows
-    than the run had cases shrinks the denominator row 18's thresholds are measured
+    than the run had cases shrinks the denominator the eval gate's thresholds are measured
     against."""
     report = build(MIXED)
 
@@ -1017,7 +1017,7 @@ def test_an_unknown_field_is_refused_on_both_levels_of_the_report() -> None:
 def test_the_set_sha_source_and_run_kind_vocabularies_are_the_published_ones() -> None:
     """Catches either field typed as a free string. `set_sha_source` exists so no reader is
     ever told a content hash is a commit (decision A), and a third word - `unknown`, `sha`,
-    `local` - means neither; `run_kind` is what row 18 filters CI runs by. Both accepted
+    `local` - means neither; `run_kind` is what a query for CI runs filters by. Both accepted
     vocabularies are asserted whole, so a value quietly added later shows up here."""
     payload = json.loads(REPORT_FIXTURE.read_text(encoding="utf-8"))
 
@@ -1310,7 +1310,7 @@ def test_the_untrusted_note_and_suffix_are_the_published_strings() -> None:
     """a project rule on the two strings this row introduces, the way the two headings are
     pinned above. Catches a note that stops naming the kappa or the floor - a reader told
     only "untrusted" cannot tell 0.699 from 0.1 and has nothing to recalibrate against -
-    and catches a suffix that is not the word row 18's operator was told to look for.
+    and catches a suffix that is not the word the eval gate's operator was told to look for.
     Asserted as the format TEMPLATE, so the two placeholders are pinned too: a note
     hard-coding `0.7` in its text would render the right line today and lie the day
     `JUDGE_TRUST_MIN` moves."""
@@ -1356,7 +1356,7 @@ def test_a_run_with_no_calibration_carries_null_in_the_field_and_in_the_metric()
     required rather than defaulted - which would make the worked fixture and every stored
     report unparseable under `extra="forbid"` - and catches an empty `RunCalibration`
     manufactured for such a run, which reads as "calibrated, against nothing" and would
-    hand row 18 a `trusted` flag nobody measured. The run IS judged, so `judge_mean` has a
+    hand the eval gate a `trusted` flag nobody measured. The run IS judged, so `judge_mean` has a
     value and a kappa cannot arrive from it."""
     report = build(JUDGED, judge_prompt_version=JUDGE_VERSION)
     document = json.loads(report_json(report))
@@ -1370,7 +1370,7 @@ def test_a_run_with_no_calibration_carries_null_in_the_field_and_in_the_metric()
 def test_the_json_document_publishes_the_calibration_record_field_by_field() -> None:
     """Criterion 4's published key set, asserted by EQUALITY on both levels so a seventh
     calibration field added quietly and one of the six dropped are both red - `report.json`
-    is what row 18's gate, the console and an auditor six months later read, and a record
+    is what the eval gate, the console and an auditor six months later read, and a record
     missing `labels_name` or `pairs` is a trust claim nobody can retrace to a file. Catches
     the record flattened into two top-level fields (decision F), which would change the
     document's key set for every run that has no calibration at all. Each value differs

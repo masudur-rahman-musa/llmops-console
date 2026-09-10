@@ -11,7 +11,7 @@ Three rules the record keeps that no single field states:
 
 * a broken turn is a FAILED case and the run continues, one attempt, never a
   retry and never omitted from the counts (decision E) - omitting it would shrink
-  the denominator every threshold in row 18 is measured against
+  the denominator every threshold in the eval gate is measured against
   (`test_a_case_that_times_out_is_a_failed_case_and_the_run_continues`);
 * a residency violation makes that case not passed even when every assertion
   passed: a turn that left its allowed region is not a result the run may count

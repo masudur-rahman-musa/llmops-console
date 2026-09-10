@@ -633,7 +633,7 @@ def test_seven_unscorable_labels_of_forty_six_refuses_and_writes_nothing(tmp_pat
 
 def test_the_artifact_carries_exactly_the_published_keys(tmp_path: Path) -> None:
     """Criterion 9, asserted by EQUALITY so a field quietly dropped and a field quietly added
-    are both red - 17f and row 18 read this document, and a missing `judge_prompt_version`
+    are both red - 17f and the eval gate read this document, and a missing `judge_prompt_version`
     is what lets a calibration made under one prompt be worn as trust by a run made under
     another. Catches a writer that names the file something else or writes two files, and
     catches rows sorted or de-duplicated: one row per SCORED label, in file order, carrying

@@ -101,7 +101,7 @@ MAX_REPORT_PATH_LENGTH: Final[int] = 1024
 """The longest `report.json` path a row may point at.
 
 A whole filesystem path rather than a name, so it is capped near what a
-conventional `PATH_MAX` allows rather than at an identifier's width; row 18's
+conventional `PATH_MAX` allows rather than at an identifier's width; the eval
 gate and the console both open this value. Pinned by the same two cases.
 """
 
@@ -430,7 +430,7 @@ def _checked_git_sha(value: str | None) -> str | None:
 def _checked_run_kind(value: str) -> str:
     """Why the run happened, against the three words and nothing else.
 
-    Row 18 filters `eval_runs` by this column, so `CI` or `ci\\n` is a gate run
+    A gate run and a nightly run are told apart by this column, so `CI` or `ci\\n` is a gate run
     that no query for `ci` ever finds - the gate would report on a subset of its
     own history and say nothing about the rest.
     """

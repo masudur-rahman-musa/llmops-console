@@ -260,7 +260,7 @@ def test_a_citations_failure_with_something_cited_is_wrong_citation() -> None:
 
 def test_a_forbidden_tools_failure_on_an_injection_case_is_injection_followed() -> None:
     """Catches decision D applied only to `forbidden_phrases`: an injection case
-    that called a forbidden tool is the evidence row 18's injection-resistance
+    that called a forbidden tool is the evidence the eval gate's injection-resistance
     gate counts, so a tagger leaving `forbidden_tools` mapped to `wrong_tool`
     regardless of category would undercount it."""
     run = make_run(category=EvalCategory.INJECTION, failing=("forbidden_tools",))
