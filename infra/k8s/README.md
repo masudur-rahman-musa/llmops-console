@@ -6,7 +6,7 @@ kubeconform` is the whole automated check, and `kubectl apply` is a human's.
 
 ```
 kustomization.yaml     the single root; `resources` grows as directories land
-base/                  namespaces, quotas, limit ranges
+base/                  namespaces, quotas, limit ranges, network policies
 platform/              Postgres, Redis, Qdrant, the ACME issuers, the middlewares
 apps/                  the gateway, llama.cpp, the Helpdesk, their config and the four public Ingresses
 ```
@@ -183,6 +183,60 @@ repo's, dialled by its own liveness probe, and if it is never served the one
 router exempt from basic auth is a public 404 - an exposed path that answers
 nothing rather than one that answers too much.
 
+## What may reach what
+
+Ten `NetworkPolicy` objects in `base/networkpolicies.yaml`, eight in `apps` and
+two in `platform`. `apps` is denied in both directions and every row below is an
+additive allow on top of that; `platform` is denied inbound only, because
+cert-manager lives there and a cluster that cannot reach the ACME endpoint is a
+cluster with no certificate on any of the four public hosts. What that costs is
+that a compromised data pod can still talk out. The namespace holding the
+provider keys is the one closed both ways.
+
+| policy | namespace | applies to | allows |
+|---|---|---|---|
+| `default-deny` | `apps` | every pod | nothing, in either direction |
+| `allow-dns` | `apps` | every pod | egress to `kube-system` on UDP 53 and TCP 53 |
+| `gateway-ingress` | `apps` | `gateway` | ingress from `kube-system` (Traefik) and from any pod in `apps`, on its serving port |
+| `gateway-egress` | `apps` | `gateway` | egress to the public internet on TCP 443, to llama 8082, llama-embed 8083, and to Postgres, Redis and Qdrant in `platform` |
+| `helpdesk-web-ingress` | `apps` | `helpdesk-web` | ingress from `kube-system` on its serving port |
+| `helpdesk-api-ingress` | `apps` | `helpdesk-agent-api`, `helpdesk-mcp-server` | ingress from the four Helpdesk pods, each on its own serving port |
+| `helpdesk-egress` | `apps` | the four Helpdesk pods | egress to `gateway:8080`, `helpdesk-agent-api:8000`, `helpdesk-mcp-server:8001`, `postgres:5432`, `redis:6379`, `qdrant:6333` - and no route off the cluster at all |
+| `llama-ingress` | `apps` | `llama`, `llama-embed` | ingress from `gateway`, each on its own serving port |
+| `default-deny-ingress` | `platform` | every pod | nothing inbound; egress is not constrained |
+| `data-ingress-from-apps` | `platform` | `postgres`, `redis`, `qdrant` | ingress from any pod in `apps` on 5432, 6379 and 6333 |
+
+The gateway is the only pod in the cluster with a route to the internet, and
+that is the point of the whole file: the Helpdesk holds no provider key, and
+with no `ipBlock` in any policy that selects it, even a bug in the companion
+repo cannot dial a provider directly. The Langfuse pair in `helpdesk-secrets` is
+dead config for the same reason, until an in-cluster collector relays it.
+
+The public destination is `0.0.0.0/0` minus `10.0.0.0/8`, `172.16.0.0/12`,
+`192.168.0.0/16` and `169.254.0.0/16`, on TCP 443 only. The link-local carve-out
+is the one worth naming: it closes `169.254.169.254`, the metadata endpoint an
+SSRF through a provider `base_url` would otherwise reach from the one pod that
+holds every key.
+
+Three rows read `on its own serving port` because the port is written by NAME
+rather than by number. A policy has one `podSelector` and its ports apply to
+every pod that selector matches, so `llama-ingress` - one policy over two pods
+listening on 8082 and 8083 - cannot say "each on its own port" with a literal.
+Both pods call their port `http`, and Kubernetes resolves a named port against
+each target pod's own container port. `platform`'s policy is the exception and
+reads in numbers: its three targets name their ports differently.
+
+Two things these policies do NOT do. They cannot see a URL path, so `/admin/*`
+and `/metrics` stay reachable through Traefik exactly as before - taking them
+off the public router is a router rule, not a policy. And `evals` and
+`monitoring` have no policies at all yet, so a Prometheus installed today
+reaches nothing in `apps`: its scrape allow lands with the metrics stack.
+
+Nothing here has ever been applied, so none of it has ever denied a packet. What
+the tests prove is shape, by equality in both directions, so an allow nobody
+agreed to is as red as a missing one; the live proof is an egress probe against
+a kind cluster, and it lands with the end-to-end tests.
+
 ## The human steps
 
 Neither of these is in any gate: `kubectl apply` and `helm install` are a
@@ -305,8 +359,9 @@ metrics stack lands.
 - The rest of `apps/` - the console with its `console.` Ingress.
 - The nightly eval CronJob in `evals/`, and the metrics stack in `monitoring/`
   with its `grafana.` Ingress.
-- NetworkPolicies keyed off exactly these four namespace names, and SOPS-
-  encrypted secrets, including the four named above.
+- SOPS-encrypted secrets, including the four named above.
+- NetworkPolicies for `evals` and `monitoring`; the two namespaces that serve
+  traffic are covered above.
 
 Each of those is admitted against the envelope above, so a workload that does
 not fit is a conversation about this table rather than a silent edit to it.

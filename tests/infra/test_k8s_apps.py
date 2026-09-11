@@ -128,6 +128,24 @@ HELPDESK_OBJECTS: frozenset[tuple[str, str, str]] = frozenset(
     }
 )
 
+#: Row 21a's eight `apps` NetworkPolicies, by name. They come from `base/networkpolicies.yaml`
+#: rather than from `apps/`, but they land in this namespace, and this case scopes by namespace
+#: rather than by the directory a document was written in - so a policy added there and not here
+#: is red. `tests/infra/test_k8s_netpol.py` owns everything about their CONTENT; this set is
+#: only the eight names, in the one place the `apps` object list is asserted whole.
+APPS_NETWORK_POLICIES = frozenset(
+    {
+        "default-deny",
+        "allow-dns",
+        "gateway-ingress",
+        "gateway-egress",
+        "helpdesk-web-ingress",
+        "helpdesk-api-ingress",
+        "helpdesk-egress",
+        "llama-ingress",
+    }
+)
+
 #: Criterion 1, as `(kind, name, namespace)`. Set EQUALITY: a file left out of
 #: `apps/kustomization.yaml`'s `resources` and an object nobody agreed to are the same failure,
 #: and only equality sees both. Row 20f's eight are unioned in rather than listed again, so the
@@ -153,6 +171,7 @@ APPS_OBJECTS: frozenset[tuple[str, str, str]] = HELPDESK_OBJECTS | frozenset(
         ("Deployment", LLAMA_EMBED, APPS),
         ("Service", LLAMA_EMBED, APPS),
     }
+    | {("NetworkPolicy", name, APPS) for name in APPS_NETWORK_POLICIES}
 )
 
 #: Criterion 1's second half: "nothing cluster-scoped is added". The two 20b issuers are the
@@ -419,7 +438,7 @@ CONTAINER_PORT = 8080
 
 #: Decision E: configuration arrives as two whole objects, so adding a variable is a change to
 #: one of them and never to the Deployment. `gateway-secrets` is NAMED here and supplied by
-#: row 21 - the ConfigMap is written by this plan.
+#: row 21c - the ConfigMap is written by this plan.
 ENV_FROM_SOURCES: dict[str, str] = {
     "configMapRef": GATEWAY_CONFIG_MAP,
     "secretRef": GATEWAY_SECRET,
@@ -630,8 +649,8 @@ HELPDESK_IMAGE_TAG = "0.0.0-unbuilt"
 #: after the first apply, and changing one then means deleting the Deployment.
 KUSTOMIZE_WIDE_LABELS = frozenset({"app.kubernetes.io/part-of", "app.kubernetes.io/managed-by"})
 
-#: Decision E, row 21 and row 20f criterion 10: the only Secret names anything in the build may
-#: reference. `helpdesk-secrets` joins the three row 21 owes - it is the gateway API key the
+#: Decision E, row 21c and row 20f criterion 10: the only Secret names anything in the build
+#: may reference. `helpdesk-secrets` joins the three row 21c owes - it is the gateway API key the
 #: Helpdesk calls with, its database URL and the Langfuse pair, supplied SOPS-encrypted and
 #: never here. The emitted-Secret half of the same case is build-wide and stays that way.
 PINNED_SECRET_NAMES = frozenset(
@@ -850,7 +869,7 @@ def secret_references(value: object, found: set[str]) -> set[str]:
 
 def tls_secret_names(documents: list[dict[str, Any]]) -> set[str]:
     """Every `spec.tls[].secretName` the built Ingresses name. These are Secrets cert-manager
-    WRITES, not ones row 21 supplies, which is why the pinned-name check subtracts them."""
+    WRITES, not ones row 21c supplies, which is why the pinned-name check subtracts them."""
     names: set[str] = set()
     for ingress in objects_of_kind(documents, "Ingress"):
         for entry in ingress.get("spec", {}).get("tls", []):
@@ -1612,7 +1631,7 @@ def test_each_apps_middleware_matches_its_platform_original(built: list[dict[str
     this file's own expectation and no value from 20b is restated here. Catches the copy
     drifting from its original in either direction: a rate limit doubled in `apps` while the
     README and 20b's tests still describe the platform one, an `stsSeconds` shortened on one
-    side, a `basicAuth.secret` renamed in `platform` when row 21 lands and not carried across -
+    side, a `basicAuth.secret` renamed in `platform` when row 21c lands and not carried across -
     which is authentication configured against a Secret that does not exist. Catches a copy
     made with an EXTRA field as well as a missing one, because the comparison is whole-`spec`
     equality rather than a per-key check. Both sides are asserted present first, so a copy
@@ -1642,12 +1661,12 @@ def test_no_secret_is_emitted_and_no_credential_is_written_inline_under_apps(
     built: list[dict[str, Any]],
 ) -> None:
     """Criterion 9, in both halves. The build half: no `Secret` kind anywhere, and every Secret
-    NAME the stream references is one of the three row 21 owes - catches the convenient repair
+    NAME the stream references is one of the three row 21c owes - catches the convenient repair
     of an apply failing on a missing Secret, which is a placeholder `Secret` carrying the
     provider keys in git that nothing ever fails to mention again, and catches a fourth Secret
     name nobody has agreed to supply. The `tls[].secretName` of an Ingress is excluded from
     that comparison and checked separately: it is a Secret cert-manager CREATES rather than
-    one row 21 supplies, so criterion 7 (every Ingress names one) and criterion 9 (every
+    one row 21c supplies, so criterion 7 (every Ingress names one) and criterion 9 (every
     referenced name is one of the three) cannot both be read literally. The separate check is
     the half that still bites - a `tls` secret named `gateway-secrets` would have cert-manager
     overwrite the provider keys with a certificate, so the two sets are asserted disjoint. The
@@ -1669,7 +1688,7 @@ def test_no_secret_is_emitted_and_no_credential_is_written_inline_under_apps(
 
     referenced = {name for name in secret_references(built, set()) if name} - issued
     assert referenced <= PINNED_SECRET_NAMES, (
-        f"the build references {sorted(referenced - PINNED_SECRET_NAMES)}, which row 21 does "
+        f"the build references {sorted(referenced - PINNED_SECRET_NAMES)}, which row 21c does "
         "not supply"
     )
 

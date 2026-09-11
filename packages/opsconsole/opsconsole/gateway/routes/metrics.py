@@ -1,10 +1,17 @@
 """`GET /metrics`: the Prometheus scrape.
 
 Unauthenticated, like `/healthz` and `/readyz`. It is what
-every Prometheus scrape config assumes, and once an earlier change writes the
-NetworkPolicies the endpoint is reachable from inside the cluster only. The cost
-is honest and it is on the known-issues list until then: tenant names are label
-values, so a `/metrics` exposed to the internet discloses the tenant list.
+every Prometheus scrape config assumes, and what takes it off the public router
+is row 21b, not row 21a's NetworkPolicies - a policy decides which pods may open
+a connection, and Traefik is admitted to the gateway, so a path it routes stays
+public until a router rule says otherwise. The cost is honest and it is on the
+known-issues list until then: tenant names are label values, so a `/metrics`
+exposed to the internet discloses the tenant list.
+
+Row 21a leaves the scrape itself denied rather than open: `apps`'s `default-deny`
+closes ingress, `gateway-ingress` admits `kube-system` and pods in `apps`, and
+`monitoring` has no policy at all yet (21a decision C), so a Prometheus installed
+before row 23 adds its allow sees no gateway target.
 
 The path is deliberately outside `/v1/`, which is what keeps a scrape every
 fifteen seconds out of `gateway_requests_total` without a rule of its own

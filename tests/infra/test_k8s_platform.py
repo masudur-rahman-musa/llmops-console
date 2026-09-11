@@ -75,6 +75,11 @@ PLATFORM_OBJECTS: frozenset[tuple[str, str, str | None]] = frozenset(
         ("Middleware", "security-headers", PLATFORM),
         ("ClusterIssuer", "letsencrypt-staging", None),
         ("ClusterIssuer", "letsencrypt-prod", None),
+        # Row 21a, from `base/networkpolicies.yaml`: they are written in `base/` and land in
+        # this namespace, and this case scopes by namespace rather than by directory.
+        # `tests/infra/test_k8s_netpol.py` owns what they contain; these are the two names.
+        ("NetworkPolicy", "default-deny-ingress", PLATFORM),
+        ("NetworkPolicy", "data-ingress-from-apps", PLATFORM),
     }
 )
 
@@ -644,7 +649,7 @@ def test_each_workload_has_both_probes_and_a_service_that_resolves(
 
 def test_the_middlewares_carry_the_agreed_values(built: list[dict[str, Any]]) -> None:
     """Criterion 7, all three by value. Catches `basic-auth` naming a Secret other than the one
-    row 21 will supply, which is an Ingress with authentication configured and no credentials
+    row 21c will supply, which is an Ingress with authentication configured and no credentials
     behind it. Catches the rate-limit triple written with `average` and `burst` swapped - 100
     sustained with a burst of 50 is a limit that never bites the way it was agreed - and
     catches `period` written as the int `1`, where Traefik reads a bare number as nanoseconds

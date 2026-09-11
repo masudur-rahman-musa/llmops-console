@@ -1,0 +1,413 @@
+# The ten NetworkPolicies. They live in `base/` rather than beside the workloads
+# they constrain because the design puts them here: a policy is part of the
+# envelope a namespace admits work into, like its quota and its LimitRange, and
+# splitting them across `apps/` and `platform/` would mean reading two files to
+# answer "what may this pod reach".
+#
+# Each document writes its own `metadata.namespace`. Neither `base/` nor
+# `platform/` has a `namespace:` transformer - one would stamp a namespace onto
+# the cluster-scoped objects `base/` also emits - so the namespace is written
+# where it is read.
+#
+# The shape is deny-first. `default-deny` selects every pod in `apps` in both
+# directions and everything after it is an additive allow, because Kubernetes
+# unions allows and has no deny rule. So the guarantee #54 asks for - only the
+# gateway reaches the internet - is a property of what is ABSENT from this file,
+# not of anything written in it, which is why `tests/infra/test_k8s_netpol.py`
+# asserts by equality and scans the whole build for a second `ipBlock` rather
+# than reading `gateway-egress` alone.
+#
+# Ports are written by NAME wherever one policy protects pods that listen on
+# different numbers. A NetworkPolicy has one `podSelector` and its `ports` apply
+# to every pod that selector matches, so `llama-ingress` - one policy over llama
+# (8082) and llama-embed (8083) - cannot express "each on its own port" with a
+# literal. A named port resolves against each target pod's own container port,
+# and both pods call theirs `http`, so `port: http` is 8082 on one and 8083 on
+# the other. The same holds for `helpdesk-api-ingress` (8000 and 8001).
+# `platform`'s policy is the exception and reads in numbers: its three targets
+# name their ports `postgres`, `redis` and `http`, so there is no shared name.
+#
+# Every cross-namespace peer keys off `kubernetes.io/metadata.name`, the label
+# Kubernetes sets on every namespace itself. Nothing here labels a namespace by
+# hand: a pair written in `namespaces.yaml` would be indistinguishable from the
+# automatic one and would silently outlive it.
+
+# Every pod in `apps`, both directions, no exceptions. This is the only document
+# here that denies anything; the seven after it are what give the namespace back
+# the traffic it actually needs.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: apps
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+# DNS is separate from every other allow because it belongs to every pod. Folded
+# into the per-workload policies it would be four copies of the same rule, and
+# the pod a later row adds would come up unable to resolve anything - a failure
+# that reads like a provider outage rather than like a policy.
+#
+# Both protocols on 53: a resolver retries over TCP when a response exceeds 512
+# bytes, so UDP alone works until it does not, intermittently and under load.
+# The peer is the namespace rather than kube-dns's own labels - `k8s-app:
+# kube-dns` is k3s's to change, and nothing else in `kube-system` listens on 53.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: apps
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+# Two sources, one port. `kube-system` is Traefik, which is how both public
+# hosts reach anything; the empty `podSelector` is every pod in `apps`, which is
+# how the four Helpdesk workloads call the gateway rather than a provider.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway-ingress
+  namespace: apps
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: http
+
+# The one policy in the cluster with a route off it, and the reason #54 is a
+# property this build can claim at all.
+#
+# `0.0.0.0/0` minus the three private ranges and link-local keeps the gateway
+# off the cluster's own address space except where a named policy lets it back
+# in, so a provider `base_url` pointed at an internal address reaches nothing.
+# `169.254.0.0/16` is the one that matters most: it closes `169.254.169.254`,
+# the metadata endpoint SSRF via `base_url` would otherwise reach from the one
+# pod holding every provider key. TCP 443 only - a provider that needs plaintext
+# is a conversation, not a widened rule.
+#
+# The in-cluster rules are separate so that the `ipBlock` rule carries exactly
+# one port. Written as one rule with four peers, the 443 allow would apply to
+# llama and the data services too.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway-egress
+  namespace: apps
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: llama
+      ports:
+        - protocol: TCP
+          port: 8082
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: llama-embed
+      ports:
+        - protocol: TCP
+          port: 8083
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: platform
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: platform
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: platform
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: qdrant
+      ports:
+        - protocol: TCP
+          port: 6333
+
+# The public Helpdesk surface, and the only Helpdesk pod that takes traffic from
+# outside the namespace. Traefik only: nothing in `apps` calls the web tier.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: helpdesk-web-ingress
+  namespace: apps
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: helpdesk-web
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: TCP
+          port: http
+
+# The two internal Helpdesk endpoints, reachable from the Helpdesk's own pods
+# and from nowhere else - not from Traefik, which is what makes "the agent API
+# is not a public surface" a property of the network rather than of the absence
+# of an Ingress. `port: http` is 8000 on the agent API and 8001 on the MCP
+# server; a literal here would be right for one and a silent deny for the other.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: helpdesk-api-ingress
+  namespace: apps
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+          - helpdesk-agent-api
+          - helpdesk-mcp-server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - helpdesk-agent-api
+                  - helpdesk-mcp-server
+                  - helpdesk-scheduler
+                  - helpdesk-web
+      ports:
+        - protocol: TCP
+          port: http
+
+# Six destinations and no `ipBlock` at all (decision B). The Helpdesk holds no
+# provider key and this is what makes that structural rather than conventional:
+# even a bug in the companion repo cannot dial a provider, because there is no
+# route off the cluster from these four pods. An allow to 443 for Langfuse would
+# be indistinguishable from a provider call, so the Langfuse pair in
+# `helpdesk-secrets` is dead config until an in-cluster collector relays it.
+#
+# One rule per destination rather than one rule listing six peers and six ports:
+# a rule crosses every peer with every port, so the compact form would allow all
+# thirty-six pairs, including the Helpdesk reaching Postgres on the gateway's
+# port and the gateway on Redis's.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: helpdesk-egress
+  namespace: apps
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+          - helpdesk-agent-api
+          - helpdesk-mcp-server
+          - helpdesk-scheduler
+          - helpdesk-web
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gateway
+      ports:
+        - protocol: TCP
+          port: 8080
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: helpdesk-agent-api
+      ports:
+        - protocol: TCP
+          port: 8000
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: helpdesk-mcp-server
+      ports:
+        - protocol: TCP
+          port: 8001
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: platform
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: platform
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: platform
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: qdrant
+      ports:
+        - protocol: TCP
+          port: 6333
+
+# The local models answer to the gateway and to nothing else. Without this, any
+# pod in `apps` could call the local model directly - no ledger row, no budget
+# check, no trace - which is the same bypass a provider key in the Helpdesk
+# would be, one hop shorter.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: llama-ingress
+  namespace: apps
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+          - llama
+          - llama-embed
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gateway
+      ports:
+        - protocol: TCP
+          port: http
+
+# `platform` is denied INBOUND only (decision A). cert-manager lives here and
+# needs the ACME endpoint and the API server; an egress deny would be a cluster
+# that cannot issue a certificate, and every public host in this build depends
+# on one. What it costs is that a compromised data pod can still talk out -
+# a smaller hole than a cluster with no TLS, and `apps`, where the provider keys
+# live, is closed in both directions.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: platform
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+
+# The three data services, open to `apps` on their own three ports and to
+# nothing else. One policy rather than three because `platform` is pinned at two
+# policies; the cost is that the three ports are allowed on all three pods, so
+# Redis admits a connection on 5432 that nothing there is listening for. Qdrant's
+# gRPC 6334 is deliberately absent - nothing in `apps` speaks it.
+#
+# The peer is the `apps` namespace rather than a workload list: every pod in
+# `apps` that reaches a data service is already constrained by its own egress
+# policy above, and repeating that list here would be a second place to keep in
+# step.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: data-ingress-from-apps
+  namespace: platform
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+          - postgres
+          - redis
+          - qdrant
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: apps
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 6333

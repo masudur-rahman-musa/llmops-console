@@ -36,8 +36,10 @@ still a directory in someone's proxy log.
 
 Like `/admin/routing`, this path is not counted by the request metrics
 (`COUNTED_PATH_PREFIX` is `/v1/`), is traced because `TracingMiddleware` spans
-every scope, and has the admin key as its only control until an earlier change's
-NetworkPolicy binds `/admin/*` cluster-internal.
+every scope, and has the admin key as its only control until row 21b takes
+`/admin/*` off the public router. Row 21a's NetworkPolicies do not reach this:
+they decide which pods may open a connection to the gateway, and Traefik is one
+of them, so a path stays public until a router rule says otherwise.
 """
 
 from __future__ import annotations
