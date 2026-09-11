@@ -1,4 +1,4 @@
-.PHONY: help setup run test select-tests test-adjacent lint typecheck format verify eval infra-check migrate purge-residency refresh-rollup
+.PHONY: help setup run test select-tests test-adjacent lint typecheck format verify eval infra-check k8s-check migrate purge-residency refresh-rollup
 
 # The console arrives in a later milestone. Until then its checks are skipped
 # rather than deleted, so the intended gate stays visible in this file. The
@@ -54,13 +54,26 @@ refresh-rollup: ## Refresh the daily cost rollup the console reads
 eval:       ## Project evals: golden set vs project-evals/baseline.json
 	uv run ops-eval run --target http://localhost:8080 --set "$$GOLDEN_SET" --tenant evals --out project-evals/reports/local
 # Two halves, each on its own line so a failure in either is the target's exit
-# code. The terraform half runs for real; the kustomize half skips while
-# infra/k8s carries no kustomization, written as a conditional rather than
-# `A && B || C`, which would report success the moment terraform failed.
+# code. The terraform half runs for real; the kustomize half is a delegation to
+# `k8s-check`, still written as a conditional rather than `A && B || C`, which
+# would report success the moment terraform failed. The conditional is kept now
+# that infra/k8s does carry a kustomization, so a checkout that has not got one
+# skips rather than failing.
 # `-backend=false` keeps `validate` off Terraform Cloud: the same init CI runs.
 infra-check: ## Validate infrastructure as code (no apply)
 	terraform -chdir=infra/terraform/hetzner fmt -check -recursive
 	terraform -chdir=infra/terraform/hetzner init -backend=false -input=false
 	terraform -chdir=infra/terraform/hetzner validate
-	@if [ -f infra/k8s/kustomization.yaml ]; then kustomize build infra/k8s | kubeconform; \
+	@if [ -f infra/k8s/kustomization.yaml ]; then $(MAKE) k8s-check; \
 	else echo "skip: no infra/k8s/kustomization.yaml yet - kustomize build"; fi
+# The kustomize half on its own target, so CI can run it without installing a
+# terraform toolchain it has no use for, and so the pipeline is written in
+# exactly one place for the two callers to share.
+# `-schema-location default` keeps the stock schemas for core kinds alongside
+# the CRD catalogue, which is where cert-manager's and Traefik's own kinds are
+# resolved from once they land. `-strict` refuses an unknown field. There is
+# deliberately no `-ignore-missing-schemas`: it would turn a kind kubeconform
+# cannot resolve into a green tick, which is the one failure this step exists
+# to produce.
+k8s-check:  ## Build the kustomization and validate it against the schemas (no apply)
+	kustomize build infra/k8s | kubeconform -strict -summary -schema-location default -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'

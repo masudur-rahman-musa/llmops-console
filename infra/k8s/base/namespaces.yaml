@@ -1,0 +1,32 @@
+# The four namespaces, and the only four: the tests assert set EQUALITY, so a
+# fifth added here reddens rather than arriving quietly.
+#
+# The split is by blast radius, not by tidiness. `platform` holds the stateful
+# backing services and the cluster's own machinery (20b), `apps` the gateway,
+# the console and the Helpdesk services (20c), `evals` the nightly CronJob
+# alone, `monitoring` the metrics stack. A NetworkPolicy in row 21
+# keys off exactly these names.
+#
+# No labels are set on these objects. The root kustomization's `labels:` block
+# is the only source, and a pair repeated here would be indistinguishable from
+# one the root stopped setting.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: apps
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: evals
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring

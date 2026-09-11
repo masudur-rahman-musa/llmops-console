@@ -212,7 +212,7 @@ def test_the_cloud_init_pins_k3s_once_and_disables_nothing() -> None:
     installer takes `latest` and two applies a month apart build different clusters; catches
     the version being pasted a second time (a comment, a second export) where one copy is
     then bumped and the other is not; and catches `--disable traefik` or
-    `--disable servicelb`, which would leave every Ingress in row 20 unrouted with no error
+    `--disable servicelb`, which would leave every Ingress unrouted with no error
     from this module at all. Counted over the raw text, so a commented-out copy still counts."""
     text = read(CLOUD_INIT)
 
@@ -272,7 +272,8 @@ def test_the_outputs_are_the_six_agreed_facts_and_no_credential() -> None:
     """Criterion 5. Catches a seventh output added for convenience - a `kubeconfig`, the
     hcloud token, the generated private key - which Terraform Cloud then stores in state and
     prints in every run's log; and catches one of the four FQDNs being dropped, which is what
-    row 20's kustomization reads to point its Ingress hosts. Equality on the name set is what
+    the Ingresses read to point their hosts once the app manifests land. Equality on the name
+    set is what
     makes both directions fail."""
     text = read(OUTPUTS_TF)
     declared = set(named_blocks(text, "output"))
@@ -343,13 +344,18 @@ def test_the_ci_job_checks_terraform_always_and_plans_only_with_credentials() ->
 
 
 def test_infra_check_runs_terraform_for_real_and_skips_kustomize_when_absent() -> None:
-    """Decision H and a project rule. The target reads
-    `terraform ... && terraform ... && kustomize build infra/k8s | kubeconform` today, which
-    cannot pass at all while `infra/k8s` carries no kustomization. Catches the two obvious
-    repairs: chaining the kustomize half onto the terraform half with `||` so the target
-    reports success when TERRAFORM fails (rule 9's `A && B || C`), and deleting the kustomize
-    half outright, which hides row 20's gate instead of skipping it. The terraform half must
-    stand on its own line so its exit code is the target's."""
+    """Decision H and a project rule. Three terraform lines, each its own line so its exit
+    code is the target's, then a guarded kustomize half. That half no longer carries the
+    pipeline itself: it delegates to the `k8s-check` target, which CI runs on its own without
+    a terraform toolchain, so the invocation exists in one place. The guard stays because it
+    is a skip-when-absent, not a skip-on-failure - a checkout without a kustomization skips
+    rather than failing the whole target.
+
+    Catches the two obvious repairs: chaining the kustomize half onto the terraform half with
+    `||` so the target reports success when TERRAFORM fails (rule 9's `A && B || C`), and
+    deleting the guarded half outright, which hides the manifest gate instead of skipping it.
+    What `k8s-check` itself runs - the kubeconform flags, the single invocation - is pinned by
+    tests/infra/test_k8s_base.py, not here."""
     lines = recipe(read(MAKEFILE), "infra-check")
     terraform_lines = [line for line in lines if "terraform" in line]
 
@@ -360,4 +366,4 @@ def test_infra_check_runs_terraform_for_real_and_skips_kustomize_when_absent() -
     assert any("if [ -f infra/k8s/kustomization.yaml ]" in line for line in lines), (
         "the kustomize half is not guarded by a skip-when-absent conditional"
     )
-    assert any("kustomize build infra/k8s" in line for line in lines), "no kustomize half at all"
+    assert any("k8s-check" in line for line in lines), "no kustomize half at all"

@@ -42,7 +42,8 @@ Weekly snapshots are a manual step: take them from the Hetzner console or with
 
 ## What is not here yet
 
-The records resolve to a box serving nothing until the cluster is deployed: the
-kustomization, its Ingresses and cert-manager arrive in the next row of the
-build order. A 404 or a connection refused on `console.<zone>` before then is
-the expected state, not a broken deploy.
+The records resolve to a box serving nothing until the cluster is deployed.
+The kustomization's namespaces and resource envelope are in `infra/k8s` now;
+cert-manager and the Ingresses that answer on these names are not, and land
+with the platform and app manifests. A 404 or a connection refused on
+`console.<zone>` before then is the expected state, not a broken deploy.

@@ -1,4 +1,4 @@
-# What a human and row 20's deploy need, and nothing else. No credential and no
+# What a human and the cluster deploy need, and nothing else. No credential and no
 # cluster admin file is published here: Terraform Cloud stores every output in
 # state and prints it in the run log, so an output is the widest place a secret
 # can land.

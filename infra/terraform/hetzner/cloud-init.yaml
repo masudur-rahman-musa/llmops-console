@@ -16,6 +16,6 @@ write_files:
 runcmd:
   # The version is pinned to an exact release, never a channel: two applies a
   # month apart must build the same cluster. Traefik and servicelb stay on -
-  # nothing here disables a bundled component, because row 20's Ingresses and
-  # LoadBalancer Services depend on both.
+  # nothing here disables a bundled component, because the cluster's Ingresses
+  # and LoadBalancer Services depend on both.
   - curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.31.5+k3s1 sh -s - server

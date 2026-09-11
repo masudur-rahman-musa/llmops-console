@@ -1,0 +1,63 @@
+# The envelope, and the reason this plan exists before the workloads do.
+#
+# A ResourceQuota that NAMES a resource makes the API server reject any pod in
+# that namespace whose containers do not declare it. So naming `requests.memory`
+# and `limits.memory` turns "requests and limits on everything" into a property
+# admission enforces, rather than one a reviewer has to re-check workload by
+# workload in 20b and 20c.
+#
+# `limits.cpu` is deliberately absent: a CPU limit
+# throttles rather than kills, so forcing one onto every container would cost
+# the gateway tail latency and buy no safety. The four requests total 6Gi and
+# 3 CPU exactly, inside the CAX21's 8 GiB and 4 vCPU, leaving both a memory and
+# a CPU margin for k3s itself. The limits column is oversubscribed (10Gi) on
+# purpose: requests are what the scheduler packs, limits are the ceiling one
+# container may burst to, and llama.cpp alone carries a 3 GiB limit.
+#
+# Raising any row means re-totalling it here AND in `../README.md`. Row 23 is
+# the likely one: a trimmed kube-prometheus-stack may not fit `monitoring` in
+# 512Mi, and that row is the right place for the argument.
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: platform-envelope
+  namespace: platform
+spec:
+  hard:
+    requests.memory: 2Gi
+    requests.cpu: 800m
+    limits.memory: 3Gi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: apps-envelope
+  namespace: apps
+spec:
+  hard:
+    requests.memory: 3Gi
+    requests.cpu: 1500m
+    limits.memory: 5Gi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: evals-envelope
+  namespace: evals
+spec:
+  hard:
+    requests.memory: 512Mi
+    requests.cpu: 300m
+    limits.memory: 1Gi
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: monitoring-envelope
+  namespace: monitoring
+spec:
+  hard:
+    requests.memory: 512Mi
+    requests.cpu: 400m
+    limits.memory: 1Gi

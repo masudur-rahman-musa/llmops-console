@@ -1,0 +1,24 @@
+# The single root. There is exactly one cluster, and the
+# AWS evidence run deploys this same kustomization unchanged, so a
+# `base/` + `overlays/<env>/` pair would exist to hold one empty overlay.
+# `make k8s-check` and CI's `k8s` job both build THIS path, with no `-o`
+# selection to keep in step.
+#
+# `resources` grows as the row lands: `base/` now, `platform/` in 20b,
+# `apps/` in 20c.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Set here rather than in `base/` so every directory a later row adds inherits
+# them without repeating the pair. `includeSelectors: false` is what keeps them
+# out of `spec.selector`: a label that reaches a Deployment's selector is
+# immutable after the first apply, and changing this pair later would then need
+# every workload deleted and recreated.
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/part-of: ai-operations-console
+      app.kubernetes.io/managed-by: kustomize
+
+resources:
+  - base

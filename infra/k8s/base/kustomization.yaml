@@ -1,0 +1,10 @@
+# The four namespaces and the envelope every later workload is admitted
+# against. No labels here: the root sets them once for every directory
+# (see `../kustomization.yaml`).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespaces.yaml
+  - quotas.yaml
+  - limitranges.yaml

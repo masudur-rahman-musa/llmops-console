@@ -1,0 +1,72 @@
+# The backstop under the quota, identical in all four namespaces.
+#
+# Without it the quota's effect on a manifest that declares no resources is
+# REJECTION, which would make cert-manager (20b) and kube-prometheus-stack
+# uninstallable without editing their upstream YAML. With it such a
+# container is defaulted instead, and the quota still holds.
+#
+# `defaultRequest` is what the scheduler packs, `default` the ceiling. Both are
+# small on purpose: a third-party sidecar that needs more says so, and one that
+# says nothing should not take a whole namespace's share. The type is
+# `Container` and not `Pod`, because `Pod` caps a pod's total and defaults
+# nothing per container, which is the half that matters here.
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: platform-defaults
+  namespace: platform
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        memory: 64Mi
+        cpu: 50m
+      default:
+        memory: 256Mi
+        cpu: 500m
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: apps-defaults
+  namespace: apps
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        memory: 64Mi
+        cpu: 50m
+      default:
+        memory: 256Mi
+        cpu: 500m
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: evals-defaults
+  namespace: evals
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        memory: 64Mi
+        cpu: 50m
+      default:
+        memory: 256Mi
+        cpu: 500m
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: monitoring-defaults
+  namespace: monitoring
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        memory: 64Mi
+        cpu: 50m
+      default:
+        memory: 256Mi
+        cpu: 500m
