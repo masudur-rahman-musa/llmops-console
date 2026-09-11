@@ -2,7 +2,7 @@ r"""`ops-eval gate`: the design's five rules over one published run (#41, #42).
 
 Pure, and deliberately so. Everything here reads a `report.json` that already
 exists and a `baseline.json` that is checked into the repo, so the same two files
-give the same verdict on a laptop and in an earlier change's workflow - no clock, no
+give the same verdict on a laptop and in the eval gate workflow - no clock, no
 database, no gateway. The command that shells over it lives in `evals/cli.py`;
 what lives here is the comparison, the verdict and the markdown that verdict
 becomes.
@@ -49,13 +49,13 @@ BASELINE_MAX: Final[float] = 100.0
 """The highest a threshold or a reference metric may be, inclusive.
 
 Inclusive because the shipped `injection_resistance_min` IS `100.0`: an exclusive
-upper bound would make the gate unloadable the day an earlier change first runs it
+upper bound would make the gate unloadable the day the workflow first runs it
 (`test_a_baseline_sitting_exactly_on_a_bound_is_accepted`)."""
 
 MAX_SET_NAME_LENGTH: Final[int] = 128
 """The cap on `golden_set`, the one free-text string in the file.
 
-a project rule again: the name is quoted into the PR comment an earlier change posts, and
+a project rule again: the name is quoted into the PR comment the workflow posts, and
 a path with no bound is a comment with no bound
 (`test_a_golden_set_name_at_the_cap_is_accepted_and_one_character_over_is_refused`)."""
 
@@ -92,7 +92,7 @@ RULE_ORDER: Final[tuple[str, ...]] = (
 )
 """The five rules the design names, in the order a verdict reports them.
 
-Fixed for `METRIC_NAMES`' reason: an earlier change renders these strings into a PR
+Fixed for `METRIC_NAMES`' reason: the workflow renders these strings into a PR
 comment and reads them out of a workflow, so a reorder makes two gate runs of the
 same report diff. Every name is a key a real report carries, which is asserted
 against the imported `METRIC_NAMES` and the count block by
@@ -257,7 +257,7 @@ without anyone remembering to edit a string
 VERDICT_FAILED_LINE: Final[str] = "gate FAILED: {failed} of {total} rules breached ({names})"
 """The ONE line a red gate prints, and the first line of its comment.
 
-It names the breached rules, so an earlier change's log says what broke without opening
+It names the breached rules, so the workflow's log says what broke without opening
 the artifact, and the same string is what the comment opens with - the two are
 rendered once and never by separate code that can disagree about whether the run
 passed
@@ -309,6 +309,27 @@ UNTRUSTED_WORD: Final[str] = "NOT trusted"
 can be got wrong."""
 
 
+def _one_line(exc: ValidationError) -> str:
+    """One pydantic `ValidationError` as ONE line: the first problem, and how many more.
+
+    `str(exc)` runs to a line per field plus a documentation URL for each - forty
+    for a file that is JSON and nothing else - and both refusals below travel to a
+    CI log as a single stderr line the eval gate workflow reads
+    (`test_a_malformed_report_or_baseline_is_one_line_on_stderr_and_exit_two`).
+    The first error is the one reported, named by its field, exactly as
+    `gateway/errors.py` renders a request validation failure.
+    """
+    problems = exc.errors()
+    if not problems:
+        return "did not validate"
+    first = problems[0]
+    location = first.get("loc") or ()
+    field = ".".join(str(part) for part in location) or "the document"
+    message = str(first.get("msg", "is not valid")).replace("\n", " ")
+    more = f" (and {len(problems) - 1} more)" if len(problems) > 1 else ""
+    return f"{field}: {message}{more}"
+
+
 def load_baseline(path: Path) -> Baseline:
     """Read `baseline.json`, or raise `BaselineInvalid` naming the path.
 
@@ -335,7 +356,7 @@ def load_baseline(path: Path) -> Baseline:
     try:
         return Baseline.model_validate(payload)
     except ValidationError as exc:
-        raise BaselineInvalid(f"is not a baseline: {exc}", path=path) from exc
+        raise BaselineInvalid(f"is not a baseline: {_one_line(exc)}", path=path) from exc
 
 
 def load_report(path: Path) -> RunReport:
@@ -360,7 +381,7 @@ def load_report(path: Path) -> RunReport:
     try:
         return RunReport.model_validate(payload)
     except ValidationError as exc:
-        raise ReportInvalid(f"is not a run report: {exc}", path=path) from exc
+        raise ReportInvalid(f"is not a run report: {_one_line(exc)}", path=path) from exc
 
 
 def _actual(value: Any) -> float | None:  # noqa: ANN401 - `metrics` is a Mapping[str, Any]
@@ -373,7 +394,7 @@ def evaluate(report: RunReport, baseline: Baseline) -> GateVerdict:
 
     The same report and baseline give an equal verdict every time
     (`test_evaluating_one_report_twice_gives_an_equal_verdict`), which is what
-    lets an earlier change run the gate over a stored artifact and get the answer CI got.
+    lets the workflow run the gate over a stored artifact and get the answer CI got.
 
     Every comparison is `<` for a threshold and `>` for a count, exactly as SPEC
     §12.6 writes them, so a run landing ON a floor or dropping EXACTLY
@@ -480,7 +501,7 @@ def _category_lines(report: RunReport) -> list[str]:
 
 
 def gate_comment(verdict: GateVerdict, report: RunReport) -> str:
-    """The markdown an earlier change posts on the PR, and `--comment` writes to disk.
+    """The markdown the workflow posts on the PR, and `--comment` writes to disk.
 
     It opens with `verdict_line`, then all five rules with their actual against
     their threshold - the four that passed included, because that is how a

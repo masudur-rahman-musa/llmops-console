@@ -1,4 +1,4 @@
-"""`evals/cli.py`: `ops-eval run` and `ops-eval calibrate` - the pre-checks, the codes.
+"""`evals/cli.py`: `ops-eval run`, `calibrate`, `gate` and `baseline-guard` - the codes.
 
 No network and no backing service: `run_set` is replaced by a recording stand-in,
 so what is under test here is the SHELL - what the CLI refuses before anything
@@ -64,6 +64,7 @@ import os
 import re
 import subprocess
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -74,6 +75,12 @@ import pytest
 
 from opsconsole.evals import cli
 from opsconsole.evals.assertions import AssertionResult, AssertionStatus, CaseAssertions
+from opsconsole.evals.baseline_guard import (
+    GUARD_PASSED_LINE,
+    MAX_REF_LENGTH,
+    MISSING_ADR_REASON,
+    MISSING_PREFIX_REASON,
+)
 from opsconsole.evals.calibration import (
     CALIBRATION_JSON_NAME,
     MIN_CALIBRATION_LABELS,
@@ -1839,7 +1846,7 @@ def test_gate_on_a_run_that_breaches_nothing_exits_zero_with_one_line_on_stdout(
 ) -> None:
     """Criterion 3. Catches a gate that fails always - the gate a team disables in a week -
     and catches the whole verdict printed as a table on stdout, which is decision E's
-    refusal: an earlier change's workflow reads one line and the exit code, and a summary it has to
+    refusal: the eval gate workflow reads one line and the exit code, and a summary it has
     parse a number out of is a workflow that breaks on a formatting change. Every metric in
     this report clears its floor by a margin, so nothing but an inverted comparison can
     redden it."""
@@ -1894,7 +1901,7 @@ def test_gate_exits_three_when_a_residency_violation_sits_beside_a_threshold_bre
 ) -> None:
     """Decision D's precedence, arranged so nothing else can produce the 3: this run ALSO
     breaches decision accuracy, so a CLI that returns on the first failing rule, or that
-    ranks `EXIT_FAILED` over `EXIT_RESIDENCY`, answers 1 here and an earlier change reads a boundary
+    ranks `EXIT_FAILED` over `EXIT_RESIDENCY`, answers 1 here and the workflow reads a
     breach as an accuracy dip somebody merges over."""
     report = write_gate_report(tmp_path, decision_accuracy=87.9, residency_violations=1)
 
@@ -1929,7 +1936,7 @@ def test_a_null_gated_metric_exits_one_and_says_no_evidence_rather_than_a_number
     """Criterion 6 and decision C, at the only place an operator sees it. A golden set that
     gates refusal recall and no longer STATES a refusal case reports `null`; catches a CLI
     reading that as "nothing against us" and exiting 0, catches it reading it as a broken
-    file and exiting 2 - which would tell 18b the harness never ran - and catches a reason
+    file and exiting 2 - which would tell the workflow the harness never ran - and catches a
     line printing `0.0` or `None`, since a reviewer who reads a number assumes something
     was measured. Every other metric in this run is clear of its floor, so only the null
     can produce the 1."""
@@ -1995,7 +2002,7 @@ def test_a_malformed_report_or_baseline_is_one_line_on_stderr_and_exit_two(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Criterion 5. `EXIT_USAGE` is how 18b tells "the harness never ran" from "the run
+    """Criterion 5. `EXIT_USAGE` is how the workflow tells "the harness never ran" from "the
     regressed", so catching a mistyped path reported as `EXIT_FAILED` matters as much as
     catching it reported as a traceback: the first blocks a PR for a reason nobody can act
     on, the second buries the path in a stack. Nothing is printed on stdout, because the
@@ -2027,7 +2034,7 @@ def test_a_malformed_report_or_baseline_is_one_line_on_stderr_and_exit_two(
 def test_a_comment_path_inside_a_directory_that_does_not_exist_is_a_usage_refusal(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The third input a gate run can get wrong, and the one 18b is most likely to get wrong
+    """The third input a gate run can get wrong, and the one CI is most likely to get wrong
     in a workflow file. Catches the `OSError` from the write escaping as a traceback, and
     catches the verdict being printed anyway: a run whose comment never reached the PR must
     not look, from stdout and the exit code, exactly like one whose comment did. The report
@@ -2094,3 +2101,248 @@ def test_the_comment_file_carries_the_verdict_line_and_the_rules_while_stdout_st
         assert rule in written
     assert "helpdesk" in written
     assert "policy_qa" in written
+
+
+# --------------------------------------------------------------------------
+# baseline-guard (18b): the ref pre-checks, one git read, the three codes
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class GuardRepo:
+    """A throwaway git repository and the shas of the commits built in it.
+
+    Built once per module (a project rule applied to the one expensive fixture in
+    this file): every case below reads a range out of the SAME history, and per-case
+    isolation comes from choosing a different range rather than from a new repository.
+    """
+
+    path: Path
+    shas: dict[str, str]
+
+
+def git(repo: Path, *arguments: str) -> str:
+    """One git command in `repo`, with the developer's own config unable to reach it.
+
+    `GIT_CONFIG_GLOBAL=/dev/null` is what stops a local `commit.gpgsign`, a
+    `commit.template` or a `core.hooksPath` from changing the subject these cases
+    assert on, and the identity is passed with `-c` so no `user.name` is needed.
+    """
+    completed = subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            *arguments,
+        ],
+        cwd=repo,
+        env={
+            **os.environ,
+            "GIT_CONFIG_GLOBAL": "/dev/null",
+            "GIT_CONFIG_SYSTEM": "/dev/null",
+            "GIT_CONFIG_NOSYSTEM": "1",
+        },
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return completed.stdout
+
+
+def guard_commit(repo: Path, subject: str, files: Sequence[str]) -> str:
+    """Write each named path, commit them under `subject`, and answer the new sha."""
+    for name in files:
+        path = repo / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{subject}\n", encoding="utf-8")
+        git(repo, "add", "--", name)
+    git(repo, "commit", "--no-gpg-sign", "-m", subject)
+    return git(repo, "rev-parse", "HEAD").strip()
+
+
+@pytest.fixture(scope="module")
+def guard_repo(tmp_path_factory: pytest.TempPathFactory) -> GuardRepo:
+    """Five commits covering every range the cases below need.
+
+    `clean` touches no baseline; `shape` is `a87abf2`'s shape; `no_adr` and
+    `no_prefix` each break one half. The offending range is the one that spans both
+    malformed commits, so nothing but the guard's own reading of them can fail it.
+    """
+    repo = tmp_path_factory.mktemp("guard-repo")
+    git(repo, "init", "--initial-branch=main", ".")
+    shas = {
+        "root": guard_commit(repo, "add the readme", ["README.md"]),
+        "clean": guard_commit(
+            repo, "add the routing overlay", ["project-evals/ci/routing.ci.yaml"]
+        ),
+        "shape": guard_commit(
+            repo,
+            "baseline: write the thresholds in points",
+            ["docs/adr/0008-the-baseline-is-written-in-points.md", "project-evals/baseline.json"],
+        ),
+        "no_adr": guard_commit(repo, "baseline: bump the floor", ["project-evals/baseline.json"]),
+        "no_prefix": guard_commit(
+            repo,
+            "write the thresholds in points",
+            ["docs/adr/0010-x.md", "project-evals/baseline.json"],
+        ),
+    }
+    return GuardRepo(path=repo, shas=shas)
+
+
+def run_guard(base: str, head: str) -> int:
+    """One `ops-eval baseline-guard` command line.
+
+    Both values are passed as `--flag=value` rather than as two words on purpose:
+    with `--base -upload-pack=evil` argparse itself refuses the leading dash, and the
+    row would then pass whether or not the pre-check under test exists at all.
+    """
+    return cli.main(["baseline-guard", f"--base={base}", f"--head={head}"])
+
+
+def test_baseline_guard_on_a_clean_range_prints_one_line_and_exits_zero(
+    guard_repo: GuardRepo, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Criterion 4's happy path over a real range, one of whose two commits DOES touch the
+    baseline in the published way. Catches a guard that blocks any PR touching the file at
+    all, and catches a summary printed as several lines, which is what the workflow log
+    reads. The count is the commits the range yielded, so a guard that read nothing and
+    reported clean (the shallow-checkout failure of risk 2) prints `0` and reddens here."""
+    monkeypatch.chdir(guard_repo.path)
+
+    code = run_guard(guard_repo.shas["root"], guard_repo.shas["shape"])
+
+    printed = capsys.readouterr()
+    assert code == EXIT_OK
+    assert printed.out.strip() == GUARD_PASSED_LINE.format(checked=2)
+    assert printed.err == ""
+
+
+def test_baseline_guard_prints_one_stderr_line_per_offence_and_exits_one(
+    guard_repo: GuardRepo, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Criterion 3 and 4 through the CLI: two malformed commits in one range, each named on
+    its own line with the half it broke. Catches a guard that reports only the first
+    offence (the author fixes one and CI fails again), catches the offences going to stdout
+    where the workflow reads the summary, and catches `EXIT_FAILED` being an exception
+    instead of a code. The range begins at the well-formed commit, so both lines come from
+    the two commits after it and nothing else in history can contribute one."""
+    monkeypatch.chdir(guard_repo.path)
+
+    code = run_guard(guard_repo.shas["shape"], guard_repo.shas["no_prefix"])
+
+    printed = capsys.readouterr()
+    lines = printed.err.strip().splitlines()
+    assert code == EXIT_FAILED
+    assert printed.out == ""
+    assert len(lines) == 2
+    assert {line.split(":")[0] for line in lines} == {
+        guard_repo.shas["no_adr"],
+        guard_repo.shas["no_prefix"],
+    }
+    by_sha = {line.split(":")[0]: line for line in lines}
+    assert by_sha[guard_repo.shas["no_adr"]].endswith(MISSING_ADR_REASON)
+    assert by_sha[guard_repo.shas["no_prefix"]].endswith(MISSING_PREFIX_REASON)
+
+
+def test_a_ref_git_cannot_resolve_is_one_usage_line_and_never_a_clean_verdict(
+    guard_repo: GuardRepo, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Risk 2's real failure: a shallow checkout makes `git log base..head` resolve nothing,
+    and a guard that treats a non-zero git exit as an empty commit list reports every PR
+    clean having read no commits. Catches exactly that (`EXIT_OK` is asserted against), and
+    catches git's `fatal:` output escaping as a traceback or as several lines. The ref is
+    well formed, so the pre-check cannot be what refuses it - only the git read can."""
+    monkeypatch.chdir(guard_repo.path)
+
+    code = run_guard("nosuchref", guard_repo.shas["no_prefix"])
+
+    printed = capsys.readouterr()
+    assert code == EXIT_USAGE
+    assert code != EXIT_OK
+    assert printed.out == ""
+    assert len(printed.err.strip().splitlines()) == 1
+    assert "Traceback" not in printed.err
+    assert "nosuchref" in printed.err
+
+
+MAX_REF = "a" * MAX_REF_LENGTH
+OVER_CAP_REF = "a" * (MAX_REF_LENGTH + 1)
+
+REFUSED_REFS: tuple[tuple[str, str, str], ...] = (
+    ("an option smuggled into the base", "--base", "-upload-pack=evil"),
+    ("a range inside the base", "--base", "a..b"),
+    ("a range inside the head", "--head", "a..b"),
+    ("an empty base", "--base", ""),
+    ("an empty head", "--head", ""),
+    ("one character over the cap", "--base", OVER_CAP_REF),
+    ("a trailing newline", "--base", "main\n"),
+    ("a trailing carriage return and newline", "--base", "main\r\n"),
+    ("a trailing space", "--base", "main "),
+    ("a path traversal", "--base", "../../etc/passwd"),
+)
+r"""Criterion 9's rejection table, one row per way a ref can reach `git log` unread.
+
+a project rule's three rows (`main\n`, `main\r\n`, `main `) are here because a
+pre-check written `^...$` with `.match` accepts the first of them, and a ref
+carrying a newline is a second argument on the git command line. Every value is
+passed as `--flag=value`, so argparse - the neighbouring guard - accepts all ten
+and only the pre-check can refuse them. The OTHER ref in each row is a resolvable
+sha, so a row that got past the pre-check would reach git and produce git's error
+line rather than the flag's, which is what the `--flag in err` assertion separates.
+"""
+
+
+@pytest.mark.parametrize(
+    ("label", "flag", "value"), REFUSED_REFS, ids=[row[0] for row in REFUSED_REFS]
+)
+def test_a_ref_failing_the_pre_check_is_refused_before_any_git_call(
+    label: str,
+    flag: str,
+    value: str,
+    guard_repo: GuardRepo,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Risk 5: `--base` and `--head` reach a subprocess, so a value starting `-` or carrying a
+    newline is argument injection into `git log`. Catches a CLI that hands the value
+    straight to git (git's own message names no flag, so the assertion below fails),
+    catches a refusal printed on stdout where the workflow reads it as the verdict, and
+    catches a traceback out of `subprocess`. The cap row catches a pre-check that never
+    measures length."""
+    monkeypatch.chdir(guard_repo.path)
+    resolvable = guard_repo.shas["shape"]
+    base = value if flag == "--base" else resolvable
+    head = value if flag == "--head" else resolvable
+
+    code = run_guard(base, head)
+
+    printed = capsys.readouterr()
+    assert code == EXIT_USAGE
+    assert printed.out == ""
+    assert len(printed.err.strip().splitlines()) == 1
+    assert flag in printed.err
+    assert "Traceback" not in printed.err
+
+
+def test_a_ref_of_exactly_the_cap_gets_past_the_pre_check(
+    guard_repo: GuardRepo, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The inclusive boundary a project rule asks for, and the pair of the `+ 1` row above:
+    256 characters is accepted by the pre-check and 257 is not. The value cannot resolve in
+    this repository, so the observable difference is WHICH refusal happens - git's, naming
+    the range, rather than the flag's - and asserting the flag name is absent is what makes
+    this row fail against an off-by-one cap of 255 instead of passing on the shared 2."""
+    monkeypatch.chdir(guard_repo.path)
+
+    code = run_guard(MAX_REF, guard_repo.shas["shape"])
+
+    printed = capsys.readouterr()
+    assert code == EXIT_USAGE
+    assert "--base" not in printed.err
+    assert len(printed.err.strip().splitlines()) == 1
+    assert "Traceback" not in printed.err

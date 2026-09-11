@@ -82,8 +82,62 @@ edited green is a gate nobody has.
 
 That prefix is the one commit subject in this repository that carries a colon:
 the house style has no `type: subject` prefixes, and this rule predates it and
-names the literal string. An earlier change enforces the rule in CI; until then it is
-enforced by review.
+names the literal string.
+
+The rule is enforced in CI, not by review:
+
+    ops-eval baseline-guard --base <ref> --head <ref>
+
+It reads `base..head` once with `git log --format=%H%x00%s --name-only` and
+answers a verdict over the commits in it. A commit that does not touch
+`project-evals/baseline.json` is not examined. One that does is clean only when
+its subject starts `baseline:` **and** that same commit carries a file under
+`docs/adr/`.
+
+Same commit, not same pull request. A merge and a revert can separate a baseline
+change from its justification across a pull request; they cannot separate them
+inside one commit.
+
+The path is matched exactly. `project-evals/baseline.json.bak` is not the
+baseline and neither is a file of that name under another directory, so a rename
+beside the file does not block a pull request that never touched it.
+
+| code | meaning |
+|---|---|
+| `0` | the range is clean; stdout carries one line naming how many commits were read |
+| `1` | at least one commit breaks the rule; each offending sha is one line on stderr, naming which half it broke |
+| `2` | `--base` or `--head` was refused, or git could not read the range |
+
+`2` is what a shallow checkout gets. `git log base..head` resolves nothing at
+depth 1, and a guard that read no commits must never answer "clean" - so the
+workflow checks out with `fetch-depth: 0` and an unresolvable range is a usage
+error rather than an empty verdict. Both refs are checked against a pattern and a
+256-character cap before git is asked anything, since both reach a subprocess
+argument list.
+
+## The workflow
+
+`.github/workflows/eval-gate.yml` runs on every pull request into `main`, in two
+jobs that fail for different reasons.
+
+`baseline-guard` is the rule above, unconditional.
+
+`eval` runs the golden set and compares it to the baseline. **It is skipped
+unless the repository variable `EVAL_TARGET_URL` is set**, and today nothing
+serves the eval target contract, so it is skipped everywhere. A stub target would
+score itself against a baseline this repository wrote, and its green tick would
+read like evidence.
+`docs/adr/0009-the-eval-gate-ships-inert-without-a-target.md` has the reasoning.
+Setting that variable is what turns the eval half on, with no code change.
+
+When it does run: the stack comes up, the run happens against the target with
+`project-evals/ci/routing.ci.yaml` merged over `routing.yaml` (which caps the
+`evals` tenant at `$2.00` for the run), then `ops-eval gate` produces the verdict
+and the comment. The report directory is uploaded as a build artifact whatever
+the verdict, because a failed gate is when somebody opens it. The comment is
+posted once per pull request and edited in place on a re-run; on a fork's pull
+request the token is read-only, so the comment is skipped and the artifact is
+still published.
 
 ## What the comment carries
 
@@ -93,5 +147,5 @@ enforced by review.
   points" into "policy_qa fell over"
 - what the run's calibration said, and the judge exclusion above
 
-An earlier change posts that markdown on the pull request and attaches the report as a
+The workflow posts that markdown on the pull request and attaches the report as a
 build artifact.

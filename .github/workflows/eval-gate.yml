@@ -1,0 +1,140 @@
+name: eval-gate
+# the design's pull request gate, in two halves that fail for different reasons.
+#
+# `baseline-guard` enforces #42: a change to `project-evals/baseline.json` arrives
+# in a commit whose subject starts `baseline:` and which carries its own ADR. It
+# runs on every pull request into main, unconditionally, and it is the half that
+# really executes in this repository today.
+#
+# `eval` runs the golden set and compares it against the baseline (#41). There is
+# no eval target anywhere yet - neither this repo nor the companion workload serves
+# `POST /v1/eval/turn` - so this job is SKIPPED until the repository variable
+# `EVAL_TARGET_URL` is set. A stub target would score itself against a baseline
+# this repo wrote, and its green tick would read like evidence; a skip is the true
+# statement. See `docs/adr/0009-the-eval-gate-ships-inert-without-a-target.md`.
+#
+# Its own workflow rather than two more jobs in `ci.yml`: the design blocks a deploy
+# unless `ci.yml` AND `eval-gate.yml` are green, which is two required checks by
+# name.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: eval-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  baseline-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Not the default depth of 1: `git log base..head` resolves nothing in a
+          # shallow clone, and a guard that reads no commits reports every pull
+          # request clean. The CLI refuses an unresolvable range rather than
+          # answering "clean", which is the other half of this defence.
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      # The rule itself is a pure module (`evals/baseline_guard.py`) behind this
+      # one line, so every way of bypassing it is a test row rather than a pull
+      # request somebody has to open.
+      - run: |
+          uv run ops-eval baseline-guard \
+            --base="${{ github.event.pull_request.base.sha }}" \
+            --head="${{ github.event.pull_request.head.sha }}"
+
+  eval:
+    # Decision A. `vars.EVAL_TARGET_URL` is a repository variable, so turning the
+    # eval half on the day a target exists is one setting and no code change.
+    if: vars.EVAL_TARGET_URL != ''
+    runs-on: ubuntu-latest
+    env:
+      OPSCONSOLE_EVAL_JUDGE_KEY: ${{ secrets.OPSCONSOLE_EVAL_JUDGE_KEY }}
+      COMMENT_MARKER: <!-- opsconsole-eval-gate -->
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      # The $2 cap for the length of this run. `project-evals/ci/routing.ci.yaml`
+      # is a partial document merged over the shipped policy, so the prod `10.00`
+      # in `routing.yaml` is never edited and the two cannot drift apart.
+      - name: Merge the CI budget overlay over routing.yaml
+        run: |
+          uv run python - <<'PY'
+          import yaml
+          from pathlib import Path
+
+          policy = yaml.safe_load(Path("routing.yaml").read_text(encoding="utf-8"))
+          overlay = yaml.safe_load(Path("project-evals/ci/routing.ci.yaml").read_text(encoding="utf-8"))
+          for tenant, fields in overlay["tenants"].items():
+              policy["tenants"][tenant].update(fields)
+          Path("routing.ci.effective.yaml").write_text(yaml.safe_dump(policy), encoding="utf-8")
+          PY
+      - name: Bring the stack up
+        env:
+          OPSCONSOLE_ROUTING_POLICY_PATH: routing.ci.effective.yaml
+        run: docker compose up -d --wait
+      # A run that FAILS its cases is the normal input to the gate, so its exit
+      # code must not end the job here: the gate step below is the verdict.
+      - name: Run the golden set
+        continue-on-error: true
+        run: |
+          uv run ops-eval run \
+            --target "${{ vars.EVAL_TARGET_URL }}" \
+            --set project-evals/golden/example.jsonl \
+            --tenant evals \
+            --policy routing.ci.effective.yaml \
+            --judge-url http://127.0.0.1:8080 \
+            --run-kind ci \
+            --out reports
+      - name: Compare the run against the baseline
+        run: |
+          uv run ops-eval gate \
+            --report reports/report.json \
+            --baseline project-evals/baseline.json \
+            --comment reports/comment.md
+      # `always()`, because a FAILED gate is exactly when somebody opens the
+      # report. Deliberately not guarded on the fork condition below: the evidence
+      # reaches a contributor's pull request even when the comment cannot.
+      - name: Publish the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report-${{ github.event.pull_request.number }}
+          path: reports/
+      # A fork's `GITHUB_TOKEN` is read-only, so this step would fail the job on
+      # every contributor pull request. Skipped there, never failed.
+      #
+      # Posted at most once per pull request: the marker identifies this
+      # workflow's own comment, and a re-run PATCHes that comment rather than
+      # appending a second one. `--input -` takes the body as JSON on stdin, so a
+      # markdown body carrying quotes, newlines or backticks needs no escaping.
+      - name: Post the gate comment
+        if: always() && github.event.pull_request.head.repo.fork == false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          body="$COMMENT_MARKER
+          $(cat reports/comment.md)"
+          existing=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+            --jq "[.[] | select(.body | startswith(\"$COMMENT_MARKER\")) | .id] | first // empty")
+          if [ -n "$existing" ]; then
+            jq -n --arg body "$body" '{body: $body}' \
+              | gh api -X PATCH "repos/$REPO/issues/comments/$existing" --input -
+          else
+            printf '%s' "$body" > reports/comment.posted.md
+            gh pr comment "$PR" --body-file reports/comment.posted.md
+          fi

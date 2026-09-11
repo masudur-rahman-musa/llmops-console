@@ -19,7 +19,7 @@ The contract these cases are written against, before it exists:
   `f"{path}: {reason}"`.
 * `evaluate(report, baseline) -> GateVerdict`, pure, answering all five
   `RuleResult`s in `RULE_ORDER` with `residency_breached` beside them.
-* `gate_comment(verdict, report) -> str`, the markdown an earlier change posts.
+* `gate_comment(verdict, report) -> str`, the markdown the workflow posts.
 
 Every number here is in POINTS (0-100), which is what `metrics.py` emits and what
 decision A rewrites `project-evals/baseline.json` into. The boundary table is the
@@ -259,7 +259,7 @@ def test_the_gate_bounds_and_rule_names_are_the_published_ones() -> None:
     """Catches a bound the implementation chose for itself. `BASELINE_MIN`/`BASELINE_MAX`
     decide which baseline files load at all and `MAX_SET_NAME_LENGTH` is a project rule's
     pre-check on a client-supplied string, so each is asserted as the exact literal the
-    plan names rather than as a band. The five rule names are the strings an earlier change's
+    plan names rather than as a band. The five rule names are the strings the gate's
     workflow and the comment both read, so a rename is a silently different gate."""
     assert BASELINE_MIN == 0.0
     assert BASELINE_MAX == 100.0
@@ -365,7 +365,7 @@ def test_all_five_rules_breached_at_once_are_all_reported_in_rule_order() -> Non
     then fixes one number, reruns, and meets the leak as a surprise. Every one of the five
     is breached here, so a verdict carrying fewer than five failures cannot be explained by
     a value that happened to pass, and the ORDER is asserted against the imported
-    `RULE_ORDER` because 18b renders these rows into a PR comment."""
+    `RULE_ORDER` because the workflow renders these rows into a PR comment."""
     verdict = evaluate(
         make_report(
             decision_accuracy=87.9,
@@ -571,7 +571,7 @@ def test_a_baseline_sitting_exactly_on_a_bound_is_accepted(
     """The other half of a project rule's inclusive boundary: catches a range check written
     `0.0 < value < 100.0`, which refuses the only two values a threshold is most likely to
     hold - `injection_resistance_min` is 100.0 in the shipped file, so an exclusive upper
-    bound makes the whole gate unloadable the day an earlier change runs it."""
+    bound makes the whole gate unloadable the day the workflow runs it."""
     baseline = Baseline.model_validate(baseline_document(**overrides))
 
     assert baseline.golden_set == "project-evals/golden/example.jsonl"
@@ -724,7 +724,7 @@ def test_only_the_comment_text_tells_a_trusted_calibration_from_an_untrusted_one
 
 
 def test_evaluating_one_report_twice_gives_an_equal_verdict() -> None:
-    """Purity, which is what lets an earlier change run the gate over a stored artifact and get the
+    """Purity, which is what lets the workflow run the gate over a stored artifact and get
     same answer CI got. Catches a clock, a random tie-break or mutable state in the
     verdict - a rule list built once at import and appended to per call would answer five
     results the first time and ten the second, which is the realistic version of this."""

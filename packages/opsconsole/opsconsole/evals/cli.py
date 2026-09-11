@@ -97,6 +97,14 @@ from urllib.parse import urlparse
 import httpx
 
 from opsconsole.core.settings import DEFAULT_ROUTING_POLICY_PATH, Settings
+from opsconsole.evals.baseline_guard import (
+    GUARD_PASSED_LINE,
+    MAX_REF_LENGTH,
+    REF_PATTERN,
+    Commit,
+    check,
+    offence_line,
+)
 from opsconsole.evals.calibration import (
     CalibrationRefused,
     CalibrationReport,
@@ -325,6 +333,106 @@ def _checked_calibration(value: Path | None, judge_url: str | None) -> RunCalibr
     )
 
 
+def _checked_ref(value: str, flag: str) -> str:
+    """Validate one `--base` or `--head` before git is asked anything (risk 5).
+
+    The cap and the pattern come from `baseline_guard`, and the order is the point:
+    both values reach a subprocess argument list, so a value starting `-` is an
+    option to `git log` and a value carrying a newline is a second argument. Neither
+    is refusable once the command line is built, which is why this runs first
+    (`test_a_ref_failing_the_pre_check_is_refused_before_any_git_call`).
+
+    The length is measured before the pattern is applied, and the boundary is
+    inclusive - 256 in, 257 out
+    (`test_a_ref_of_exactly_the_cap_gets_past_the_pre_check`).
+    """
+    if len(value) > MAX_REF_LENGTH:
+        raise UsageError(f"{flag}: longer than {MAX_REF_LENGTH} characters")
+    if REF_PATTERN.fullmatch(value) is None:
+        raise UsageError(
+            f"{flag}: not a ref this command will pass to git "
+            "(letters, digits, `.`, `_`, `/` and `-`, no leading `-`, no `..`)"
+        )
+    return value
+
+
+def _commits(base: str, head: str) -> tuple[Commit, ...]:
+    r"""Read `base..head` once and answer what each commit touched.
+
+    `git log --format=%H%x00%s --name-only` prints a header line `<sha>\x00<subject>`, then a
+    blank line, then one path per line until the next header. The NUL is what
+    separates the sha from a subject that may contain anything, including the colon
+    every well-formed baseline commit's subject carries.
+
+    A range git cannot resolve exits non-zero, and that is reported as a refusal
+    rather than as an empty commit list: a shallow checkout would otherwise let this
+    guard report clean having read nothing, which is risk 2
+    (`test_a_ref_git_cannot_resolve_is_one_usage_line_and_never_a_clean_verdict`).
+    git's own message runs to three lines, so what is printed is this command's own
+    one line naming the range.
+    """
+    revisions = f"{base}..{head}"
+    try:
+        finished = subprocess.run(
+            ["git", "log", "--format=%H%x00%s", "--name-only", revisions],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise UsageError(f"the range {revisions} could not be read by git: {exc}") from exc
+    if finished.returncode != 0:
+        raise UsageError(f"the range {revisions} could not be read by git")
+
+    commits: list[Commit] = []
+    shas: list[str] = []
+    subjects: list[str] = []
+    touched: list[list[str]] = []
+    for line in finished.stdout.splitlines():
+        if "\x00" in line:
+            sha, _, subject = line.partition("\x00")
+            shas.append(sha)
+            subjects.append(subject)
+            touched.append([])
+        elif line and touched:
+            touched[-1].append(line)
+    for sha, subject, files in zip(shas, subjects, touched, strict=True):
+        commits.append(Commit(sha=sha, subject=subject, files=tuple(files)))
+    return tuple(commits)
+
+
+def _baseline_guard(options: argparse.Namespace) -> int:
+    """Answer #42's verdict over one range of commits and the process exit code (18b).
+
+    `_gate`'s shape over git rather than over two files: every refusal is one line on
+    stderr answered with `EXIT_USAGE`, stdout carries exactly the one summary line,
+    and the offences go to stderr one per sha so an author sees every commit to fix
+    in one CI round
+    (`test_baseline_guard_prints_one_stderr_line_per_offence_and_exits_one`).
+
+    `EXIT_USAGE` and `EXIT_FAILED` are kept apart here for the reason the rest of
+    this module keeps them apart: "the guard could not read the range" and "the
+    range breaks the rule" have different fixes, and only the second is the
+    author's.
+    """
+    try:
+        base = _checked_ref(options.base, "--base")
+        head = _checked_ref(options.head, "--head")
+        commits = _commits(base, head)
+    except UsageError as exc:
+        print(exc, file=sys.stderr)
+        return EXIT_USAGE
+
+    verdict = check(commits)
+    if verdict.passed:
+        print(GUARD_PASSED_LINE.format(checked=len(commits)))
+        return EXIT_OK
+
+    for offence in verdict.offences:
+        print(offence_line(offence), file=sys.stderr)
+    return EXIT_FAILED
+
+
 def _checked_out(value: Path) -> Path:
     """Create the report directory, or refuse the path.
 
@@ -499,7 +607,7 @@ def _judged_prompt_version(result: RunResult) -> str | None:
 
 
 def _parser() -> argparse.ArgumentParser:
-    """`ops-eval` and its two subcommands."""
+    """`ops-eval` and its four subcommands: `run`, `calibrate`, `gate`, `baseline-guard`."""
     parser = argparse.ArgumentParser(prog="ops-eval", description="Run a golden set.")
     subcommands = parser.add_subparsers(dest="command", required=True)
     run = subcommands.add_parser("run", help="run a golden set against a target")
@@ -560,6 +668,14 @@ def _parser() -> argparse.ArgumentParser:
     gate_command.add_argument(
         "--comment", type=Path, help="where the PR comment markdown is written; without it, none"
     )
+    guard_command = subcommands.add_parser(
+        "baseline-guard",
+        help="refuse a baseline change arriving without its prefix and its ADR",
+    )
+    guard_command.add_argument(
+        "--base", required=True, help="the ref the range starts after (exclusive)"
+    )
+    guard_command.add_argument("--head", required=True, help="the ref the range ends at")
     return parser
 
 
@@ -638,6 +754,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _calibrate(options)
     if options.command == "gate":
         return _gate(options)
+    if options.command == "baseline-guard":
+        return _baseline_guard(options)
     return _run(options)
 
 
@@ -719,7 +837,7 @@ def _gate(options: argparse.Namespace) -> int:
     """Compare one published run against the baseline and answer the exit code (18a).
 
     `_run`'s shape with no run in it: every refusal is one line on stderr answered
-    with `EXIT_USAGE`, stdout carries exactly the one verdict line an earlier change reads
+    with `EXIT_USAGE`, stdout carries exactly the one verdict line the workflow reads
     (decision E), and the breached rules go to stderr one line each so a reviewer
     sees all of them at once
     (`test_gate_reports_every_breached_rule_on_its_own_line_and_exits_one`).
