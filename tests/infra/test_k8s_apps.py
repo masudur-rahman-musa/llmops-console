@@ -1,5 +1,6 @@
 r"""`infra/k8s/apps`: the gateway Deployment, its Service, HPA, PDB and ConfigMap, the three
-copied Traefik middlewares and the two `api.` Ingresses an earlier change agrees, plus the llama.cpp
+copied Traefik middlewares and the two `api.` Ingresses an earlier change agrees, the two `helpdesk.`
+Ingresses row 20g adds over the same three middleware copies, plus the llama.cpp
 Deployment, its Service and the `llama-models` claim an earlier change adds, read off what kustomize
 actually emits.
 
@@ -104,6 +105,12 @@ GATEWAY_SECRET = "gateway-secrets"
 ROOT_INGRESS = "gateway"
 HEALTHZ_INGRESS = "gateway-healthz"
 
+#: Row 20g criterion 1: the two public routers for the Helpdesk web host, named for the pair
+#: they mirror (decision D). They are here rather than in the Helpdesk block below because
+#: `APPS_OBJECTS` names them first.
+HELPDESK_INGRESS = "helpdesk"
+HELPDESK_HEALTHZ_INGRESS = "helpdesk-healthz"
+
 #: Row 20f criterion 1, as `(kind, name, namespace)`: the eight objects the Helpdesk adds.
 #: `Service/helpdesk-scheduler` is absent on purpose (criterion 2) and its absence is asserted
 #: by name in its own case rather than left to this set. Written as its own frozenset because
@@ -137,6 +144,8 @@ APPS_OBJECTS: frozenset[tuple[str, str, str]] = HELPDESK_OBJECTS | frozenset(
         ("Middleware", "security-headers", APPS),
         ("Ingress", ROOT_INGRESS, APPS),
         ("Ingress", HEALTHZ_INGRESS, APPS),
+        ("Ingress", HELPDESK_INGRESS, APPS),
+        ("Ingress", HELPDESK_HEALTHZ_INGRESS, APPS),
         ("PersistentVolumeClaim", LLAMA_PVC, APPS),
         ("Deployment", LLAMA, APPS),
         ("Service", LLAMA, APPS),
@@ -420,9 +429,52 @@ ENV_FROM_SOURCES: dict[str, str] = {
 #: block carries `includeSelectors: false` and never reaches a pod template.
 SELECTOR_LABEL = "app.kubernetes.io/name"
 
-#: Criterion 7. `infra/terraform/hetzner/variables.tf` fixes the subdomain; no new choice is
-#: made here.
-INGRESS_HOST = "api.example.com"
+#: Row 20g criterion 5's second host. `infra/terraform/hetzner/variables.tf` publishes `api`,
+#: `console`, `helpdesk` and `grafana` and validates that all four are present, so no new
+#: choice is made here either.
+HELPDESK_HOST = "helpdesk.example.com"
+
+#: Row 20g criterion 5, PER INGRESS rather than as one shared constant: two routers on
+#: `api.example.com` and two on `helpdesk.example.com`. A router copied from its
+#: neighbour and left on the neighbour's host is what a single shared value cannot see.
+INGRESS_HOSTS: dict[str, str] = {
+    ROOT_INGRESS: "api.example.com",
+    HEALTHZ_INGRESS: "api.example.com",
+    HELPDESK_INGRESS: HELPDESK_HOST,
+    HELPDESK_HEALTHZ_INGRESS: HELPDESK_HOST,
+}
+
+#: Row 20g criteria 4 and 5: the backend `Service` each router sends its path to. An earlier change
+#: decision B leaves `helpdesk-web` as the only public Helpdesk surface, so no entry here names
+#: the agent-api or the MCP server and no other Ingress may either (criterion 7).
+INGRESS_BACKENDS: dict[str, str] = {
+    ROOT_INGRESS: GATEWAY,
+    HEALTHZ_INGRESS: GATEWAY,
+    HELPDESK_INGRESS: HELPDESK_WEB,
+    HELPDESK_HEALTHZ_INGRESS: HELPDESK_WEB,
+}
+
+#: Row 20g criterion 3: the Secret cert-manager WRITES for each router, by name. An earlier change
+#: criterion 10 named the two Helpdesk ones before this row existed. All four are asserted
+#: distinct from one another and disjoint from `PINNED_SECRET_NAMES`, because ingress-shim owns
+#: one `Certificate` per `secretName` through the Ingress that asked for it.
+INGRESS_TLS_SECRETS: dict[str, str] = {
+    ROOT_INGRESS: "gateway-tls",
+    HEALTHZ_INGRESS: "gateway-healthz-tls",
+    HELPDESK_INGRESS: "helpdesk-tls",
+    HELPDESK_HEALTHZ_INGRESS: "helpdesk-healthz-tls",
+}
+
+#: The two routers the design exempts from basic auth, one per host. Named rather than derived
+#: from a `-healthz` suffix: a router called `helpdesk-healthz-web` would pass a suffix test
+#: while being neither of these.
+HEALTHZ_INGRESSES = frozenset({HEALTHZ_INGRESS, HELPDESK_HEALTHZ_INGRESS})
+
+#: Row 20g criterion 4's `pathType`s. `Exact` on the exempt router because Traefik orders
+#: routers by rule length: an exact `/healthz` wins over the other router's `PathPrefix(/)`,
+#: and `Prefix` there instead would pull every path under it out from behind basic auth.
+PATH_TYPE_PREFIX = "Prefix"
+PATH_TYPE_EXACT = "Exact"
 
 #: Criterion 7: the production issuer, on both Ingresses. A staging annotation here is a
 #: certificate no browser trusts on the public host.
@@ -439,6 +491,8 @@ MIDDLEWARE_ANNOTATION = "traefik.ingress.kubernetes.io/router.middlewares"
 INGRESS_MIDDLEWARES: dict[str, frozenset[str]] = {
     ROOT_INGRESS: frozenset({"basic-auth", "rate-limit", "security-headers"}),
     HEALTHZ_INGRESS: frozenset({"rate-limit", "security-headers"}),
+    HELPDESK_INGRESS: frozenset({"basic-auth", "rate-limit", "security-headers"}),
+    HELPDESK_HEALTHZ_INGRESS: frozenset({"rate-limit", "security-headers"}),
 }
 
 #: Decision B's three copies, by name. Their VALUES are never written here: the equality case
@@ -469,8 +523,8 @@ HELPDESK_CONTAINER_PORTS: dict[str, int] = {
     HELPDESK_WEB: 3000,
 }
 
-#: Criterion 1: the Service type all three carry. Decision B leaves one public surface and row
-#: 20g's Ingress is what publishes it, so a `LoadBalancer` or a `NodePort` here is a Helpdesk
+#: Criterion 1: the Service type all three carry. Decision B leaves one public surface and the
+#: `helpdesk` Ingress pair publishes it, so a `LoadBalancer` or a `NodePort` here is a Helpdesk
 #: service reachable from outside the cluster without any router in front of it.
 HELPDESK_SERVICE_TYPE = "ClusterIP"
 
@@ -1421,19 +1475,21 @@ def test_the_apps_quota_row_reads_seven_gibibytes_of_limits(built: list[dict[str
     )
 
 
-def test_both_ingresses_publish_the_host_with_tls_and_the_production_issuer(
+def test_every_ingress_publishes_its_own_host_with_tls_and_the_production_issuer(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 7's host, TLS and issuer half, asserted on BOTH Ingresses because decision C
-    splits them and a value corrected on one is the failure this case exists for. Catches the
-    `letsencrypt-staging` annotation left on a public Ingress after the rehearsal 20b's second
-    issuer exists for, which is a certificate no browser trusts; catches the annotation dropped
-    entirely, where cert-manager issues nothing at all and Traefik serves its own default
-    certificate with no error anywhere; catches a `tls` block whose `hosts` omit the host it
-    serves, which is a certificate issued for nothing the router matches; and catches one of
-    the two Ingresses published on a different subdomain, which `infra/terraform/hetzner`
-    publishes no A record for."""
-    for ingress_name in INGRESS_MIDDLEWARES:
+    """An earlier change's criterion 7 and row 20g's criteria 2 and 5, asserted on EVERY Ingress out of
+    `INGRESS_HOSTS` rather than against one shared host, because two hosts now carry two
+    routers each and a value corrected on one of the four is the failure this case exists for.
+    Catches the `letsencrypt-staging` annotation left on a public Ingress after the rehearsal
+    20b's second issuer exists for, which is a certificate no browser trusts; catches the
+    annotation dropped entirely, where cert-manager issues nothing at all and Traefik serves
+    its own default certificate with no error anywhere; catches a `tls` block whose `hosts`
+    omit the host it serves, which is a certificate issued for nothing the router matches; and
+    catches a Helpdesk router copied from the gateway pair and left on `api.example.com`,
+    or a gateway router moved to `helpdesk.example.com` - each of which a single shared
+    `INGRESS_HOST` accepted silently."""
+    for ingress_name, expected_host in INGRESS_HOSTS.items():
         ingress = sole_object(built, "Ingress", ingress_name)
         annotations = annotations_of(ingress)
         assert annotations.get(CLUSTER_ISSUER_ANNOTATION) == CLUSTER_ISSUER, (
@@ -1442,18 +1498,20 @@ def test_both_ingresses_publish_the_host_with_tls_and_the_production_issuer(
 
         rules = ingress["spec"]["rules"]
         assert isinstance(rules, list) and rules, f"{ingress_name} routes nothing"
-        assert {str(rule.get("host")) for rule in rules} == {INGRESS_HOST}, (
+        assert {str(rule.get("host")) for rule in rules} == {expected_host}, (
             f"{ingress_name} publishes {[rule.get('host') for rule in rules]}"
         )
 
         tls = ingress["spec"]["tls"]
         assert isinstance(tls, list) and len(tls) == 1, f"{ingress_name} declares {tls} for TLS"
-        assert [str(host) for host in tls[0]["hosts"]] == [INGRESS_HOST]
+        assert [str(host) for host in tls[0]["hosts"]] == [expected_host]
         assert str(tls[0].get("secretName", "")), f"{ingress_name}'s tls block names no secret"
 
 
-def test_only_the_root_ingress_carries_basic_auth(built: list[dict[str, Any]]) -> None:
-    """Criterion 7's middleware half and decision C, by set equality per Ingress. Catches
+def test_only_the_healthz_ingresses_are_exempt_from_basic_auth(built: list[dict[str, Any]]) -> None:
+    """An earlier change's criterion 7 middleware half and row 20g's criterion 4, by set equality per
+    Ingress over all four routers - the name says "the healthz ingresses" because the exempt
+    router is now one of two hosts' pairs rather than "the root ingress" of one. Catches
     basic-auth listed on the `/healthz` Ingress, which puts a 401 in front of the endpoint an
     uptime monitor and a load balancer poll and makes the service look down while it is up;
     catches basic-auth dropped from the `/` one, which publishes `/metrics` and `/admin/*` to
@@ -1476,6 +1534,77 @@ def test_only_the_root_ingress_carries_basic_auth(built: list[dict[str, Any]]) -
             f"{ingress_name} references {unresolved}, which the build emits nowhere: "
             f"{sorted(emitted)}"
         )
+
+
+def test_every_tls_secret_name_is_distinct_and_supplied_by_nobody(
+    built: list[dict[str, Any]],
+) -> None:
+    """Row 20g criterion 3, over every Ingress the build emits. The kill that lives ONLY here
+    is two Ingresses pointing at one `secretName`: cert-manager's ingress-shim creates one
+    `Certificate` per `secretName` and owns it through the Ingress that asked, so a Helpdesk
+    router copied from the gateway pair with `gateway-tls` left in place is two owners for one
+    certificate, each re-issuing over the other, and no other case in this file can see it -
+    `tls_secret_names` and
+    `test_no_secret_is_emitted_and_no_credential_is_written_inline_under_apps` both collapse
+    the names into a SET, where a shared name is indistinguishable from a missing one. It also
+    pins each router's secret by name against `INGRESS_TLS_SECRETS`, which catches
+    `helpdesk-healthz-tls` and `helpdesk-tls` swapped between the two routers - four distinct
+    names stay four distinct names under a swap. The disjointness assertion at the end repeats
+    a build-wide check that case already makes; it is kept because criterion 3 states it on the
+    four names specifically, and a `tls.secretName` of `helpdesk-secrets` would have
+    cert-manager overwrite the Helpdesk's credentials with a certificate."""
+    issued: list[str] = []
+    for ingress in objects_of_kind(built, "Ingress"):
+        ingress_name = name_of(ingress)
+        assert ingress_name in INGRESS_TLS_SECRETS, (
+            f"the build emits Ingress/{ingress_name}, which row 20g's four routers do not name"
+        )
+        entries = ingress["spec"]["tls"]
+        assert isinstance(entries, list) and len(entries) == 1, (
+            f"{ingress_name} declares {entries} for TLS"
+        )
+        secret_name = str(entries[0].get("secretName", ""))
+        assert secret_name == INGRESS_TLS_SECRETS[ingress_name], (
+            f"{ingress_name} asks cert-manager to write `{secret_name}`"
+        )
+        issued.append(secret_name)
+
+    assert len(issued) == len(INGRESS_TLS_SECRETS), (
+        f"the build emits {len(issued)} Ingress TLS blocks, not {len(INGRESS_TLS_SECRETS)}"
+    )
+    assert len(set(issued)) == len(issued), f"two Ingresses claim one certificate: {sorted(issued)}"
+    assert tls_secret_names(built).isdisjoint(PINNED_SECRET_NAMES), (
+        "cert-manager is told to write a certificate into "
+        f"{sorted(tls_secret_names(built) & PINNED_SECRET_NAMES)}, which this repo supplies"
+    )
+
+
+def test_no_ingress_publishes_the_agent_api_or_the_mcp_server(built: list[dict[str, Any]]) -> None:
+    """Row 20g criterion 7, by ABSENCE across every Ingress backend in the build rather than
+    across the four routers `INGRESS_BACKENDS` names. An earlier change decision B leaves `helpdesk-web`
+    as the only public Helpdesk surface - the agent-api is the shape a project rule rejects for
+    the console and the MCP server is a tool endpoint the design gives no host - and what this
+    case catches is a FIFTH Ingress added later that publishes one of them. Its neighbour
+    `test_each_ingress_routes_its_own_path_to_its_own_backend_service` parametrises over
+    `INGRESS_BACKENDS`, so a router nobody wrote a mapping entry for is never visited by it at
+    all; only a build-wide scan sees one."""
+    forbidden = {HELPDESK_AGENT_API, HELPDESK_MCP_SERVER}
+    published: dict[str, set[str]] = {}
+    for ingress in objects_of_kind(built, "Ingress"):
+        backends: set[str] = set()
+        for rule in ingress["spec"]["rules"]:
+            for path in rule["http"]["paths"]:
+                backends.add(str(path["backend"]["service"]["name"]))
+        published[name_of(ingress)] = backends
+
+    offenders = {
+        ingress_name: sorted(backends & forbidden)
+        for ingress_name, backends in published.items()
+        if backends & forbidden
+    }
+    assert offenders == {}, (
+        f"{offenders} publish a Helpdesk surface plan 20f decision B keeps private"
+    )
 
 
 def test_each_apps_middleware_matches_its_platform_original(built: list[dict[str, Any]]) -> None:
@@ -1576,29 +1705,48 @@ def test_the_image_carries_the_price_table_it_loads_at_startup() -> None:
 
 
 @pytest.mark.parametrize("ingress_name", sorted(INGRESS_MIDDLEWARES))
-def test_each_ingress_routes_its_own_path_to_the_gateway_service(
+def test_each_ingress_routes_its_own_path_to_its_own_backend_service(
     ingress_name: str, built: list[dict[str, Any]]
 ) -> None:
-    """Criterion 1's routing half, which decision C's two-Ingress split is only worth anything
-    with: each Ingress must send its path to the gateway `Service` this plan emits. Catches the
-    `/healthz` Ingress pointing at a backend Service that does not exist, which is a 503 on the
-    one path that is meant to answer without credentials, and catches the two Ingresses given
-    the same path - where the router's basic-auth-free rule would match `/` as well and the
-    split decision C made would be undone without any value in this file changing."""
+    """An earlier change's criterion 1 routing half and row 20g's criteria 4 and 5: each router sends
+    its own path to ITS OWN backend out of `INGRESS_BACKENDS`, on the port NAME the pod
+    publishes, with the `pathType` the path is worth. Catches a Helpdesk router copied from the
+    gateway pair and left pointing at `Service/gateway`, which serves the OpenAI-compatible API
+    on the browser host - the `== GATEWAY` form this case replaced asserted exactly that wrong
+    thing. Catches a router pointing at a backend Service the build does not emit, which is a
+    503 on the one path meant to answer without credentials. Catches a backend port given as a
+    number that drifts from the `http` the Service targets, which resolves to no endpoint.
+    Catches the two routers of one host given the same path, where the basic-auth-free rule
+    matches `/` as well. And catches `pathType: Prefix` on the exempt `/healthz` router, which
+    puts everything under `/healthz/...` outside basic auth - the one thing decision B's
+    `Exact` buys and the only assertion here that sees it."""
     ingress = sole_object(built, "Ingress", ingress_name)
     services = {name_of(document) for document in objects_of_kind(built, "Service")}
+    expected_backend = INGRESS_BACKENDS[ingress_name]
+    is_healthz = ingress_name in HEALTHZ_INGRESSES
+    expected_path = LIVENESS_PATH if is_healthz else "/"
+    expected_path_type = PATH_TYPE_EXACT if is_healthz else PATH_TYPE_PREFIX
     paths: set[str] = set()
     for rule in ingress["spec"]["rules"]:
         for path in rule["http"]["paths"]:
             paths.add(str(path["path"]))
+            assert str(path.get("pathType")) == expected_path_type, (
+                f"{ingress_name} serves {path['path']} as {path.get('pathType')}"
+            )
             backend = path["backend"]["service"]
             assert str(backend["name"]) in services, (
                 f"{ingress_name} routes {path['path']} to Service/{backend['name']}, "
                 f"which the build does not emit"
             )
-            assert str(backend["name"]) == GATEWAY, f"{ingress_name} routes away from {GATEWAY}"
-    expected = LIVENESS_PATH if ingress_name == HEALTHZ_INGRESS else "/"
-    assert paths == {expected}, f"{ingress_name} routes {sorted(paths)}"
+            assert str(backend["name"]) == expected_backend, (
+                f"{ingress_name} routes to Service/{backend['name']} and not {expected_backend}"
+            )
+            port = backend.get("port", {})
+            assert isinstance(port, dict), f"{ingress_name} names backend port {port}"
+            assert str(port.get("name")) == CONTAINER_PORT_NAME, (
+                f"{ingress_name} names backend port {port} and not `{CONTAINER_PORT_NAME}`"
+            )
+    assert paths == {expected_path}, f"{ingress_name} routes {sorted(paths)}"
 
 
 def test_the_llama_service_is_where_the_shipped_routing_policy_expects_it(
@@ -2091,7 +2239,7 @@ def test_the_build_emits_every_helpdesk_object_the_plan_names(built: list[dict[s
     sees. Catches a `targetPort: http` naming a port the workload's own template never
     declares, in both forms the field takes. Catches a `LoadBalancer` or a `NodePort`, which is
     a Helpdesk service reachable from outside the cluster with no router in front of it
-    (decision B leaves one public surface, and row 20g's Ingress is what publishes it). The
+    (decision B leaves one public surface, and the `helpdesk` Ingress pair publishes it). The
     cluster-scoped equality is criterion 1's second half; the set is shared with
     `test_the_apps_directory_emits_the_objects_the_plan_names`, which is the case that owns
     the `apps` set equality, so what is this case's own is the ports and the types."""

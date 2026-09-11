@@ -1,25 +1,40 @@
-# The two public routers for `api.example.com`, split because a Traefik
-# middleware annotation is per INGRESS and not per path. One Ingress cannot
-# exempt `/healthz` from basic auth, and `/healthz` behind a 401 is an uptime
-# monitor reporting an outage that is not happening.
+# The public routers of `apps`, one PAIR per host. A pair exists because a
+# Traefik middleware annotation is per INGRESS and not per path: one Ingress
+# cannot exempt `/healthz` from basic auth, and `/healthz` behind a 401 is an
+# uptime monitor reporting an outage that is not happening.
 #
-# So: `/` carries basic auth, rate limiting and the security headers, and
-# `/healthz` carries the last two only. `/metrics` and `/admin/*` fall under `/`
-# and are therefore behind basic auth from the public side; nothing in-cluster
-# reaches the gateway through the Ingress at all.
+# So in every pair: `/` carries basic auth, rate limiting and the security
+# headers, and `/healthz` carries the last two only. The `/healthz` router uses
+# `pathType: Exact` because Traefik orders routers by rule length, so the exact
+# path wins over its neighbour's `PathPrefix(/)` and nothing else falls out from
+# behind basic auth.
 #
-# The host comes from `infra/terraform/hetzner/variables.tf`, which publishes
+# Two instances of that shape live here:
+#
+#   `api.example.com`      -> Service/gateway       (`gateway`, `gateway-healthz`)
+#   `helpdesk.example.com` -> Service/helpdesk-web   (`helpdesk`, `helpdesk-healthz`)
+#
+# On the gateway pair, `/metrics` and `/admin/*` fall under `/` and are
+# therefore behind basic auth from the public side; nothing in-cluster reaches
+# the gateway through the Ingress at all. On the Helpdesk pair, `helpdesk-web`
+# is the only public surface - the agent API is the shape a project rule rejects
+# for the console, and the MCP server is a tool endpoint with no host.
+#
+# The hosts come from `infra/terraform/hetzner/variables.tf`, which publishes
 # `api`, `console`, `helpdesk` and `grafana` as A records. a design note keeps every
 # one of them proxy-off, which is what lets the HTTP-01 solver answer at all.
 #
+# Traefik instantiates a rate limit PER ROUTER, so the four routers here do not
+# share one budget: each gets the middleware's own 50/s average and 100 burst.
+#
 # Each Ingress names its OWN `tls.secretName`. cert-manager's ingress-shim
 # creates one `Certificate` per `secretName` and owns it through the Ingress
-# that asked, so pointing both at one Secret would be two Ingresses claiming one
-# certificate. Two orders for one host is well inside Let's Encrypt's per-domain
-# allowance, and the `letsencrypt-staging` issuer is where the rehearsal goes
-# before either of these is applied for the first time.
+# that asked, so pointing two Ingresses at one Secret would be two owners for
+# one certificate. Two orders for one host is well inside Let's Encrypt's
+# per-domain allowance, and the `letsencrypt-staging` issuer is where the
+# rehearsal goes before any of these is applied for the first time.
 #
-# Neither Secret below is one this repo supplies: cert-manager WRITES them,
+# No Secret below is one this repo supplies: cert-manager WRITES all four,
 # which is why they are named nowhere in the README's Secret table.
 ---
 apiVersion: networking.k8s.io/v1
@@ -83,5 +98,72 @@ spec:
             backend:
               service:
                 name: gateway
+                port:
+                  name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: helpdesk
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: helpdesk-web
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # The same three `apps` copies the gateway pair names, never
+    # `platform-`: Traefik resolves a CRD middleware as
+    # `<namespace>-<name>@kubernetescrd` and treats one it cannot resolve as no
+    # middleware at all rather than as an error.
+    traefik.ingress.kubernetes.io/router.middlewares: >-
+      apps-basic-auth@kubernetescrd,apps-rate-limit@kubernetescrd,apps-security-headers@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - helpdesk.example.com
+      secretName: helpdesk-tls
+  rules:
+    - host: helpdesk.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: helpdesk-web
+                port:
+                  name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: helpdesk-healthz
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: helpdesk-web
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.middlewares: >-
+      apps-rate-limit@kubernetescrd,apps-security-headers@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - helpdesk.example.com
+      secretName: helpdesk-healthz-tls
+  rules:
+    - host: helpdesk.example.com
+      http:
+        paths:
+          # `Exact` for the same reason the gateway pair uses it: the exact
+          # `/healthz` outranks the other router's `PathPrefix(/)`, so this is
+          # the only path the basic-auth-free router serves. The path itself is
+          # the companion repo's promise - `helpdesk-web`'s liveness probe
+          # dials it - and if it is never served this router is a public 404.
+          - path: /healthz
+            pathType: Exact
+            backend:
+              service:
+                name: helpdesk-web
                 port:
                   name: http

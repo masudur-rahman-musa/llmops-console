@@ -8,7 +8,7 @@ kubeconform` is the whole automated check, and `kubectl apply` is a human's.
 kustomization.yaml     the single root; `resources` grows as directories land
 base/                  namespaces, quotas, limit ranges
 platform/              Postgres, Redis, Qdrant, the ACME issuers, the middlewares
-apps/                  the gateway, llama.cpp, their config and the two `api.` Ingresses
+apps/                  the gateway, llama.cpp, the Helpdesk, their config and the four public Ingresses
 ```
 
 Build it:
@@ -139,6 +139,50 @@ first gave it: llama.cpp is sized for 3 GiB on its own, and trimming its ceiling
 to fit would be shrinking the model to fit the table. The requests column, the
 one the scheduler actually packs, did not move.
 
+## The public hosts
+
+Four Ingresses, two hosts, one pair per host. The pair exists because a Traefik
+middleware annotation is per Ingress and not per path: one Ingress cannot exempt
+`/healthz` from basic auth, and `/healthz` behind a 401 is an uptime monitor
+reporting an outage that is not happening.
+
+| host | Ingress | path | backend Service | middlewares | TLS Secret |
+|---|---|---|---|---|---|
+| `api.example.com` | `gateway` | `/` (Prefix) | `gateway` | basic-auth, rate-limit, security-headers | `gateway-tls` |
+| `api.example.com` | `gateway-healthz` | `/healthz` (Exact) | `gateway` | rate-limit, security-headers | `gateway-healthz-tls` |
+| `helpdesk.example.com` | `helpdesk` | `/` (Prefix) | `helpdesk-web` | basic-auth, rate-limit, security-headers | `helpdesk-tls` |
+| `helpdesk.example.com` | `helpdesk-healthz` | `/healthz` (Exact) | `helpdesk-web` | rate-limit, security-headers | `helpdesk-healthz-tls` |
+
+`Exact` on the `/healthz` rows is what keeps the split honest. Traefik orders
+routers by rule length, so the exact path outranks its neighbour's
+`PathPrefix(/)` and nothing else falls out from behind basic auth.
+
+`helpdesk-web` is the only public Helpdesk surface. The agent API is the shape
+a project rule rejects for the console, and the MCP server is a tool endpoint with
+no host - both are reachable in-cluster by their ClusterIP Services and from
+nowhere else. On the gateway host, `/metrics` and `/admin/*` fall under `/` and
+are therefore behind basic auth from the public side.
+
+Every middleware reference is namespace-qualified as `apps-<name>@kubernetescrd`
+and resolves to the `apps` copy of that middleware. Traefik treats a
+reference it cannot resolve as no middleware at all rather than as an error, so
+a `platform-` prefix here would serve unauthenticated traffic silently;
+`tests/infra/test_k8s_apps.py` resolves every parsed reference against the
+`Middleware`s the build actually emits.
+
+The rate limit is instantiated PER ROUTER, so these four do not share one
+budget: each gets the middleware's own 50/s average and 100 burst. Nobody has
+measured a browser page load against that number, and a Next.js page fanning out
+past the burst takes a 429 on assets, which looks like a broken page rather than
+like a rate limit. The fix, if it ever bites, is a second middleware and a row
+here rather than a value quietly widened.
+
+Both `/healthz` paths are a promise the pod behind them makes. The gateway
+serves `/healthz` from this repo's code; `helpdesk-web`'s is the companion
+repo's, dialled by its own liveness probe, and if it is never served the one
+router exempt from basic auth is a public 404 - an exposed path that answers
+nothing rather than one that answers too much.
+
 ## The human steps
 
 Neither of these is in any gate: `kubectl apply` and `helm install` are a
@@ -182,9 +226,9 @@ first apply:
 
 `traefik-basic-auth` is supplied once per routing namespace, not once per
 cluster: a `Middleware` reads its Secret from its own namespace, and a design note is
-why each namespace carries its own copy of the three middlewares. The TLS
-Secrets the Ingresses name are not in this table - cert-manager writes those,
-and their names have to stay disjoint from the four above, or an issued
+why each namespace carries its own copy of the three middlewares. The four TLS
+Secrets the four Ingresses name are not in this table - cert-manager writes
+those, and their names have to stay disjoint from the four above, or an issued
 certificate overwrites a set of credentials.
 
 Until they exist an apply fails on the missing Secret, which is the point: a
@@ -258,8 +302,7 @@ metrics stack lands.
 
 ## Still to land
 
-- The rest of `apps/` - the `helpdesk.` Ingress for `helpdesk-web`, and the
-  console with its `console.` Ingress.
+- The rest of `apps/` - the console with its `console.` Ingress.
 - The nightly eval CronJob in `evals/`, and the metrics stack in `monitoring/`
   with its `grafana.` Ingress.
 - NetworkPolicies keyed off exactly these four namespace names, and SOPS-

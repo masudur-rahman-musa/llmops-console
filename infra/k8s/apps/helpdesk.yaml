@@ -15,9 +15,9 @@
 # No `limits.cpu` on any of the four. A CPU limit throttles rather than kills,
 # and the agent-api is the workload the design puts a tail-latency SLO on.
 #
-# Decision B - which of these is public: `helpdesk-web` alone, and only once row
-# 20g writes the `helpdesk.` Ingress. Until then all three Services are
-# ClusterIP and reachable in-cluster only. A browser reaching the agent-api
+# Decision B - which of these is public: `helpdesk-web` alone, through the
+# `helpdesk.` Ingress pair in `ingress.yaml`. All three Services stay ClusterIP
+# and the other two are reachable in-cluster only. A browser reaching the agent-api
 # directly is the shape a project rule rejects for the console, and the MCP server
 # is a tool endpoint that no host should resolve to.
 #

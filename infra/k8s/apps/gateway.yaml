@@ -1,7 +1,7 @@
-# The gateway: the one workload in `apps` that serves public traffic today.
-# llama.cpp sits beside it in `llama.yaml` and the four Helpdesk workloads in
-# `helpdesk.yaml`, none of which is routed from outside yet - row 20g gives
-# `helpdesk-web` its own Ingress. The console is still to land, and the budget
+# The gateway: one of the two workloads in `apps` that serve public traffic.
+# llama.cpp sits beside it in `llama.yaml`, unrouted from outside, and the four
+# Helpdesk workloads in `helpdesk.yaml`, of which `helpdesk-web` has its own
+# Ingress pair in `ingress.yaml`. The console is still to land, and the budget
 # table in `../README.md` holds it as a named reserve, so this namespace's quota
 # already fits it.
 #

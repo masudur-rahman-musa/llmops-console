@@ -1,7 +1,8 @@
 # The gateway, the two llama.cpp servers, the four Helpdesk workloads and the
-# two `api.` routers. The `helpdesk.` router pair and the console
-# land here too, and neither changes this file beyond a line in
-# `resources` and, where it runs an image, an entry in `images:`.
+# four public routers - the `api.` pair and the `helpdesk.` pair, both in
+# `ingress.yaml`. The console lands here too, and does not change this
+# file beyond a line in `resources` and, where it runs an image, an entry in
+# `images:`.
 #
 # No `namespace:` transformer, for the same reason `../platform` has none: it
 # would stamp `metadata.namespace` onto anything kustomize does not know to be
