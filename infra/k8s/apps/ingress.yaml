@@ -3,10 +3,10 @@
 # cannot exempt `/healthz` from basic auth, and `/healthz` behind a 401 is an
 # uptime monitor reporting an outage that is not happening.
 #
-# So in every pair: `/` carries basic auth, rate limiting and the security
-# headers, and `/healthz` carries the last two only. The `/healthz` router uses
-# `pathType: Exact` because Traefik orders routers by rule length, so the exact
-# path wins over its neighbour's `PathPrefix(/)` and nothing else falls out from
+# So in every pair: the serving router carries basic auth, rate limiting and the
+# security headers, and `/healthz` carries the last two only. The `/healthz`
+# router uses `pathType: Exact` because Traefik orders routers by rule length, so
+# the exact path wins over a neighbour's prefix and nothing else falls out from
 # behind basic auth.
 #
 # Two instances of that shape live here:
@@ -14,11 +14,21 @@
 #   `api.example.com`      -> Service/gateway       (`gateway`, `gateway-healthz`)
 #   `helpdesk.example.com` -> Service/helpdesk-web   (`helpdesk`, `helpdesk-healthz`)
 #
-# On the gateway pair, `/metrics` and `/admin/*` fall under `/` and are
-# therefore behind basic auth from the public side; nothing in-cluster reaches
-# the gateway through the Ingress at all. On the Helpdesk pair, `helpdesk-web`
-# is the only public surface - the agent API is the shape a project rule rejects
-# for the console, and the MCP server is a tool endpoint with no host.
+# The gateway pair publishes `/v1` and `/healthz` and nothing else. `/metrics`,
+# `/admin/routing`, `/admin/routing/reload` and `/admin/directory` are matched by
+# no router on this host, so they are not served publicly at all rather than
+# served behind basic auth: a path with no router answers Traefik's own 404, and
+# the admin key stays in front of the three admin routes for callers that reach
+# the pod another way. In-cluster callers are unaffected - they dial
+# `Service/gateway` directly and every path the app mounts answers there, which
+# is how a Prometheus scrape will reach `/metrics` once `monitoring` has a
+# NetworkPolicy allowing it. `/readyz` is public nowhere: the kubelet dials the
+# pod, and the readiness body names which dependencies are reachable.
+#
+# On the Helpdesk pair, `helpdesk-web` is the only public surface - the agent API
+# is the shape a project rule rejects for the console, and the MCP server is a tool
+# endpoint with no host. That router keeps `/` because the browser app serves a
+# whole site, and `Service/helpdesk-web` mounts none of the paths above.
 #
 # The hosts come from `infra/terraform/hetzner/variables.tf`, which publishes
 # `api`, `console`, `helpdesk` and `grafana` as A records. a design note keeps every
@@ -61,7 +71,11 @@ spec:
     - host: api.example.com
       http:
         paths:
-          - path: /
+          # `/v1`, not `/`: the OpenAI-compatible API is the whole public surface
+          # of this host. Narrowing it is what takes `/metrics` and `/admin/*` off
+          # the public router, and a `Prefix` match on a `/`-segment boundary is
+          # what still serves `/v1/chat/completions` beneath it.
+          - path: /v1
             pathType: Prefix
             backend:
               service:
@@ -90,9 +104,11 @@ spec:
     - host: api.example.com
       http:
         paths:
-          # `Exact`, not `Prefix`: Traefik orders routers by rule length, so an
-          # exact `/healthz` wins over the other Ingress's `PathPrefix(/)` and
-          # nothing else falls out from behind basic auth.
+          # `Exact`, not `Prefix`: `/healthz` is the one path this host serves
+          # without basic auth, and `Prefix` here would put everything under
+          # `/healthz/...` outside it. It no longer overlaps the serving router
+          # at all now that one is `/v1`, so rule-length ordering decides
+          # nothing between them - the exemption is this path and only this one.
           - path: /healthz
             pathType: Exact
             backend:

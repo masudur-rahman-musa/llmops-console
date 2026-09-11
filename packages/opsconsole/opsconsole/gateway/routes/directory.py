@@ -36,10 +36,14 @@ still a directory in someone's proxy log.
 
 Like `/admin/routing`, this path is not counted by the request metrics
 (`COUNTED_PATH_PREFIX` is `/v1/`), is traced because `TracingMiddleware` spans
-every scope, and has the admin key as its only control until row 21b takes
-`/admin/*` off the public router. Row 21a's NetworkPolicies do not reach this:
-they decide which pods may open a connection to the gateway, and Traefik is one
-of them, so a path stays public until a router rule says otherwise.
+every scope, and is cluster-internal: the `gateway` Ingress routes `/v1` and
+nothing wider, so no public router matches `/admin/directory`
+(`tests/infra/test_k8s_apps.py::test_no_public_router_matches_an_admin_path_or_the_scrape`,
+which imports `ADMIN_DIRECTORY` from this module). The admin key above is
+unchanged and is still the control an in-cluster caller meets. Row 21a's
+NetworkPolicies are a separate layer again: they decide which pods may open a
+connection to the gateway, and Traefik is one of them, so what closed the path
+was the router rule and not the policy.
 """
 
 from __future__ import annotations

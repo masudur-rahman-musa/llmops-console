@@ -1,15 +1,20 @@
 """`GET /metrics`: the Prometheus scrape.
 
 Unauthenticated, like `/healthz` and `/readyz`. It is what
-every Prometheus scrape config assumes, and what takes it off the public router
-is row 21b, not row 21a's NetworkPolicies - a policy decides which pods may open
-a connection, and Traefik is admitted to the gateway, so a path it routes stays
-public until a router rule says otherwise. The cost is honest and it is on the
-known-issues list until then: tenant names are label values, so a `/metrics`
-exposed to the internet discloses the tenant list.
+every Prometheus scrape config assumes, and it is served in-cluster only: the
+`gateway` Ingress routes `/v1` and nothing wider, so no public router matches
+this path and a request for it from the internet is Traefik's own 404
+(`tests/infra/test_k8s_apps.py::test_no_public_router_matches_an_admin_path_or_the_scrape`).
+That matters because tenant names are label values, so a `/metrics` reachable
+from the internet would disclose the tenant list. A path with no router is not a
+control this endpoint carries - it is the absence of a route to it, which is why
+the in-cluster listener is unchanged and every pod allowed to open a connection
+still reads the exposition here.
 
-Row 21a leaves the scrape itself denied rather than open: `apps`'s `default-deny`
-closes ingress, `gateway-ingress` admits `kube-system` and pods in `apps`, and
+Two network facts sit under that and neither is a path rule. `apps`'s
+`default-deny` closes ingress and `gateway-ingress` admits `kube-system` and pods
+in `apps`, so Traefik itself can still open a connection to this port - a policy
+decides which pods may connect and never which path they may ask for. And
 `monitoring` has no policy at all yet (21a decision C), so a Prometheus installed
 before row 23 adds its allow sees no gateway target.
 

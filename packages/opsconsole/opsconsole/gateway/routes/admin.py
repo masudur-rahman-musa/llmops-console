@@ -33,11 +33,17 @@ previous snapshot goes on serving (`test_an_invalid_policy_on_reload_is_422_nami
 `test_a_failed_reload_keeps_the_previous_policy_serving`).
 
 Neither route is counted by the request metrics: `COUNTED_PATH_PREFIX` is `/v1/`. Both are traced, because `TracingMiddleware` spans every
-HTTP scope. And the admin key is the only control in front of them until row
-21b takes `/admin/*` off the public router: row 21a's NetworkPolicies admit
-Traefik to the gateway on its serving port and a policy cannot see a path, so
-the network half of #70 closes who may open a connection and the router half is
-what decides which paths that connection may ask for.
+HTTP scope. And both are now cluster-internal: the `gateway` Ingress routes `/v1`
+and nothing wider, so no public router matches `/admin/*` and a request for one
+from the internet is Traefik's own 404
+(`tests/infra/test_k8s_apps.py::test_no_public_router_matches_an_admin_path_or_the_scrape`,
+whose four paths are imported from here and from `directory.py` rather than
+retyped). The admin key is unchanged and is still the control: the router rule
+removed a way in, it did not replace a check, and anything reaching the pod
+another way - an in-cluster caller through `Service/gateway`, a port-forward -
+meets the key exactly as before. The network half of #70 is a third layer and a
+different question: row 21a's NetworkPolicies decide which pods may open a
+connection, never which path that connection may ask for.
 """
 
 from __future__ import annotations

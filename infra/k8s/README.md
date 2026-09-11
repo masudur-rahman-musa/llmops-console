@@ -148,20 +148,35 @@ reporting an outage that is not happening.
 
 | host | Ingress | path | backend Service | middlewares | TLS Secret |
 |---|---|---|---|---|---|
-| `api.example.com` | `gateway` | `/` (Prefix) | `gateway` | basic-auth, rate-limit, security-headers | `gateway-tls` |
+| `api.example.com` | `gateway` | `/v1` (Prefix) | `gateway` | basic-auth, rate-limit, security-headers | `gateway-tls` |
 | `api.example.com` | `gateway-healthz` | `/healthz` (Exact) | `gateway` | rate-limit, security-headers | `gateway-healthz-tls` |
 | `helpdesk.example.com` | `helpdesk` | `/` (Prefix) | `helpdesk-web` | basic-auth, rate-limit, security-headers | `helpdesk-tls` |
 | `helpdesk.example.com` | `helpdesk-healthz` | `/healthz` (Exact) | `helpdesk-web` | rate-limit, security-headers | `helpdesk-healthz-tls` |
 
-`Exact` on the `/healthz` rows is what keeps the split honest. Traefik orders
-routers by rule length, so the exact path outranks its neighbour's
-`PathPrefix(/)` and nothing else falls out from behind basic auth.
+`Exact` on the `/healthz` rows is what keeps the split honest: `Prefix` there
+would put everything under `/healthz/...` outside basic auth. On the Helpdesk
+host it also settles an overlap - Traefik orders routers by rule length, so the
+exact path outranks its neighbour's `PathPrefix(/)`. On the gateway host the two
+routers no longer overlap at all.
 
 `helpdesk-web` is the only public Helpdesk surface. The agent API is the shape
 a project rule rejects for the console, and the MCP server is a tool endpoint with
 no host - both are reachable in-cluster by their ClusterIP Services and from
-nowhere else. On the gateway host, `/metrics` and `/admin/*` fall under `/` and
-are therefore behind basic auth from the public side.
+nowhere else.
+
+The gateway host publishes `/v1` and `/healthz` and nothing else. `/metrics`,
+`/admin/routing`, `/admin/routing/reload` and `/admin/directory` are matched by
+no router, so they are not served publicly at all rather than served behind
+basic auth: a path with no router gets Traefik's own 404, which discloses less
+than a 403 does. The admin key still guards the three admin routes for anything
+that reaches the pod another way - the router rule removed a surface, it did not
+replace a control. `/readyz` is published nowhere either, because its body names
+which dependencies are reachable and the kubelet dials the pod directly. Every
+path the app mounts still answers on `Service/gateway` in-cluster, which is what
+"cluster-internal" means here and how row 23's Prometheus will scrape `/metrics`.
+
+A future public surface that is not under `/v1` - the console's `console-api` -
+needs a router of its own on this table, or it is a 404 on a host that is up.
 
 Every middleware reference is namespace-qualified as `apps-<name>@kubernetescrd`
 and resolves to the `apps` copy of that middleware. Traefik treats a
@@ -226,9 +241,11 @@ Both pods call their port `http`, and Kubernetes resolves a named port against
 each target pod's own container port. `platform`'s policy is the exception and
 reads in numbers: its three targets name their ports differently.
 
-Two things these policies do NOT do. They cannot see a URL path, so `/admin/*`
-and `/metrics` stay reachable through Traefik exactly as before - taking them
-off the public router is a router rule, not a policy. And `evals` and
+Two things these policies do NOT do. They cannot see a URL path: what takes
+`/admin/*` and `/metrics` off the public side is the `gateway` Ingress routing
+`/v1` and nothing wider, a router rule rather than a policy. These policies
+decide only which pods may open a connection, and Traefik is one of them. And
+`evals` and
 `monitoring` have no policies at all yet, so a Prometheus installed today
 reaches nothing in `apps`: its scrape allow lands with the metrics stack.
 
@@ -359,7 +376,8 @@ metrics stack lands.
 - The rest of `apps/` - the console with its `console.` Ingress.
 - The nightly eval CronJob in `evals/`, and the metrics stack in `monitoring/`
   with its `grafana.` Ingress.
-- SOPS-encrypted secrets, including the four named above.
+- SOPS-encrypted secrets, including the four named above - the last open half of
+  the network and secrets work.
 - NetworkPolicies for `evals` and `monitoring`; the two namespaces that serve
   traffic are covered above.
 

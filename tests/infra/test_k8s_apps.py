@@ -52,13 +52,20 @@ failure decision B paid a copy to remove.
 
 from __future__ import annotations
 
+import functools
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 from urllib.parse import SplitResult, urlsplit
 
 import pytest
 import yaml
+
+from opsconsole.gateway.app import create_app
+from opsconsole.gateway.routes.admin import ADMIN_ROUTING, ADMIN_ROUTING_RELOAD
+from opsconsole.gateway.routes.directory import ADMIN_DIRECTORY
+from opsconsole.gateway.routes.metrics import METRICS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 K8S_ROOT = REPO_ROOT / "infra" / "k8s"
@@ -473,6 +480,42 @@ INGRESS_BACKENDS: dict[str, str] = {
     HELPDESK_HEALTHZ_INGRESS: HELPDESK_WEB,
 }
 
+#: Row 21b criterion 1: the one path the public `gateway` router serves. `/v1` is the whole
+#: OpenAI-compatible surface; `/metrics`, `/admin/*` and `/readyz` are served by the same pod
+#: and left with no public router at all (decisions A and B), which is what "cluster-internal"
+#: means once a NetworkPolicy has been shown unable to see a URL path.
+VERSIONED_PREFIX = "/v1"
+
+#: Row 21b criteria 1 and 7, PER INGRESS beside `INGRESS_HOSTS` and `INGRESS_BACKENDS` rather
+#: than as one rule for every non-healthz router: only `gateway` narrows to `/v1`, and
+#: `helpdesk` keeps `/` because narrowing the browser host takes the Helpdesk off the internet.
+INGRESS_PATHS: dict[str, str] = {
+    ROOT_INGRESS: VERSIONED_PREFIX,
+    HEALTHZ_INGRESS: LIVENESS_PATH,
+    HELPDESK_INGRESS: "/",
+    HELPDESK_HEALTHZ_INGRESS: LIVENESS_PATH,
+}
+
+#: Row 21b criterion 2: the four paths the gateway serves that no public router may match,
+#: IMPORTED from the three route modules that mount them rather than retyped here, so a route
+#: moved to a new path moves this list with it instead of leaving a stale string behind.
+CLOSED_PUBLIC_PATHS: tuple[str, ...] = (
+    ADMIN_ROUTING,
+    ADMIN_ROUTING_RELOAD,
+    ADMIN_DIRECTORY,
+    METRICS,
+)
+
+#: Row 21b criterion 5: the prefix every admin route mounts under, WITH the trailing slash that
+#: makes it a `/`-segment boundary - `/admin` alone also reads as a prefix of `/admin-keys`,
+#: which is a path `CLOSED_PUBLIC_PATHS` does not name.
+ADMIN_PREFIX = "/admin/"
+
+#: What `create_app` reads provider keys from in this file: nothing (#66). `tests/gateway`
+#: passes the same empty mapping, so a developer with a real key exported cannot have these
+#: cases build an app holding a live-keyed client.
+NO_ENVIRON: Mapping[str, str] = {}
+
 #: Row 20g criterion 3: the Secret cert-manager WRITES for each router, by name. An earlier change
 #: criterion 10 named the two Helpdesk ones before this row existed. All four are asserted
 #: distinct from one another and disjoint from `PINNED_SECRET_NAMES`, because ingress-shim owns
@@ -494,6 +537,23 @@ HEALTHZ_INGRESSES = frozenset({HEALTHZ_INGRESS, HELPDESK_HEALTHZ_INGRESS})
 #: and `Prefix` there instead would pull every path under it out from behind basic auth.
 PATH_TYPE_PREFIX = "Prefix"
 PATH_TYPE_EXACT = "Exact"
+
+#: Row 21b's boundary rows, both sides of the one rule in this file with an edge (§6's
+#: "Boundaries" line). `(path, pathType, request path, matches)`: a `Prefix` matches an equal
+#: path and one continuing at a `/` boundary and NOT one continuing mid-segment, an `Exact`
+#: matches only itself, and a `/` Prefix - the router this plan removes - matches everything,
+#: which is why the closed paths are public until it goes.
+MATCHER_BOUNDARY_ROWS: tuple[tuple[str, str, str, bool], ...] = (
+    (VERSIONED_PREFIX, PATH_TYPE_PREFIX, VERSIONED_PREFIX, True),
+    (VERSIONED_PREFIX, PATH_TYPE_PREFIX, "/v1/chat/completions", True),
+    (VERSIONED_PREFIX, PATH_TYPE_PREFIX, "/v1beta/x", False),
+    (VERSIONED_PREFIX, PATH_TYPE_PREFIX, ADMIN_ROUTING, False),
+    ("/", PATH_TYPE_PREFIX, ADMIN_ROUTING, True),
+    ("/", PATH_TYPE_PREFIX, "/", True),
+    (LIVENESS_PATH, PATH_TYPE_EXACT, LIVENESS_PATH, True),
+    (LIVENESS_PATH, PATH_TYPE_EXACT, "/healthz/deeper", False),
+    (LIVENESS_PATH, PATH_TYPE_EXACT, READINESS_PATH, False),
+)
 
 #: Criterion 7: the production issuer, on both Ingresses. A staging annotation here is a
 #: certificate no browser trusts on the public host.
@@ -914,6 +974,91 @@ def sole_object(documents: list[dict[str, Any]], kind: str, name: str) -> dict[s
     found = in_apps(documents, kind)
     assert name in found, f"the build emits no {kind}/{name} in {APPS}: {sorted(found)}"
     return found[name]
+
+
+@functools.lru_cache(maxsize=1)
+def mounted_paths() -> frozenset[str]:
+    """Every path the shipped gateway app mounts, read off the app's own router (row 21b
+    criteria 3 and 5) and never written down here.
+
+    `create_app` is given an EMPTY environ (#66): a developer with a real `OPENAI_API_KEY`
+    exported would otherwise have this file build an app holding a live-keyed client, and the
+    route table is the same either way.
+
+    The walk is recursive because `app.routes` is NOT the route table in this FastAPI version:
+    `include_router` leaves one `_IncludedRouter` object per router, whose own routes hang off
+    `original_router.routes`, and a flat `getattr(route, "path", None)` over `app.routes` sees
+    only Starlette's `/docs`, `/redoc` and `/openapi.json`. A flat read would therefore make
+    both derived cases pass over an EMPTY served set - exactly the vacuum they exist to
+    prevent - which is why each caller asserts the paths it expects to find are present.
+    """
+    collected: set[str] = set()
+
+    def walk(routes: list[Any]) -> None:
+        for route in routes:
+            path = getattr(route, "path", None)
+            if isinstance(path, str):
+                collected.add(path)
+            nested = getattr(route, "routes", None)
+            if nested is None:
+                included = getattr(route, "original_router", None)
+                nested = getattr(included, "routes", None)
+            if nested:
+                walk(list(nested))
+
+    walk(list(create_app(environ=NO_ENVIRON).routes))
+    return frozenset(collected)
+
+
+def router_matches(route_path: str, path_type: str, request_path: str) -> bool:
+    """Traefik's matching rule, the one piece of logic in this file, in ONE place so no two
+    cases can disagree about what "matched" means.
+
+    `Exact` matches an equal path and nothing else. `Prefix` matches an equal path or one
+    continuing at a `/`-segment boundary, so `/v1` matches `/v1/chat/completions` and not
+    `/v1beta/x`, and a `/` Prefix matches every path there is. Pinned both sides by
+    `MATCHER_BOUNDARY_ROWS` inside `test_no_public_router_matches_an_admin_path_or_the_scrape`.
+    """
+    if path_type == PATH_TYPE_EXACT:
+        return request_path == route_path
+    assert path_type == PATH_TYPE_PREFIX, (
+        f"a router serves {route_path} as `{path_type}`, which is neither "
+        f"{PATH_TYPE_EXACT} nor {PATH_TYPE_PREFIX}"
+    )
+    if request_path == route_path:
+        return True
+    boundary = route_path if route_path.endswith("/") else f"{route_path}/"
+    return request_path.startswith(boundary)
+
+
+def gateway_routers(documents: list[dict[str, Any]]) -> list[tuple[str, str, str]]:
+    """Every `(ingress, path, pathType)` triple in the build whose backend is `Service/gateway`.
+
+    Scoped by BACKEND rather than over every Ingress in the build, because the `helpdesk`
+    router keeps `/` (criterion 7) and a `/`-wide read would make criterion 2 unsatisfiable on
+    a path the gateway never sees: `helpdesk.example.com/admin/routing` is forwarded to
+    `Service/helpdesk-web`, which serves no admin API. What criterion 2 forbids is a router
+    that hands one of the closed paths to the gateway.
+    """
+    routers: list[tuple[str, str, str]] = []
+    for ingress in objects_of_kind(documents, "Ingress"):
+        ingress_name = name_of(ingress)
+        for rule in ingress["spec"]["rules"]:
+            for path in rule["http"]["paths"]:
+                backend = path["backend"]["service"]
+                if str(backend["name"]) != GATEWAY:
+                    continue
+                routers.append((ingress_name, str(path["path"]), str(path.get("pathType"))))
+    return routers
+
+
+def routers_matching(documents: list[dict[str, Any]], request_path: str) -> list[str]:
+    """The gateway-backed routers that would serve `request_path`, rendered for a message."""
+    return [
+        f"{ingress_name} {route_path} ({path_type})"
+        for ingress_name, route_path, path_type in gateway_routers(documents)
+        if router_matches(route_path, path_type, request_path)
+    ]
 
 
 def gateway_pod_owner(documents: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1533,9 +1678,11 @@ def test_only_the_healthz_ingresses_are_exempt_from_basic_auth(built: list[dict[
     router is now one of two hosts' pairs rather than "the root ingress" of one. Catches
     basic-auth listed on the `/healthz` Ingress, which puts a 401 in front of the endpoint an
     uptime monitor and a load balancer poll and makes the service look down while it is up;
-    catches basic-auth dropped from the `/` one, which publishes `/metrics` and `/admin/*` to
-    the internet unauthenticated; and catches rate-limit or security-headers missing from
-    either. Every name parsed out of either annotation is then resolved against the
+    catches basic-auth dropped from the `/v1` one, which publishes the OpenAI-compatible API
+    to the internet unauthenticated - `/metrics` and `/admin/*` are no longer part of what that
+    costs, because row 21b leaves them with no public router at all; and catches rate-limit or
+    security-headers missing from either. Every name parsed out of either annotation is then
+    resolved against the
     `Middleware`s the build actually emits in `apps` - which is decision B's whole point, since
     Traefik treats an unresolvable reference as no middleware rather than as an error, so a
     `platform-basic-auth@kubernetescrd` left over from the cross-namespace shape, or a name
@@ -1743,7 +1890,7 @@ def test_each_ingress_routes_its_own_path_to_its_own_backend_service(
     services = {name_of(document) for document in objects_of_kind(built, "Service")}
     expected_backend = INGRESS_BACKENDS[ingress_name]
     is_healthz = ingress_name in HEALTHZ_INGRESSES
-    expected_path = LIVENESS_PATH if is_healthz else "/"
+    expected_path = INGRESS_PATHS[ingress_name]
     expected_path_type = PATH_TYPE_EXACT if is_healthz else PATH_TYPE_PREFIX
     paths: set[str] = set()
     for rule in ingress["spec"]["rules"]:
@@ -2639,3 +2786,146 @@ def test_no_helpdesk_workload_has_a_disruption_budget(built: list[dict[str, Any]
             if all(labels.get(key) == value for key, value in match_labels.items()):
                 selecting.append(f"{budget_name} selects {workload_name}")
     assert selecting == [], f"disruption budgets over single-replica Helpdesk pods: {selecting}"
+
+
+def test_the_gateway_router_serves_only_the_versioned_api(built: list[dict[str, Any]]) -> None:
+    """Row 21b criterion 1: the `gateway` Ingress's path set is exactly `{"/v1"}`, `Prefix`, to
+    `Service/gateway` on port name `http`, with `gateway-healthz` left on `/healthz`, `Exact`.
+    Catches the router this plan narrows left at `/`, which is the whole point of the row: with
+    `/` served, `/metrics` and every `/admin/*` route the pod mounts are published on the public
+    host behind nothing but basic auth, and a NetworkPolicy cannot see a path to stop it.
+    Catches `/metrics` or an `/admin` path ADDED back beside `/v1` as a second entry, which set
+    equality sees and a `startswith` or a "some path is /v1" check would not. Catches `/v1`
+    given `pathType: Exact`, where `/v1/chat/completions` - every request the gateway exists to
+    serve - stops matching and 404s while the manifest still names the right prefix. And catches
+    the narrowed router repointed at another Service or given a numeric backend port that drifts
+    from the `http` the Service targets, which resolves to no endpoint. The `/healthz` half is
+    asserted alongside so a sweep that narrows both routers, taking the unauthenticated probe
+    off the internet, is red here rather than discovered by an uptime monitor."""
+    ingress = sole_object(built, "Ingress", ROOT_INGRESS)
+    paths: set[str] = set()
+    for rule in ingress["spec"]["rules"]:
+        for path in rule["http"]["paths"]:
+            paths.add(str(path["path"]))
+            assert str(path.get("pathType")) == PATH_TYPE_PREFIX, (
+                f"{ROOT_INGRESS} serves {path['path']} as {path.get('pathType')}"
+            )
+            backend = path["backend"]["service"]
+            assert str(backend["name"]) == GATEWAY, (
+                f"{ROOT_INGRESS} routes {path['path']} to Service/{backend['name']}"
+            )
+            port = backend.get("port", {})
+            assert isinstance(port, dict) and str(port.get("name")) == CONTAINER_PORT_NAME, (
+                f"{ROOT_INGRESS} names backend port {port} and not `{CONTAINER_PORT_NAME}`"
+            )
+    assert paths == {VERSIONED_PREFIX}, f"{ROOT_INGRESS} routes {sorted(paths)}"
+
+    healthz = sole_object(built, "Ingress", HEALTHZ_INGRESS)
+    healthz_paths = {
+        (str(path["path"]), str(path.get("pathType")))
+        for rule in healthz["spec"]["rules"]
+        for path in rule["http"]["paths"]
+    }
+    assert healthz_paths == {(LIVENESS_PATH, PATH_TYPE_EXACT)}, (
+        f"{HEALTHZ_INGRESS} routes {sorted(healthz_paths)}"
+    )
+
+
+def test_no_public_router_matches_an_admin_path_or_the_scrape(built: list[dict[str, Any]]) -> None:
+    """Row 21b criterion 2: none of the four closed paths - `/admin/routing`,
+    `/admin/routing/reload`, `/admin/directory`, `/metrics` - is matched by any router in the
+    build that forwards to `Service/gateway`, under Traefik's own matching rule. The four are
+    IMPORTED from the route modules that mount them, so a route moved to a new path moves this
+    case with it instead of leaving it green against a string nothing serves any more. Catches
+    the `/` router this plan removes, which matches all four and is what makes this case red
+    today; catches a later router added back for one of them, an `ipAllowList`-guarded
+    `/admin` Ingress being exactly the shape decision A rejected because k3s's servicelb can
+    hide the real client IP; and catches a narrowing written as `/` plus a deny middleware,
+    which leaves the path matched and the closure a middleware's job again. `MATCHER_BOUNDARY_ROWS`
+    pins both sides of the one edge in the matcher first, so a matcher that answered False for
+    everything - which would make this case pass over any build at all - is red before the
+    build is read."""
+    for route_path, path_type, request_path, expected in MATCHER_BOUNDARY_ROWS:
+        assert router_matches(route_path, path_type, request_path) is expected, (
+            f"`{route_path}` ({path_type}) against `{request_path}` is not {expected}"
+        )
+
+    for closed in CLOSED_PUBLIC_PATHS:
+        matched = routers_matching(built, closed)
+        assert matched == [], f"the build publishes {closed} through {matched}"
+
+
+def test_every_served_versioned_path_is_still_publicly_routable(
+    built: list[dict[str, Any]],
+) -> None:
+    """Row 21b criterion 3, the other half of criterion 2 and the reason the narrowing is not
+    just "route less": every path the app mounts under `/v1`, plus `/healthz`, is matched by
+    EXACTLY one gateway-backed router. The served set is read off the app's own router
+    (`mounted_paths`), so a `/v2` or a fourth `/v1` route added later fails here rather than
+    404ing in production against a manifest nobody thought to widen. Catches a narrowing that
+    overshoots - `/v1/chat` in place of `/v1`, or `Exact` where `Prefix` was meant - which
+    silently drops served paths; catches `/healthz` narrowed away with the rest, which is the
+    one public path with no credential and a real consumer. And catches an OVERLAP rather than
+    a gap: two routers matching one path is the state the build is in today, where `/healthz`
+    is served both by `gateway`'s `/` and by `gateway-healthz`'s `Exact` rule and Traefik picks
+    between them by rule length - a tie decided by a mechanic no manifest states, and on that
+    path the difference between the two routers is basic auth."""
+    served = sorted(
+        {path for path in mounted_paths() if path.startswith(f"{VERSIONED_PREFIX}/")}
+        | {VERSIONED_PREFIX, LIVENESS_PATH}
+    )
+    assert len(served) > 2, f"the app mounts nothing under {VERSIONED_PREFIX}: {served}"
+
+    for path in served:
+        matched = routers_matching(built, path)
+        assert len(matched) == 1, f"{path} is matched by {len(matched)} routers: {matched}"
+
+
+def test_readyz_is_reachable_only_in_cluster(built: list[dict[str, Any]]) -> None:
+    """Row 21b criterion 4 and decision B: `/readyz` is matched by no gateway-backed router.
+    It reports WHICH dependencies are reachable, which is the shape of an internal disclosure,
+    and it has no public consumer - the kubelet dials the pod and an in-cluster caller uses the
+    Service. Catches the `/` router that matches it today; catches `/readyz` added to the
+    `gateway-healthz` router alongside `/healthz`, which is the tempting edit because the two
+    probes look alike and is the one decision B rules out; and catches `gateway-healthz`
+    widened from `Exact` to `Prefix`, where `/readyz` stays unmatched but the assertion on
+    `/healthz` below fixes the matcher's `Exact` behaviour so the widening cannot be mistaken
+    for a pass. The same `router_matches` as criterion 2 decides it, so the two cases cannot
+    disagree about what "matched" means; and `/healthz` is asserted matched in the same breath,
+    so a build that routes nothing at all - which would satisfy this case trivially - is red."""
+    assert routers_matching(built, READINESS_PATH) == [], (
+        f"the build publishes {READINESS_PATH} through {routers_matching(built, READINESS_PATH)}"
+    )
+    assert routers_matching(built, LIVENESS_PATH) != [], (
+        f"the build routes {READINESS_PATH} nowhere and {LIVENESS_PATH} nowhere either"
+    )
+
+
+def test_every_admin_path_the_app_mounts_is_under_the_prefix_the_build_closes(
+    built: list[dict[str, Any]],
+) -> None:
+    """Row 21b criterion 5: every path the app mounts that begins `/admin` is inside `/admin/`
+    AND is matched by no gateway-backed router - which is what makes criterion 2's four-path
+    list a rule rather than a snapshot of today's three routes. Derived from the app, so a
+    fourth admin route added later is covered without anyone remembering to add it to
+    `CLOSED_PUBLIC_PATHS`. Catches an admin route mounted just outside the prefix - `/admin`
+    bare, or `/admin-keys`, both of which start `/admin`, neither of which any of the four
+    constants names - and catches an admin route that IS inside the prefix but reachable,
+    which is the state the `/` router leaves every one of them in today. The three known admin
+    paths are asserted present first: `mounted_paths` walks a nested router structure, and an
+    empty derivation would otherwise let both halves of this case pass over nothing."""
+    admin_paths = sorted(path for path in mounted_paths() if path.startswith("/admin"))
+    missing = sorted(
+        path
+        for path in CLOSED_PUBLIC_PATHS
+        if path.startswith("/admin") and path not in admin_paths
+    )
+    assert missing == [], f"the app mounts {admin_paths}, which does not include {missing}"
+
+    outside = [path for path in admin_paths if not path.startswith(ADMIN_PREFIX)]
+    assert outside == [], f"admin routes outside `{ADMIN_PREFIX}`: {outside}"
+
+    published = {path: routers_matching(built, path) for path in admin_paths}
+    assert all(matched == [] for matched in published.values()), (
+        f"the build publishes admin routes: { ({k: v for k, v in published.items() if v}) }"
+    )
