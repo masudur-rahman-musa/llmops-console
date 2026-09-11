@@ -1,0 +1,21 @@
+#cloud-config
+# Rendered by templatefile() from main.tf; the TLS SAN below is the only
+# substitution this file takes.
+package_update: true
+packages:
+  - curl
+
+write_files:
+  - path: /etc/rancher/k3s/config.yaml
+    permissions: "0600"
+    content: |
+      write-kubeconfig-mode: "0600"
+      tls-san:
+        - ${api_fqdn}
+
+runcmd:
+  # The version is pinned to an exact release, never a channel: two applies a
+  # month apart must build the same cluster. Traefik and servicelb stay on -
+  # nothing here disables a bundled component, because row 20's Ingresses and
+  # LoadBalancer Services depend on both.
+  - curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.31.5+k3s1 sh -s - server

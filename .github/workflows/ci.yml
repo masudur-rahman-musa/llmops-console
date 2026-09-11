@@ -48,3 +48,48 @@ jobs:
       - run: make lint
       - run: make typecheck
       - run: make test
+
+  # Terraform's own checks on the Hetzner module. `fmt`, `init` and `validate`
+  # are unconditional: they need no credential, and they are the only semantic
+  # check the module gets - the pytest file beside them pins text, not meaning.
+  # `plan` needs a real Terraform Cloud token, which a fork pull request does
+  # not have, so it is skipped when the token is absent and the skip is echoed
+  # into the log rather than left as a green tick nobody can interpret.
+  tf:
+    runs-on: ubuntu-latest
+    env:
+      # The `secrets` context is not readable from an `if:`, so the presence
+      # check is lifted here, where it is, and the conditions below read the
+      # answer rather than the token.
+      TF_API_TOKEN_PRESENT: ${{ secrets.TF_API_TOKEN != '' }}
+    defaults:
+      run:
+        working-directory: infra/terraform/hetzner
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform fmt -check -recursive
+      # One init, always run, choosing its backend from what it has. With the
+      # token it initialises Terraform Cloud so the plan step can run; without
+      # it, `-backend=false` gives `validate` everything it needs and says so.
+      # Keeping this one step is what keeps `validate` unconditional.
+      - name: terraform init
+        env:
+          TF_TOKEN_app_terraform_io: ${{ secrets.TF_API_TOKEN }}
+        run: |
+          if [ -n "$TF_TOKEN_app_terraform_io" ]; then
+            terraform init -input=false
+          else
+            terraform init -backend=false -input=false
+            echo "note: no TF_API_TOKEN, initialised without the Terraform Cloud backend"
+          fi
+      - run: terraform validate
+      - name: terraform plan
+        if: env.TF_API_TOKEN_PRESENT == 'true'
+        env:
+          TF_TOKEN_app_terraform_io: ${{ secrets.TF_API_TOKEN }}
+        run: terraform plan -input=false -lock=false
+      - name: no credentials, no plan
+        if: env.TF_API_TOKEN_PRESENT == 'false'
+        run: |
+          echo "skip: TF_API_TOKEN is unset, so terraform plan did not run; fmt and validate did"

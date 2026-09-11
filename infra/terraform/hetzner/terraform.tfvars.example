@@ -1,0 +1,10 @@
+# Copy to terraform.tfvars and fill in. The filled-in copy is gitignored; the
+# provider credentials are NOT in this file at all - they are environment
+# variables the providers read for themselves:
+#
+#   export HCLOUD_TOKEN=...
+#   export CLOUDFLARE_API_TOKEN=...
+
+admin_ips      = ["203.0.113.7/32"]
+zone           = "example.com"
+ssh_public_key = "ssh-ed25519 REPLACE_WITH_YOUR_PUBLIC_KEY you@example.com"

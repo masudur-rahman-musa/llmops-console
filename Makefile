@@ -53,5 +53,14 @@ refresh-rollup: ## Refresh the daily cost rollup the console reads
 	uv run ops-refresh-rollup
 eval:       ## Project evals: golden set vs project-evals/baseline.json
 	uv run ops-eval run --target http://localhost:8080 --set "$$GOLDEN_SET" --tenant evals --out project-evals/reports/local
+# Two halves, each on its own line so a failure in either is the target's exit
+# code. The terraform half runs for real; the kustomize half skips while
+# infra/k8s carries no kustomization, written as a conditional rather than
+# `A && B || C`, which would report success the moment terraform failed.
+# `-backend=false` keeps `validate` off Terraform Cloud: the same init CI runs.
 infra-check: ## Validate infrastructure as code (no apply)
-	terraform -chdir=infra/terraform/hetzner fmt -check && terraform -chdir=infra/terraform/hetzner validate && kustomize build infra/k8s | kubeconform
+	terraform -chdir=infra/terraform/hetzner fmt -check -recursive
+	terraform -chdir=infra/terraform/hetzner init -backend=false -input=false
+	terraform -chdir=infra/terraform/hetzner validate
+	@if [ -f infra/k8s/kustomization.yaml ]; then kustomize build infra/k8s | kubeconform; \
+	else echo "skip: no infra/k8s/kustomization.yaml yet - kustomize build"; fi
