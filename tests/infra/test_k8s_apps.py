@@ -81,6 +81,12 @@ BASE_KINDS = frozenset({"Namespace", "ResourceQuota", "LimitRange"})
 LLAMA = "llama"
 LLAMA_PVC = "llama-models"
 
+#: Row 20e's second llama.cpp process: one server serves one model, so the embedding endpoint
+#: is its own Deployment, its own Service and its own claim. The names are here rather than in
+#: the embedding block below because `APPS_OBJECTS` names them first.
+LLAMA_EMBED = "llama-embed"
+LLAMA_EMBED_PVC = "llama-embed-models"
+
 GATEWAY = "gateway"
 GATEWAY_CONFIG_MAP = "gateway-config"
 GATEWAY_SECRET = "gateway-secrets"
@@ -105,6 +111,9 @@ APPS_OBJECTS: frozenset[tuple[str, str, str]] = frozenset(
         ("PersistentVolumeClaim", LLAMA_PVC, APPS),
         ("Deployment", LLAMA, APPS),
         ("Service", LLAMA, APPS),
+        ("PersistentVolumeClaim", LLAMA_EMBED_PVC, APPS),
+        ("Deployment", LLAMA_EMBED, APPS),
+        ("Service", LLAMA_EMBED, APPS),
     }
 )
 
@@ -272,6 +281,79 @@ PREVIOUS_LOCAL_MODEL = "qwen2.5-7b-instruct"
 #: `models` appear on several lines of both files, so a first-hit scan would read the wrong one.
 COMPOSE_MODEL_DEFAULT = re.compile(r"\$\{LLAMA_MODEL_FILE:-(?P<file>[^}]+)\}")
 ENV_MODEL_DEFAULT = re.compile(r"^LLAMA_MODEL_FILE=(?P<file>\S+)$")
+
+#: Row 20e criterion 4: the provider row the `embed` alias resolves to after the split. One
+#: provider carries one `base_url`, so the second server is a second provider and not a second
+#: alias - and this key becomes the ledger's `provider` value for every embedding row.
+LOCAL_EMBED_PROVIDER = "local_embed"
+
+#: Criterion 4: the alias whose only candidate moves, and the model that candidate names. Every
+#: CHAT alias keeps `local`, which the same case asserts.
+EMBED_ALIAS = "embed"
+EMBED_MODEL = "bge-small-en-v1.5"
+
+#: Decision B: the upstream Q8_0 artefact, ~130 MB of a 33M-parameter encoder where quantising
+#: harder buys nothing. The suffix is what criterion 10's case takes off the built `-m` file
+#: name to get the model id, rather than writing the id down a second time.
+Q8_SUFFIX = "-q8_0.gguf"
+LLAMA_EMBED_MODEL_FILE = f"{EMBED_MODEL}{Q8_SUFFIX}"
+
+#: Criterion 1: the embedding claim's size and access mode, and the `storageClassName` it must
+#: NOT declare - k3s's local-path provisioner is the default, the same reason 20b's Postgres
+#: and 20d's claim omit it. `1Gi` for a ~130 MB file, exactly.
+LLAMA_EMBED_PVC_STORAGE = "1Gi"
+LLAMA_EMBED_PVC_ACCESS_MODES = ["ReadWriteOnce"]
+
+#: Criterion 2: one replica, and the only update strategy a `ReadWriteOnce` volume survives -
+#: 20d's reason, unchanged by the file being smaller.
+LLAMA_EMBED_REPLICAS = 1
+LLAMA_EMBED_STRATEGY = "Recreate"
+
+#: Criterion 6, by value and in order: decision D's BERT-encoder flags (`--pooling cls` written
+#: out because a mean-pooled vector is a different vector space that still returns plausible
+#: numbers, and `n_ubatch >= n_ctx` because llama.cpp refuses a non-causal model otherwise), the
+#: address it binds and the one file it loads. The port reads the same numeral criterion 3
+#: derives from `routing.yaml`; it is written here because the args are pinned
+#: as a LIST, and a list assembled from three sources cannot state an order.
+LLAMA_EMBED_ARGS: list[str] = [
+    "--embedding",
+    "--pooling",
+    "cls",
+    "--ctx-size",
+    "512",
+    "--ubatch-size",
+    "512",
+    "--host",
+    "0.0.0.0",
+    "--port",
+    "8083",
+    "-m",
+    f"{LLAMA_MOUNT_PATH}/{LLAMA_EMBED_MODEL_FILE}",
+]
+
+#: Criterion 7, exactly: `5` seconds times `24` attempts is the 120-second
+#: ceiling on a cold load of a ~130 MB file - not 20d's 600, which was sized for a
+#: multi-gigabyte read. `LLAMA_PROBE_PATH` and `LLAMA_PROBES` are reused rather than restated:
+#: this is the same llama.cpp server, so the path it serves and the three probes a pod runs are
+#: the same fact, and writing them twice would let the two drift.
+LLAMA_EMBED_STARTUP_PERIOD_SECONDS = 5
+LLAMA_EMBED_STARTUP_FAILURE_THRESHOLD = 24
+
+#: Criterion 9's embedding row, by value, per pod. Decision E takes it from
+#: the headroom rather than from llama.cpp's row, and `limits.cpu` is absent on purpose -
+#: equality on the whole mapping is what keeps it absent.
+LLAMA_EMBED_RESOURCES: dict[str, str] = {
+    "requests.memory": "256Mi",
+    "requests.cpu": "100m",
+    "limits.memory": "512Mi",
+}
+
+#: Criterion 10's compose and `.env.example` defaults. Every matching line is scanned and the
+#: values required to agree. Neither pattern can match the chat server's
+#: `LLAMA_MODEL_FILE` lines and neither of those can match these: `${LLAMA_MODEL_FILE` is not a
+#: substring of `${LLAMA_EMBED_MODEL_FILE`, and the `.env.example` pattern is anchored whole.
+COMPOSE_EMBED_MODEL_DEFAULT = re.compile(r"\$\{LLAMA_EMBED_MODEL_FILE:-(?P<file>[^}]+)\}")
+ENV_EMBED_MODEL_DEFAULT = re.compile(r"^LLAMA_EMBED_MODEL_FILE=(?P<file>\S+)$")
 
 #: Decision F, by value: two replicas at rest, an HPA from 2 to 3 on 70% CPU, and a PDB that
 #: still lets a single-node drain proceed.
@@ -810,6 +892,94 @@ def priced_keys() -> dict[str, Any]:
     return prices
 
 
+def llama_embed_pod_owner(documents: list[dict[str, Any]]) -> dict[str, Any]:
+    """The embedding Deployment, selected by name and namespace and asserted to own a pod."""
+    owner = sole_object(documents, "Deployment", LLAMA_EMBED)
+    assert owner in pod_owners(documents), f"{LLAMA_EMBED} carries no pod template"
+    return owner
+
+
+def llama_embed_base_url() -> SplitResult:
+    """`providers.local_embed.base_url` out of the SHIPPED `routing.yaml`, split into its parts.
+    This is the address the gateway dials for an embedding after the split, and the only source
+    criterion 3's Service name and port are read from."""
+    policy = yaml.safe_load(read(ROUTING_POLICY))
+    assert isinstance(policy, dict), f"{ROUTING_POLICY.name} is not a mapping"
+    providers = policy.get("providers", {})
+    assert isinstance(providers, dict) and LOCAL_EMBED_PROVIDER in providers, (
+        f"{ROUTING_POLICY.name} names no `{LOCAL_EMBED_PROVIDER}` provider: "
+        f"{sorted(providers) if isinstance(providers, dict) else providers}"
+    )
+    declared = providers[LOCAL_EMBED_PROVIDER].get("base_url", "")
+    assert declared, (
+        f"{ROUTING_POLICY.name}'s `{LOCAL_EMBED_PROVIDER}` provider declares no base_url"
+    )
+    return urlsplit(str(declared))
+
+
+def alias_candidates(alias: str) -> list[dict[str, str]]:
+    """The shipped policy's candidate list for one alias, as `{provider, model}` mappings."""
+    policy = yaml.safe_load(read(ROUTING_POLICY))
+    assert isinstance(policy, dict), f"{ROUTING_POLICY.name} is not a mapping"
+    aliases = policy.get("aliases", {})
+    assert isinstance(aliases, dict) and alias in aliases, (
+        f"{ROUTING_POLICY.name} names no `{alias}` alias"
+    )
+    candidates = aliases[alias].get("candidates", [])
+    assert isinstance(candidates, list), f"`{alias}` names no candidate list"
+    return [
+        {str(key): str(value) for key, value in candidate.items()}
+        for candidate in candidates
+        if isinstance(candidate, dict)
+    ]
+
+
+def providers_named_outside(alias: str) -> list[str]:
+    """Every provider the shipped policy names ANYWHERE except in `alias`'s own candidate list -
+    the other aliases' candidates and every tenant override, WITH duplicates, so a chat line
+    repointed at the embedding server is visible however many other lines are correct."""
+    policy = yaml.safe_load(read(ROUTING_POLICY))
+    assert isinstance(policy, dict), f"{ROUTING_POLICY.name} is not a mapping"
+    groups: list[Any] = [
+        entry.get("candidates", [])
+        for name, entry in policy.get("aliases", {}).items()
+        if name != alias
+    ]
+    for tenant in policy.get("tenants", {}).values():
+        groups.extend(tenant.get("overrides", {}).values())
+    return [
+        str(candidate["provider"])
+        for group in groups
+        if isinstance(group, list)
+        for candidate in group
+        if isinstance(candidate, dict)
+    ]
+
+
+def embed_model_id_from(file_name: str) -> str:
+    """The model id inside the embedding GGUF file name: `bge-small-en-v1.5-q8_0.gguf` is
+    `bge-small-en-v1.5`. The suffix is asserted rather than stripped conditionally, so a file in
+    another quantisation is a named failure and not an id with a tail on it."""
+    assert file_name.endswith(Q8_SUFFIX), f"{file_name} is not a {Q8_SUFFIX} artefact"
+    return file_name[: -len(Q8_SUFFIX)]
+
+
+def compose_embed_model_files() -> set[str]:
+    """Every GGUF file name a `${LLAMA_EMBED_MODEL_FILE:-...}` default in `docker-compose.yml`
+    falls back to. All matching lines, never the first."""
+    return {match.group("file") for match in COMPOSE_EMBED_MODEL_DEFAULT.finditer(read(COMPOSE))}
+
+
+def env_example_embed_model_files() -> set[str]:
+    """Every `LLAMA_EMBED_MODEL_FILE=` value in `.env.example`, all matching lines scanned."""
+    files: set[str] = set()
+    for line in read(ENV_EXAMPLE).splitlines():
+        match = ENV_EMBED_MODEL_DEFAULT.fullmatch(line.strip())
+        if match is not None:
+            files.add(match.group("file"))
+    return files
+
+
 def test_the_apps_directory_emits_the_objects_the_plan_names(built: list[dict[str, Any]]) -> None:
     """Criterion 1, by SET EQUALITY over `(kind, name, namespace)` for everything the build
     emits in `apps` that is not one of 20a's three base kinds, plus the claim that nothing
@@ -956,16 +1126,17 @@ def test_the_apps_subtotals_fit_inside_the_namespace_quota(built: list[dict[str,
     parsed off the BUILT pod templates in `apps`, multiplied by each workload's replica count -
     or by the `maxReplicas` of the HPA that scales it, read from the same build - added to the
     two remaining named reserves, and compared to the `apps` `ResourceQuota` read from the same
-    build. Two workloads are now read off the build rather than reserved: the gateway, and
+    build. Three workloads are now read off the build rather than reserved: the gateway,
     llama.cpp since row 20d wrote its manifest - `LLAMA_RESERVE` left `RESERVES` in the same
     change, because a pod both summed as a reserve and read off the build is priced twice and
-    overflows a quota that is correct. The subtotals must NOT move across that change, which is
-    what proves the manifest was written to the reserve rather than the reserve rewritten to
-    the manifest. Both templates are asserted present before the sums, so a workload left out
-    of `apps/kustomization.yaml`'s `resources` is a loud red here and not a subtotal that
-    quietly fits. Catches the arithmetic failing even though every individual quantity is
-    correct: the gateway raised to fit, a third replica, a reserve revised upward, or the quota
-    lowered by a later edit to 20a's table. The gateway is priced at the HPA's CEILING, which
+    overflows a quota that is correct - and row 20e's embedding server, the one workload no
+    reserve was EVER held for (decision E), so unlike 20d's change the three sums genuinely
+    move here and the README table moves with them. All three templates are asserted present
+    before the sums, so a workload left out of `apps/kustomization.yaml`'s `resources` is a
+    loud red here and not a build that quietly sums less and fits. Catches the arithmetic
+    failing even though every individual quantity is correct: the gateway raised to fit, a
+    third replica, a reserve revised upward, or the quota lowered by a later edit to 20a's
+    table. The gateway is priced at the HPA's CEILING, which
     catches the quota being sized to `spec.replicas` - the state where the cluster is admitted
     happily at
     rest and the first scale-up is rejected at admission, which is precisely the event an
@@ -983,7 +1154,7 @@ def test_the_apps_subtotals_fit_inside_the_namespace_quota(built: list[dict[str,
     ceilings = scale_targets(built)
     owners = [owner for owner in pod_owners(built) if namespace_of(owner) == APPS]
     built_names = {name_of(owner) for owner in owners}
-    missing = {GATEWAY, LLAMA} - built_names
+    missing = {GATEWAY, LLAMA, LLAMA_EMBED} - built_names
     assert missing == set(), (
         f"the build emits no pod template in {APPS} for {sorted(missing)}: {sorted(built_names)}"
     )
@@ -1451,3 +1622,260 @@ def test_the_llama_image_is_pinned_and_not_a_floating_tag(built: list[dict[str, 
     assert repository == LLAMA_IMAGE_REPOSITORY, f"{LLAMA} runs from `{repository}`"
     assert tag not in LLAMA_FLOATING_TAGS, f"{LLAMA} runs a floating tag `{tag}`"
     assert tag == LLAMA_IMAGE_TAG, f"{LLAMA} is tagged `{tag}`"
+
+
+def test_the_embedding_service_is_where_the_shipped_routing_policy_expects_it(
+    built: list[dict[str, Any]],
+) -> None:
+    """Criterion 3, with BOTH halves of the address derived and never written down twice: the host and the port come out of the shipped `routing.yaml`'s
+    `providers.local_embed.base_url`, which is a BARE name and therefore resolves only to a
+    Service of that name in this pod's own namespace. Catches an implementation that publishes
+    the embedding server under any other Service name, or on any port but the one the policy
+    dials - both build, lint and kubeconform cleanly and are a connection refused on every
+    `/v1/embeddings` call and every semantic-cache probe, with the pod perfectly healthy.
+    Catches a `targetPort` that resolves to nothing in this pod's own template, which is a
+    Service with no endpoints, and catches it resolving to a DIFFERENT container port than the
+    URL names, where the Service answers on 8083 and forwards where nothing is bound. Catches a
+    `type: NodePort` or `LoadBalancer`, which publishes an unauthenticated model server on every
+    node. And catches the base URL losing its `/v1` prefix, which is every OpenAI-compatible
+    call 404ing. The chat Service is a NEIGHBOURING guard and cannot produce this pass: the
+    lookup is by the embedding provider's own host, so a build emitting only `llama` reddens on
+    the missing Service rather than resolving against it."""
+    url = llama_embed_base_url()
+    host = url.hostname
+    assert host, f"{ROUTING_POLICY.name}'s {LOCAL_EMBED_PROVIDER} base_url names no host"
+    assert url.port is not None, f"{LOCAL_EMBED_PROVIDER} base_url {url.geturl()} names no port"
+    assert url.path == LOCAL_BASE_PATH, (
+        f"{LOCAL_EMBED_PROVIDER} base_url {url.geturl()} is rooted at {url.path}"
+    )
+
+    services = in_apps(built, "Service")
+    assert host in services, f"the build emits no Service/{host} in {APPS}: {sorted(services)}"
+    service = services[host]
+    assert service["spec"].get("type", "ClusterIP") == "ClusterIP", (
+        f"Service/{host} is a {service['spec'].get('type')}, reachable from outside the cluster"
+    )
+
+    published = [port for port in service["spec"]["ports"] if int(port["port"]) == url.port]
+    assert len(published) == 1, (
+        f"Service/{host} publishes {[port.get('port') for port in service['spec']['ports']]}, "
+        f"and the shipped policy dials {url.port}"
+    )
+
+    container = sole_container(llama_embed_pod_owner(built))
+    target = published[0].get("targetPort", published[0]["port"])
+    assert resolved_container_port(target, container) == url.port, (
+        f"Service/{host} targets {target!r}, which resolves to "
+        f"{resolved_container_port(target, container)} against the container's "
+        f"{container.get('ports')}"
+    )
+
+
+def test_the_embed_alias_resolves_to_the_embedding_server_and_not_the_chat_one() -> None:
+    """Criterion 4, off the shipped policy alone - no build is involved, so this is the case
+    that still speaks when `kubectl` is absent. Catches the split half-done in either
+    direction: the `local_embed` provider row added and the `embed` alias left pointing at
+    `local`, which is every embedding request sent to a chat server that answers 501 for
+    `/v1/embeddings`; and the alias repointed while `local`'s own `base_url` is edited to the
+    embedding address, which silently moves every chat completion - including the one candidate
+    an EU `pii` tenant is allowed - onto a 384-dimension encoder. The chat port is read out of
+    `LLAMA_ARGS` rather than written again, so the two servers cannot be
+    collapsed onto one address without this reddening. And it catches a CHAT alias or a tenant
+    override naming `local_embed`, which no other case here can see: `providers_named_outside`
+    keeps duplicates, so one bad line among correct ones is still a failure."""
+    candidates = alias_candidates(EMBED_ALIAS)
+    assert candidates == [{"provider": LOCAL_EMBED_PROVIDER, "model": EMBED_MODEL}], (
+        f"`{EMBED_ALIAS}` resolves to {candidates}"
+    )
+
+    chat = local_base_url()
+    assert chat.hostname == LLAMA, f"`{LOCAL_PROVIDER}` now dials {chat.geturl()}"
+    assert chat.port == int(LLAMA_ARGS[LLAMA_ARGS.index("--port") + 1]), (
+        f"`{LOCAL_PROVIDER}` dials port {chat.port}, and the chat pod binds "
+        f"{LLAMA_ARGS[LLAMA_ARGS.index('--port') + 1]}"
+    )
+
+    elsewhere = providers_named_outside(EMBED_ALIAS)
+    assert LOCAL_EMBED_PROVIDER not in elsewhere, (
+        f"{ROUTING_POLICY.name} routes non-embedding traffic to {LOCAL_EMBED_PROVIDER}: {elsewhere}"
+    )
+
+
+def test_the_embedding_pod_declares_the_quantities_the_budget_prices(
+    built: list[dict[str, Any]],
+) -> None:
+    """Criterion 9's per-pod row, by VALUE on the whole flattened mapping.
+    The subtotals case passes for any set of numbers that happens to fit inside the quota, so
+    this is the one that says WHICH numbers - decision E's `256Mi` / `100m` / `512Mi`, taken
+    from the headroom rather than out of llama.cpp's row. Catches a request copied from the
+    chat server's 1024Mi, which is a pod the `apps` quota rejects at admission with nothing
+    else reporting a problem; catches `512Mi` written as `500M` - 5% smaller and not equal to
+    the API server either, which is an OOM kill under load; and catches a `limits.cpu`
+    appearing, which throttles the encoder that every semantic-cache probe waits on. Both a
+    missing key and an extra one are visible because the comparison is equality."""
+    quantities = resource_quantities(sole_container(llama_embed_pod_owner(built)))
+    assert quantities == LLAMA_EMBED_RESOURCES, f"{LLAMA_EMBED} declares {quantities}"
+
+
+def test_the_embedding_pod_serves_one_model_from_a_read_only_volume(
+    built: list[dict[str, Any]],
+) -> None:
+    """Criteria 1 and 2, which are one failure seen from four sides. Catches `replicas: 2` and
+    catches the default `RollingUpdate` strategy: a `ReadWriteOnce` claim attaches to one node
+    at a time, so the new pod of a rolling update waits for a volume the old pod will not
+    release until it is deleted - a rollout wedged forever with both pods reporting exactly
+    what they wait on and nothing acting on it. Catches the claim sized wrong or given a
+    `storageClassName` this cluster does not define, which is a claim stuck Pending and a pod
+    that never schedules. Catches the `/models` mount losing `readOnly: true`, which is a
+    server process able to truncate weights a human copied in by hand (decision B). And catches
+    the mount pointed at the CHAT claim or at an `emptyDir` left over from a draft, because the
+    mount's NAME is resolved against this template's own `volumes` and the claim name is
+    asserted - decision B's whole argument is that sharing 20d's `llama-models` pins both pods
+    to one node forever."""
+    owner = llama_embed_pod_owner(built)
+    assert replicas_of(owner) == LLAMA_EMBED_REPLICAS, (
+        f"{LLAMA_EMBED} runs {replicas_of(owner)} replicas"
+    )
+    strategy = owner["spec"].get("strategy", {})
+    assert strategy.get("type") == LLAMA_EMBED_STRATEGY, f"{LLAMA_EMBED} updates with {strategy}"
+
+    claim = sole_object(built, "PersistentVolumeClaim", LLAMA_EMBED_PVC)
+    assert [str(mode) for mode in claim["spec"]["accessModes"]] == LLAMA_EMBED_PVC_ACCESS_MODES
+    assert str(claim["spec"]["resources"]["requests"]["storage"]) == LLAMA_EMBED_PVC_STORAGE, (
+        f"{LLAMA_EMBED_PVC} claims {claim['spec']['resources']['requests']['storage']}"
+    )
+    assert "storageClassName" not in claim["spec"], (
+        f"{LLAMA_EMBED_PVC} names storage class {claim['spec']['storageClassName']!r}; the "
+        "cluster's default provisioner is what binds it"
+    )
+
+    mount = mount_at(sole_container(owner), LLAMA_MOUNT_PATH)
+    assert mount.get("readOnly") is True, f"{LLAMA_MOUNT_PATH} is mounted {mount}"
+    volume = volume_named(owner, str(mount["name"]))
+    assert volume.get("persistentVolumeClaim", {}).get("claimName") == LLAMA_EMBED_PVC, (
+        f"{LLAMA_MOUNT_PATH} is backed by {volume}"
+    )
+
+
+def test_the_embedding_server_runs_with_the_flags_a_bert_encoder_needs(
+    built: list[dict[str, Any]],
+) -> None:
+    """Criterion 6 and decision D, as the whole `args` LIST by value and in order, because every
+    one of these is a flag whose absence produces a server that starts happily and is wrong at
+    runtime. Catches `--embedding` dropped, which is a llama.cpp process that serves completions
+    and refuses `/v1/embeddings` - the exact 502 this plan exists to remove. Catches `--pooling
+    cls` dropped, which is the sharpest one: the GGUF's own metadata decides, a mean-pooled
+    vector is a DIFFERENT vector space, every number it returns is plausible, and the only
+    symptom is retrieval quality nobody can attribute. Catches `--ubatch-size` below
+    `--ctx-size`, which llama.cpp refuses at request time for a non-causal model while the pod
+    stays Ready; catches a `--ctx-size` above 512, which buys an error at position 513 instead
+    of a truncation; catches `--host` left off or set to `127.0.0.1`, where the Service has
+    endpoints and every connection is refused; catches a `--port` that disagrees with the
+    address the policy dials; and catches `-m` naming a file this claim does not hold. Order is
+    part of the assertion: a value orphaned from its flag by an insertion is a different command
+    line, and only equality sees it."""
+    args = [str(arg) for arg in sole_container(llama_embed_pod_owner(built)).get("args", [])]
+    assert args == LLAMA_EMBED_ARGS, f"{LLAMA_EMBED} runs with {args}"
+
+
+def test_the_embedding_pod_waits_out_its_model_load_before_liveness_can_restart_it(
+    built: list[dict[str, Any]],
+) -> None:
+    """Criterion 7, exactly: `5` seconds times `24` attempts is the
+    120-second ceiling this file's ~130 MB earns, and not 20d's 600. Catches the startup probe
+    dropped altogether, which is the failure the whole decision is about - without one,
+    Kubernetes runs the liveness probe from the start, `/health` answers nothing while the
+    weights load, and the pod is killed before it has ever finished loading, forever, with the
+    event log showing only `Liveness probe failed`. Catches the threshold lowered, which is the
+    same crash loop with a longer fuse, and catches the period stretched, which moves the same
+    ceiling from the other side. Catches any of the three probes pointed at a path llama.cpp
+    does not serve - a 404 is a failed probe, so a readiness probe on `/healthz` is a Service
+    with no endpoints and a liveness probe on one is a permanent crash loop. The startup
+    probe's port is resolved against this container's OWN declared ports, so a probe aimed at
+    the chat server's 8082 - which fails identically and looks like a slow model - is red
+    here too."""
+    container = sole_container(llama_embed_pod_owner(built))
+    for probe_name in LLAMA_PROBES:
+        probe = container.get(probe_name)
+        assert isinstance(probe, dict), f"{LLAMA_EMBED} declares no {probe_name}"
+        assert probe["httpGet"]["path"] == LLAMA_PROBE_PATH, (
+            f"{LLAMA_EMBED}'s {probe_name} polls {probe['httpGet']['path']}"
+        )
+
+    startup = container["startupProbe"]
+    assert startup["periodSeconds"] == LLAMA_EMBED_STARTUP_PERIOD_SECONDS, (
+        f"the startup probe polls every {startup['periodSeconds']}s"
+    )
+    assert startup["failureThreshold"] == LLAMA_EMBED_STARTUP_FAILURE_THRESHOLD, (
+        f"the startup probe gives up after {startup['failureThreshold']} attempts"
+    )
+    assert resolved_container_port(startup["httpGet"]["port"], container) is not None, (
+        f"the startup probe polls port {startup['httpGet']['port']!r}, which the container's "
+        f"{container.get('ports')} does not declare"
+    )
+
+
+def test_the_embedding_image_is_the_same_pinned_build_the_chat_server_runs(
+    built: list[dict[str, Any]],
+) -> None:
+    """Criterion 6's first clause and decision C, asserted as EQUALITY between the two built
+    containers rather than against a repository and a tag written down a second time: one
+    `images:` entry rewrites both bare `llama` references, so the claim is that the two agree
+    and not that either matches a literal. Catches a second `images:` entry added for
+    `llama-embed`, which is a capability nobody chose - two llama.cpp builds on one box, with a
+    regression in either server attributable to no commit. Catches a container image name the
+    transformer does not match (a typo in `name:`, which kustomize accepts in silence), which
+    leaves a bare `llama-embed` in the stream that no registry can pull. Catches the tag left
+    at upstream's floating `server`, or `latest`, or `main`, or absent altogether - which
+    Kubernetes resolves as `latest` - each of which is a cluster whose running code no commit
+    names. The floating-tag list is applied to the embedding container itself, so the check
+    does not depend on the chat case having run."""
+    image = str(sole_container(llama_embed_pod_owner(built)).get("image", ""))
+    chat_image = str(sole_container(llama_pod_owner(built)).get("image", ""))
+    assert image, f"{LLAMA_EMBED} declares no image"
+    assert ":" in image.rsplit("/", 1)[-1], f"{LLAMA_EMBED} image `{image}` carries no tag"
+    assert image == chat_image, (
+        f"{LLAMA_EMBED} runs `{image}` while {LLAMA} runs `{chat_image}`; decision C says one "
+        "build serves both"
+    )
+
+    tag = image.rpartition(":")[2]
+    assert tag not in LLAMA_FLOATING_TAGS, f"{LLAMA_EMBED} runs a floating tag `{tag}`"
+
+
+def test_the_embedding_model_file_reads_the_same_in_every_file_that_names_it(
+    built: list[dict[str, Any]],
+) -> None:
+    """Criteria 5 and 10, with the file read OFF THE BUILD - the basename of the `-m` argument -
+    and compose, `.env.example` and `prices.yaml` compared to that and to each other, never to a
+    literal repeated four times. Catches the cluster and the local stack serving different
+    weights under one alias, which is a developer reproducing nothing and a CI compose run that
+    proves nothing about the pod. Catches `prices.yaml` missing a row for the id the pod
+    actually serves under its NEW provider key: decision A renames the first half of every
+    embedding price key, so the row that priced `local/bge-small-en-v1.5` no longer matches and
+    every embedding books `unpriced` while the gateway answers normally. Catches such a row
+    written with no `effective_from`, which cannot be selected against an instant. And asserts
+    the old `local/` key is still priced: a ledger row already booked under it is
+    priced against the entry it was charged with, so the old key is KEPT beside the new one and
+    never edited into it. The compose and `.env.example` scans read EVERY matching line - both files name `llama` and `models` on several - and neither pattern
+    can match the chat server's `LLAMA_MODEL_FILE` lines."""
+    file_name = Path(sole_arg_value(sole_container(llama_embed_pod_owner(built)), "-m")).name
+    model_id = embed_model_id_from(file_name)
+
+    defaults = {
+        COMPOSE.name: compose_embed_model_files(),
+        ENV_EXAMPLE.name: env_example_embed_model_files(),
+    }
+    for source, written in defaults.items():
+        assert written == {file_name}, f"{source} defaults the weights file to {sorted(written)}"
+
+    prices = priced_keys()
+    key = f"{LOCAL_EMBED_PROVIDER}/{model_id}"
+    assert key in prices, f"{PRICES.name} prices {sorted(prices)}, and the pod serves {key}"
+    entries = prices[key]
+    assert isinstance(entries, list) and entries, f"{key} carries no price entries"
+    assert all(entry.get("effective_from") for entry in entries), f"{key} reads {entries}"
+    assert f"{LOCAL_PROVIDER}/{model_id}" in prices, (
+        f"{PRICES.name} dropped the {LOCAL_PROVIDER}/{model_id} row that prices rows already "
+        "booked under the provider name before the split"
+    )

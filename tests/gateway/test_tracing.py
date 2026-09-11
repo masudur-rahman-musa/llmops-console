@@ -136,6 +136,10 @@ NORDLICHT_KEY = TEST_KEYS["nordlicht"]
 REDACT_CLASS = "confidential"
 PLAIN_CLASS = "internal"
 LOCAL_PROVIDER = "local"
+EMBED_PROVIDER = "local_embed"
+"""The `embed` alias's only candidate, and therefore the provider span an embeddings
+request carries. Its own server on its own address: one llama.cpp process serves one
+model."""
 REMOTE_PROVIDER = "anthropic"
 
 EMAIL = "alice@example.com"
@@ -566,9 +570,9 @@ SPAN_NAME_ROWS: list[tuple[str, str, str, Callable[[TestClient], Response], set[
     (
         "embeddings-plain-class",
         "embeddings_client",
-        LOCAL_PROVIDER,
+        EMBED_PROVIDER,
         lambda client: post_embeddings(client, embeddings_body(model=EMBED_ALIAS)),
-        {AUTH_SPAN, ROUTE_SPAN, f"provider:{LOCAL_PROVIDER}"},
+        {AUTH_SPAN, ROUTE_SPAN, f"provider:{EMBED_PROVIDER}"},
     ),
     (
         "redact-endpoint",

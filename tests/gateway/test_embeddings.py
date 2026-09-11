@@ -61,6 +61,7 @@ from opsconsole.routing.resolver import Resolved, resolve
 
 from .conftest import (
     EMBED_ALIAS,
+    EMBED_PROVIDER,
     STUB_EMBEDDING_MODEL,
     STUB_EMBEDDING_USAGE,
     STUB_VECTORS,
@@ -132,7 +133,11 @@ def first_candidate(policy: Policy) -> Resolved:
     resolver rather than against literals alone.
     """
     candidates = resolve(
-        policy, TENANT, EMBED_ALIAS, DATA_CLASS, is_healthy=lambda provider: provider == "local"
+        policy,
+        TENANT,
+        EMBED_ALIAS,
+        DATA_CLASS,
+        is_healthy=lambda provider: provider == EMBED_PROVIDER,
     )
     return candidates[0]
 
@@ -157,11 +162,11 @@ def test_embedding_stub_adapter_satisfies_the_protocol() -> None:
     so a drifted stub would make every success case in this file a 503 - and the sibling of
     `test_stub_adapter_satisfies_the_protocol` is what says so in one line rather than
     through twenty confusing failures."""
-    stub = EmbeddingStubAdapter(name="local")
+    stub = EmbeddingStubAdapter(name=EMBED_PROVIDER)
 
     assert isinstance(stub, EmbeddingAdapter)
-    assert stub.name == "local"
-    assert stub.price_key("some-model") == "local/some-model"
+    assert stub.name == EMBED_PROVIDER
+    assert stub.price_key("some-model") == f"{EMBED_PROVIDER}/some-model"
 
 
 def test_the_route_path_is_the_published_one() -> None:
@@ -245,9 +250,9 @@ def test_a_list_input_returns_one_vector_per_item_in_request_order(settings: Set
     them, or that renumbers them by their position in its own loop: the caller matches
     vectors back to its rows by `index` alone, so a renumbered answer pairs a real vector
     with the wrong text and nothing reports it."""
-    stub = EmbeddingStubAdapter(name="local", response=embedding_stub_response(3))
+    stub = EmbeddingStubAdapter(name=EMBED_PROVIDER, response=embedding_stub_response(3))
 
-    with build_chat_client(settings, {"local": stub}) as client:
+    with build_chat_client(settings, {EMBED_PROVIDER: stub}) as client:
         body = ok_body(post_embeddings(client, embeddings_body(input=THREE_TEXTS)))
 
     assert [item["index"] for item in body["data"]] == [0, 1, 2]
@@ -337,9 +342,9 @@ def test_base64_still_asks_the_provider_for_floats_on_the_wire(settings: Setting
     reader expects numbers, and a reader that passed it through unchanged would return a
     DOUBLE-encoded blob - which decodes cleanly to nonsense. Only asserting the outbound
     body can tell that apart from a correct answer."""
-    adapter, scripted = make_local_adapter([local_ok("embeddings_single")], name="local")
+    adapter, scripted = make_local_adapter([local_ok("embeddings_single")], name=EMBED_PROVIDER)
 
-    with build_chat_client(settings, {"local": adapter}) as client:
+    with build_chat_client(settings, {EMBED_PROVIDER: adapter}) as client:
         body = ok_body(post_embeddings(client, embeddings_body(encoding_format="base64")))
 
     assert scripted.request_count == 1
@@ -409,9 +414,9 @@ def test_a_rejected_input_is_422_before_any_outbound_call(
     answered 422; catches an exclusive comparison that lets 65 items or 8193 characters
     through; and catches a token array accepted and handed to a provider that would embed
     the string "[1, 2, 3]". `requests == []` is the half that says the check ran FIRST."""
-    stub = EmbeddingStubAdapter(name="local")
+    stub = EmbeddingStubAdapter(name=EMBED_PROVIDER)
 
-    with build_chat_client(settings, {"local": stub}) as client:
+    with build_chat_client(settings, {EMBED_PROVIDER: stub}) as client:
         response = post_embeddings(client, embeddings_body(input=value))
 
     assert_error_body(response, status=422, code="VALIDATION")
@@ -429,9 +434,9 @@ def test_a_capped_input_names_the_field(case: str, value: WireInput, settings: S
     the existing `handle_request_validation_error` reports the LAST segment of the error
     location, which for a `str | tuple[str, ...]` union is the failing member's name; that
     handler is not this plan's to change."""
-    stub = EmbeddingStubAdapter(name="local")
+    stub = EmbeddingStubAdapter(name=EMBED_PROVIDER)
 
-    with build_chat_client(settings, {"local": stub}) as client:
+    with build_chat_client(settings, {EMBED_PROVIDER: stub}) as client:
         response = post_embeddings(client, embeddings_body(input=value))
 
     error = response.json()["error"]
@@ -458,9 +463,9 @@ def test_an_input_at_the_boundary_is_accepted(
     which refuses a batch that is exactly at the documented cap, and catches a validator so
     strict it rejects everything - without this row the table above would pass against one
     that always raised."""
-    stub = EmbeddingStubAdapter(name="local")
+    stub = EmbeddingStubAdapter(name=EMBED_PROVIDER)
 
-    with build_chat_client(settings, {"local": stub}) as client:
+    with build_chat_client(settings, {EMBED_PROVIDER: stub}) as client:
         ok_body(post_embeddings(client, embeddings_body(input=value)))
 
     assert len(stub.requests) == 1, case
@@ -503,9 +508,9 @@ def test_an_eu_tenant_on_a_us_only_alias_is_451_with_no_call(settings: Settings)
     region set when nothing is allowed: `agent-strong` is US-only while `anthropic_eu` is
     disabled, so an EU tenant's request must not leave the process at all. Residency is
     decided before the embedding-capability seam, so this is a 451 and not the 503 below."""
-    stub = EmbeddingStubAdapter(name="local")
+    stub = EmbeddingStubAdapter(name=EMBED_PROVIDER)
 
-    with build_chat_client(settings, {"local": stub}) as client:
+    with build_chat_client(settings, {EMBED_PROVIDER: stub}) as client:
         response = post_embeddings(
             client,
             embeddings_body(model="agent-strong"),
@@ -523,7 +528,7 @@ def test_a_candidate_without_an_embedding_adapter_is_503(settings: Settings) -> 
     provider-presence seam would let the request through and the caller would get an
     `AttributeError` served as a 500 with no code. Only the `EmbeddingAdapter` check can
     turn it into the resolver's typed 503 (decision B)."""
-    with build_chat_client(settings, {"local": StubAdapter(name="local")}) as client:
+    with build_chat_client(settings, {EMBED_PROVIDER: StubAdapter(name=EMBED_PROVIDER)}) as client:
         response = post_embeddings(client, embeddings_body())
 
     assert_error_body(response, status=503, code="ALL_PROVIDERS_FAILED")
@@ -544,9 +549,9 @@ def test_provider_failure_is_502_without_the_provider_message(settings: Settings
     """Catches a route that renders the provider's own words into the client body: the error
     fixture carries a marker string, and a client that can read a slot count or a model file
     path is being told about the box we run."""
-    adapter, scripted = make_local_adapter([local_fail(400, "error_400")], name="local")
+    adapter, scripted = make_local_adapter([local_fail(400, "error_400")], name=EMBED_PROVIDER)
 
-    with build_chat_client(settings, {"local": adapter}) as client:
+    with build_chat_client(settings, {EMBED_PROVIDER: adapter}) as client:
         response = post_embeddings(client, embeddings_body())
 
     assert_error_body(response, status=502, code="PROVIDER_ERROR")
@@ -559,7 +564,7 @@ def test_an_adapter_raising_provider_error_is_502(settings: Settings) -> None:
     untyped bug: the caller would get a 500 with `code: null` instead of the 502 its retry
     logic is written against."""
     stub = EmbeddingStubAdapter(
-        name="local",
+        name=EMBED_PROVIDER,
         error=ProviderError(
             "local: the provider answered 503",
             retryable=True,
@@ -567,7 +572,7 @@ def test_an_adapter_raising_provider_error_is_502(settings: Settings) -> None:
         ),
     )
 
-    with build_chat_client(settings, {"local": stub}) as client:
+    with build_chat_client(settings, {EMBED_PROVIDER: stub}) as client:
         response = post_embeddings(client, embeddings_body())
 
     assert_error_body(response, status=502, code="PROVIDER_ERROR")
@@ -612,9 +617,9 @@ def test_an_eu_pii_request_is_served_by_the_self_region_provider(settings: Setti
     has no alternative anywhere - it either reaches the box we run or it is refused. The
     header assertions are what prove the vector was computed in `self` and not merely that
     a 200 came back."""
-    adapter, scripted = make_local_adapter([local_ok("embeddings_single")], name="local")
+    adapter, scripted = make_local_adapter([local_ok("embeddings_single")], name=EMBED_PROVIDER)
 
-    with build_chat_client(settings, {"local": adapter}) as client:
+    with build_chat_client(settings, {EMBED_PROVIDER: adapter}) as client:
         served = post_embeddings(
             client,
             embeddings_body(),
@@ -625,7 +630,7 @@ def test_an_eu_pii_request_is_served_by_the_self_region_provider(settings: Setti
 
     body = ok_body(served)
     assert scripted.request_count == 1, "the local provider was not actually called"
-    assert served.headers["x-gateway-provider"] == "local"
+    assert served.headers["x-gateway-provider"] == EMBED_PROVIDER
     assert served.headers["x-gateway-region"] == "self"
     assert served.headers["x-gateway-model"] == PROVIDER_MODEL
     assert body["data"][0]["embedding"] == list(SINGLE_VECTOR)
@@ -653,7 +658,7 @@ def test_response_headers_on_success(embeddings_client: TestClient, policy: Poli
     assert headers["x-gateway-redacted"] == "false"
     # The literal anchors, so the three resolver-derived rows above cannot be
     # satisfied by a resolver that returned something else entirely.
-    assert resolved.provider == "local"
+    assert resolved.provider == EMBED_PROVIDER
     assert resolved.region == "self"
     assert resolved.model == PROVIDER_MODEL
 
@@ -674,7 +679,7 @@ def test_the_cost_header_is_the_booked_cost(embeddings_client: TestClient) -> No
     forgets the header - the chat route is where the header is built, so this route
     getting it is not automatic - and catches a header that is not the row's number, since
     the value is compared to the row as a `Decimal` and its six places are counted. The
-    zero here is a PRICED zero: `local/bge-small-en-v1.5` ships at 0.00 per million, and
+    zero here is a PRICED zero: `local_embed/bge-small-en-v1.5` ships at 0.00 per million, and
     the row's `price_version` says so rather than reading `unpriced`."""
     response = post_embeddings(embeddings_client, embeddings_body())
 
@@ -685,7 +690,7 @@ def test_the_cost_header_is_the_booked_cost(embeddings_client: TestClient) -> No
     value = response.headers["x-gateway-cost-usd"]
     assert Decimal(value) == row.cost_usd
     assert len(value.partition(".")[2]) == 6, value
-    assert row.price_version == f"local/{PROVIDER_MODEL}@2025-01-01"
+    assert row.price_version == f"{EMBED_PROVIDER}/{PROVIDER_MODEL}@2025-01-01"
 
 
 def test_model_header_is_the_provider_model_not_the_alias(

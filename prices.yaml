@@ -96,6 +96,16 @@ prices:
       input_usd_per_1m: "0.0"
       output_usd_per_1m: "0.0"
 
+  # The embedding server is its own provider: one llama.cpp process
+  # serves one model, so the `embed` alias dials a second address and every
+  # embedding row is booked under `local_embed` from now on. The `local` key
+  # above is KEPT - it prices the rows filed before the split, and historical
+  # ledger data is never re-priced.
+  local_embed/bge-small-en-v1.5:
+    - effective_from: 2025-01-01
+      input_usd_per_1m: "0.0"
+      output_usd_per_1m: "0.0"
+
   # `vllm` ships disabled and no alias names it, so no model id for it exists in
   # `routing.yaml` yet and the coverage test cannot reach this key. It is here
   # because the measurement plan puts qwen on vLLM, and a self-hosted provider

@@ -497,14 +497,23 @@ def chat_client(settings: Settings, chat_stub: StubAdapter) -> Iterator[TestClie
 # only candidate cannot embed" reachable as the resolver's 503 without editing
 # `routing.yaml` (`test_a_candidate_without_an_embedding_adapter_is_503`).
 #
-# The shipped policy sends `embed` to the provider `local` alone, region `self`,
-# so every case here registers its stub under `local`.
+# The shipped policy sends `embed` to the provider `local_embed` alone, region
+# `self` - its own server on its own address, because one llama.cpp process
+# serves one model - so every case here registers its stub under `local_embed`.
+# The chat provider `local` is a DIFFERENT adapter in this suite for the same
+# reason it is a different pod in the cluster.
 
 EMBEDDINGS = "/v1/embeddings"
 """The published route path. `test_the_route_path_is_the_published_one` asserts
 this against the route module's own constant, so the two cannot drift."""
 
 EMBED_ALIAS = "embed"
+
+EMBED_PROVIDER = "local_embed"
+"""The `embed` alias's only candidate in the shipped policy: the embedding server,
+which is not the chat provider `local`. A stub registered under the chat name
+leaves the alias with no healthy candidate, which is a 503 and not a test of
+anything this suite is about."""
 
 # Every component is exactly representable as a float32, so the base64 round trip
 # in `test_embeddings.py` compares EQUAL rather than approximately equal: a wrong
@@ -620,14 +629,15 @@ def post_embeddings(
 @pytest.fixture(scope="session")
 def embedding_stub() -> EmbeddingStubAdapter:
     """The shared stub behind `embeddings_client`, answering one fixed vector."""
-    return EmbeddingStubAdapter(name="local")
+    return EmbeddingStubAdapter(name=EMBED_PROVIDER)
 
 
 @pytest.fixture(scope="session")
 def embeddings_client(
     settings: Settings, embedding_stub: EmbeddingStubAdapter
 ) -> Iterator[TestClient]:
-    """The shipped app with one embedding-capable adapter, for the policy provider `local`."""
+    """The shipped app with one embedding-capable adapter, for the policy provider
+    `local_embed`."""
     with build_chat_client(settings, {embedding_stub.name: embedding_stub}) as client:
         yield client
 
@@ -1013,8 +1023,9 @@ class SilentSemanticCache:
 
     An earlier change wires the semantic tier into the chat route, and `agent-default` -
     the alias every case in the fallback family sends - carries
-    `semantic_cache: true`. This app registers an adapter under `local`, which is
-    the shipped `embed` alias's only candidate, so the tier is fully live here:
+    `semantic_cache: true`. This app registers an adapter under `local`, and the
+    probe resolves `embed` to `local_embed`, so the tier is live here whenever
+    that adapter is registered too:
     a second identical chat request would be served from it, and the loop, the
     breaker and the residency log would stop seeing the calls those families
     exist to count.

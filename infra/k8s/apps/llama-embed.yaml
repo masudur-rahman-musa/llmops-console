@@ -1,0 +1,147 @@
+# The second llama.cpp server: the `local_embed` provider in `routing.yaml`, and
+# the only thing in the cluster that can answer `/v1/embeddings` or a semantic
+# cache probe. One process serves ONE model, so the chat pod next door cannot do
+# this and a second address was the only way to have both - which is why the
+# split is a PROVIDER and not an alias. The gateway dials
+# `http://llama-embed:8083/v1`, a BARE name that resolves only because both
+# workloads sit in `apps`, so this Service's NAME and PORT are fixed by the
+# shipped policy rather than chosen here. A test derives both from
+# `providers.local_embed.base_url` for that reason.
+#
+# BGE is a BERT encoder trained at 512 tokens: `--pooling cls` is written out
+# rather than left to the GGUF's metadata, because a mean-pooled vector is a
+# different vector space that still returns plausible numbers, and llama.cpp
+# needs `n_ubatch >= n_ctx` for a non-causal model or it refuses the request at
+# runtime. A larger `--ctx-size` buys nothing: the model has no positions above
+# 512.
+#
+# The weights are not in the image and no container downloads them: a 1Gi claim
+# of its own, mounted read-only, filled by the human step in `../README.md`.
+# Its own claim and not the chat pod's: a `ReadWriteOnce` volume mounted by two
+# Deployments pins both pods to one node forever, which is true today and an
+# unstated constraint the day it is not. Until the file is there the pod fails
+# its startup probe and says so.
+#
+# `app.kubernetes.io/name` is written on the selector, on the pod template and
+# on the Service because the root kustomization's `labels:` block carries
+# `includeSelectors: false` and reaches none of them.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: llama-embed-models
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: llama-embed
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+  # `storageClassName` is deliberately absent, the same reason the chat pod's
+  # claim and `platform`'s Postgres omit it: k3s defaults to `local-path` and
+  # EKS to `gp2`, so one build deploys to both without leaving a Pending claim
+  # on a class that does not exist there.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llama-embed
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: llama-embed
+spec:
+  replicas: 1
+  # `Recreate`, not the default rolling update. The claim is `ReadWriteOnce`, so
+  # a rolling update is a new pod waiting for a volume the old pod still holds -
+  # forever, with the rollout stuck and the old pod still serving.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: llama-embed
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: llama-embed
+    spec:
+      containers:
+        - name: llama-embed
+          # The SAME bare name the chat pod writes, replaced wholesale by
+          # `kustomization.yaml`'s existing `images:` transformer. One build and
+          # one pin for both servers: a second entry would let them be pinned
+          # apart, which is two llama.cpp versions on one box that nobody chose.
+          image: llama
+          args:
+            - --embedding
+            - --pooling
+            - cls
+            - --ctx-size
+            - "512"
+            - --ubatch-size
+            - "512"
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8083"
+            - -m
+            - /models/bge-small-en-v1.5-q8_0.gguf
+          ports:
+            - name: http
+              containerPort: 8083
+          # 120 seconds (5s x 24) rather than the chat pod's 600: this file is
+          # ~130 MB, not multiple gigabytes. The startup probe is still what
+          # makes the liveness probe safe - liveness cannot fire until startup
+          # has passed, so a cold load restarts nothing.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 5
+          # New spend against the apps headroom, not a reserve being built out:
+          # `../README.md` never held a row for this pod, so its table gains one
+          # and its totals move. No `limits.cpu` - a CPU limit throttles rather
+          # than kills, and a 33M-parameter encoder is latency-sensitive.
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 100m
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: models
+              mountPath: /models
+              readOnly: true
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: llama-embed-models
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llama-embed
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: llama-embed
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: llama-embed
+  ports:
+    - name: http
+      port: 8083
+      targetPort: http

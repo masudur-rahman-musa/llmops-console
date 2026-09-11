@@ -119,7 +119,7 @@ class, so the alias flag is the ONLY difference between it and `ALIAS`."""
 PROVIDER = "anthropic"
 REGION = "us"
 
-EMBED_PROVIDER = "local"
+EMBED_PROVIDER = "local_embed"
 EMBED_MODEL = "bge-small-en-v1.5"
 """The provider and the resolved model of the shipped `embed` alias's only
 candidate. Stated because no header carries them: the embedding is not the
@@ -173,9 +173,10 @@ the chat route. The raw address is what must never reach the embedding adapter."
 
 PII_CLASS = "pii"
 LOCAL_PROVIDER = "local"
-"""`evals` under `pii` allows region `self` alone, so `local` is both the chat
-candidate and the `embed` candidate - which is why that row needs an adapter
-that can do both."""
+"""`evals` under `pii` allows region `self` alone, so the chat candidate is `local`
+and the `embed` candidate is `local_embed` - both region `self`, and both needed
+on the app that row builds, because the probe resolves the alias separately from
+the request."""
 
 TOOLS: tuple[dict[str, Any], ...] = (
     {
@@ -379,7 +380,7 @@ def chat_stub() -> ChatStub:
 
 @pytest.fixture(scope="module")
 def embed_stub() -> EmbedStub:
-    """The embedding adapter under `local`, which the shipped `embed` alias names."""
+    """The embedding adapter under `local_embed`, which the shipped `embed` alias names."""
     return EmbedStub(name=EMBED_PROVIDER)
 
 
@@ -409,14 +410,19 @@ def _fresh(
 
 @pytest.fixture(scope="module")
 def pii_stub() -> ChatAndEmbedStub:
-    """The one adapter a `pii` request can reach: it both chats and embeds."""
-    return ChatAndEmbedStub(name=LOCAL_PROVIDER, embedder=EmbedStub(name=LOCAL_PROVIDER))
+    """The adapter a `pii` chat request reaches, registered under both self-region
+    providers: it both chats and embeds, so the same object answers the request and
+    the probe."""
+    return ChatAndEmbedStub(name=LOCAL_PROVIDER, embedder=EmbedStub(name=EMBED_PROVIDER))
 
 
 @pytest.fixture(scope="module")
 def pii_client(settings: Settings, pii_stub: ChatAndEmbedStub) -> Iterator[TestClient]:
-    """An app whose only adapter is under `local`, the sole region a `pii` class allows."""
-    with build_chat_client(settings, {pii_stub.name: pii_stub}) as client:
+    """An app whose adapters are the two `self` providers a `pii` class allows - the chat
+    server and the embedding server, which are one object here and two pods in the
+    cluster."""
+    adapters: dict[str, Adapter] = {LOCAL_PROVIDER: pii_stub, EMBED_PROVIDER: pii_stub}
+    with build_chat_client(settings, adapters) as client:
         yield client
 
 

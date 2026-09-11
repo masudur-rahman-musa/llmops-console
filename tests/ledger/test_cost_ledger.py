@@ -73,7 +73,7 @@ from opsconsole.limits.prices import PriceTable
 from opsconsole.providers.base import Usage
 from opsconsole.routing.errors import IdentifierInvalid
 from opsconsole.routing.policy import Policy, load_policy
-from opsconsole.routing.resolver import MAX_IDENTIFIER_LENGTH
+from opsconsole.routing.resolver import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
 
 Pool = ConnectionPool[Connection[TupleRow]]
 
@@ -556,6 +556,24 @@ def test_every_model_the_shipped_policy_can_resolve_to_passes_the_pattern(
 
     assert models
     assert {model for model in models if MODEL_PATTERN.fullmatch(model) is None} == set()
+
+
+def test_the_embedding_provider_id_passes_the_ledger_pre_check(policy: Policy) -> None:
+    """The `provider` half of the same trap, swept off the shipped file rather than off a
+    literal. Row 20e splits the local provider in two, and `provider` is a column the ledger
+    pre-checks against the RESOLVER's identifier rule before any SQL runs - so a provider id
+    that rule refuses raises `IdentifierInvalid` and silently loses every row booked under it,
+    while the gateway goes on answering normally. Catches an implementation that names the new
+    provider anything the rule refuses: `localEmbed` and `local.embed` fail the pattern,
+    `local-embed-` and `local__embed` fail its separator rule, and a very long id fails the
+    cap - none of which `routing.yaml`'s own schema, the resolver's happy path or any manifest
+    test would notice. Swept over EVERY provider key, so the same failure introduced by a later
+    row is caught here too, and asserted non-empty so an empty sweep cannot pass this."""
+    providers = set(policy.providers)
+
+    assert providers
+    assert {name for name in providers if IDENTIFIER_PATTERN.fullmatch(name) is None} == set()
+    assert {name for name in providers if len(name) > MAX_IDENTIFIER_LENGTH} == set()
 
 
 ACCEPTED_MODELS = [

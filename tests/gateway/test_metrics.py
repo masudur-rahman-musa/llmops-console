@@ -199,6 +199,9 @@ TENANT = "evals"
 REMOTE_PROVIDER = "anthropic"
 REMOTE_REGION = "us"
 LOCAL_PROVIDER = "local"
+EMBED_PROVIDER = "local_embed"
+"""The `embed` alias's only candidate. Its own provider, not the chat one beside it:
+one llama.cpp process serves one model, so the two servers are two addresses."""
 LOCAL_REGION = "self"
 PLAIN_CLASS = "internal"
 REDACT_CLASS = "confidential"
@@ -671,7 +674,7 @@ def test_tokens_are_recorded_on_an_embeddings_request(
     assert response.status_code == 200, response.text
     model = response.headers["x-gateway-model"]
 
-    labels = {"tenant": TENANT, "provider": LOCAL_PROVIDER, "model": model}
+    labels = {"tenant": TENANT, "provider": EMBED_PROVIDER, "model": model}
 
     assert metrics.delta(TOKENS, direction="in", **labels) == STUB_EMBEDDING_USAGE.prompt_tokens
     assert metrics.delta(TOKENS, direction="out", **labels) == 0

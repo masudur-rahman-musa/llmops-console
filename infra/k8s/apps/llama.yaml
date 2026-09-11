@@ -7,10 +7,9 @@
 # it, which is why a test derives both from `providers.local.base_url`.
 #
 # One process serves ONE model, so this pod cannot answer an embedding. The
-# `embed` alias points at the same provider with `bge-small-en-v1.5` and stays
-# unreachable in-cluster - with it the semantic cache probe and
-# `/v1/embeddings` - until row 20e adds the second server and splits the
-# provider. Stated rather than half-done.
+# `embed` alias resolves to `local_embed` and a second server, `llama-embed.yaml`
+# beside this file - so `/v1/embeddings` and the semantic cache probe are that
+# pod's, and nothing here answers for them.
 #
 # A 3B Q4_K_M, not the 7B the repo named until now: this pod's ceiling is 3 GiB
 # and a 7B Q4_K_M is ~4.4 GB before its KV cache. Serving a 3B file under the 7B

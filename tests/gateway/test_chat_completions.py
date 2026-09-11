@@ -709,16 +709,18 @@ def test_an_eu_pii_request_is_served_by_the_local_provider(
     adapter, scripted = make_local_adapter(
         [local_ok("embeddings_single"), local_ok("plain")], name="local"
     )
-    with build_chat_client(settings, {"local": adapter}) as client:
+    adapters = {"local": adapter, "local_embed": adapter}
+    with build_chat_client(settings, adapters) as client:
         served = post_chat(client, body, key=NORDLICHT_KEY, tenant="nordlicht", data_class="pii")
 
     assert served.status_code == 200, served.text
-    # TWO calls to the one adapter, in this order, and the reason is an earlier change: on
-    # this app `local` is both the chat candidate and the `embed` alias's only
-    # candidate, so an `agent-default` request first embeds its semantic probe
-    # and then asks for the completion. The chat call is therefore index 1, and
-    # the count is asserted exactly so that a tier which embedded twice, or a
-    # loop which called the provider twice, still fails here.
+    # TWO calls to the one adapter, in this order, and the reason is an earlier change: the
+    # `pii` rule allows the region `self` alone, where both self-hosted providers
+    # live, so an `agent-default` request first embeds its semantic probe through
+    # `local_embed` and then asks `local` for the completion. One object stands in
+    # for both servers here, so the calls land on the same recorder: the chat call
+    # is index 1, and the count is asserted exactly so that a tier which embedded
+    # twice, or a loop which called the provider twice, still fails here.
     assert scripted.request_count == 2, "the local provider was not called for both"
     assert scripted.requests[0].url.path.endswith("/embeddings")
     assert served.headers["x-gateway-provider"] == "local"

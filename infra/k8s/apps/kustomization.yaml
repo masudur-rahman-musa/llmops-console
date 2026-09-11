@@ -1,4 +1,4 @@
-# The gateway, llama.cpp and the two `api.` routers. The Helpdesk services and
+# The gateway, the two llama.cpp servers and the two `api.` routers. The Helpdesk services and
 # the console land here too, and neither changes this file beyond a line in
 # `resources` and, where it runs an image, an entry in `images:`.
 #
@@ -11,6 +11,7 @@ kind: Kustomization
 resources:
   - gateway.yaml
   - llama.yaml
+  - llama-embed.yaml
   - middlewares.yaml
   - ingress.yaml
 
@@ -22,7 +23,8 @@ resources:
 # a cluster whose running code no commit names, and a rollout that changes
 # meaning with no diff to show for it.
 #
-# llama.cpp is pinned to an exact upstream build for the same reason, and
+# Both llama.cpp pods write the bare name `llama` and share the one entry below,
+# which is pinned to an exact upstream build for the same reason, and
 # `docker-compose.yml` names the same one so the two stacks run the same server.
 # Upstream's `server` tag floats: it is whatever the last build published, so a
 # cluster on it runs code no commit here names. `server-b10902` was resolved

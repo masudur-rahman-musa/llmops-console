@@ -126,7 +126,7 @@ ALIAS = "agent-default"
 PROVIDER = "anthropic"
 
 EMBED_ALIAS = "embed"
-EMBED_PROVIDER = "local"
+EMBED_PROVIDER = "local_embed"
 
 UNPOLICED_TENANT = "cap-key"
 """A tenant with a key in the store and no entry in `routing.yaml`. The rate check
@@ -254,7 +254,8 @@ def chat_stub() -> StubAdapter:
 
 @pytest.fixture(scope="module")
 def embed_stub() -> EmbeddingStubAdapter:
-    """The embedding adapter under `local`: the `embed` alias and the semantic tier."""
+    """The embedding adapter under `local_embed`: the `embed` alias and the semantic
+    tier."""
     return EmbeddingStubAdapter(name=EMBED_PROVIDER)
 
 

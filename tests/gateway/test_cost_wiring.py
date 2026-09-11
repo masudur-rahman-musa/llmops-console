@@ -148,11 +148,16 @@ candidate first. The model is the POLICY's id, never the stub's own answer and
 never the alias."""
 
 EMBED_ALIAS = "embed"
-EMBED_PROVIDER = "local"
+EMBED_PROVIDER = "local_embed"
 EMBED_REGION = "self"
 EMBED_MODEL = "bge-small-en-v1.5"
 """The shipped `embed` alias's only candidate, which `/v1/embeddings` serves from
 and which the semantic tier embeds through."""
+
+LOCAL_PROVIDER = "local"
+"""The CHAT server on the box we run, which is not the embedding server beside it:
+one llama.cpp process serves one model, so `agent-default`'s self-region candidate
+and the `embed` alias's candidate are two providers with two addresses."""
 
 FALLBACK_MODEL = "qwen2.5-3b-instruct"
 """The model of `agent-default`'s SECOND candidate, `local`. The fallback row
@@ -162,11 +167,12 @@ is a copy of what `routing.yaml` resolves to, so it moves when that file does.""
 
 CHAT_PRICE_VERSION = f"{PROVIDER}/{POLICY_MODEL}@2025-10-15"
 EMBED_PRICE_VERSION = f"{EMBED_PROVIDER}/{EMBED_MODEL}@2025-01-01"
-FALLBACK_PRICE_VERSION = f"{EMBED_PROVIDER}/{FALLBACK_MODEL}@2025-01-01"
+FALLBACK_PRICE_VERSION = f"{LOCAL_PROVIDER}/{FALLBACK_MODEL}@2025-01-01"
 """The entries in force in the shipped `prices.yaml`, spelled as the literals the
 row must carry. A row that priced the ALIAS, or that fell through to `unpriced`,
 carries a different string and fails - which is what makes the zero-priced
-`local` rows worth asserting at all."""
+self-hosted rows worth asserting at all. The embedding row and the fallback row are
+priced from DIFFERENT keys now that the two servers are two providers."""
 
 WHEN_PRICED = date(2026, 6, 1)
 """The instant the two price-store cases price at: after every `effective_from`
@@ -361,7 +367,7 @@ def chat_stub() -> CostChatStub:
 
 @pytest.fixture(scope="module")
 def embed_stub() -> CostEmbedStub:
-    """The embedding adapter under `local`, which the shipped `embed` alias names."""
+    """The embedding adapter under `local_embed`, which the shipped `embed` alias names."""
     return CostEmbedStub(name=EMBED_PROVIDER)
 
 
@@ -1138,7 +1144,7 @@ def test_the_embedding_adapter_serves_the_alias_the_rows_name(
     cost_client: TestClient, embed_stub: CostEmbedStub
 ) -> None:
     """The same, for the embeddings path: catches a fixture whose `embed` alias resolves
-    somewhere other than `local`, which would make the embeddings row's provider and price
+    somewhere other than `local_embed`, which would make the embeddings row's provider and price
     version assertions above statements about the wrong candidate."""
     response = post_embed(cost_client, embeddings_body())
 

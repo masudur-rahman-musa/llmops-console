@@ -77,7 +77,7 @@ DATA_CLASS = "internal"
 SESSION = "sess-budget-override"
 ALIAS = "agent-default"
 PROVIDER = "anthropic"
-EMBED_PROVIDER = "local"
+EMBED_PROVIDER = "local_embed"
 
 CAP_USD = Decimal("10.00")
 CAP = 10_000_000

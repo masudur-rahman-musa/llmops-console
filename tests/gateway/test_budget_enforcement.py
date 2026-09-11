@@ -117,7 +117,7 @@ ALIAS = "agent-default"
 PROVIDER = "anthropic"
 
 EMBED_ALIAS = "embed"
-EMBED_PROVIDER = "local"
+EMBED_PROVIDER = "local_embed"
 
 UNPOLICED_TENANT = "cap-key"
 """A tenant with a key in the store and no entry in `routing.yaml`. The budget

@@ -502,7 +502,7 @@ def test_a_reload_rebuilds_the_adapter_set_for_the_new_policy(tmp_path: Path) ->
     name, and the resolver's health seam would go on reporting it as usable.
     """
     with admin_app_on(tmp_path, WITH_ANTHROPIC_KEY) as built:
-        assert set(built.app.state.adapters) == {"anthropic", "local"}
+        assert set(built.app.state.adapters) == {"anthropic", "local", "local_embed"}
 
         rewrite_policy(
             built.policy_path,
@@ -512,8 +512,8 @@ def test_a_reload_rebuilds_the_adapter_set_for_the_new_policy(tmp_path: Path) ->
         response = built.client.post(ADMIN_ROUTING_RELOAD, headers=ADMIN_HEADERS)
         assert response.status_code == 200, response.text
 
-        assert response.json()["providers"] == ["local"]
-        assert set(built.app.state.adapters) == {"local"}
+        assert response.json()["providers"] == ["local", "local_embed"]
+        assert set(built.app.state.adapters) == {"local", "local_embed"}
         assert "anthropic" not in built.app.state.adapters
 
 

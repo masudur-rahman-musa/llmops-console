@@ -71,6 +71,10 @@ WITHOUT_PII = "which city is the capital of Germany"
 ALIAS = "agent-default"
 PROVIDER = "local"
 
+EMBED_PROVIDER = "local_embed"
+"""The `embed` alias's only candidate: the embedding server is its own provider,
+because one llama.cpp process serves one model. The chat rows keep `local`."""
+
 # (data class, what the caller sent, what the adapter must receive, the header)
 INLINE_ROWS: tuple[tuple[str, str, str, str], ...] = (
     ("confidential", WITH_PII, REDACTED_PII, "true"),
@@ -98,8 +102,8 @@ def inline_chat_client(settings: Settings, inline_chat_stub: StubAdapter) -> Ite
 
 @pytest.fixture(scope="module")
 def inline_embedding_stub() -> EmbeddingStubAdapter:
-    """The embedding stub, under the same policy provider the `embed` alias names."""
-    return EmbeddingStubAdapter(name=PROVIDER, response=embedding_stub_response())
+    """The embedding stub, under the policy provider the `embed` alias names."""
+    return EmbeddingStubAdapter(name=EMBED_PROVIDER, response=embedding_stub_response())
 
 
 @pytest.fixture(scope="module")
@@ -119,7 +123,7 @@ def inline_batch_stub() -> EmbeddingStubAdapter:
     single-input stub instead would make every one-item row assert against an
     over-long answer.
     """
-    return EmbeddingStubAdapter(name=PROVIDER, response=embedding_stub_response(3))
+    return EmbeddingStubAdapter(name=EMBED_PROVIDER, response=embedding_stub_response(3))
 
 
 @pytest.fixture(scope="module")

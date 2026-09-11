@@ -42,6 +42,14 @@ providers:
     kind: openai_compatible
     region: self
     base_url: http://llama:8082/v1
+  # One llama.cpp process serves ONE model, so the embedding server is a second
+  # address and therefore a second provider rather than another alias here. Its
+  # id is what the ledger books every embedding row under and the first half of
+  # that row's price key.
+  local_embed:
+    kind: openai_compatible
+    region: self
+    base_url: http://llama-embed:8083/v1
   vllm:
     kind: openai_compatible
     region: self
@@ -77,7 +85,7 @@ aliases:
       - { provider: openai, model: gpt-4o }
   embed:
     candidates:
-      - { provider: local, model: bge-small-en-v1.5 }
+      - { provider: local_embed, model: bge-small-en-v1.5 }
 
 tenants:
   nordlicht:

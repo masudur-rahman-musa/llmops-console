@@ -97,9 +97,10 @@ reserves so the namespace is not re-planned when each lands.
 |---|---|---|---|
 | `gateway`, 3 pods at HPA max (256Mi / 150m / 512Mi) | 768Mi | 450m | 1536Mi |
 | `llama`, 1 pod | 1024Mi | 300m | 3072Mi |
+| `llama-embed`, 1 pod | 256Mi | 100m | 512Mi |
 | Helpdesk reserve, 3 pods at 192Mi / 100m / 384Mi | 576Mi | 300m | 1152Mi |
 | console reserve, 1 pod | 256Mi | 100m | 512Mi |
-| **total** | **2624Mi** | **1150m** | **6272Mi** |
+| **total** | **2880Mi** | **1250m** | **6784Mi** |
 
 `tests/infra/test_k8s_apps.py` derives those three totals the same way - the
 built pod templates, the gateway multiplied by the `maxReplicas` of the HPA in
@@ -107,6 +108,13 @@ the same build, plus the two remaining reserves - and checks them against the
 `apps` quota. llama.cpp moved from the reserve list to the built side when its
 manifest landed, and the totals did not move: the manifest was written to the
 reserve, not the reserve rewritten to the manifest.
+
+The embedding server is the one row that DID move them. No reserve was ever held
+for it - it exists because one llama.cpp process serves one model, so the
+`embed` alias needs a second address - and pretending otherwise by carving its
+256Mi out of the chat model's row would be shrinking that model to fit the
+table. What is left after it is thin on purpose: 192Mi of requests and 384Mi of
+limits, so a fourth Helpdesk pod is a conversation about this table.
 
 The limits column is why that quota holds 7Gi rather than the 5Gi the envelope
 first gave it: llama.cpp is sized for 3 GiB on its own, and trimming its ceiling
@@ -170,6 +178,10 @@ the same file `docker-compose.yml` loads locally - `qwen2.5-3b-instruct-q4_k_m.g
 the upstream Q4_K_M build. A 3B rather than a 7B because the pod's ceiling is
 3 GiB and a 7B Q4_K_M is ~4.4 GB before its KV cache.
 
+Both llama.cpp claims are filled this way, and each has its own: a
+`ReadWriteOnce` volume mounted by two Deployments would pin both pods to one
+node forever.
+
 ```
 kubectl -n apps scale deployment/llama --replicas=0
 kubectl -n apps run llama-load --image=busybox:1.36 --restart=Never \
@@ -186,10 +198,15 @@ pod cannot mount it while the llama.cpp pod holds it. Until the file is there
 the pod fails its startup probe for 600 seconds and then restarts, which is a
 visibly unready workload rather than a silent one.
 
+The embedding claim is filled by the same five commands with three names
+changed - `llama-embed`, `llama-embed-models` and
+`bge-small-en-v1.5-q8_0.gguf`, the upstream Q8_0 build of a 33M-parameter
+encoder, where quantising harder buys nothing and costs vector quality. Its
+startup ceiling is 120 seconds rather than 600: the file is ~130 MB.
+
 ## Still to land
 
-- The rest of `apps/` - a second llama.cpp serving the embedding model the
-  `embed` alias names, the Helpdesk services and the console, with the
+- The rest of `apps/` - the Helpdesk services and the console, with the
   `helpdesk.` and `console.` Ingresses.
 - The nightly eval CronJob in `evals/`, and the metrics stack in `monitoring/`
   with its `grafana.` Ingress.

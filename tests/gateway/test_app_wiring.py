@@ -84,12 +84,14 @@ def test_create_app_builds_the_adapter_set() -> None:
     app = create_app(wiring_settings(), {ANTHROPIC_KEY_ENV: FAKE_KEY})
 
     adapters = app.state.adapters
-    # `local` joins `anthropic` from an earlier change on: the shipped policy's
-    # `openai_compatible` provider declares no `key_env`, so it is built from the
-    # policy alone and needs nothing in the environment (06a decision B).
-    assert set(adapters) == {"anthropic", "local"}
+    # `local` and `local_embed` join `anthropic` from an earlier change on: the shipped
+    # policy's `openai_compatible` providers declare no `key_env`, so they are built
+    # from the policy alone and need nothing in the environment (06a decision B).
+    # There are two of them because one llama.cpp process serves one model.
+    assert set(adapters) == {"anthropic", "local", "local_embed"}
     assert isinstance(adapters["anthropic"], Adapter)
     assert isinstance(adapters["local"], Adapter)
+    assert isinstance(adapters["local_embed"], Adapter)
     close_adapters(adapters)
 
 
@@ -99,10 +101,11 @@ def test_create_app_reads_keys_only_from_the_given_environ() -> None:
     provider, and a test that made a real billed call would pass locally and fail in CI."""
     app = create_app(wiring_settings(), NO_PROVIDER_KEYS)
 
-    # `local` survives an empty environment on purpose - it holds no key to read.
-    # `anthropic` is the provider this test is about, and its absence is what
-    # proves nothing was read from `os.environ` behind the injected mapping.
-    assert set(app.state.adapters) == {"local"}
+    # The two self-hosted providers survive an empty environment on purpose - neither
+    # holds a key to read. `anthropic` is the provider this test is about, and its
+    # absence is what proves nothing was read from `os.environ` behind the injected
+    # mapping.
+    assert set(app.state.adapters) == {"local", "local_embed"}
     close_adapters(app.state.adapters)
 
 
