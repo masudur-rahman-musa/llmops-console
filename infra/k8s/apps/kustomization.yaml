@@ -1,5 +1,6 @@
-# The gateway, the two llama.cpp servers and the two `api.` routers. The Helpdesk services and
-# the console land here too, and neither changes this file beyond a line in
+# The gateway, the two llama.cpp servers, the four Helpdesk workloads and the
+# two `api.` routers. The `helpdesk.` router pair and the console
+# land here too, and neither changes this file beyond a line in
 # `resources` and, where it runs an image, an entry in `images:`.
 #
 # No `namespace:` transformer, for the same reason `../platform` has none: it
@@ -12,6 +13,7 @@ resources:
   - gateway.yaml
   - llama.yaml
   - llama-embed.yaml
+  - helpdesk.yaml
   - middlewares.yaml
   - ingress.yaml
 
@@ -37,3 +39,18 @@ images:
   - name: llama
     newName: ghcr.io/ggml-org/llama.cpp
     newTag: server-b10902
+  # The four Helpdesk workloads, each its own image out of the companion repo's
+  # registry. Same honest placeholder tag as the gateway: nothing has been
+  # published yet, so an apply made before row 22's deploy fails on the pull.
+  - name: helpdesk-agent-api
+    newName: ghcr.io/developermusa/ai-helpdesk-governed-access/helpdesk-agent-api
+    newTag: 0.0.0-unbuilt
+  - name: helpdesk-mcp-server
+    newName: ghcr.io/developermusa/ai-helpdesk-governed-access/helpdesk-mcp-server
+    newTag: 0.0.0-unbuilt
+  - name: helpdesk-scheduler
+    newName: ghcr.io/developermusa/ai-helpdesk-governed-access/helpdesk-scheduler
+    newTag: 0.0.0-unbuilt
+  - name: helpdesk-web
+    newName: ghcr.io/developermusa/ai-helpdesk-governed-access/helpdesk-web
+    newTag: 0.0.0-unbuilt

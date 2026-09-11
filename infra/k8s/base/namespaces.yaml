@@ -3,9 +3,10 @@
 #
 # The split is by blast radius, not by tidiness. `platform` holds the stateful
 # backing services and the cluster's own machinery, `apps` the gateway and
-# everything else that serves a request - llama.cpp, the Helpdesk services and
-# the console - `evals` the nightly CronJob alone, `monitoring` the metrics
-# stack. The NetworkPolicies key off exactly these names.
+# everything else that serves a request - the two llama.cpp servers, the four
+# Helpdesk workloads and, still to land, the console - `evals` the nightly
+# CronJob alone, `monitoring` the metrics stack. The NetworkPolicies key off
+# exactly these names.
 #
 # No labels are set on these objects. The root kustomization's `labels:` block
 # is the only source, and a pair repeated here would be indistinguishable from

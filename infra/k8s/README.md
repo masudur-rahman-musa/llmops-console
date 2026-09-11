@@ -90,21 +90,24 @@ What `apps/` spends of the 3Gi / 1500m / 7Gi the envelope gives it. The gateway
 is priced at its HPA CEILING rather than at its two resting replicas: a quota
 sized to the floor admits the cluster happily and then rejects the first
 scale-up at admission, which is the one event an autoscaler exists to serve. The
-last two rows are workloads this directory does not write yet, held as named
-reserves so the namespace is not re-planned when each lands.
+last row is a workload this directory does not write yet, held as a named
+reserve so the namespace is not re-planned when it lands.
 
 | workload | requests.memory | requests.cpu | limits.memory |
 |---|---|---|---|
 | `gateway`, 3 pods at HPA max (256Mi / 150m / 512Mi) | 768Mi | 450m | 1536Mi |
 | `llama`, 1 pod | 1024Mi | 300m | 3072Mi |
 | `llama-embed`, 1 pod | 256Mi | 100m | 512Mi |
-| Helpdesk reserve, 3 pods at 192Mi / 100m / 384Mi | 576Mi | 300m | 1152Mi |
+| `helpdesk-agent-api`, 1 pod | 192Mi | 100m | 384Mi |
+| `helpdesk-mcp-server`, 1 pod | 128Mi | 75m | 256Mi |
+| `helpdesk-web`, 1 pod | 128Mi | 75m | 256Mi |
+| `helpdesk-scheduler`, 1 pod | 128Mi | 50m | 256Mi |
 | console reserve, 1 pod | 256Mi | 100m | 512Mi |
 | **total** | **2880Mi** | **1250m** | **6784Mi** |
 
 `tests/infra/test_k8s_apps.py` derives those three totals the same way - the
 built pod templates, the gateway multiplied by the `maxReplicas` of the HPA in
-the same build, plus the two remaining reserves - and checks them against the
+the same build, plus the one remaining reserve - and checks them against the
 `apps` quota. llama.cpp moved from the reserve list to the built side when its
 manifest landed, and the totals did not move: the manifest was written to the
 reserve, not the reserve rewritten to the manifest.
@@ -113,8 +116,23 @@ The embedding server is the one row that DID move them. No reserve was ever held
 for it - it exists because one llama.cpp process serves one model, so the
 `embed` alias needs a second address - and pretending otherwise by carving its
 256Mi out of the chat model's row would be shrinking that model to fit the
-table. What is left after it is thin on purpose: 192Mi of requests and 384Mi of
-limits, so a fourth Helpdesk pod is a conversation about this table.
+table.
+
+The four Helpdesk rows divide the envelope that was held for three. The reserve
+priced three pods at 192Mi / 100m / 384Mi and the service list turned out to be
+four, so the four rows above were written to sum to exactly the same 576Mi,
+300m and 1152Mi rather than the quota being raised to hold a fourth pod at the
+reserve's own size - which would have put the requests column at exactly 3Gi
+against a 3Gi hard limit, no headroom at all, and left the console with nowhere
+to land. What it costs is honest: `helpdesk-agent-api` keeps the reserve's own
+row and is the only Helpdesk pod sized for real traffic, while the other three
+run in 128Mi with a 256Mi ceiling. If one of them needs more, the conversation
+is this table and not a quiet edit - and the direction of the error is visible,
+because an out-of-memory kill on `helpdesk-web` is a CrashLoopBackOff rather
+than a silent degradation.
+
+What is left after all of it is thin on purpose: the console's 256Mi / 100m /
+512Mi reserve and no more, so row 27 is the last workload this envelope holds.
 
 The limits column is why that quota holds 7Gi rather than the 5Gi the envelope
 first gave it: llama.cpp is sized for 3 GiB on its own, and trimming its ceiling
@@ -152,7 +170,7 @@ If the chart's real footprint is larger than that, the quota refuses the install
 with the namespace named, which is the intended direction: raising it means
 re-totalling the table above and the reserve constant in the test together.
 
-The three Secrets nothing here writes, each supplied SOPS-encrypted before the
+The four Secrets nothing here writes, each supplied SOPS-encrypted before the
 first apply:
 
 | Secret | namespace | keys | read by |
@@ -160,11 +178,14 @@ first apply:
 | `postgres-credentials` | `platform` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | the Postgres StatefulSet, by `envFrom` |
 | `traefik-basic-auth` | `platform`, `apps` | `users` (htpasswd lines) | the `basic-auth` middleware in each namespace |
 | `gateway-secrets` | `apps` | the database URL, the provider keys `routing.yaml` reads by `key_env`, the Langfuse pair, the tenant key digests | the gateway Deployment, by `envFrom` |
+| `helpdesk-secrets` | `apps` | the gateway API key the Helpdesk calls with, its own database URL, the Langfuse pair | the four Helpdesk Deployments, by `envFrom` |
 
 `traefik-basic-auth` is supplied once per routing namespace, not once per
 cluster: a `Middleware` reads its Secret from its own namespace, and a design note is
 why each namespace carries its own copy of the three middlewares. The TLS
-Secrets the Ingresses name are not in this table - cert-manager writes those.
+Secrets the Ingresses name are not in this table - cert-manager writes those,
+and their names have to stay disjoint from the four above, or an issued
+certificate overwrites a set of credentials.
 
 Until they exist an apply fails on the missing Secret, which is the point: a
 placeholder with a password in git would come up working and never mention it
@@ -204,14 +225,45 @@ changed - `llama-embed`, `llama-embed-models` and
 encoder, where quantising harder buys nothing and costs vector quality. Its
 startup ceiling is 120 seconds rather than 600: the file is ~130 MB.
 
+## What the Helpdesk reads
+
+The companion repo is a separate repository and its variable names cannot be
+read from here, so this is the contract: `helpdesk-config` publishes these four
+keys and the four Deployments take the whole object by `envFrom`. If the
+Helpdesk reads different names it will start and misbehave rather than fail
+loudly - a missing variable is usually a `None` default, not a crash - so this
+table is the one place the two repositories agree, and a disagreement is a
+change here.
+
+| key | value | why |
+|---|---|---|
+| `HELPDESK_GATEWAY_URL` | `http://gateway.apps.svc.cluster.local:8080/v1` | every model call goes through this gateway, so the Helpdesk never holds a provider key |
+| `HELPDESK_REDIS_URL` | `redis://redis.platform.svc.cluster.local:6379/1` | database `1`, not the gateway's `0`: one Redis, two tenants of it, and a shared index is one `FLUSHDB` from taking out the other repo's state |
+| `HELPDESK_QDRANT_URL` | `http://qdrant.platform.svc.cluster.local:6333` | the same vector store the gateway's semantic cache uses, in its own collections |
+| `HELPDESK_ENV` | `production` | what the pods report about themselves |
+
+Every host is fully qualified because these pods are in `apps` and two of the
+three services are in `platform`, where a bare `redis` resolves to nothing.
+
+`HELPDESK_OTEL_SERVICE_NAME` is deliberately NOT in that ConfigMap. It is a
+per-container `env` entry on each of the four, set to that workload's own name,
+because one trace carries spans from the Helpdesk and from the gateway and a
+shared service name would collapse five processes into one in the trace viewer.
+
+The scheduler has no liveness signal and that is a decision, not an omission: it
+serves no port, so a health probe would have to be a command no code in this
+repo defines, and a liveness probe against a command that does not exist
+restarts the pod forever. A wedged scheduler is therefore invisible until the
+metrics stack lands.
+
 ## Still to land
 
-- The rest of `apps/` - the Helpdesk services and the console, with the
-  `helpdesk.` and `console.` Ingresses.
+- The rest of `apps/` - the `helpdesk.` Ingress for `helpdesk-web`, and the
+  console with its `console.` Ingress.
 - The nightly eval CronJob in `evals/`, and the metrics stack in `monitoring/`
   with its `grafana.` Ingress.
 - NetworkPolicies keyed off exactly these four namespace names, and SOPS-
-  encrypted secrets, including the three named above.
+  encrypted secrets, including the four named above.
 
 Each of those is admitted against the envelope above, so a workload that does
 not fit is a conversation about this table rather than a silent edit to it.

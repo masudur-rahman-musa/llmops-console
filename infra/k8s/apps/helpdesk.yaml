@@ -1,0 +1,329 @@
+# The four Helpdesk workloads: the companion repo's agent API, its MCP tool
+# server, its scheduler and its web front end. They are CLIENTS of the gateway
+# in `gateway.yaml`, not providers of it, so nothing here touches `routing.yaml`
+# or `prices.yaml` - the Helpdesk reaches this cluster's models the same way any
+# other caller does, over `HELPDESK_GATEWAY_URL`.
+#
+# All four are written INTO the `Helpdesk reserve, 3 pods` envelope
+# `../README.md` has held since row 20a - 576Mi of requests, 300m of CPU, 1152Mi
+# of limits - rather than on top of it, so the apps budget's three totals do not
+# move and `../base/quotas.yaml` is untouched. That costs something and the
+# README says what: the agent-api keeps the reserve's own 192Mi and the other
+# three take 128Mi, so the agent-api is the only Helpdesk pod sized for real
+# traffic. If one of the other three needs more, the conversation is that table.
+#
+# No `limits.cpu` on any of the four. A CPU limit throttles rather than kills,
+# and the agent-api is the workload the design puts a tail-latency SLO on.
+#
+# Decision B - which of these is public: `helpdesk-web` alone, and only once row
+# 20g writes the `helpdesk.` Ingress. Until then all three Services are
+# ClusterIP and reachable in-cluster only. A browser reaching the agent-api
+# directly is the shape a project rule rejects for the console, and the MCP server
+# is a tool endpoint that no host should resolve to.
+#
+# Decision E - the env contract. These `HELPDESK_*` names are THIS repo's
+# proposal; the companion repo does not exist here and its variable names cannot
+# be read from it. They are published in `../README.md`'s config table as the
+# one place that repo reads, and the risk is honest: if it reads different
+# names, these pods start and misbehave rather than failing loudly, because a
+# missing variable is usually a `None` default and not a crash.
+#
+# Decision F - the scheduler has no ports and no probes. It serves nothing: it
+# holds a Redis leader lock and runs jobs, so `replicas: 1` with `Recreate` is
+# what keeps exactly one copy through a rollout, and inventing a health port or
+# an exec probe for a process no code in this repo defines would be worse than
+# the gap - a liveness probe against a command that does not exist restarts the
+# pod forever. What it costs is stated rather than half-fixed: a wedged
+# scheduler is invisible until row 23's metrics stack.
+#
+# `helpdesk-secrets` is NAMED here and supplied nowhere in this repo. It carries
+# the gateway API key the Helpdesk calls with, its own database URL and the
+# Langfuse pair, SOPS-encrypted before the first apply, and until it exists an
+# apply fails on the missing Secret - which is the intended direction.
+#
+# The images are set by `kustomization.yaml`'s `images:` transformer, not here.
+# `0.0.0-unbuilt` is honest: the companion repo has published nothing yet, so an
+# apply made before row 22's deploy fails on the pull rather than running
+# something nobody chose.
+#
+# `app.kubernetes.io/name` is written three times per serving workload - on the
+# selector, on the pod template and on the Service - because the root
+# kustomization's `labels:` block carries `includeSelectors: false` and reaches
+# none of them. Nothing else is written into a selector: a label that reaches
+# one is immutable after the first apply.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: helpdesk-config
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: helpdesk
+data:
+  # In-cluster addresses, every host fully qualified: these pods are in `apps`
+  # and two of the three services are in `platform`, so a bare `redis` resolves
+  # to nothing.
+  HELPDESK_GATEWAY_URL: http://gateway.apps.svc.cluster.local:8080/v1
+  # Redis database `1`, not the gateway's `0`. One Redis, two tenants of it, and
+  # a shared index is one `FLUSHDB` away from taking out the other repo's state.
+  HELPDESK_REDIS_URL: redis://redis.platform.svc.cluster.local:6379/1
+  HELPDESK_QDRANT_URL: http://qdrant.platform.svc.cluster.local:6333
+  HELPDESK_ENV: production
+  # `HELPDESK_OTEL_SERVICE_NAME` is deliberately NOT here. It is per-container
+  # `env` below, because one trace carries spans from the Helpdesk and from the
+  # gateway, and a shared name collapses four processes into one service in the
+  # viewer - a failure no trace test would catch.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: helpdesk-agent-api
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: helpdesk-agent-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: helpdesk-agent-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: helpdesk-agent-api
+    spec:
+      containers:
+        - name: helpdesk-agent-api
+          image: helpdesk-agent-api
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: helpdesk-config
+            - secretRef:
+                name: helpdesk-secrets
+          env:
+            - name: HELPDESK_OTEL_SERVICE_NAME
+              value: helpdesk-agent-api
+          # `/readyz` is dependencies reachable and `/healthz` is process up.
+          # Swapped, `/readyz` as liveness restarts the pod every time Redis
+          # blips and `/healthz` as readiness sends traffic to a process with no
+          # database.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+          # The reserve's own per-pod row: the one Helpdesk workload sized for
+          # real traffic (decision A).
+          resources:
+            requests:
+              memory: 192Mi
+              cpu: 100m
+            limits:
+              memory: 384Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: helpdesk-agent-api
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: helpdesk-agent-api
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: helpdesk-agent-api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: helpdesk-mcp-server
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: helpdesk-mcp-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: helpdesk-mcp-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: helpdesk-mcp-server
+    spec:
+      containers:
+        - name: helpdesk-mcp-server
+          image: helpdesk-mcp-server
+          ports:
+            - name: http
+              containerPort: 8001
+          envFrom:
+            - configMapRef:
+                name: helpdesk-config
+            - secretRef:
+                name: helpdesk-secrets
+          env:
+            - name: HELPDESK_OTEL_SERVICE_NAME
+              value: helpdesk-mcp-server
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: 75m
+            limits:
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: helpdesk-mcp-server
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: helpdesk-mcp-server
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: helpdesk-mcp-server
+  ports:
+    - name: http
+      port: 8001
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: helpdesk-web
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: helpdesk-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: helpdesk-web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: helpdesk-web
+    spec:
+      containers:
+        - name: helpdesk-web
+          image: helpdesk-web
+          ports:
+            - name: http
+              containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: helpdesk-config
+            - secretRef:
+                name: helpdesk-secrets
+          env:
+            - name: HELPDESK_OTEL_SERVICE_NAME
+              value: helpdesk-web
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: 75m
+            limits:
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: helpdesk-web
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: helpdesk-web
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: helpdesk-web
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: helpdesk-scheduler
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: helpdesk-scheduler
+spec:
+  replicas: 1
+  # `Recreate`, not `RollingUpdate`: the rolling default starts the new pod
+  # before the old one stops, which is two schedulers for the length of every
+  # deploy. The Redis leader lock the design names is what makes a brief second
+  # copy survivable if one ever happens; it is not a reason to arrange for one.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: helpdesk-scheduler
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: helpdesk-scheduler
+    spec:
+      containers:
+        - name: helpdesk-scheduler
+          image: helpdesk-scheduler
+          # No `ports`, no Service and no probes (decision F). It serves
+          # nothing, so a Service in front of it would be an address with no
+          # listener behind it.
+          envFrom:
+            - configMapRef:
+                name: helpdesk-config
+            - secretRef:
+                name: helpdesk-secrets
+          env:
+            - name: HELPDESK_OTEL_SERVICE_NAME
+              value: helpdesk-scheduler
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: 50m
+            limits:
+              memory: 256Mi

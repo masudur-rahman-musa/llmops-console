@@ -153,12 +153,16 @@ ACME_EMAIL = "ops@example.com"
 ACME_SOLVERS = [{"http01": {"ingress": {"class": "traefik"}}}]
 
 #: Decision D: the only Secret names anything in the build may reference, checked build-wide
-#: on purpose - "no Secret is emitted anywhere" is the claim worth keeping whole. All three are
+#: on purpose - "no Secret is emitted anywhere" is the claim worth keeping whole. All four are
 #: supplied SOPS-encrypted before the first apply; until then an apply fails loudly on a
 #: missing Secret, which is the intended direction. The TLS secrets the Ingresses name are
 #: cert-manager's to write, so they are excluded where that comparison is made
-#: (`tests/infra/test_k8s_apps.py`) rather than added here.
-PINNED_SECRET_NAMES = frozenset({"postgres-credentials", BASIC_AUTH_SECRET, "gateway-secrets"})
+#: (`tests/infra/test_k8s_apps.py`) rather than added here. `helpdesk-secrets` joined the list
+#: with row 20f's four workloads, which name it and supply it nowhere; this constant is
+#: build-wide, so it has to move in the same change or a correct manifest reddens here.
+PINNED_SECRET_NAMES = frozenset(
+    {"postgres-credentials", BASIC_AUTH_SECRET, "gateway-secrets", "helpdesk-secrets"}
+)
 
 #: Criterion 9's file scan, first shape: a credential KEY with a scalar value on the same
 #: line. Anchored on the key, so `passwordSecretRef:` and a `secretRef:` reference do not

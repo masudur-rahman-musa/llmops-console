@@ -87,16 +87,45 @@ LLAMA_PVC = "llama-models"
 LLAMA_EMBED = "llama-embed"
 LLAMA_EMBED_PVC = "llama-embed-models"
 
+#: Row 20f's four Helpdesk workloads, their shared ConfigMap and the Secret this repo names
+#: and never supplies. The names are here rather than in the Helpdesk block below because
+#: `HELPDESK_OBJECTS` names them first, and every one of them is also the value of that
+#: workload's `app.kubernetes.io/name` label and of its Service.
+HELPDESK_AGENT_API = "helpdesk-agent-api"
+HELPDESK_MCP_SERVER = "helpdesk-mcp-server"
+HELPDESK_SCHEDULER = "helpdesk-scheduler"
+HELPDESK_WEB = "helpdesk-web"
+HELPDESK_CONFIG_MAP = "helpdesk-config"
+HELPDESK_SECRET = "helpdesk-secrets"
+
 GATEWAY = "gateway"
 GATEWAY_CONFIG_MAP = "gateway-config"
 GATEWAY_SECRET = "gateway-secrets"
 ROOT_INGRESS = "gateway"
 HEALTHZ_INGRESS = "gateway-healthz"
 
+#: Row 20f criterion 1, as `(kind, name, namespace)`: the eight objects the Helpdesk adds.
+#: `Service/helpdesk-scheduler` is absent on purpose (criterion 2) and its absence is asserted
+#: by name in its own case rather than left to this set. Written as its own frozenset because
+#: two cases read it - `APPS_OBJECTS` unions it below, so the eight are named once.
+HELPDESK_OBJECTS: frozenset[tuple[str, str, str]] = frozenset(
+    {
+        ("ConfigMap", HELPDESK_CONFIG_MAP, APPS),
+        ("Deployment", HELPDESK_AGENT_API, APPS),
+        ("Deployment", HELPDESK_MCP_SERVER, APPS),
+        ("Deployment", HELPDESK_SCHEDULER, APPS),
+        ("Deployment", HELPDESK_WEB, APPS),
+        ("Service", HELPDESK_AGENT_API, APPS),
+        ("Service", HELPDESK_MCP_SERVER, APPS),
+        ("Service", HELPDESK_WEB, APPS),
+    }
+)
+
 #: Criterion 1, as `(kind, name, namespace)`. Set EQUALITY: a file left out of
 #: `apps/kustomization.yaml`'s `resources` and an object nobody agreed to are the same failure,
-#: and only equality sees both.
-APPS_OBJECTS: frozenset[tuple[str, str, str]] = frozenset(
+#: and only equality sees both. Row 20f's eight are unioned in rather than listed again, so the
+#: object list and the Helpdesk cases cannot disagree about what the build owes.
+APPS_OBJECTS: frozenset[tuple[str, str, str]] = HELPDESK_OBJECTS | frozenset(
     {
         ("Deployment", GATEWAY, APPS),
         ("Service", GATEWAY, APPS),
@@ -157,9 +186,13 @@ LLAMA_RESERVE: dict[str, str | int] = {
     "limits.memory": "3072Mi",
 }
 
-#: Row 20f's four Helpdesk services, priced as three pods of the same size. Row 20 split
-#: after 20c was written: 20d built llama.cpp, 20e adds the embedding server and 20f the
-#: Helpdesk workloads, so the row this comment named before the split no longer does it.
+#: The envelope the apps budget held for the Helpdesk before row 20f built it: three pods of
+#: one size, which 20f divides into FOUR built workloads without moving the three totals
+#: (decision A). It is no longer a reserve - `RESERVES` lost it in the same change that added
+#: the four built rows, because a pod both summed here and read off the built template is
+#: priced twice - and it stays in this module as the envelope
+#: `test_the_four_helpdesk_pods_fit_the_envelope_the_reserve_held` holds the four manifests to,
+#: the same move 20d made with `LLAMA_RESERVE`.
 HELPDESK_RESERVE: dict[str, str | int] = {
     "pods": 3,
     "requests.memory": "192Mi",
@@ -175,12 +208,15 @@ CONSOLE_RESERVE: dict[str, str | int] = {
     "limits.memory": "512Mi",
 }
 
-#: The reserves still held as constants. `LLAMA_RESERVE` is NOT one of them any more: row 20d
-#: builds that pod, so the subtotals case reads its quantities off the built template the way it
-#: already reads the gateway's, and summing the reserve as well would price the one workload
-#: twice. The reserve stays in this module as the row
-#: `test_llama_declares_the_quantities_the_budget_prices` holds the manifest to.
-RESERVES = (HELPDESK_RESERVE, CONSOLE_RESERVE)
+#: The reserve still held as a constant - row 27's console, the one workload in `apps` that no
+#: plan has built yet. `LLAMA_RESERVE` and `HELPDESK_RESERVE` are NOT in it any more: rows 20d
+#: and 20f build those pods, so the subtotals case reads their quantities off the built
+#: templates the way it already reads the gateway's, and summing a reserve as well would price
+#: the same workload twice and overflow a quota that is correct. Both stay in this module as
+#: the rows their own cases hold the manifests to
+#: (`test_llama_declares_the_quantities_the_budget_prices`,
+#: `test_the_four_helpdesk_pods_fit_the_envelope_the_reserve_held`).
+RESERVES = (CONSOLE_RESERVE,)
 
 #: Decision A: the `apps` envelope after the limits column is raised. The requests column does
 #: not move - it is the 6Gi cluster-wide total #55 and the design pin.
@@ -416,9 +452,137 @@ MIDDLEWARE_REFERENCE = re.compile(
     r"(?P<namespace>[a-z0-9]+)-(?P<name>[a-z0-9][a-z0-9-]*)@kubernetescrd"
 )
 
-#: Decision E and row 21: the only three Secret names anything in the build may reference. The
-#: emitted-Secret half of the same case is build-wide and stays that way.
-PINNED_SECRET_NAMES = frozenset({"postgres-credentials", "traefik-basic-auth", GATEWAY_SECRET})
+#: Row 20f criterion 1: the four workloads in the order the budget table prices them, and the
+#: three of them that serve traffic. The scheduler is in the first tuple and not the second -
+#: it holds a Redis leader lock and runs jobs, so it has no port, no Service (criterion 2) and
+#: no probes (criterion 7), while everything the other three are held to it is held to as well.
+HELPDESK_WORKLOADS = (HELPDESK_AGENT_API, HELPDESK_MCP_SERVER, HELPDESK_SCHEDULER, HELPDESK_WEB)
+HELPDESK_SERVING = (HELPDESK_AGENT_API, HELPDESK_MCP_SERVER, HELPDESK_WEB)
+
+#: Criterion 1, by value: the port each serving workload's container publishes, which is also
+#: the port its Service publishes. Three different numbers on purpose - a Service copied from
+#: its neighbour and left on the neighbour's port is endpoints pointing at a closed socket,
+#: which nothing in a build reports.
+HELPDESK_CONTAINER_PORTS: dict[str, int] = {
+    HELPDESK_AGENT_API: 8000,
+    HELPDESK_MCP_SERVER: 8001,
+    HELPDESK_WEB: 3000,
+}
+
+#: Criterion 1: the Service type all three carry. Decision B leaves one public surface and row
+#: 20g's Ingress is what publishes it, so a `LoadBalancer` or a `NodePort` here is a Helpdesk
+#: service reachable from outside the cluster without any router in front of it.
+HELPDESK_SERVICE_TYPE = "ClusterIP"
+
+#: Criterion 3, by value, per pod, compared as strings - the subtotals and
+#: the envelope cases are the only places these are parsed. Decision A divides the envelope
+#: `HELPDESK_RESERVE` held for three pods across four workloads: the agent-api keeps the
+#: reserve's own row and the other three take 128Mi. `limits.cpu` is absent from every row on
+#: purpose, and equality on the whole flattened mapping is what keeps it absent - a CPU limit
+#: throttles the agent-api's tail latency, which the design puts an SLO on.
+HELPDESK_RESOURCES: dict[str, dict[str, str]] = {
+    HELPDESK_AGENT_API: {
+        "requests.memory": "192Mi",
+        "requests.cpu": "100m",
+        "limits.memory": "384Mi",
+    },
+    HELPDESK_MCP_SERVER: {
+        "requests.memory": "128Mi",
+        "requests.cpu": "75m",
+        "limits.memory": "256Mi",
+    },
+    HELPDESK_SCHEDULER: {
+        "requests.memory": "128Mi",
+        "requests.cpu": "50m",
+        "limits.memory": "256Mi",
+    },
+    HELPDESK_WEB: {
+        "requests.memory": "128Mi",
+        "requests.cpu": "75m",
+        "limits.memory": "256Mi",
+    },
+}
+
+#: Criterion 7: the scheduler's replica count and the only strategy that keeps exactly one copy
+#: through a rollout - `RollingUpdate` starts the new pod before the old one stops, which is two
+#: schedulers for the length of a deploy.
+HELPDESK_SCHEDULER_REPLICAS = 1
+HELPDESK_SCHEDULER_STRATEGY = "Recreate"
+
+#: Criterion 7's third and fourth halves: the three probe keys a container may declare, all of
+#: which the scheduler must declare none of (decision F). A liveness probe against a command
+#: nobody has written restarts the pod forever.
+PROBE_KEYS = ("readinessProbe", "livenessProbe", "startupProbe")
+
+#: Criterion 8, by value: the whole `helpdesk-config` mapping, asserted by equality so a fifth
+#: key nobody agreed to is as visible as a missing one. Every host is fully qualified because
+#: these pods are in `apps` and two of the three addresses are in `platform`, where a bare
+#: `redis` resolves to nothing. Redis database `1`, not the gateway's `0`: one Redis, two
+#: tenants of it, and a shared index is one `FLUSHDB` away from taking out the other repo.
+HELPDESK_CONFIG: dict[str, str] = {
+    "HELPDESK_GATEWAY_URL": "http://gateway.apps.svc.cluster.local:8080/v1",
+    "HELPDESK_REDIS_URL": "redis://redis.platform.svc.cluster.local:6379/1",
+    "HELPDESK_QDRANT_URL": "http://qdrant.platform.svc.cluster.local:6333",
+    "HELPDESK_ENV": "production",
+}
+
+#: Criterion 8's in-cluster claim, checked on every URL value of the ConfigMap rather than on
+#: the three keys named above, so a fourth address added later is covered by the same rule.
+IN_CLUSTER_SUFFIX = ".svc.cluster.local"
+
+#: Criterion 8: the Redis database index each side owns, as the path of its own URL. The
+#: gateway's is READ OFF THE BUILD from the key below rather than restated;
+#: the constant is the key's name, not its value.
+HELPDESK_REDIS_URL_KEY = "HELPDESK_REDIS_URL"
+HELPDESK_REDIS_DATABASE_PATH = "/1"
+GATEWAY_REDIS_URL_KEY = "OPSCONSOLE_REDIS_URL"
+
+#: Criterion 9: the per-container variable that names a process in a trace viewer, and the
+#: gateway's key for the same thing. The Helpdesk's is per-container `env` and NOT a key of
+#: `helpdesk-config`, because a shared ConfigMap would give all four pods one name and collapse
+#: them into one service in the viewer - the failure a trace test would not catch.
+HELPDESK_TRACE_NAME_KEY = "HELPDESK_OTEL_SERVICE_NAME"
+GATEWAY_TRACE_NAME_KEY = "OPSCONSOLE_OTEL_SERVICE_NAME"
+
+#: Criterion 9's four values, by value. They read the same as the workload
+#: names, and they are written out rather than derived: the claim is that the trace viewer
+#: shows these four strings, and a comprehension over the names would assert only that two
+#: things this file computes agree.
+HELPDESK_TRACE_NAMES: dict[str, str] = {
+    HELPDESK_AGENT_API: "helpdesk-agent-api",
+    HELPDESK_MCP_SERVER: "helpdesk-mcp-server",
+    HELPDESK_SCHEDULER: "helpdesk-scheduler",
+    HELPDESK_WEB: "helpdesk-web",
+}
+
+#: Criterion 8 and decision E: configuration arrives as two whole objects, the same shape
+#: decision E gave the gateway. `helpdesk-secrets` is NAMED here and supplied nowhere in this
+#: repo (criterion 10), so an apply made before it exists fails loudly rather than starting a
+#: pod with no gateway key.
+HELPDESK_ENV_FROM_SOURCES: dict[str, str] = {
+    "configMapRef": HELPDESK_CONFIG_MAP,
+    "secretRef": HELPDESK_SECRET,
+}
+
+#: Criterion 11 and decision D: the companion repo's registry namespace and the same honest
+#: placeholder tag the gateway carries. Each workload's repository is that prefix plus its own
+#: name, so an `images:` entry pointing two workloads at one image is visible.
+HELPDESK_IMAGE_REPOSITORY_PREFIX = "ghcr.io/developermusa/ai-helpdesk-governed-access"
+HELPDESK_IMAGE_TAG = "0.0.0-unbuilt"
+
+#: Criterion 12: the two labels the ROOT kustomization stamps on every object's
+#: `metadata.labels`. Its `labels:` block carries `includeSelectors: false`, so neither may
+#: reach a `matchLabels` or a Service selector - a label that reaches a selector is immutable
+#: after the first apply, and changing one then means deleting the Deployment.
+KUSTOMIZE_WIDE_LABELS = frozenset({"app.kubernetes.io/part-of", "app.kubernetes.io/managed-by"})
+
+#: Decision E, row 21 and row 20f criterion 10: the only Secret names anything in the build may
+#: reference. `helpdesk-secrets` joins the three row 21 owes - it is the gateway API key the
+#: Helpdesk calls with, its database URL and the Langfuse pair, supplied SOPS-encrypted and
+#: never here. The emitted-Secret half of the same case is build-wide and stays that way.
+PINNED_SECRET_NAMES = frozenset(
+    {"postgres-credentials", "traefik-basic-auth", GATEWAY_SECRET, HELPDESK_SECRET}
+)
 
 #: Criterion 9's file scan, first shape: a credential KEY with a scalar value on the same line.
 #: Anchored on the key, so `passwordSecretRef:` and a `secretRef:` reference do not match, and
@@ -892,6 +1056,40 @@ def priced_keys() -> dict[str, Any]:
     return prices
 
 
+def helpdesk_pod_owner(documents: list[dict[str, Any]], workload_name: str) -> dict[str, Any]:
+    """The Helpdesk Deployment named `workload_name`, selected by name and namespace and
+    asserted to own a pod - four near-identical workloads are exactly where one file copied
+    from another loses its `spec.template`."""
+    owner = sole_object(documents, "Deployment", workload_name)
+    assert owner in pod_owners(documents), f"{workload_name} carries no pod template"
+    return owner
+
+
+def envelope_totals(reserve: dict[str, str | int]) -> dict[str, int]:
+    """One reserve row, multiplied out the way `reserve_totals` multiplies the ones still
+    held: memory in bytes, CPU in whole millicores. `HELPDESK_RESERVE` is no longer summed as a
+    reserve, so the envelope case parses it here instead."""
+    pods = int(str(reserve["pods"]))
+    return {
+        "requests.memory": pods * memory_bytes(str(reserve["requests.memory"])),
+        "requests.cpu": pods * cpu_millicores(str(reserve["requests.cpu"])),
+        "limits.memory": pods * memory_bytes(str(reserve["limits.memory"])),
+    }
+
+
+def container_image_parts(container: dict[str, Any], label: str) -> tuple[str, str]:
+    """A container's image split into `(repository, tag)`, asserting it carries an explicit tag
+    and is not pinned by digest. A reference with no tag is resolved by Kubernetes as `latest`,
+    so the absence of a tag and a floating tag are one failure and this helper refuses the
+    first half of it."""
+    image = str(container.get("image", ""))
+    assert image, f"{label} declares no image"
+    assert "@" not in image, f"{label} is pinned by digest ({image}); decision D names a tag"
+    assert ":" in image.rsplit("/", 1)[-1], f"{label}'s image `{image}` carries no tag at all"
+    repository, _, tag = image.rpartition(":")
+    return repository, tag
+
+
 def llama_embed_pod_owner(documents: list[dict[str, Any]]) -> dict[str, Any]:
     """The embedding Deployment, selected by name and namespace and asserted to own a pod."""
     owner = sole_object(documents, "Deployment", LLAMA_EMBED)
@@ -1125,13 +1323,15 @@ def test_the_apps_subtotals_fit_inside_the_namespace_quota(built: list[dict[str,
     """20c's criterion 3, derived and never restated: the three sums are
     parsed off the BUILT pod templates in `apps`, multiplied by each workload's replica count -
     or by the `maxReplicas` of the HPA that scales it, read from the same build - added to the
-    two remaining named reserves, and compared to the `apps` `ResourceQuota` read from the same
-    build. Three workloads are now read off the build rather than reserved: the gateway,
+    one remaining named reserve, and compared to the `apps` `ResourceQuota` read from the same
+    build. Seven workloads are now read off the build rather than reserved: the gateway,
     llama.cpp since row 20d wrote its manifest - `LLAMA_RESERVE` left `RESERVES` in the same
     change, because a pod both summed as a reserve and read off the build is priced twice and
-    overflows a quota that is correct - and row 20e's embedding server, the one workload no
+    overflows a quota that is correct - row 20e's embedding server, the one workload no
     reserve was EVER held for (decision E), so unlike 20d's change the three sums genuinely
-    move here and the README table moves with them. All three templates are asserted present
+    move there and the README table moves with them, and row 20f's four Helpdesk workloads,
+    which `HELPDESK_RESERVE` left `RESERVES` for on the same terms. `CONSOLE_RESERVE` is the
+    only reserve left. All seven templates are asserted present
     before the sums, so a workload left out of `apps/kustomization.yaml`'s `resources` is a
     loud red here and not a build that quietly sums less and fits. Catches the arithmetic
     failing even though every individual quantity is correct: the gateway raised to fit, a
@@ -1142,8 +1342,8 @@ def test_the_apps_subtotals_fit_inside_the_namespace_quota(built: list[dict[str,
     rest and the first scale-up is rejected at admission, which is precisely the event an
     autoscaler exists to serve. Millicores as ints, because `0.15 + 0.3 + 0.1` is not `0.55` in
     binary floating point and a float comparison would redden a correct manifest. Compared with
-    `<=`: the reserves are floors on what rows 20f and 27 may take, and the headroom above them
-    is deliberate."""
+    `<=`: the reserve is a floor on what row 27 may take, and the headroom above it is
+    deliberate."""
     quotas = [
         quota for quota in objects_of_kind(built, "ResourceQuota") if namespace_of(quota) == APPS
     ]
@@ -1154,7 +1354,7 @@ def test_the_apps_subtotals_fit_inside_the_namespace_quota(built: list[dict[str,
     ceilings = scale_targets(built)
     owners = [owner for owner in pod_owners(built) if namespace_of(owner) == APPS]
     built_names = {name_of(owner) for owner in owners}
-    missing = {GATEWAY, LLAMA, LLAMA_EMBED} - built_names
+    missing = {GATEWAY, LLAMA, LLAMA_EMBED, *HELPDESK_WORKLOADS} - built_names
     assert missing == set(), (
         f"the build emits no pod template in {APPS} for {sorted(missing)}: {sorted(built_names)}"
     )
@@ -1879,3 +2079,396 @@ def test_the_embedding_model_file_reads_the_same_in_every_file_that_names_it(
         f"{PRICES.name} dropped the {LOCAL_PROVIDER}/{model_id} row that prices rows already "
         "booked under the provider name before the split"
     )
+
+
+def test_the_build_emits_every_helpdesk_object_the_plan_names(built: list[dict[str, Any]]) -> None:
+    """Row 20f criterion 1, one object at a time so the red names the object rather than a set
+    difference, plus the half no other case holds: each Service's TYPE and PORT, and the
+    `targetPort` resolved against its own workload's container ports. Catches
+    `Service/helpdesk-web` copied from `helpdesk-agent-api` and left on 8000, which is a
+    Service whose endpoints point at a socket nothing listens on - a correct Deployment, a
+    correct Service, and a connection refused at runtime that no build and no schema check
+    sees. Catches a `targetPort: http` naming a port the workload's own template never
+    declares, in both forms the field takes. Catches a `LoadBalancer` or a `NodePort`, which is
+    a Helpdesk service reachable from outside the cluster with no router in front of it
+    (decision B leaves one public surface, and row 20g's Ingress is what publishes it). The
+    cluster-scoped equality is criterion 1's second half; the set is shared with
+    `test_the_apps_directory_emits_the_objects_the_plan_names`, which is the case that owns
+    the `apps` set equality, so what is this case's own is the ports and the types."""
+    emitted = {
+        (str(document.get("kind")), name_of(document), namespace_of(document)) for document in built
+    }
+    missing = sorted(HELPDESK_OBJECTS - emitted)
+    assert missing == [], f"the build emits no {missing}"
+
+    for workload_name, expected_port in sorted(HELPDESK_CONTAINER_PORTS.items()):
+        service_spec = sole_object(built, "Service", workload_name)["spec"]
+        assert str(service_spec.get("type")) == HELPDESK_SERVICE_TYPE, (
+            f"{workload_name}'s Service is a {service_spec.get('type')}"
+        )
+        ports = service_spec.get("ports", [])
+        assert isinstance(ports, list) and len(ports) == 1, (
+            f"{workload_name}'s Service publishes {ports}"
+        )
+        assert int(ports[0]["port"]) == expected_port, (
+            f"{workload_name}'s Service publishes port {ports[0]['port']}"
+        )
+        target = ports[0].get("targetPort", ports[0]["port"])
+        container = sole_container(helpdesk_pod_owner(built, workload_name))
+        assert resolved_container_port(target, container) == expected_port, (
+            f"{workload_name}'s Service targets {target}, which resolves to "
+            f"{resolved_container_port(target, container)} against its own container ports "
+            f"{container.get('ports')}"
+        )
+
+    cluster_scoped = {
+        (str(document.get("kind")), name_of(document))
+        for document in built
+        if namespace_of(document) is None and str(document.get("kind")) not in BASE_KINDS
+    }
+    assert cluster_scoped == CLUSTER_SCOPED_OBJECTS, (
+        f"cluster-scoped objects changed: {sorted(cluster_scoped ^ CLUSTER_SCOPED_OBJECTS)}"
+    )
+
+
+def test_the_scheduler_has_no_service(built: list[dict[str, Any]]) -> None:
+    """Criterion 2, by NAME absence across every Service in `apps`, with the three serving
+    Services asserted present first so the case cannot pass vacuously over a namespace that
+    holds no Helpdesk at all - the trap an absence assertion falls into on the day the
+    manifests do not exist yet. Catches the fourth Service a copy-paste of the three produces:
+    the scheduler holds a Redis leader lock and serves nothing, so a Service in front of it is
+    a cluster address with no listener behind it, published to every pod in the cluster and
+    silently failing whatever later dials it."""
+    services = in_apps(built, "Service")
+    absent = [name for name in HELPDESK_SERVING if name not in services]
+    assert absent == [], f"the build emits no Service for {absent}: {sorted(services)}"
+    assert HELPDESK_SCHEDULER not in services, (
+        f"the build emits Service/{HELPDESK_SCHEDULER}, which fronts a process that listens on "
+        "nothing"
+    )
+
+
+@pytest.mark.parametrize(("workload_name", "expected"), sorted(HELPDESK_RESOURCES.items()))
+def test_each_helpdesk_workload_declares_the_quantities_the_budget_prices(
+    workload_name: str, expected: dict[str, str], built: list[dict[str, Any]]
+) -> None:
+    """Criterion 3's per-pod row, by VALUE rather than by presence, because the subtotals and
+    the envelope cases both pass for any set of numbers that happens to add up. Catches a row
+    written as `256M` where decision A's table says `256Mi` - a 7% difference the API server
+    does not treat as equal, and the direction that gets a Next.js server OOM-killed - and
+    catches one workload given its neighbour's quantities, which four near-identical Deployments
+    in one file invite. Catches `limits.cpu` appearing on any of the four: equality on the whole
+    flattened mapping is what keeps it absent, and a CPU limit throttles the agent-api's tail
+    latency rather than protecting the node."""
+    quantities = resource_quantities(sole_container(helpdesk_pod_owner(built, workload_name)))
+    assert quantities == expected, f"{workload_name} declares {quantities}"
+
+
+def test_the_four_helpdesk_pods_fit_the_envelope_the_reserve_held(
+    built: list[dict[str, Any]],
+) -> None:
+    """Criterion 4, as an EQUALITY between the four BUILT templates and `HELPDESK_RESERVE`
+    multiplied out - the envelope the apps budget held for three pods before this row divided
+    it across four. The totals themselves are never written here: both sides
+    are derived. Catches decision A being abandoned quietly - a workload raised from 128Mi to
+    192Mi because it looked tight, which still fits the quota today and takes the headroom row
+    27's console has to land in - and catches it in the other direction too, a row shaved so the
+    README table and the manifests no longer describe the same cluster. An HPA over any of the
+    four would make this sum a floor rather than the cost, so the absence of one is asserted
+    here: the quota admits pods at their ceiling, not at `spec.replicas`."""
+    scaled = [
+        key for key in scale_targets(built) if key[1] in HELPDESK_WORKLOADS and key[2] == APPS
+    ]
+    assert scaled == [], f"an HPA scales {scaled}, so these four cost more than one pod each"
+
+    totals = {"requests.memory": 0, "requests.cpu": 0, "limits.memory": 0}
+    for workload_name in HELPDESK_WORKLOADS:
+        owner = helpdesk_pod_owner(built, workload_name)
+        pods = replicas_of(owner)
+        for container in all_containers(owner):
+            quantities = resource_quantities(container)
+            totals["requests.memory"] += pods * memory_bytes(quantities["requests.memory"])
+            totals["requests.cpu"] += pods * cpu_millicores(quantities["requests.cpu"])
+            totals["limits.memory"] += pods * memory_bytes(quantities["limits.memory"])
+
+    envelope = envelope_totals(HELPDESK_RESERVE)
+    assert totals == envelope, (
+        f"the four Helpdesk pods cost {totals} against the envelope {envelope} the apps budget "
+        "still prices them at"
+    )
+
+
+def test_each_serving_helpdesk_workload_probes_readyz_and_healthz(
+    built: list[dict[str, Any]],
+) -> None:
+    """Criterion 6, on the three workloads that serve. Catches the two paths SWAPPED, which is
+    the failure `gateway.yaml` records beside the same pair and the one a reader skims past:
+    `/readyz` as the liveness probe restarts the pod every time Redis blips, and `/healthz` as
+    the readiness probe sends traffic to a process with no database. Catches a readiness probe
+    with no liveness probe (a wedged process nothing restarts) and the reverse. Catches a probe
+    port copied from a neighbour - 8080 on a container that listens on 3000, or the name `http`
+    on a template that never declares it - which is a probe that never succeeds, so the pod
+    either never becomes ready or is restarted forever; both forms are resolved against the
+    workload's OWN declared ports, an int against `containerPort` and a string against the
+    port's name."""
+    for workload_name in HELPDESK_SERVING:
+        container = sole_container(helpdesk_pod_owner(built, workload_name))
+        expected_port = HELPDESK_CONTAINER_PORTS[workload_name]
+        declared = container.get("ports", [])
+        assert isinstance(declared, list) and declared, f"{workload_name} declares no ports"
+        numbers = {int(port["containerPort"]) for port in declared if "containerPort" in port}
+        names = {str(port["name"]) for port in declared if port.get("name")}
+        assert numbers == {expected_port}, f"{workload_name} listens on {sorted(numbers)}"
+        assert CONTAINER_PORT_NAME in names, f"{workload_name}'s ports are named {sorted(names)}"
+
+        for probe_key, path in (
+            ("readinessProbe", READINESS_PATH),
+            ("livenessProbe", LIVENESS_PATH),
+        ):
+            probe = container.get(probe_key)
+            assert isinstance(probe, dict), f"{workload_name} declares no {probe_key}"
+            request = probe.get("httpGet", {})
+            assert isinstance(request, dict), f"{workload_name}'s {probe_key} is {probe}"
+            assert str(request.get("path")) == path, (
+                f"{workload_name}'s {probe_key} polls {request.get('path')}"
+            )
+            resolved = resolved_container_port(request.get("port", ""), container)
+            assert resolved == expected_port, (
+                f"{workload_name}'s {probe_key} polls port {request.get('port')}, which resolves "
+                f"to {resolved} against its own ports {declared}"
+            )
+
+
+def test_the_scheduler_runs_one_replica_recreate_with_no_ports_and_no_probes(
+    built: list[dict[str, Any]],
+) -> None:
+    """Criterion 7 and decision F, all four halves asserted positively so the omissions read as
+    a decision rather than as an oversight. Catches `replicas: 2` or a `RollingUpdate` strategy,
+    which are the two ways two schedulers run at once - `RollingUpdate` starts the new pod
+    before the old one stops, and the Redis leader lock the design names is a safety net for a
+    brief overlap, not a licence to schedule one on every deploy. Catches a probe copied in
+    from one of the three serving workloads: an HTTP probe against a process that binds no port
+    fails every time, so a liveness probe here is a CrashLoopBackOff on a healthy scheduler and
+    a readiness probe is a pod that never reports ready. Catches a `ports` block copied with
+    it, which is what a Service in front of it would then look justified by."""
+    owner = helpdesk_pod_owner(built, HELPDESK_SCHEDULER)
+    assert replicas_of(owner) == HELPDESK_SCHEDULER_REPLICAS, (
+        f"{HELPDESK_SCHEDULER} runs {replicas_of(owner)} replicas"
+    )
+    strategy = owner["spec"].get("strategy", {})
+    assert isinstance(strategy, dict), f"{HELPDESK_SCHEDULER} declares strategy {strategy}"
+    assert str(strategy.get("type")) == HELPDESK_SCHEDULER_STRATEGY, (
+        f"{HELPDESK_SCHEDULER} rolls out with {strategy.get('type')}"
+    )
+
+    container = sole_container(owner)
+    assert container.get("ports", []) == [], f"{HELPDESK_SCHEDULER} declares {container['ports']}"
+    probes = [key for key in PROBE_KEYS if key in container]
+    assert probes == [], f"{HELPDESK_SCHEDULER} declares {probes} against a process with no port"
+
+
+def test_the_helpdesk_config_carries_only_fully_qualified_in_cluster_addresses(
+    built: list[dict[str, Any]],
+) -> None:
+    """Criterion 8. The whole `data` mapping by equality, so a key added without agreement is as
+    visible as one missing, and every URL value's HOST checked against `.svc.cluster.local` -
+    catches a bare `redis:6379` or a `localhost` carried over from a compose file, which these
+    pods cannot resolve at all: they run in `apps` and two of the three addresses live in
+    `platform`, so the failure is a connection error at startup rather than anything a build
+    reports. Catches the gateway address written without `/v1`, which is an OpenAI-compatible
+    client 404ing on every call. Catches the Redis database index left at the gateway's `0`,
+    which is one Redis shared by two repos with no partition: a `FLUSHDB` from either takes out
+    the other's state, and nothing about that looks wrong until it happens. The gateway's index
+    is read off ITS built ConfigMap rather than written down here, so the claim is that the two
+    differ rather than that either is a number this file remembers."""
+    raw = sole_object(built, "ConfigMap", HELPDESK_CONFIG_MAP).get("data", {})
+    assert isinstance(raw, dict), f"{HELPDESK_CONFIG_MAP} carries no data mapping"
+    data = {str(key): str(value) for key, value in raw.items()}
+    assert data == HELPDESK_CONFIG, f"{HELPDESK_CONFIG_MAP} carries {data}"
+
+    external = {
+        key: value
+        for key, value in data.items()
+        if "://" in value and not (urlsplit(value).hostname or "").endswith(IN_CLUSTER_SUFFIX)
+    }
+    assert external == {}, (
+        f"{HELPDESK_CONFIG_MAP} names addresses no pod in {APPS} resolves: {external}"
+    )
+
+    assert urlsplit(data[HELPDESK_REDIS_URL_KEY]).path == HELPDESK_REDIS_DATABASE_PATH, (
+        f"the Helpdesk reads Redis database {urlsplit(data[HELPDESK_REDIS_URL_KEY]).path}"
+    )
+    gateway_raw = sole_object(built, "ConfigMap", GATEWAY_CONFIG_MAP).get("data", {})
+    gateway_redis = str(gateway_raw[GATEWAY_REDIS_URL_KEY])
+    assert urlsplit(gateway_redis).path != HELPDESK_REDIS_DATABASE_PATH, (
+        f"the gateway reads the same Redis database as the Helpdesk ({gateway_redis})"
+    )
+
+
+def test_each_helpdesk_workload_carries_its_own_trace_service_name(
+    built: list[dict[str, Any]],
+) -> None:
+    """Criterion 9. Catches the convenient version of this variable: one
+    `HELPDESK_OTEL_SERVICE_NAME` in the shared ConfigMap, which gives all four pods one name and
+    collapses them into a single service in the trace viewer - every span correctly recorded,
+    the trace correctly propagated, and no way to tell the scheduler's work from the web's. That
+    is the failure a tracing test cannot see, because the spans are all there. Catches two of
+    the four given the same value by a copy, and catches any of them given the gateway's
+    `opsconsole-gateway`, which #44 and #67 need distinguishable because one trace carries spans
+    from both repos. The gateway's name is read off its built ConfigMap, so the five-way
+    distinctness is a claim about the build and not about this file's memory."""
+    raw = sole_object(built, "ConfigMap", HELPDESK_CONFIG_MAP).get("data", {})
+    assert isinstance(raw, dict), f"{HELPDESK_CONFIG_MAP} carries no data mapping"
+    assert HELPDESK_TRACE_NAME_KEY not in raw, (
+        f"{HELPDESK_CONFIG_MAP} sets {HELPDESK_TRACE_NAME_KEY}, so all four pods share one name"
+    )
+
+    names: dict[str, str] = {}
+    for workload_name in HELPDESK_WORKLOADS:
+        container = sole_container(helpdesk_pod_owner(built, workload_name))
+        environment = {
+            str(entry["name"]): str(entry.get("value", ""))
+            for entry in container.get("env", [])
+            if isinstance(entry, dict) and "name" in entry
+        }
+        assert HELPDESK_TRACE_NAME_KEY in environment, (
+            f"{workload_name} sets {sorted(environment)} and not {HELPDESK_TRACE_NAME_KEY}"
+        )
+        assert environment[HELPDESK_TRACE_NAME_KEY] == HELPDESK_TRACE_NAMES[workload_name], (
+            f"{workload_name} traces as {environment[HELPDESK_TRACE_NAME_KEY]}"
+        )
+        names[workload_name] = environment[HELPDESK_TRACE_NAME_KEY]
+
+    gateway_raw = sole_object(built, "ConfigMap", GATEWAY_CONFIG_MAP).get("data", {})
+    gateway_name = str(gateway_raw[GATEWAY_TRACE_NAME_KEY])
+    distinct = set(names.values()) | {gateway_name}
+    assert len(distinct) == len(names) + 1, (
+        f"the build traces {sorted(names.values())} and the gateway as {gateway_name}, which is "
+        f"{len(distinct)} distinct services rather than {len(names) + 1}"
+    )
+
+
+def test_every_helpdesk_workload_reads_the_secret_this_repo_does_not_supply(
+    built: list[dict[str, Any]],
+) -> None:
+    """Criterion 10 and decision E's two-whole-objects shape, on all four Deployments. Catches
+    `secretRef` dropped from one of them while the other three keep it - the scheduler is the
+    likely one, since it looks like the workload with nothing to call - which is a process that
+    starts, finds no gateway key and fails on its first request rather than at admission.
+    Catches the configMapRef dropped the same way, and catches a third source nobody agreed to.
+    The second half catches the convenient repair of an apply that fails on a missing Secret: a
+    placeholder `Secret/helpdesk-secrets` committed here, which is a project rule broken in git
+    forever and an apply that never mentions the omission again."""
+    for workload_name in HELPDESK_WORKLOADS:
+        container = sole_container(helpdesk_pod_owner(built, workload_name))
+        sources = {
+            key: str(entry[key].get("name", ""))
+            for entry in container.get("envFrom", [])
+            for key in entry
+            if isinstance(entry.get(key), dict)
+        }
+        assert sources == HELPDESK_ENV_FROM_SOURCES, (
+            f"{workload_name} takes its environment from {sources}"
+        )
+
+    supplied = [name_of(document) for document in objects_of_kind(built, "Secret")]
+    assert HELPDESK_SECRET not in supplied, (
+        f"the build emits {HELPDESK_SECRET}, which is credentials in git rather than an apply "
+        "that fails loudly until they are supplied out of band"
+    )
+
+
+def test_no_image_in_the_build_carries_a_floating_tag(built: list[dict[str, Any]]) -> None:
+    """Criterion 11 and decision D, build-wide over every container of every pod template in
+    every namespace, `initContainers` included. Catches a reference with no tag at all, which
+    Kubernetes resolves as `latest`; catches `latest` or `main` written out - a cluster whose
+    running code no commit names, and a rollout that changes meaning with no diff to show for
+    it. llama.cpp's pinned `server-b10902` is not a floating tag and is unaffected: the refusal
+    is the two spellings in `FLOATING_TAGS`, not any tag with a word in it. The second half
+    catches the Helpdesk half of an `images:` block that silently did nothing: kustomize accepts
+    an entry whose `name:` matches no container, so a typo leaves the bare `helpdesk-web` in the
+    stream, and it catches two workloads pointed at one repository, which is a Deployment
+    running another service's code."""
+    owners = pod_owners(built)
+    assert owners, "the build emits no pod templates at all"
+    floating: list[str] = []
+    for owner in owners:
+        label = f"{owner.get('kind')}/{name_of(owner)}"
+        for container in all_containers(owner):
+            where = f"{label}:{container.get('name')}"
+            _, tag = container_image_parts(container, where)
+            if tag in FLOATING_TAGS:
+                floating.append(f"{where} runs `{tag}`")
+    assert floating == [], f"floating tags in the build: {floating}"
+
+    for workload_name in HELPDESK_WORKLOADS:
+        container = sole_container(helpdesk_pod_owner(built, workload_name))
+        repository, tag = container_image_parts(container, workload_name)
+        assert repository == f"{HELPDESK_IMAGE_REPOSITORY_PREFIX}/{workload_name}", (
+            f"{workload_name} runs from `{repository}`"
+        )
+        assert tag == HELPDESK_IMAGE_TAG, f"{workload_name} is tagged `{tag}`"
+
+
+def test_no_helpdesk_selector_carries_a_kustomize_wide_label(built: list[dict[str, Any]]) -> None:
+    """Criterion 12. The root kustomization's `labels:` block carries `includeSelectors: false`
+    precisely so `app.kubernetes.io/part-of` and `app.kubernetes.io/managed-by` reach
+    `metadata.labels` and nothing else; a workload that writes either into its OWN
+    `spec.selector.matchLabels` undoes that per object, and a label in a selector is immutable
+    after the first apply - changing it later means deleting the Deployment. Catches that, by
+    equality on the whole selector rather than by the absence of two names, which also catches
+    the other half of §2's kustomize mechanic: `app.kubernetes.io/name` omitted from a pod
+    template or written with a neighbour's value, which is a Deployment rolling out zero
+    matching pods while reporting nothing wrong, and a Service selecting another Helpdesk
+    workload's pods entirely."""
+    for workload_name in HELPDESK_WORKLOADS:
+        owner = helpdesk_pod_owner(built, workload_name)
+        declared = owner["spec"]["selector"]["matchLabels"]
+        assert isinstance(declared, dict) and declared, f"{workload_name} selects nothing"
+        match_labels = {str(key): str(value) for key, value in declared.items()}
+        reached = sorted(KUSTOMIZE_WIDE_LABELS & set(match_labels))
+        assert reached == [], f"{workload_name}'s selector carries {reached}, immutable on apply"
+        assert match_labels == {SELECTOR_LABEL: workload_name}, (
+            f"{workload_name} selects {match_labels}"
+        )
+        labels = template_labels(owner)
+        assert labels.get(SELECTOR_LABEL) == workload_name, (
+            f"{workload_name}'s pod template is labelled {labels}"
+        )
+
+    for workload_name in HELPDESK_SERVING:
+        declared = sole_object(built, "Service", workload_name)["spec"].get("selector", {})
+        assert isinstance(declared, dict) and declared, f"{workload_name}'s Service selects nothing"
+        selector = {str(key): str(value) for key, value in declared.items()}
+        reached = sorted(KUSTOMIZE_WIDE_LABELS & set(selector))
+        assert reached == [], f"{workload_name}'s Service selector carries {reached}"
+        assert selector == {SELECTOR_LABEL: workload_name}, (
+            f"{workload_name}'s Service selects {selector}"
+        )
+
+
+def test_no_helpdesk_workload_has_a_disruption_budget(built: list[dict[str, Any]]) -> None:
+    """Criterion 13, as absence, with the four templates read first so the case cannot pass
+    vacuously over a namespace that holds no Helpdesk yet. Catches a PDB copied from the
+    gateway's onto a single-replica workload: `minAvailable: 1` against one replica blocks a
+    node drain forever, and on this one-node cluster that is every drain there is - an upgrade
+    that hangs with nothing reporting an error. The gateway's own PDB is legitimate because it
+    runs two replicas, so the check is not "no PDB in `apps`" but "no PDB SELECTS a Helpdesk
+    pod": a budget named something else whose `matchLabels` match one of these templates is the
+    same outage, and a name-only check would walk past it."""
+    owners = {name: helpdesk_pod_owner(built, name) for name in HELPDESK_WORKLOADS}
+    budgets = in_apps(built, "PodDisruptionBudget")
+
+    named = sorted(set(budgets) & set(HELPDESK_WORKLOADS))
+    assert named == [], f"the build emits PodDisruptionBudgets for {named}"
+
+    selecting: list[str] = []
+    for budget_name, budget in sorted(budgets.items()):
+        declared = budget["spec"]["selector"]["matchLabels"]
+        assert isinstance(declared, dict) and declared, f"{budget_name} selects nothing"
+        match_labels = {str(key): str(value) for key, value in declared.items()}
+        for workload_name, owner in owners.items():
+            labels = template_labels(owner)
+            if all(labels.get(key) == value for key, value in match_labels.items()):
+                selecting.append(f"{budget_name} selects {workload_name}")
+    assert selecting == [], f"disruption budgets over single-replica Helpdesk pods: {selecting}"
