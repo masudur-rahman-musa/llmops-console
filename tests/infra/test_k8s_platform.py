@@ -58,7 +58,10 @@ BASE_KINDS = frozenset({"Namespace", "ResourceQuota", "LimitRange"})
 
 #: Criterion 1, as `(kind, name, namespace)`. `None` is a cluster-scoped object. Set EQUALITY:
 #: a file left out of `platform/kustomization.yaml`'s `resources` and an object nobody agreed
-#: to are the same failure, and only equality sees both.
+#: to are the same failure, and only equality sees both. Scoped to what `platform/` puts in
+#: the build - its own namespace plus the two cluster-scoped issuers - rather than to
+#: "everything that is not a base kind", which was the same set only while `platform/` was the
+#: last directory in the root's `resources`.
 PLATFORM_OBJECTS: frozenset[tuple[str, str, str | None]] = frozenset(
     {
         ("StatefulSet", "postgres", PLATFORM),
@@ -149,10 +152,13 @@ ISSUERS = {
 ACME_EMAIL = "ops@example.com"
 ACME_SOLVERS = [{"http01": {"ingress": {"class": "traefik"}}}]
 
-#: Decision D: the only two Secret names anything in the build may reference. Row 21 supplies
-#: both SOPS-encrypted; until then an apply fails loudly on a missing Secret, which is the
-#: intended direction.
-PINNED_SECRET_NAMES = frozenset({"postgres-credentials", BASIC_AUTH_SECRET})
+#: Decision D: the only Secret names anything in the build may reference, checked build-wide
+#: on purpose - "no Secret is emitted anywhere" is the claim worth keeping whole. All three are
+#: supplied SOPS-encrypted before the first apply; until then an apply fails loudly on a
+#: missing Secret, which is the intended direction. The TLS secrets the Ingresses name are
+#: cert-manager's to write, so they are excluded where that comparison is made
+#: (`tests/infra/test_k8s_apps.py`) rather than added here.
+PINNED_SECRET_NAMES = frozenset({"postgres-credentials", BASIC_AUTH_SECRET, "gateway-secrets"})
 
 #: Criterion 9's file scan, first shape: a credential KEY with a scalar value on the same
 #: line. Anchored on the key, so `passwordSecretRef:` and a `secretRef:` reference do not
@@ -364,6 +370,17 @@ def secret_references(value: object, found: set[str]) -> set[str]:
     return found
 
 
+def tls_secret_names(documents: list[dict[str, Any]]) -> set[str]:
+    """Every `spec.tls[].secretName` the built Ingresses name. cert-manager WRITES these, so
+    they are not names anyone supplies and they cannot sit inside `PINNED_SECRET_NAMES`."""
+    names: set[str] = set()
+    for ingress in objects_of_kind(documents, "Ingress"):
+        for entry in ingress.get("spec", {}).get("tls", []):
+            if isinstance(entry, dict) and entry.get("secretName"):
+                names.add(str(entry["secretName"]))
+    return names
+
+
 def inline_credentials(label: str, lines: list[str]) -> list[str]:
     """Every line of a manifest that writes a credential VALUE, in both shapes it takes: a
     credential key with a scalar on the same line, and an `env` entry whose `name` is a
@@ -397,13 +414,17 @@ def test_the_platform_directory_emits_the_objects_the_plan_names(
     personal data at rest), catches a Service written without its workload or vice versa, and
     catches a middleware or an issuer given a namespace it should not have: a namespaced
     `ClusterIssuer` is silently ignored by cert-manager, and a `platform` middleware moved to
-    `default` is a 20c Ingress referencing nothing. The 20a kinds are excluded rather than
+    `default` is an Ingress referencing nothing. The base kinds are excluded rather than
     enumerated alongside, so this case cannot pass or fail on anything `test_k8s_base.py`
-    already owns."""
+    already owns; the namespace filter is what keeps it from failing on objects a LATER
+    directory adds, which is a claim this case never made - `tests/infra/test_k8s_apps.py`
+    asserts the same equality over `apps`, and the cluster-scoped half stays here because a
+    `ClusterIssuer` belongs to no namespace at all."""
     added = {
         (str(document.get("kind")), name_of(document), namespace_of(document))
         for document in built
         if str(document.get("kind")) not in BASE_KINDS
+        and namespace_of(document) in (PLATFORM, None)
     }
     assert added == PLATFORM_OBJECTS, (
         f"unexpected: {sorted(added - PLATFORM_OBJECTS)}; "
@@ -682,12 +703,17 @@ def test_no_secret_is_emitted_and_no_credential_is_written_inline(
     built: list[dict[str, Any]],
 ) -> None:
     """Criterion 9 and decision D, in both halves the decision names. The build half: no
-    `Secret` kind at all, and every Secret NAME the stream references is one of the two row 21
-    owes - catches the convenient repair of the apply failing on a missing Secret, which is a
-    placeholder `Secret` with a password in git that nothing ever fails to mention again, and
-    catches a reference to a third Secret nobody has agreed to supply. The file half is a scan
-    of what is WRITTEN under `platform/`, not of what is built: a literal that a later patch
-    strips out of the output is still in the history, and a project rule is about the repo. The
+    `Secret` kind at all, and every Secret NAME the stream references is one of the three
+    supplied SOPS-encrypted - catches the convenient repair of the apply failing on a
+    missing Secret, which is a placeholder `Secret` with a password in git that nothing ever
+    fails to mention again, and catches a reference to a Secret nobody has agreed to supply.
+    An Ingress's `tls[].secretName` is subtracted first: cert-manager WRITES those, so they
+    are not names anyone supplies, and the check that still bites on them - that they are
+    disjoint from the supplied three, or a certificate lands on top of the provider keys -
+    is asserted in `tests/infra/test_k8s_apps.py` beside the Ingresses that name them.
+    The file half is a scan of what is WRITTEN under `platform/`, not of what is built: a
+    literal that a later patch strips out of the output is still in the history, and hard
+    rule 5 is about the repo. The
     scan asserts the directory exists first, so a missing `platform/` is a loud red and not a
     vacuous pass over zero files - the trap this whole case would otherwise fall into. It
     reads BOTH shapes a written credential takes: `password: hunter2` on one line, and the
@@ -697,10 +723,11 @@ def test_no_secret_is_emitted_and_no_credential_is_written_inline(
     emitted = objects_of_kind(built, "Secret")
     assert emitted == [], f"the build emits Secrets: {[name_of(document) for document in emitted]}"
 
-    referenced = {name for name in secret_references(built, set()) if name}
+    referenced = {name for name in secret_references(built, set()) if name} - tls_secret_names(
+        built
+    )
     assert referenced <= PINNED_SECRET_NAMES, (
-        f"the build references {sorted(referenced - PINNED_SECRET_NAMES)}, which row 21 does "
-        "not supply"
+        f"the build references {sorted(referenced - PINNED_SECRET_NAMES)}, which nothing supplies"
     )
 
     assert PLATFORM_DIR.is_dir(), f"{PLATFORM_DIR} does not exist, so this scan reads no files"

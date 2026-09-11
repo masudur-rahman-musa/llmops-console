@@ -1,0 +1,87 @@
+# The two public routers for `api.example.com`, split because a Traefik
+# middleware annotation is per INGRESS and not per path. One Ingress cannot
+# exempt `/healthz` from basic auth, and `/healthz` behind a 401 is an uptime
+# monitor reporting an outage that is not happening.
+#
+# So: `/` carries basic auth, rate limiting and the security headers, and
+# `/healthz` carries the last two only. `/metrics` and `/admin/*` fall under `/`
+# and are therefore behind basic auth from the public side; nothing in-cluster
+# reaches the gateway through the Ingress at all.
+#
+# The host comes from `infra/terraform/hetzner/variables.tf`, which publishes
+# `api`, `console`, `helpdesk` and `grafana` as A records. a design note keeps every
+# one of them proxy-off, which is what lets the HTTP-01 solver answer at all.
+#
+# Each Ingress names its OWN `tls.secretName`. cert-manager's ingress-shim
+# creates one `Certificate` per `secretName` and owns it through the Ingress
+# that asked, so pointing both at one Secret would be two Ingresses claiming one
+# certificate. Two orders for one host is well inside Let's Encrypt's per-domain
+# allowance, and the `letsencrypt-staging` issuer is where the rehearsal goes
+# before either of these is applied for the first time.
+#
+# Neither Secret below is one this repo supplies: cert-manager WRITES them,
+# which is why they are named nowhere in the README's Secret table.
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gateway
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: gateway
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # Namespace-qualified because Traefik resolves a CRD middleware as
+    # `<namespace>-<name>@kubernetescrd`; these three are the copies in `apps`
+    #, never `platform-`.
+    traefik.ingress.kubernetes.io/router.middlewares: >-
+      apps-basic-auth@kubernetescrd,apps-rate-limit@kubernetescrd,apps-security-headers@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - api.example.com
+      secretName: gateway-tls
+  rules:
+    - host: api.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port:
+                  name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gateway-healthz
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: gateway
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.middlewares: >-
+      apps-rate-limit@kubernetescrd,apps-security-headers@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - api.example.com
+      secretName: gateway-healthz-tls
+  rules:
+    - host: api.example.com
+      http:
+        paths:
+          # `Exact`, not `Prefix`: Traefik orders routers by rule length, so an
+          # exact `/healthz` wins over the other Ingress's `PathPrefix(/)` and
+          # nothing else falls out from behind basic auth.
+          - path: /healthz
+            pathType: Exact
+            backend:
+              service:
+                name: gateway
+                port:
+                  name: http

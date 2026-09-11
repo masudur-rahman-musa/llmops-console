@@ -74,7 +74,7 @@ COMMON_LABELS = {
 #: from every row ON PURPOSE - see `FORBIDDEN_QUOTA_KEYS`.
 QUOTAS: dict[str, dict[str, str]] = {
     "platform": {"requests.memory": "2Gi", "requests.cpu": "800m", "limits.memory": "3Gi"},
-    "apps": {"requests.memory": "3Gi", "requests.cpu": "1500m", "limits.memory": "5Gi"},
+    "apps": {"requests.memory": "3Gi", "requests.cpu": "1500m", "limits.memory": "7Gi"},
     "evals": {"requests.memory": "512Mi", "requests.cpu": "300m", "limits.memory": "1Gi"},
     "monitoring": {"requests.memory": "512Mi", "requests.cpu": "400m", "limits.memory": "1Gi"},
 }

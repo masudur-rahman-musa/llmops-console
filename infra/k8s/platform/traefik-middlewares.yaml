@@ -1,17 +1,18 @@
-# The three middlewares 20c's Ingresses reference. `traefik.io/v1alpha1` is
+# The three middlewares every public router applies. `traefik.io/v1alpha1` is
 # Traefik v3's group, which is what k3s v1.31.5+k3s1 ships - the older
 # `traefik.containo.us/v1alpha1` is v2's and is not served by this cluster.
 #
-# They live in `platform` with the rest of the shared infrastructure. 20c's
-# Ingresses are in `apps` and reference them as
-# `platform-<name>@kubernetescrd`; Traefik v3's CRD provider defaults
-# `allowCrossNamespace` to false, so if that reference is refused the fallback
-# is a second copy of this file under `apps/`. The first real deploy is what
-# says, and nothing in this repo can say it sooner.
+# These are the originals, and they are what every copy is compared against.
+# A `Middleware` is namespaced, and Traefik v3's CRD provider defaults
+# `allowCrossNamespace` to false - it also treats a reference it cannot resolve
+# as NO middleware rather than as an error, which on a router carrying basic
+# auth is unauthenticated traffic with nothing saying so. So each namespace that
+# routes public traffic carries its own copy instead of reaching in here, and a
+# test pins every copy against the `spec` below field-for-field.
 #
-# `basic-auth` names a Secret this repo never writes (decision D): row 21
-# supplies `traefik-basic-auth` SOPS-encrypted, with the htpasswd lines under
-# the key `users`.
+# `basic-auth` names a Secret this repo never writes: `traefik-basic-auth` is
+# supplied SOPS-encrypted, with the htpasswd lines under the key `users`, once
+# per namespace holding a copy.
 ---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware

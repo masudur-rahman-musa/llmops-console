@@ -5,7 +5,7 @@
 #
 # Both issuers ship (decision F). Let's Encrypt's production rate limits are
 # real and a first HTTP-01 attempt against a misconfigured Ingress burns them,
-# so `letsencrypt-staging` exists for the rehearsal and 20c's Ingresses name
+# so `letsencrypt-staging` exists for the rehearsal and the public Ingresses name
 # `letsencrypt-prod`. Separate `privateKeySecretRef` names because they are
 # separate ACME accounts: sharing one would let whichever issuer reconciles
 # first decide the account both then use.

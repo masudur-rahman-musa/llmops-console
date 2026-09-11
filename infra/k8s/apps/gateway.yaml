@@ -1,0 +1,156 @@
+# The gateway: the one workload in `apps` that serves public traffic, and so
+# far the only one here. llama.cpp, the Helpdesk services and the console are
+# still to land; the budget table in `../README.md` holds all three as named
+# reserves, so this namespace's quota already fits them.
+#
+# Two replicas at rest with an HPA to three. The `apps` quota is
+# sized against the CEILING rather than the floor: a quota that only fits
+# `spec.replicas` admits the cluster happily at rest and rejects the first
+# scale-up at admission, which is the one event an autoscaler exists to serve.
+# The PDB's `minAvailable: 1` is what lets a drain proceed at all on a
+# single-node cluster - `minAvailable: 2` against two replicas blocks it
+# forever.
+#
+# The image is set by `kustomization.yaml`'s `images:` transformer, not here.
+# `0.0.0-unbuilt` is honest: no image has been pushed yet, and the deploy that
+# publishes one sets its SHA with `kustomize edit set image`. A floating
+# `latest` or `main` here would be a cluster whose running code no commit names.
+#
+# Configuration arrives as two whole objects by `envFrom`: the `ConfigMap`
+# below, which is a property of the cluster and readable by anyone with
+# `kubectl get`, and `gateway-secrets`, which this file only NAMES - it is
+# supplied SOPS-encrypted and carries the database URL, the provider keys
+# `routing.yaml` reads by `key_env`, the Langfuse pair and the tenant key
+# digests. Adding a variable is then a change to one of two objects and never
+# to this Deployment.
+#
+# `app.kubernetes.io/name` is written here three times - on the selector, on the
+# pod template and on the Service - because the root kustomization's `labels:`
+# block carries `includeSelectors: false` and reaches none of them.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-config
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: gateway
+data:
+  # In-cluster addresses, fully qualified: the gateway is in `apps` and the
+  # three data services are in `platform`, so a bare `redis` would not resolve.
+  OPSCONSOLE_REDIS_URL: redis://redis.platform.svc.cluster.local:6379/0
+  OPSCONSOLE_QDRANT_URL: http://qdrant.platform.svc.cluster.local:6333
+  OPSCONSOLE_ENV: production
+  # What this process is called in a trace viewer. One trace carries spans from
+  # the Helpdesk and from the gateway, so the two need different names.
+  OPSCONSOLE_OTEL_SERVICE_NAME: opsconsole-gateway
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gateway
+    spec:
+      containers:
+        - name: gateway
+          # Replaced wholesale by the `images:` transformer. Left as a bare
+          # name so an apply made before that transformer lands fails on a pull
+          # rather than quietly running something.
+          image: gateway
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: gateway-config
+            - secretRef:
+                name: gateway-secrets
+          # `/readyz` is dependencies reachable and `/healthz` is process up, so
+          # each probe reads the endpoint that means what the probe means.
+          # Swapped, `/readyz` as liveness restarts the pod every time Redis
+          # blips and `/healthz` as readiness sends traffic to a process with no
+          # database.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+          # No `limits.cpu`: a CPU limit throttles rather than kills, and this
+          # is the workload whose tail latency it would cost.
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 150m
+            limits:
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: gateway
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: gateway
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gateway
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: gateway
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: gateway
+  minReplicas: 2
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: gateway
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: gateway
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gateway

@@ -8,6 +8,7 @@ kubeconform` is the whole automated check, and `kubectl apply` is a human's.
 kustomization.yaml     the single root; `resources` grows as directories land
 base/                  namespaces, quotas, limit ranges
 platform/              Postgres, Redis, Qdrant, the ACME issuers, the middlewares
+apps/                  the gateway, its config and the two `api.` Ingresses
 ```
 
 Build it:
@@ -24,10 +25,10 @@ to fit; they total exactly 6Gi and 3 CPU, leaving k3s itself a margin in both.
 | namespace | requests.memory | requests.cpu | limits.memory | holds |
 |---|---|---|---|---|
 | `platform` | 2Gi | 800m | 3Gi | Postgres, Redis, Qdrant, cert-manager, the Traefik middlewares |
-| `apps` | 3Gi | 1500m | 5Gi | the gateway, the console, llama.cpp, the Helpdesk services |
+| `apps` | 3Gi | 1500m | 7Gi | the gateway, the console, llama.cpp, the Helpdesk services |
 | `evals` | 512Mi | 300m | 1Gi | the nightly eval CronJob |
 | `monitoring` | 512Mi | 400m | 1Gi | Prometheus, Grafana, Alertmanager |
-| **total** | **6Gi** | **3** | 10Gi | |
+| **total** | **6Gi** | **3** | 12Gi | |
 
 The limits column is oversubscribed against an 8 GiB box on purpose. Requests
 are what the scheduler packs and limits are the ceiling a single container may
@@ -56,10 +57,14 @@ Raising any row means re-totalling this table and the comment in
 `base/quotas.yaml` by hand. Only the manifests are checked mechanically:
 `tests/infra/test_k8s_base.py` pins every quantity above against what kustomize
 actually emits, and derives the two totals from those same built objects rather
-than restating them - so a row raised in isolation fails there. This prose is
-not in that loop, with one exception: the cert-manager row of the platform table
-below IS read by `tests/infra/test_k8s_platform.py`, because there is no
-manifest under it to check instead.
+than restating them - so a row raised in isolation fails there.
+
+Two rows of prose below ARE in that loop, because a table nobody checks is a
+table that quietly stops being true. `tests/infra/test_k8s_platform.py` reads
+the cert-manager row of the platform budget, which has no manifest under it to
+check instead; `tests/infra/test_k8s_apps.py` reads the `apps` row of the table
+above, whose limits column is the one a workload still to land depends on.
+Everything else here is prose.
 
 ## The platform budget
 
@@ -78,6 +83,33 @@ for (see below), held as a reserve rather than discovered at install time.
 `tests/infra/test_k8s_platform.py` derives those three totals from the built pod
 templates plus the same reserve and checks them against the `platform` quota, so
 a row raised in isolation fails there rather than at `helm install`.
+
+## The apps budget
+
+What `apps/` spends of the 3Gi / 1500m / 7Gi the envelope gives it. The gateway
+is priced at its HPA CEILING rather than at its two resting replicas: a quota
+sized to the floor admits the cluster happily and then rejects the first
+scale-up at admission, which is the one event an autoscaler exists to serve. The
+other three rows are workloads this directory does not write yet, held as named
+reserves so the namespace is not re-planned when each lands.
+
+| workload | requests.memory | requests.cpu | limits.memory |
+|---|---|---|---|
+| `gateway`, 3 pods at HPA max (256Mi / 150m / 512Mi) | 768Mi | 450m | 1536Mi |
+| llama.cpp reserve, 1 pod | 1024Mi | 300m | 3072Mi |
+| Helpdesk reserve, 3 pods at 192Mi / 100m / 384Mi | 576Mi | 300m | 1152Mi |
+| console reserve, 1 pod | 256Mi | 100m | 512Mi |
+| **total** | **2624Mi** | **1150m** | **6272Mi** |
+
+`tests/infra/test_k8s_apps.py` derives those three totals the same way - the
+built pod templates, the gateway multiplied by the `maxReplicas` of the HPA in
+the same build, plus the three reserves - and checks them against the `apps`
+quota.
+
+The limits column is why that quota holds 7Gi rather than the 5Gi the envelope
+first gave it: llama.cpp is sized for 3 GiB on its own, and trimming its ceiling
+to fit would be shrinking the model to fit the table. The requests column, the
+one the scheduler actually packs, did not move.
 
 ## The human steps
 
@@ -110,13 +142,19 @@ If the chart's real footprint is larger than that, the quota refuses the install
 with the namespace named, which is the intended direction: raising it means
 re-totalling the table above and the reserve constant in the test together.
 
-The two Secrets nothing here writes, both of which the next row supplies
-SOPS-encrypted:
+The three Secrets nothing here writes, each supplied SOPS-encrypted before the
+first apply:
 
 | Secret | namespace | keys | read by |
 |---|---|---|---|
 | `postgres-credentials` | `platform` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | the Postgres StatefulSet, by `envFrom` |
-| `traefik-basic-auth` | `platform` | `users` (htpasswd lines) | the `basic-auth` middleware |
+| `traefik-basic-auth` | `platform`, `apps` | `users` (htpasswd lines) | the `basic-auth` middleware in each namespace |
+| `gateway-secrets` | `apps` | the database URL, the provider keys `routing.yaml` reads by `key_env`, the Langfuse pair, the tenant key digests | the gateway Deployment, by `envFrom` |
+
+`traefik-basic-auth` is supplied once per routing namespace, not once per
+cluster: a `Middleware` reads its Secret from its own namespace, and a design note is
+why each namespace carries its own copy of the three middlewares. The TLS
+Secrets the Ingresses name are not in this table - cert-manager writes those.
 
 Until they exist an apply fails on the missing Secret, which is the point: a
 placeholder with a password in git would come up working and never mention it
@@ -124,11 +162,12 @@ again.
 
 ## Still to land
 
-- `apps/` - the gateway, the console, llama.cpp, the Helpdesk services, the
-  evals CronJob, and the TLS Ingresses for the four subdomains the Terraform
-  module publishes, referencing the three middlewares above.
+- The rest of `apps/` - llama.cpp, the Helpdesk services and the console, with
+  the `helpdesk.` and `console.` Ingresses.
+- The nightly eval CronJob in `evals/`, and the metrics stack in `monitoring/`
+  with its `grafana.` Ingress.
 - NetworkPolicies keyed off exactly these four namespace names, and SOPS-
-  encrypted secrets, including the two named above.
+  encrypted secrets, including the three named above.
 
 Each of those is admitted against the envelope above, so a workload that does
 not fit is a conversation about this table rather than a silent edit to it.

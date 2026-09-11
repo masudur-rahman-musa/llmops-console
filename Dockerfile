@@ -26,6 +26,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY packages/ ./packages/
 COPY services/ ./services/
 COPY routing.yaml ./
+COPY prices.yaml ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev
 
@@ -46,9 +47,13 @@ COPY --from=build --chown=root:root /app /app
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
-    # The image does not carry the repository layout, so the default computed
-    # from `core/settings.py`'s file position would point outside /app.
-    OPSCONSOLE_ROUTING_POLICY_PATH=/app/routing.yaml
+    # The image does not carry the repository layout, so the defaults computed
+    # from `core/settings.py`'s file position would point outside /app. Both
+    # files are loaded eagerly at startup - the routing policy and the price
+    # table are built in `create_app` - so a wrong path here is a container that
+    # never answers its first request rather than one that degrades.
+    OPSCONSOLE_ROUTING_POLICY_PATH=/app/routing.yaml \
+    OPSCONSOLE_PRICES_PATH=/app/prices.yaml
 
 USER 1000
 EXPOSE 8080

@@ -1,0 +1,26 @@
+# The gateway and the two `api.` routers. llama.cpp, the Helpdesk services and
+# the console land here too, and none of them changes this file beyond a line
+# in `resources`.
+#
+# No `namespace:` transformer, for the same reason `../platform` has none: it
+# would stamp `metadata.namespace` onto anything kustomize does not know to be
+# cluster-scoped. Each file writes `metadata.namespace: apps` itself.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - gateway.yaml
+  - middlewares.yaml
+  - ingress.yaml
+
+# The Deployment writes a bare `gateway`, which nothing can pull, so a manifest
+# applied without this transformer fails on the pull rather than running
+# something nobody chose. `0.0.0-unbuilt` is the honest placeholder: no image
+# has been pushed yet, and the deploy that publishes one replaces the tag with a
+# commit SHA (`kustomize edit set image`). A `latest` or a `main` here would be
+# a cluster whose running code no commit names, and a rollout that changes
+# meaning with no diff to show for it.
+images:
+  - name: gateway
+    newName: ghcr.io/developermusa/ai-operations-console/gateway
+    newTag: 0.0.0-unbuilt
