@@ -338,7 +338,7 @@ def test_the_view_resolves_every_tenant_alias_and_data_class(
         {
             "alias": "agent-default",
             "data_class": "internal",
-            "resolved": [{"provider": "local", "model": "qwen2.5-7b-instruct", "region": "self"}],
+            "resolved": [{"provider": "local", "model": "qwen2.5-3b-instruct", "region": "self"}],
         }
     ]
 

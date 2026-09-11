@@ -62,7 +62,7 @@ aliases:
     candidates:
       - { provider: anthropic, model: claude-haiku-4-5 }
       - { provider: anthropic_eu, model: claude-haiku-4-5 }
-      - { provider: local, model: qwen2.5-7b-instruct }
+      - { provider: local, model: qwen2.5-3b-instruct }
   # Both strong aliases are US-only until `anthropic_eu` is enabled, so a tenant
   # with `residency: eu` gets a 451 for them rather than a weaker model under a
   # strong name. Widen this by enabling the EU provider, never by adding a
@@ -92,7 +92,7 @@ tenants:
     # Everything this tenant sends stays on the box we run.
     overrides:
       agent-default:
-        - { provider: local, model: qwen2.5-7b-instruct }
+        - { provider: local, model: qwen2.5-3b-instruct }
   cuan:
     residency: eu
     data_class_rules:

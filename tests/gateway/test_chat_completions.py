@@ -723,8 +723,8 @@ def test_an_eu_pii_request_is_served_by_the_local_provider(
     assert scripted.requests[0].url.path.endswith("/embeddings")
     assert served.headers["x-gateway-provider"] == "local"
     assert served.headers["x-gateway-region"] == "self"
-    assert served.headers["x-gateway-model"] == "qwen2.5-7b-instruct"
+    assert served.headers["x-gateway-model"] == "qwen2.5-3b-instruct"
     assert served.json()["choices"][0]["message"]["content"] == "Ship it."
-    assert scripted.body(1)["model"] == "qwen2.5-7b-instruct", (
+    assert scripted.body(1)["model"] == "qwen2.5-3b-instruct", (
         "the provider model id, never the alias, goes on the wire"
     )

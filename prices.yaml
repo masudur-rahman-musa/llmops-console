@@ -82,6 +82,15 @@ prices:
       input_usd_per_1m: "0.0"
       output_usd_per_1m: "0.0"
 
+  # What the box actually serves: a 3B Q4_K_M fits the 3 GiB ceiling
+  # `infra/k8s/apps/llama.yaml` gives the pod, where a 7B Q4_K_M does not. The
+  # 7B row above stays as written - a price that was in effect is never edited,
+  # and a ledger row booked under it still has to price.
+  local/qwen2.5-3b-instruct:
+    - effective_from: 2025-01-01
+      input_usd_per_1m: "0.0"
+      output_usd_per_1m: "0.0"
+
   local/bge-small-en-v1.5:
     - effective_from: 2025-01-01
       input_usd_per_1m: "0.0"

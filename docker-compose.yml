@@ -76,15 +76,17 @@ services:
     # tenant's `pii` traffic may reach. The model is a mount rather than a build
     # argument: no weights are committed, and MODELS_DIR points at wherever the
     # developer keeps them.
-    image: ghcr.io/ggml-org/llama.cpp:server
-    command: ["-m", "/models/${LLAMA_MODEL_FILE:-qwen2.5-7b-instruct-q4_k_m.gguf}", "--host", "0.0.0.0", "--port", "8082", "--ctx-size", "8192"]
+    # Pinned to the same build `infra/k8s/apps/kustomization.yaml` pins, so a
+    # developer and the cluster run the same server. `server` floats.
+    image: ghcr.io/ggml-org/llama.cpp:server-b10902
+    command: ["-m", "/models/${LLAMA_MODEL_FILE:-qwen2.5-3b-instruct-q4_k_m.gguf}", "--host", "0.0.0.0", "--port", "8082", "--ctx-size", "8192"]
     ports: ["8082:8082"]
     volumes: ["${MODELS_DIR:-./models}:/models:ro"]
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8082/health"]
       interval: 10s
       timeout: 5s
-      # A first load of a 7B model off a cold disk is minutes, not seconds.
+      # A first load of the model off a cold disk is minutes, not seconds.
       retries: 60
       start_period: 60s
 

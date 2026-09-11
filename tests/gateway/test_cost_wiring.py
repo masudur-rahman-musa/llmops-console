@@ -154,9 +154,11 @@ EMBED_MODEL = "bge-small-en-v1.5"
 """The shipped `embed` alias's only candidate, which `/v1/embeddings` serves from
 and which the semantic tier embeds through."""
 
-FALLBACK_MODEL = "qwen2.5-7b-instruct"
+FALLBACK_MODEL = "qwen2.5-3b-instruct"
 """The model of `agent-default`'s SECOND candidate, `local`. The fallback row
-must name this and not `claude-haiku-4-5`."""
+must name this and not `claude-haiku-4-5`. Renamed with the shipped policy when
+an earlier change sized the self-hosted model to the 3 GiB ceiling its pod carries: this
+is a copy of what `routing.yaml` resolves to, so it moves when that file does."""
 
 CHAT_PRICE_VERSION = f"{PROVIDER}/{POLICY_MODEL}@2025-10-15"
 EMBED_PRICE_VERSION = f"{EMBED_PROVIDER}/{EMBED_MODEL}@2025-01-01"

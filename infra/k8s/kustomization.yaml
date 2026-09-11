@@ -6,9 +6,9 @@
 #
 # `resources` grows as each directory lands: `base/` the namespaces and the
 # envelope, `platform/` the backing services and the cluster's own machinery,
-# `apps/` the gateway and the public routers. The workloads still to come -
-# llama.cpp, the Helpdesk services, the console - land inside `apps/` rather
-# than as a fourth entry here.
+# `apps/` the gateway, llama.cpp and the public routers. The workloads still to
+# come - the embedding server, the Helpdesk services, the console - land inside
+# `apps/` rather than as a fourth entry here.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 

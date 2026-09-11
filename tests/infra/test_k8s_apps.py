@@ -1,6 +1,13 @@
 r"""`infra/k8s/apps`: the gateway Deployment, its Service, HPA, PDB and ConfigMap, the three
-copied Traefik middlewares and the two `api.` Ingresses an earlier change agrees, read off what
-kustomize actually emits.
+copied Traefik middlewares and the two `api.` Ingresses an earlier change agrees, plus the llama.cpp
+Deployment, its Service and the `llama-models` claim an earlier change adds, read off what kustomize
+actually emits.
+
+Row 20d's cases read four SHIPPED product files as well - `routing.yaml` for the address the
+gateway dials and the model ids it resolves, `prices.yaml`, `docker-compose.yml` and
+`.env.example` - and compare them to the built manifest and to each other. The model id itself
+is written down nowhere here: it is the basename of the Deployment's `-m` argument, so the one
+thing five files have to agree on has exactly one source in this file too.
 
 The stream comes from the session-scoped `built` fixture in `tests/infra/conftest.py`: one
 `kubectl kustomize infra/k8s` for the whole session, parsed once, shared with
@@ -47,8 +54,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import SplitResult, urlsplit
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 K8S_ROOT = REPO_ROOT / "infra" / "k8s"
@@ -67,6 +76,10 @@ PLATFORM = "platform"
 #: from that row, so criterion 1's set equality runs over everything in `apps` that is NOT one
 #: of these - it covers what `apps/` adds without asserting anything `test_k8s_base.py` owns.
 BASE_KINDS = frozenset({"Namespace", "ResourceQuota", "LimitRange"})
+
+#: Row 20d's workload: the llama.cpp server, its Service and the claim its weights live on.
+LLAMA = "llama"
+LLAMA_PVC = "llama-models"
 
 GATEWAY = "gateway"
 GATEWAY_CONFIG_MAP = "gateway-config"
@@ -89,6 +102,9 @@ APPS_OBJECTS: frozenset[tuple[str, str, str]] = frozenset(
         ("Middleware", "security-headers", APPS),
         ("Ingress", ROOT_INGRESS, APPS),
         ("Ingress", HEALTHZ_INGRESS, APPS),
+        ("PersistentVolumeClaim", LLAMA_PVC, APPS),
+        ("Deployment", LLAMA, APPS),
+        ("Service", LLAMA, APPS),
     }
 )
 
@@ -121,8 +137,10 @@ GATEWAY_RESOURCES: dict[str, str] = {
     "limits.memory": "512Mi",
 }
 
-#: Row 20d's llama.cpp, one pod, held as a named reserve: the design names 3 GiB for it and
-#: decision A raises the quota's limits column to hold exactly that.
+#: Row 20d's llama.cpp, one pod. It was a named reserve until 20d built it; it is now the ROW
+#: the built manifest is held to (`LLAMA_RESOURCES` below derives from it), and it is no longer
+#: summed as a reserve. the design names 3 GiB for it and 20c's decision A raised the quota's
+#: limits column to hold exactly that.
 LLAMA_RESERVE: dict[str, str | int] = {
     "pods": 1,
     "requests.memory": "1024Mi",
@@ -130,7 +148,9 @@ LLAMA_RESERVE: dict[str, str | int] = {
     "limits.memory": "3072Mi",
 }
 
-#: Row 20d's four Helpdesk services, priced as three pods of the same size.
+#: Row 20f's four Helpdesk services, priced as three pods of the same size. Row 20 split
+#: after 20c was written: 20d built llama.cpp, 20e adds the embedding server and 20f the
+#: Helpdesk workloads, so the row this comment named before the split no longer does it.
 HELPDESK_RESERVE: dict[str, str | int] = {
     "pods": 3,
     "requests.memory": "192Mi",
@@ -146,7 +166,12 @@ CONSOLE_RESERVE: dict[str, str | int] = {
     "limits.memory": "512Mi",
 }
 
-RESERVES = (LLAMA_RESERVE, HELPDESK_RESERVE, CONSOLE_RESERVE)
+#: The reserves still held as constants. `LLAMA_RESERVE` is NOT one of them any more: row 20d
+#: builds that pod, so the subtotals case reads its quantities off the built template the way it
+#: already reads the gateway's, and summing the reserve as well would price the one workload
+#: twice. The reserve stays in this module as the row
+#: `test_llama_declares_the_quantities_the_budget_prices` holds the manifest to.
+RESERVES = (HELPDESK_RESERVE, CONSOLE_RESERVE)
 
 #: Decision A: the `apps` envelope after the limits column is raised. The requests column does
 #: not move - it is the 6Gi cluster-wide total #55 and the design pin.
@@ -155,6 +180,98 @@ APPS_QUOTA: dict[str, str] = {
     "requests.cpu": "1500m",
     "limits.memory": "7Gi",
 }
+
+#: Criterion 1: the claim's size and access mode, and the `storageClassName` it must NOT
+#: declare - k3s's local-path provisioner is the cluster default and naming a class here is a
+#: claim that binds to nothing, the same reason 20b's Postgres omits it.
+LLAMA_PVC_STORAGE = "5Gi"
+LLAMA_PVC_ACCESS_MODES = ["ReadWriteOnce"]
+
+#: Criterion 2: one replica, and the only update strategy a `ReadWriteOnce` volume survives.
+LLAMA_REPLICAS = 1
+LLAMA_STRATEGY = "Recreate"
+
+#: Criterion 5: where the weights are mounted, and the suffix the upstream Q4_K_M artefact
+#: carries - the model ID is the file name with this taken off, which is how criterion 8's
+#: case derives an id from the manifest instead of writing one down.
+LLAMA_MOUNT_PATH = "/models"
+GGUF_SUFFIX = "-q4_k_m.gguf"
+
+#: Criterion 5, by value and in order: the design's context and parallelism, the address the
+#: server binds, and the one file it loads. The port reads the same numeral criterion 3 derives
+#: from `routing.yaml`; it is written here because the args are pinned as a
+#: LIST and a list assembled from three sources cannot state an order.
+LLAMA_MODEL_FILE = f"qwen2.5-3b-instruct{GGUF_SUFFIX}"
+LLAMA_ARGS: list[str] = [
+    "--host",
+    "0.0.0.0",
+    "--port",
+    "8082",
+    "--ctx-size",
+    "4096",
+    "--parallel",
+    "2",
+    "-m",
+    f"{LLAMA_MOUNT_PATH}/{LLAMA_MODEL_FILE}",
+]
+
+#: Criterion 6 and decision E: the path llama.cpp serves, and the 600-second ceiling on a cold
+#: load of a multi-gigabyte file - `10` seconds times `60` attempts, both exact (standing
+#: rule 2). A failure threshold of 30 is a pod killed halfway through its first load.
+LLAMA_PROBE_PATH = "/health"
+LLAMA_STARTUP_PERIOD_SECONDS = 10
+LLAMA_STARTUP_FAILURE_THRESHOLD = 60
+
+#: The three probes criterion 6 names, in the order a pod runs them.
+LLAMA_PROBES = ("startupProbe", "readinessProbe", "livenessProbe")
+
+#: Decision C: the upstream repository the `images:` transformer points `llama` at, and the
+#: exact tag resolved from GHCR while this plan was implemented. Compose runs the same one, so
+#: the two stacks run the same server.
+LLAMA_IMAGE_REPOSITORY = "ghcr.io/ggml-org/llama.cpp"
+LLAMA_IMAGE_TAG = "server-b10902"
+
+#: Decision C's refusal list. `server` is upstream's own moving tag - the one compose used
+#: before this plan - so it joins the two spellings decision D already refuses for the gateway.
+#: A separate constant, because the gateway's case refuses exactly two and must keep doing so.
+LLAMA_FLOATING_TAGS = FLOATING_TAGS | {"server"}
+
+#: Criterion 4's llama row, DERIVED from the reserve the apps budget already holds rather than
+#: written a second time: a manifest that disagrees with the reserve moves
+#: the subtotals, and the two cases would then have to be corrected together. `pods` is the
+#: reserve's own multiplier and not a container quantity. `limits.cpu` is absent on purpose and
+#: equality on the whole mapping is what keeps it absent.
+LLAMA_RESOURCES: dict[str, str] = {
+    key: str(value) for key, value in LLAMA_RESERVE.items() if key != "pods"
+}
+
+#: The shipped files criterion 8 compares to one another. None of them is this file's own
+#: expectation: the id comes off the built `-m` argument and every file is read from the repo.
+ROUTING_POLICY = REPO_ROOT / "routing.yaml"
+PRICES = REPO_ROOT / "prices.yaml"
+COMPOSE = REPO_ROOT / "docker-compose.yml"
+ENV_EXAMPLE = REPO_ROOT / ".env.example"
+
+#: The provider name in `routing.yaml` this plan's pod answers for, and the path its `base_url`
+#: carries. Criterion 3 derives the Service's name and port from that URL and asserts the path
+#: separately, because a base URL missing `/v1` is an OpenAI-compatible client 404ing.
+LOCAL_PROVIDER = "local"
+LOCAL_BASE_PATH = "/v1"
+
+#: Criterion 8: how many `local` CHAT candidates the shipped policy names - the `agent-default`
+#: alias's and nordlicht's override, both of which decision A renames. Exact, so renaming one
+#: line and not the other is red rather than half-green.
+LOCAL_CHAT_CANDIDATES = 2
+
+#: The id decision A replaces. Its `prices.yaml` key is KEPT (a project rule - a historical ledger
+#: row is priced against it), and `routing.yaml` must stop naming it.
+PREVIOUS_LOCAL_MODEL = "qwen2.5-7b-instruct"
+
+#: The GGUF file name compose interpolates, and the same default in `.env.example`. Every
+#: matching line is scanned and the values required to agree: `llama` and
+#: `models` appear on several lines of both files, so a first-hit scan would read the wrong one.
+COMPOSE_MODEL_DEFAULT = re.compile(r"\$\{LLAMA_MODEL_FILE:-(?P<file>[^}]+)\}")
+ENV_MODEL_DEFAULT = re.compile(r"^LLAMA_MODEL_FILE=(?P<file>\S+)$")
 
 #: Decision F, by value: two replicas at rest, an HPA from 2 to 3 on 70% CPU, and a PDB that
 #: still lets a single-node drain proceed.
@@ -519,7 +636,7 @@ def scale_targets(documents: list[dict[str, Any]]) -> dict[tuple[str, str, str |
 
 
 def reserve_totals() -> dict[str, int]:
-    """The three named reserves, summed as pods times their per-pod quantities. Memory in
+    """The named reserves, summed as pods times their per-pod quantities. Memory in
     bytes, CPU in whole millicores."""
     totals = {"requests.memory": 0, "requests.cpu": 0, "limits.memory": 0}
     for reserve in RESERVES:
@@ -565,6 +682,132 @@ def dockerfile_environment(text: str) -> dict[str, str]:
         for match in DOCKERFILE_ENV_ASSIGNMENT.finditer(line):
             assignments[match.group("name")] = match.group("value").rstrip("\\").strip("\"'")
     return assignments
+
+
+def llama_pod_owner(documents: list[dict[str, Any]]) -> dict[str, Any]:
+    """The llama Deployment, selected by name and namespace and asserted to own a pod."""
+    owner = sole_object(documents, "Deployment", LLAMA)
+    assert owner in pod_owners(documents), f"{LLAMA} carries no pod template"
+    return owner
+
+
+def local_base_url() -> SplitResult:
+    """`providers.local.base_url` out of the SHIPPED `routing.yaml`, split into its parts. This
+    is the address the gateway dials in the cluster, and the only source criterion 3's Service
+    name and port are read from."""
+    policy = yaml.safe_load(read(ROUTING_POLICY))
+    assert isinstance(policy, dict), f"{ROUTING_POLICY.name} is not a mapping"
+    providers = policy.get("providers", {})
+    assert isinstance(providers, dict) and LOCAL_PROVIDER in providers, (
+        f"{ROUTING_POLICY.name} names no `{LOCAL_PROVIDER}` provider"
+    )
+    declared = providers[LOCAL_PROVIDER].get("base_url", "")
+    assert declared, f"{ROUTING_POLICY.name}'s `{LOCAL_PROVIDER}` provider declares no base_url"
+    return urlsplit(str(declared))
+
+
+def local_candidate_models() -> list[str]:
+    """Every model id the shipped policy names for the `local` provider, alias candidates and
+    tenant overrides alike, WITH duplicates: the count is the claim (criterion 8 renames two
+    lines), so collapsing them to a set would let one renamed line pass for two."""
+    policy = yaml.safe_load(read(ROUTING_POLICY))
+    assert isinstance(policy, dict), f"{ROUTING_POLICY.name} is not a mapping"
+    groups: list[Any] = [
+        alias.get("candidates", []) for alias in policy.get("aliases", {}).values()
+    ]
+    for tenant in policy.get("tenants", {}).values():
+        groups.extend(tenant.get("overrides", {}).values())
+    return [
+        str(candidate["model"])
+        for group in groups
+        if isinstance(group, list)
+        for candidate in group
+        if isinstance(candidate, dict) and candidate.get("provider") == LOCAL_PROVIDER
+    ]
+
+
+def sole_arg_value(container: dict[str, Any], flag: str) -> str:
+    """The value following `flag` in a container's `args`, asserting the flag appears EXACTLY
+    once. A second `-m` is a second model file, and a scan that took the first occurrence would
+    report the one that is not loaded."""
+    args = [str(arg) for arg in container.get("args", [])]
+    positions = [index for index, arg in enumerate(args) if arg == flag]
+    assert len(positions) == 1, f"{flag} appears {len(positions)} times in {args}"
+    index = positions[0]
+    assert index + 1 < len(args), f"{flag} is the last argument of {args}"
+    return args[index + 1]
+
+
+def mount_at(container: dict[str, Any], path: str) -> dict[str, Any]:
+    """The one `volumeMounts` entry at `path`, asserting the container declares exactly one."""
+    mounts = [
+        mount
+        for mount in container.get("volumeMounts", [])
+        if isinstance(mount, dict) and str(mount.get("mountPath")) == path
+    ]
+    assert len(mounts) == 1, f"{len(mounts)} mounts at {path}: {container.get('volumeMounts')}"
+    return mounts[0]
+
+
+def volume_named(owner: dict[str, Any], name: str) -> dict[str, Any]:
+    """The pod template's `volumes` entry a mount refers to by name - a mount naming a volume
+    the template does not declare is a pod the API server refuses, and a mount naming the WRONG
+    volume is a model directory backed by something else entirely."""
+    volumes = [
+        volume
+        for volume in pod_spec(owner).get("volumes", [])
+        if isinstance(volume, dict) and str(volume.get("name")) == name
+    ]
+    assert len(volumes) == 1, f"{len(volumes)} volumes named {name} on {name_of(owner)}"
+    return volumes[0]
+
+
+def resolved_container_port(target: object, container: dict[str, Any]) -> int | None:
+    """The `containerPort` NUMBER a `targetPort` or a probe port resolves to, in both forms it
+    takes - an int against the declared numbers, a string against the declared names - or None
+    when the container declares no such port. A name that resolves to nothing is a Service with
+    no endpoints and a probe that never succeeds, neither of which fails at build time."""
+    declared = [port for port in container.get("ports", []) if isinstance(port, dict)]
+    if isinstance(target, str) and not target.isdigit():
+        for port in declared:
+            if str(port.get("name")) == target:
+                return int(port["containerPort"])
+        return None
+    number = int(str(target))
+    return number if any(int(port["containerPort"]) == number for port in declared) else None
+
+
+def model_id_from(file_name: str) -> str:
+    """The model id inside a GGUF file name: `qwen2.5-3b-instruct-q4_k_m.gguf` is
+    `qwen2.5-3b-instruct`. The suffix is asserted rather than stripped conditionally, so a file
+    in another quantisation is a named failure and not an id with a tail on it."""
+    assert file_name.endswith(GGUF_SUFFIX), f"{file_name} is not a {GGUF_SUFFIX} artefact"
+    return file_name[: -len(GGUF_SUFFIX)]
+
+
+def compose_model_files() -> set[str]:
+    """Every GGUF file name a `${LLAMA_MODEL_FILE:-...}` default in `docker-compose.yml` falls
+    back to. All matching lines, never the first."""
+    return {match.group("file") for match in COMPOSE_MODEL_DEFAULT.finditer(read(COMPOSE))}
+
+
+def env_example_model_files() -> set[str]:
+    """Every `LLAMA_MODEL_FILE=` value written in `.env.example`, all matching lines scanned."""
+    files: set[str] = set()
+    for line in read(ENV_EXAMPLE).splitlines():
+        match = ENV_MODEL_DEFAULT.fullmatch(line.strip())
+        if match is not None:
+            files.add(match.group("file"))
+    return files
+
+
+def priced_keys() -> dict[str, Any]:
+    """The `prices` mapping of the shipped `prices.yaml`, keyed `provider/model`."""
+    table = yaml.safe_load(read(PRICES))
+    assert isinstance(table, dict), f"{PRICES.name} is not a mapping"
+    prices = table.get("prices", {})
+    assert isinstance(prices, dict) and prices, f"{PRICES.name} prices nothing"
+    return prices
 
 
 def test_the_apps_directory_emits_the_objects_the_plan_names(built: list[dict[str, Any]]) -> None:
@@ -709,18 +952,26 @@ def test_the_gateway_carries_both_probes_and_a_service_that_resolves(
 
 
 def test_the_apps_subtotals_fit_inside_the_namespace_quota(built: list[dict[str, Any]]) -> None:
-    """Criterion 3, derived and never restated: the three sums are parsed off
-    the BUILT pod templates in `apps`, multiplied by each workload's replica count - or by the
-    `maxReplicas` of the HPA that scales it, read from the same build - added to the three
-    named reserves, and compared to the `apps` `ResourceQuota` read from the same build.
-    Catches the arithmetic failing even though every individual quantity is correct: the
-    gateway raised to fit, a third replica, a reserve revised upward, or the quota lowered by a
-    later edit to 20a's table. The gateway is priced at the HPA's CEILING, which catches the
-    quota being sized to `spec.replicas` - the state where the cluster is admitted happily at
+    """20c's criterion 3, derived and never restated: the three sums are
+    parsed off the BUILT pod templates in `apps`, multiplied by each workload's replica count -
+    or by the `maxReplicas` of the HPA that scales it, read from the same build - added to the
+    two remaining named reserves, and compared to the `apps` `ResourceQuota` read from the same
+    build. Two workloads are now read off the build rather than reserved: the gateway, and
+    llama.cpp since row 20d wrote its manifest - `LLAMA_RESERVE` left `RESERVES` in the same
+    change, because a pod both summed as a reserve and read off the build is priced twice and
+    overflows a quota that is correct. The subtotals must NOT move across that change, which is
+    what proves the manifest was written to the reserve rather than the reserve rewritten to
+    the manifest. Both templates are asserted present before the sums, so a workload left out
+    of `apps/kustomization.yaml`'s `resources` is a loud red here and not a subtotal that
+    quietly fits. Catches the arithmetic failing even though every individual quantity is
+    correct: the gateway raised to fit, a third replica, a reserve revised upward, or the quota
+    lowered by a later edit to 20a's table. The gateway is priced at the HPA's CEILING, which
+    catches the quota being sized to `spec.replicas` - the state where the cluster is admitted
+    happily at
     rest and the first scale-up is rejected at admission, which is precisely the event an
     autoscaler exists to serve. Millicores as ints, because `0.15 + 0.3 + 0.1` is not `0.55` in
     binary floating point and a float comparison would redden a correct manifest. Compared with
-    `<=`: the reserves are floors on what rows 20d and 27 may take, and the headroom above them
+    `<=`: the reserves are floors on what rows 20f and 27 may take, and the headroom above them
     is deliberate."""
     quotas = [
         quota for quota in objects_of_kind(built, "ResourceQuota") if namespace_of(quota) == APPS
@@ -732,8 +983,9 @@ def test_the_apps_subtotals_fit_inside_the_namespace_quota(built: list[dict[str,
     ceilings = scale_targets(built)
     owners = [owner for owner in pod_owners(built) if namespace_of(owner) == APPS]
     built_names = {name_of(owner) for owner in owners}
-    assert GATEWAY in built_names, (
-        f"the build emits no gateway pod template in {APPS}: {built_names}"
+    missing = {GATEWAY, LLAMA} - built_names
+    assert missing == set(), (
+        f"the build emits no pod template in {APPS} for {sorted(missing)}: {sorted(built_names)}"
     )
 
     for owner in owners:
@@ -976,3 +1228,226 @@ def test_each_ingress_routes_its_own_path_to_the_gateway_service(
             assert str(backend["name"]) == GATEWAY, f"{ingress_name} routes away from {GATEWAY}"
     expected = LIVENESS_PATH if ingress_name == HEALTHZ_INGRESS else "/"
     assert paths == {expected}, f"{ingress_name} routes {sorted(paths)}"
+
+
+def test_the_llama_service_is_where_the_shipped_routing_policy_expects_it(
+    built: list[dict[str, Any]],
+) -> None:
+    """Criterion 3, with BOTH sides of the address derived rather than written down twice: the host and the port come out of the shipped `routing.yaml`'s
+    `providers.local.base_url`, which is a BARE name and therefore resolves only to a Service of
+    that name in this pod's own namespace. Catches the Service named anything but `llama` and
+    the Service published on any port but the one the policy dials - both of which build, lint
+    and kubeconform cleanly and are a connection refused from the gateway at runtime, on the one
+    candidate an EU `pii` chat is allowed to use. Catches a `targetPort` that resolves to
+    nothing in the pod's own template (a name renamed on one side, a number nothing listens on),
+    which is a Service with no endpoints; and catches it resolving to a DIFFERENT container port
+    than the URL names, where the Service answers on 8082 and forwards to a port the server is
+    not bound to. Catches a `type: NodePort` or `LoadBalancer`, which publishes an unauthenticated
+    model server on every node - the `/` Ingress's basic auth is in front of the gateway, not
+    this. And catches the base URL losing its `/v1` prefix, which is every OpenAI-compatible
+    call 404ing while the pod is perfectly healthy. Nothing about the address is stated here."""
+    url = local_base_url()
+    host = url.hostname
+    assert host, f"{ROUTING_POLICY.name}'s local base_url {url.geturl()} names no host"
+    assert url.port is not None, f"local base_url {url.geturl()} names no port"
+    assert url.path == LOCAL_BASE_PATH, f"local base_url {url.geturl()} is rooted at {url.path}"
+
+    services = in_apps(built, "Service")
+    assert host in services, f"the build emits no Service/{host} in {APPS}: {sorted(services)}"
+    service = services[host]
+    assert name_of(service) == host
+    assert service["spec"].get("type", "ClusterIP") == "ClusterIP", (
+        f"Service/{host} is a {service['spec'].get('type')}, reachable from outside the cluster"
+    )
+
+    published = [port for port in service["spec"]["ports"] if int(port["port"]) == url.port]
+    assert len(published) == 1, (
+        f"Service/{host} publishes {[port.get('port') for port in service['spec']['ports']]}, "
+        f"and the shipped policy dials {url.port}"
+    )
+
+    container = sole_container(llama_pod_owner(built))
+    target = published[0].get("targetPort", published[0]["port"])
+    assert resolved_container_port(target, container) == url.port, (
+        f"Service/{host} targets {target!r}, which resolves to "
+        f"{resolved_container_port(target, container)} against the container's "
+        f"{container.get('ports')}"
+    )
+
+
+def test_llama_declares_the_quantities_the_budget_prices(built: list[dict[str, Any]]) -> None:
+    """Criterion 4's per-pod row, by VALUE on the whole flattened mapping, against the reserve
+    the apps budget already holds (`LLAMA_RESERVE`, minus its pod multiplier) rather than three
+    quantities restated here. The subtotals case passes for any set of numbers that happens to
+    fit, so this is the one that says WHICH numbers. Catches a request raised to what a 7B needs
+    (the reserve is what 20c priced, and raising it is a pod the `apps` quota rejects at
+    admission with the cluster reporting nothing wrong until the next rollout), catches `3072Mi`
+    written as `3G` - 7% smaller, which the API server does not treat as equal and which
+    OOM-kills the server mid-load - and catches a `limits.cpu` appearing, which throttles token
+    generation on the one workload whose latency is the product. Both the missing key and the
+    extra one are visible because the comparison is equality."""
+    quantities = resource_quantities(sole_container(llama_pod_owner(built)))
+    assert quantities == LLAMA_RESOURCES, f"{LLAMA} declares {quantities}"
+
+
+def test_llama_serves_one_model_from_a_read_only_volume(built: list[dict[str, Any]]) -> None:
+    """Criteria 1 and 2, which are one failure seen from three sides. Catches `replicas: 2` and
+    catches the default `RollingUpdate` strategy: a `ReadWriteOnce` claim is attached to one node
+    at a time, so a second pod - a scale-up or the new pod of a rolling update - waits for a
+    volume the old pod will not release until it is deleted, which is a rollout wedged forever
+    with both pods reporting exactly what they are waiting for and nothing acting on it. Catches
+    a claim sized for the weights it cannot hold, or a `storageClassName` naming a class this
+    cluster does not define, which is a claim stuck Pending and a pod that never schedules.
+    Catches the `/models` mount losing `readOnly: true`, which is a server process able to
+    truncate the weights a human copied in by hand (decision B) and no way to tell that it did.
+    And catches the mount pointed at another volume - an `emptyDir` left over from a draft is a
+    pod that starts, finds no weights, and fails its startup probe with the claim bound to
+    nothing - because the mount's NAME is resolved against the template's `volumes`."""
+    owner = llama_pod_owner(built)
+    assert replicas_of(owner) == LLAMA_REPLICAS, f"{LLAMA} runs {replicas_of(owner)} replicas"
+    strategy = owner["spec"].get("strategy", {})
+    assert strategy.get("type") == LLAMA_STRATEGY, f"{LLAMA} updates with {strategy}"
+
+    claim = sole_object(built, "PersistentVolumeClaim", LLAMA_PVC)
+    assert [str(mode) for mode in claim["spec"]["accessModes"]] == LLAMA_PVC_ACCESS_MODES
+    assert str(claim["spec"]["resources"]["requests"]["storage"]) == LLAMA_PVC_STORAGE, (
+        f"{LLAMA_PVC} claims {claim['spec']['resources']['requests']['storage']}"
+    )
+    assert "storageClassName" not in claim["spec"], (
+        f"{LLAMA_PVC} names storage class {claim['spec']['storageClassName']!r}; the cluster's "
+        "default provisioner is what binds it"
+    )
+
+    mount = mount_at(sole_container(owner), LLAMA_MOUNT_PATH)
+    assert mount.get("readOnly") is True, f"{LLAMA_MOUNT_PATH} is mounted {mount}"
+    volume = volume_named(owner, str(mount["name"]))
+    assert volume.get("persistentVolumeClaim", {}).get("claimName") == LLAMA_PVC, (
+        f"{LLAMA_MOUNT_PATH} is backed by {volume}"
+    )
+
+
+def test_llama_runs_with_the_context_and_parallelism_the_spec_names(
+    built: list[dict[str, Any]],
+) -> None:
+    """Criterion 5, as the whole `args` LIST by value and in order, because every one of these
+    is a flag whose wrong value produces a server that starts happily and is wrong at runtime.
+    Catches `--host` left off or set to `127.0.0.1`, where the Service has endpoints and every
+    connection is refused; catches a `--port` that disagrees with the container port and the
+    policy's URL; catches the design's `--ctx-size 4096` replaced by compose's developer-machine
+    `8192`, which is twice the KV cache on a pod with a 3Gi ceiling and an OOM kill under the
+    second concurrent request; catches `--parallel` missing, where llama.cpp serves one slot and
+    the second caller queues behind the first with no error to show for it; and catches `-m`
+    naming a file the PVC does not hold. Order is part of the assertion: a value orphaned from
+    its flag by an insertion is a different command line, and equality is what sees it."""
+    args = [str(arg) for arg in sole_container(llama_pod_owner(built)).get("args", [])]
+    assert args == LLAMA_ARGS, f"{LLAMA} runs with {args}"
+
+
+def test_llama_waits_out_a_cold_model_load_before_liveness_can_restart_it(
+    built: list[dict[str, Any]],
+) -> None:
+    """Criterion 6 and decision E, exactly: `10` seconds times `60` attempts
+    is the 600-second ceiling on the first load of a multi-gigabyte file off a cold disk.
+    Catches the startup probe dropped altogether, which is the failure the whole decision is
+    about - without one, Kubernetes runs the liveness probe from the start, `/health` answers
+    nothing while the weights load, and the pod is killed and restarted before it has ever
+    finished loading, forever, with the event log showing only `Liveness probe failed`. Catches
+    the threshold lowered to 30 (300 seconds, which is inside the range a cold 2.5GB read can
+    take on this box) and the period stretched, which changes the same ceiling from the other
+    side. Catches any of the three probes pointed at a path llama.cpp does not serve - a 404 is
+    a failed probe, so a readiness probe on `/healthz` is a Service with no endpoints and a
+    liveness probe on one is a permanent crash loop. The startup probe's port is resolved
+    against the container's own declared ports, so a probe aimed at a port nothing listens on -
+    which fails in exactly the same way and looks like a slow model - is red here too."""
+    container = sole_container(llama_pod_owner(built))
+    for probe_name in LLAMA_PROBES:
+        probe = container.get(probe_name)
+        assert isinstance(probe, dict), f"{LLAMA} declares no {probe_name}"
+        assert probe["httpGet"]["path"] == LLAMA_PROBE_PATH, (
+            f"{LLAMA}'s {probe_name} polls {probe['httpGet']['path']}"
+        )
+
+    startup = container["startupProbe"]
+    assert startup["periodSeconds"] == LLAMA_STARTUP_PERIOD_SECONDS, (
+        f"the startup probe polls every {startup['periodSeconds']}s"
+    )
+    assert startup["failureThreshold"] == LLAMA_STARTUP_FAILURE_THRESHOLD, (
+        f"the startup probe gives up after {startup['failureThreshold']} attempts"
+    )
+    assert resolved_container_port(startup["httpGet"]["port"], container) is not None, (
+        f"the startup probe polls port {startup['httpGet']['port']!r}, which the container's "
+        f"{container.get('ports')} does not declare"
+    )
+
+
+def test_the_local_model_id_reads_the_same_in_every_file_that_names_it(
+    built: list[dict[str, Any]],
+) -> None:
+    """Criteria 8 and 9 and decision A, with the id read OFF THE BUILD - the basename of the
+    `-m` argument, minus its quantisation suffix - and every file compared to that and to each
+    other, never to a literal repeated five times. Catches the rename half-done, which is the
+    only way this fails in practice: the manifest serving a 3B while `routing.yaml` still
+    resolves `agent-default` to the 7B id puts a model that never ran on every ledger row, in
+    every `X-Gateway-Model` header and in the eval report, with the gateway answering normally
+    throughout. Catches the alias line renamed and nordlicht's OVERRIDE left behind, which is
+    the same failure for the one tenant whose traffic never leaves the box - the count of
+    `local` chat candidates is asserted exactly, so one of two is not half a pass. Catches
+    `prices.yaml` missing a row for the id that actually runs, which books every local request
+    `unpriced`; catches a row written with no `effective_from`, which cannot be selected
+    against an instant. Catches compose and `.env.example` still defaulting to a file the image
+    now has no reason to hold, where the local stack and the cluster serve different models
+    under one name. And asserts the `local/{PREVIOUS_LOCAL_MODEL}` key is still priced (hard
+    rule 7): a ledger row booked last month is priced against the entry it was charged with, so
+    the old key is KEPT beside the new one and never edited into it."""
+    file_name = Path(sole_arg_value(sole_container(llama_pod_owner(built)), "-m")).name
+    model_id = model_id_from(file_name)
+
+    candidates = local_candidate_models()
+    named = [model for model in candidates if model == model_id]
+    assert len(named) == LOCAL_CHAT_CANDIDATES, (
+        f"{ROUTING_POLICY.name} gives `{LOCAL_PROVIDER}` the candidates {candidates}, of which "
+        f"{len(named)} name the model the manifest loads ({model_id})"
+    )
+    assert PREVIOUS_LOCAL_MODEL not in candidates, (
+        f"{ROUTING_POLICY.name} still routes to {PREVIOUS_LOCAL_MODEL}, which no pod serves"
+    )
+
+    prices = priced_keys()
+    key = f"{LOCAL_PROVIDER}/{model_id}"
+    assert key in prices, f"{PRICES.name} prices {sorted(prices)}, and the pod serves {key}"
+    entries = prices[key]
+    assert isinstance(entries, list) and entries, f"{key} carries no price entries"
+    assert all(entry.get("effective_from") for entry in entries), f"{key} reads {entries}"
+    assert f"{LOCAL_PROVIDER}/{PREVIOUS_LOCAL_MODEL}" in prices, (
+        f"{PRICES.name} dropped the {PREVIOUS_LOCAL_MODEL} row that prices already-booked rows"
+    )
+
+    defaults = {
+        COMPOSE.name: compose_model_files(),
+        ENV_EXAMPLE.name: env_example_model_files(),
+    }
+    for source, written in defaults.items():
+        assert written == {file_name}, f"{source} defaults the weights file to {sorted(written)}"
+
+
+def test_the_llama_image_is_pinned_and_not_a_floating_tag(built: list[dict[str, Any]]) -> None:
+    """Criterion 7 and decision C, the gateway's case applied to the one image this repo does
+    not build, and read off the BUILT container so an `images:` transformer whose `name:` does
+    not match the Deployment's container - which kustomize accepts in silence - leaves the bare
+    `llama` reference in the stream and reddens here. Catches the tag left at upstream's own
+    moving `server`, which compose used before this plan: the same manifest applied twice pulls
+    two different servers, so a regression in generation quality or in token throughput cannot
+    be attributed to any commit. Catches `latest` and `main` for the same reason, catches a
+    reference with no tag at all (which Kubernetes resolves as `latest`), and catches the
+    repository pointed somewhere else, which is an apply that runs an image nobody reviewed on
+    the pod holding the model weights. The exact tag is asserted as well as the refusal list,
+    because the pinned tag IS the claim - a refusal list alone passes for any tag at all."""
+    image = str(sole_container(llama_pod_owner(built)).get("image", ""))
+    assert image, f"{LLAMA} declares no image"
+    assert "@" not in image, f"{LLAMA} is pinned by digest ({image}); decision C names a tag"
+    assert ":" in image.rsplit("/", 1)[-1], f"{LLAMA} image `{image}` carries no tag at all"
+
+    repository, _, tag = image.rpartition(":")
+    assert repository == LLAMA_IMAGE_REPOSITORY, f"{LLAMA} runs from `{repository}`"
+    assert tag not in LLAMA_FLOATING_TAGS, f"{LLAMA} runs a floating tag `{tag}`"
+    assert tag == LLAMA_IMAGE_TAG, f"{LLAMA} is tagged `{tag}`"

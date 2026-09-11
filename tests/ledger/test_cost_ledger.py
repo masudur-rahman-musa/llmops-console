@@ -538,7 +538,7 @@ def test_every_model_the_shipped_policy_can_resolve_to_passes_the_pattern(
     policy: Policy,
 ) -> None:
     """Decision D's trap, caught here rather than in production. `routing.yaml` names
-    `qwen2.5-7b-instruct` and `bge-small-en-v1.5`, and both fail the resolver's slug rule
+    `qwen2.5-3b-instruct` and `bge-small-en-v1.5`, and both fail the resolver's slug rule
     because of the dots - so a `model` pre-check that reused `IDENTIFIER_PATTERN` would
     refuse, and therefore silently lose, every ledger row for the local provider while
     the gateway went on answering normally. The tenant OVERRIDES are swept too, because

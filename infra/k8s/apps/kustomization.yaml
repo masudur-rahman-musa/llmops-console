@@ -1,6 +1,6 @@
-# The gateway and the two `api.` routers. llama.cpp, the Helpdesk services and
-# the console land here too, and none of them changes this file beyond a line
-# in `resources`.
+# The gateway, llama.cpp and the two `api.` routers. The Helpdesk services and
+# the console land here too, and neither changes this file beyond a line in
+# `resources` and, where it runs an image, an entry in `images:`.
 #
 # No `namespace:` transformer, for the same reason `../platform` has none: it
 # would stamp `metadata.namespace` onto anything kustomize does not know to be
@@ -10,6 +10,7 @@ kind: Kustomization
 
 resources:
   - gateway.yaml
+  - llama.yaml
   - middlewares.yaml
   - ingress.yaml
 
@@ -20,7 +21,17 @@ resources:
 # commit SHA (`kustomize edit set image`). A `latest` or a `main` here would be
 # a cluster whose running code no commit names, and a rollout that changes
 # meaning with no diff to show for it.
+#
+# llama.cpp is pinned to an exact upstream build for the same reason, and
+# `docker-compose.yml` names the same one so the two stacks run the same server.
+# Upstream's `server` tag floats: it is whatever the last build published, so a
+# cluster on it runs code no commit here names. `server-b10902` was resolved
+# against GHCR at implementation time and its index carries linux/arm64, which
+# the CAX21 needs.
 images:
   - name: gateway
     newName: ghcr.io/developermusa/ai-operations-console/gateway
     newTag: 0.0.0-unbuilt
+  - name: llama
+    newName: ghcr.io/ggml-org/llama.cpp
+    newTag: server-b10902

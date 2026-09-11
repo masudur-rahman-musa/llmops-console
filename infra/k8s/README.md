@@ -8,7 +8,7 @@ kubeconform` is the whole automated check, and `kubectl apply` is a human's.
 kustomization.yaml     the single root; `resources` grows as directories land
 base/                  namespaces, quotas, limit ranges
 platform/              Postgres, Redis, Qdrant, the ACME issuers, the middlewares
-apps/                  the gateway, its config and the two `api.` Ingresses
+apps/                  the gateway, llama.cpp, their config and the two `api.` Ingresses
 ```
 
 Build it:
@@ -90,21 +90,23 @@ What `apps/` spends of the 3Gi / 1500m / 7Gi the envelope gives it. The gateway
 is priced at its HPA CEILING rather than at its two resting replicas: a quota
 sized to the floor admits the cluster happily and then rejects the first
 scale-up at admission, which is the one event an autoscaler exists to serve. The
-other three rows are workloads this directory does not write yet, held as named
+last two rows are workloads this directory does not write yet, held as named
 reserves so the namespace is not re-planned when each lands.
 
 | workload | requests.memory | requests.cpu | limits.memory |
 |---|---|---|---|
 | `gateway`, 3 pods at HPA max (256Mi / 150m / 512Mi) | 768Mi | 450m | 1536Mi |
-| llama.cpp reserve, 1 pod | 1024Mi | 300m | 3072Mi |
+| `llama`, 1 pod | 1024Mi | 300m | 3072Mi |
 | Helpdesk reserve, 3 pods at 192Mi / 100m / 384Mi | 576Mi | 300m | 1152Mi |
 | console reserve, 1 pod | 256Mi | 100m | 512Mi |
 | **total** | **2624Mi** | **1150m** | **6272Mi** |
 
 `tests/infra/test_k8s_apps.py` derives those three totals the same way - the
 built pod templates, the gateway multiplied by the `maxReplicas` of the HPA in
-the same build, plus the three reserves - and checks them against the `apps`
-quota.
+the same build, plus the two remaining reserves - and checks them against the
+`apps` quota. llama.cpp moved from the reserve list to the built side when its
+manifest landed, and the totals did not move: the manifest was written to the
+reserve, not the reserve rewritten to the manifest.
 
 The limits column is why that quota holds 7Gi rather than the 5Gi the envelope
 first gave it: llama.cpp is sized for 3 GiB on its own, and trimming its ceiling
@@ -160,10 +162,35 @@ Until they exist an apply fails on the missing Secret, which is the point: a
 placeholder with a password in git would come up working and never mention it
 again.
 
+The model weights are the third thing this repo does not supply. No GGUF is
+committed, no image carries one and no container downloads one: an unverified
+download URL with a checksum nobody has ever compared anything to is worse than
+an absence that says so. The `llama-models` claim is filled once, by hand, with
+the same file `docker-compose.yml` loads locally - `qwen2.5-3b-instruct-q4_k_m.gguf`,
+the upstream Q4_K_M build. A 3B rather than a 7B because the pod's ceiling is
+3 GiB and a 7B Q4_K_M is ~4.4 GB before its KV cache.
+
+```
+kubectl -n apps scale deployment/llama --replicas=0
+kubectl -n apps run llama-load --image=busybox:1.36 --restart=Never \
+  --overrides='{"spec":{"containers":[{"name":"llama-load","image":"busybox:1.36",
+  "command":["sleep","3600"],"volumeMounts":[{"name":"models","mountPath":"/models"}]}],
+  "volumes":[{"name":"models","persistentVolumeClaim":{"claimName":"llama-models"}}]}}'
+kubectl -n apps cp qwen2.5-3b-instruct-q4_k_m.gguf llama-load:/models/
+kubectl -n apps delete pod llama-load
+kubectl -n apps scale deployment/llama --replicas=1
+```
+
+The scale to zero is not optional: the claim is `ReadWriteOnce`, so the helper
+pod cannot mount it while the llama.cpp pod holds it. Until the file is there
+the pod fails its startup probe for 600 seconds and then restarts, which is a
+visibly unready workload rather than a silent one.
+
 ## Still to land
 
-- The rest of `apps/` - llama.cpp, the Helpdesk services and the console, with
-  the `helpdesk.` and `console.` Ingresses.
+- The rest of `apps/` - a second llama.cpp serving the embedding model the
+  `embed` alias names, the Helpdesk services and the console, with the
+  `helpdesk.` and `console.` Ingresses.
 - The nightly eval CronJob in `evals/`, and the metrics stack in `monitoring/`
   with its `grafana.` Ingress.
 - NetworkPolicies keyed off exactly these four namespace names, and SOPS-

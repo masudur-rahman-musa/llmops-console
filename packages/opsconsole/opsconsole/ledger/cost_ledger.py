@@ -26,7 +26,7 @@ lost write still shows up as spend on a dashboard. Pinned by
 `test_a_failing_write_is_swallowed`.
 
 **`model` has its own rule, not the resolver's** (decision D). The shipped
-`routing.yaml` names `qwen2.5-7b-instruct` and `bge-small-en-v1.5`, and both fail
+`routing.yaml` names `qwen2.5-3b-instruct` and `bge-small-en-v1.5`, and both fail
 `routing.resolver.IDENTIFIER_PATTERN` because of the dots, so reusing it here
 would refuse - and therefore silently lose - every ledger row the local provider
 produced.  `test_every_model_the_shipped_policy_can_resolve_to_passes_the_pattern`
