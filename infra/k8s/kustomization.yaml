@@ -4,8 +4,8 @@
 # `make k8s-check` and CI's `k8s` job both build THIS path, with no `-o`
 # selection to keep in step.
 #
-# `resources` grows as the row lands: `base/` now, `platform/` in 20b,
-# `apps/` in 20c.
+# `resources` grows as the row lands: `base/` and `platform/` now, `apps/` in
+# 20c.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -22,3 +22,4 @@ labels:
 
 resources:
   - base
+  - platform

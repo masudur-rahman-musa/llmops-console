@@ -7,6 +7,7 @@ kubeconform` is the whole automated check, and `kubectl apply` is a human's.
 ```
 kustomization.yaml     the single root; `resources` grows as directories land
 base/                  namespaces, quotas, limit ranges
+platform/              Postgres, Redis, Qdrant, the ACME issuers, the middlewares
 ```
 
 Build it:
@@ -56,17 +57,78 @@ Raising any row means re-totalling this table and the comment in
 `tests/infra/test_k8s_base.py` pins every quantity above against what kustomize
 actually emits, and derives the two totals from those same built objects rather
 than restating them - so a row raised in isolation fails there. This prose is
-not in that loop.
+not in that loop, with one exception: the cert-manager row of the platform table
+below IS read by `tests/infra/test_k8s_platform.py`, because there is no
+manifest under it to check instead.
+
+## The platform budget
+
+What `platform/` spends of the 2Gi / 800m / 3Gi the table above gives it. Every
+row is one pod; cert-manager is three pods this repo does not write a manifest
+for (see below), held as a reserve rather than discovered at install time.
+
+| workload | requests.memory | requests.cpu | limits.memory |
+|---|---|---|---|
+| `postgres` | 512Mi | 200m | 1Gi |
+| `redis` | 256Mi | 100m | 512Mi |
+| `qdrant` | 512Mi | 200m | 768Mi |
+| cert-manager, 3 pods at 32Mi / 10m / 128Mi each | 96Mi | 30m | 384Mi |
+| **total** | **1376Mi** | **530m** | **2688Mi** |
+
+`tests/infra/test_k8s_platform.py` derives those three totals from the built pod
+templates plus the same reserve and checks them against the `platform` quota, so
+a row raised in isolation fails there rather than at `helm install`.
+
+## The human steps
+
+Neither of these is in any gate: `kubectl apply` and `helm install` are a
+human's, and this repo only prepares and validates.
+
+cert-manager is installed from its chart into `platform`, not from the upstream
+static manifest. The manifest creates its own `cert-manager` namespace, which
+would sit outside the four namespaces above with no quota and no LimitRange on
+it - so the one component issuing our certificates would be the one thing
+without requests and limits. The chart takes both:
+
+```
+helm repo add jetstack https://charts.jetstack.io && helm repo update
+helm install cert-manager jetstack/cert-manager \
+  --version v1.16.2 --namespace platform \
+  --set crds.enabled=true \
+  --set resources.requests.memory=32Mi \
+  --set resources.requests.cpu=10m \
+  --set resources.limits.memory=128Mi \
+  --set webhook.resources.requests.memory=32Mi \
+  --set webhook.resources.requests.cpu=10m \
+  --set webhook.resources.limits.memory=128Mi \
+  --set cainjector.resources.requests.memory=32Mi \
+  --set cainjector.resources.requests.cpu=10m \
+  --set cainjector.resources.limits.memory=128Mi
+```
+
+If the chart's real footprint is larger than that, the quota refuses the install
+with the namespace named, which is the intended direction: raising it means
+re-totalling the table above and the reserve constant in the test together.
+
+The two Secrets nothing here writes, both of which the next row supplies
+SOPS-encrypted:
+
+| Secret | namespace | keys | read by |
+|---|---|---|---|
+| `postgres-credentials` | `platform` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | the Postgres StatefulSet, by `envFrom` |
+| `traefik-basic-auth` | `platform` | `users` (htpasswd lines) | the `basic-auth` middleware |
+
+Until they exist an apply fails on the missing Secret, which is the point: a
+placeholder with a password in git would come up working and never mention it
+again.
 
 ## Still to land
 
-- `platform/` - Postgres, Redis and Qdrant, cert-manager and its issuer, and
-  the Traefik middlewares for basic auth, rate limiting and security headers.
 - `apps/` - the gateway, the console, llama.cpp, the Helpdesk services, the
   evals CronJob, and the TLS Ingresses for the four subdomains the Terraform
-  module publishes.
+  module publishes, referencing the three middlewares above.
 - NetworkPolicies keyed off exactly these four namespace names, and SOPS-
-  encrypted secrets.
+  encrypted secrets, including the two named above.
 
 Each of those is admitted against the envelope above, so a workload that does
 not fit is a conversation about this table rather than a silent edit to it.

@@ -1,0 +1,92 @@
+# Qdrant: the semantic cache's vector store. `qdrant/qdrant:v1.12.4`, pinned to
+# the patch the local stack runs (decision E) - the on-disk collection format is
+# what changes underneath a StatefulSet's claim, so this is the one image where
+# a floating tag would be a data question rather than a version question.
+#
+# Both ports are published: 6333 is the HTTP API the gateway uses and the one
+# the probes read, 6334 the gRPC API nothing in this repo speaks yet.
+#
+# The probes are `httpGet`, not the `exec` the compose healthcheck uses. The
+# image carries no curl, which is why compose shells out to the binary's own
+# `--version`; the kubelet makes the request itself, so `/readyz` and `/livez`
+# answer the real question - the process is up AND serving - instead of proving
+# only that a binary can print a string.
+#
+# `storageClassName` is absent for the same reason as postgres.yaml (decision B).
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: qdrant
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: qdrant
+spec:
+  serviceName: qdrant
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: qdrant
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: qdrant
+    spec:
+      containers:
+        - name: qdrant
+          image: qdrant/qdrant:v1.12.4
+          ports:
+            - name: http
+              containerPort: 6333
+            - name: grpc
+              containerPort: 6334
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 5
+          resources:
+            requests:
+              memory: 512Mi
+              cpu: 200m
+            limits:
+              memory: 768Mi
+          volumeMounts:
+            - name: storage
+              mountPath: /qdrant/storage
+  volumeClaimTemplates:
+    - metadata:
+        name: storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qdrant
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: qdrant
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: qdrant
+  ports:
+    - name: http
+      port: 6333
+      targetPort: http
+    - name: grpc
+      port: 6334
+      targetPort: grpc

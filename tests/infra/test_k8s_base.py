@@ -5,7 +5,9 @@ Decision D of an earlier change chose "build and parse" over reading the raw fil
 perfectly valid set of files and an output stream missing the object. So the one session-scoped
 fixture here runs `kubectl kustomize <repo>/infra/k8s` once (a project rule - built once, no
 per-test rebuild) and every case reads the parsed stream. `kubectl` v1.32.2 with embedded
-kustomize v5.5.0 is what this is probed against.
+kustomize v5.5.0 is what this is probed against. That fixture now lives in
+`tests/infra/conftest.py`, shared with `test_k8s_platform.py`; it is
+requested by name here, and no assertion in this file changed when it moved.
 
 The fixture skips ONLY when `kubectl` is absent from `PATH`. A non-zero exit is a failure
 carrying kubectl's stderr, never a skip: a broken kustomization that skipped itself green would
@@ -45,8 +47,6 @@ decision E exists to prevent.
 from __future__ import annotations
 
 import re
-import shutil
-import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -268,34 +268,6 @@ def quota_hard(quota: dict[str, Any]) -> dict[str, str]:
     return {str(key): str(value) for key, value in hard.items()}
 
 
-@pytest.fixture(scope="session")
-def built() -> list[dict[str, Any]]:
-    """`kubectl kustomize infra/k8s`, run ONCE for the whole session.
-
-    Skips only when `kubectl` is absent from `PATH` (decision D). A non-zero exit fails, with
-    kubectl's stderr in the message, because a build that cannot run is the failure this file
-    exists to report - not a reason to report nothing.
-    """
-    if shutil.which("kubectl") is None:
-        pytest.skip("kubectl is not on PATH; CI's `k8s` job is the copy that cannot skip")
-    completed = subprocess.run(
-        ["kubectl", "kustomize", str(K8S_ROOT)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert completed.returncode == 0, (
-        f"`kubectl kustomize {K8S_ROOT}` exited {completed.returncode}:\n{completed.stderr}"
-    )
-    documents = [
-        document
-        for document in yaml.safe_load_all(completed.stdout)
-        if isinstance(document, dict) and document
-    ]
-    assert documents, f"`kubectl kustomize {K8S_ROOT}` emitted no objects"
-    return documents
-
-
 def test_the_build_succeeds_and_emits_only_the_four_namespaces(
     built: list[dict[str, Any]],
 ) -> None:
@@ -371,8 +343,10 @@ def test_each_namespace_has_one_limit_range_with_the_agreed_defaults(
     namespace: str, built: list[dict[str, Any]]
 ) -> None:
     """Criterion 5. The LimitRange is the backstop under the quota: without it a third-party
-    manifest that declares no resources is REJECTED at admission rather than defaulted, so
-    cert-manager and kube-prometheus-stack stop being installable unedited in 20b and 20c.
+    manifest that declares no resources is REJECTED at admission rather than defaulted, so an
+    unedited upstream chart - kube-prometheus-stack in row 23 - stops being installable at all.
+    cert-manager is no longer an example of that: 20b's decision A installs it with all three
+    quantities set on the command line, so it is admitted on its own values and not these.
     Catches the `Container` entry retyped as `Pod` (which defaults nothing per container),
     catches `default` and `defaultRequest` swapped - a 256Mi request against a 64Mi ceiling is
     unschedulable - and catches either resource dropped from either side."""

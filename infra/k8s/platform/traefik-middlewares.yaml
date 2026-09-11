@@ -1,0 +1,53 @@
+# The three middlewares 20c's Ingresses reference. `traefik.io/v1alpha1` is
+# Traefik v3's group, which is what k3s v1.31.5+k3s1 ships - the older
+# `traefik.containo.us/v1alpha1` is v2's and is not served by this cluster.
+#
+# They live in `platform` with the rest of the shared infrastructure. 20c's
+# Ingresses are in `apps` and reference them as
+# `platform-<name>@kubernetescrd`; Traefik v3's CRD provider defaults
+# `allowCrossNamespace` to false, so if that reference is refused the fallback
+# is a second copy of this file under `apps/`. The first real deploy is what
+# says, and nothing in this repo can say it sooner.
+#
+# `basic-auth` names a Secret this repo never writes (decision D): row 21
+# supplies `traefik-basic-auth` SOPS-encrypted, with the htpasswd lines under
+# the key `users`.
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: basic-auth
+  namespace: platform
+spec:
+  basicAuth:
+    secret: traefik-basic-auth
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: rate-limit
+  namespace: platform
+spec:
+  # 50 requests a second sustained, bursting to 100. `period` is a duration
+  # STRING: Traefik reads a bare number here as nanoseconds, which would make
+  # the average effectively unbounded rather than tightening it.
+  rateLimit:
+    average: 50
+    burst: 100
+    period: 1s
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: security-headers
+  namespace: platform
+spec:
+  # Exactly these five. HSTS for a year including subdomains, no MIME sniffing,
+  # no framing, and a referrer policy that sends the origin cross-site rather
+  # than the full URL - a gateway URL can carry a tenant and a model name.
+  headers:
+    stsSeconds: 31536000
+    stsIncludeSubdomains: true
+    contentTypeNosniff: true
+    frameDeny: true
+    referrerPolicy: strict-origin-when-cross-origin

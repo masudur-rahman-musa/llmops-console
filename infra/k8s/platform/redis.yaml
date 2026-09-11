@@ -1,0 +1,84 @@
+# Redis: the redaction map, the exact cache, the budget windows and the rate
+# limit counters. A Deployment over an `emptyDir`, not a StatefulSet with a
+# claim (decision C).
+#
+# The same reason `docker-compose.yml` runs it with `--save "" --appendonly no`:
+# Redis holds a redaction map, and a disk image of that map is personal data at
+# rest that nothing needs. The cost is named rather than hidden - a restart
+# forgives part of a budget window and resets a rate-limit window - and it falls
+# in the permissive direction, never toward refusing a tenant traffic it was
+# owed. Nothing durable lives here: the ledger is in Postgres.
+#
+# `emptyDir` is still mounted at `/data` so the working set has somewhere to go
+# that is not the container's writable layer.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: redis
+spec:
+  replicas: 1
+  # Written here and on the template for the same reason as postgres.yaml: the
+  # root's common labels carry `includeSelectors: false` and reach neither.
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7
+          args:
+            - --save
+            - ""
+            - --appendonly
+            - "no"
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 100m
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: redis
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
