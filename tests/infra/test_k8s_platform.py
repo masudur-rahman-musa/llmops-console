@@ -649,8 +649,9 @@ def test_each_workload_has_both_probes_and_a_service_that_resolves(
 
 def test_the_middlewares_carry_the_agreed_values(built: list[dict[str, Any]]) -> None:
     """Criterion 7, all three by value. Catches `basic-auth` naming a Secret other than the one
-    row 21c will supply, which is an Ingress with authentication configured and no credentials
-    behind it. Catches the rate-limit triple written with `average` and `burst` swapped - 100
+    `infra/secrets/traefik-basic-auth.example.yaml` contracts, which is an Ingress with
+    authentication configured and no credentials behind it. Catches the rate-limit triple
+    written with `average` and `burst` swapped - 100
     sustained with a burst of 50 is a limit that never bites the way it was agreed - and
     catches `period` written as the int `1`, where Traefik reads a bare number as nanoseconds
     and the limiter becomes effectively unbounded. Catches any of the five security headers

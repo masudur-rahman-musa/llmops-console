@@ -286,14 +286,19 @@ with the namespace named, which is the intended direction: raising it means
 re-totalling the table above and the reserve constant in the test together.
 
 The four Secrets nothing here writes, each supplied SOPS-encrypted before the
-first apply:
+first apply. `../secrets/` holds one plaintext contract per Secret
+(`*.example.yaml`, every value `REPLACE_ME`), the workflow that encrypts a filled
+copy, and the key procedure; `../../.sops.yaml` is the policy that decides what
+gets encrypted and to whom. The key names below and the ones in those templates
+are asserted equal, and equal to the names the build references, by
+`tests/infra/test_secrets.py`:
 
 | Secret | namespace | keys | read by |
 |---|---|---|---|
 | `postgres-credentials` | `platform` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | the Postgres StatefulSet, by `envFrom` |
 | `traefik-basic-auth` | `platform`, `apps` | `users` (htpasswd lines) | the `basic-auth` middleware in each namespace |
-| `gateway-secrets` | `apps` | the database URL, the provider keys `routing.yaml` reads by `key_env`, the Langfuse pair, the tenant key digests | the gateway Deployment, by `envFrom` |
-| `helpdesk-secrets` | `apps` | the gateway API key the Helpdesk calls with, its own database URL, the Langfuse pair | the four Helpdesk Deployments, by `envFrom` |
+| `gateway-secrets` | `apps` | `OPSCONSOLE_DATABASE_URL`, `OPSCONSOLE_API_KEYS`, `OPSCONSOLE_ADMIN_KEY_SHA256`, `OPSCONSOLE_BUDGET_OVERRIDE_SECRET`, `OPSCONSOLE_OTLP_ENDPOINT`, `OPSCONSOLE_OTLP_HEADERS`, `ANTHROPIC_API_KEY`, `ANTHROPIC_EU_API_KEY`, `OPENAI_API_KEY`, `AZURE_OPENAI_KEY`, `AZURE_OPENAI_ENDPOINT` | the gateway Deployment, by `envFrom` |
+| `helpdesk-secrets` | `apps` | `HELPDESK_GATEWAY_API_KEY`, `HELPDESK_DATABASE_URL`, `HELPDESK_LANGFUSE_PUBLIC_KEY`, `HELPDESK_LANGFUSE_SECRET_KEY`, `HELPDESK_LANGFUSE_HOST` | the four Helpdesk Deployments, by `envFrom` |
 
 `traefik-basic-auth` is supplied once per routing namespace, not once per
 cluster: a `Middleware` reads its Secret from its own namespace, and a design note is
@@ -302,9 +307,16 @@ Secrets the four Ingresses name are not in this table - cert-manager writes
 those, and their names have to stay disjoint from the four above, or an issued
 certificate overwrites a set of credentials.
 
+Three of those key names are endpoints rather than credentials
+(`OPSCONSOLE_OTLP_ENDPOINT`, `AZURE_OPENAI_ENDPOINT`, `HELPDESK_LANGFUSE_HOST`).
+A pod reads exactly two sources, its ConfigMap and its Secret, and each of these
+three travels with a credential it would be useless apart from, so they sit with
+the credential rather than in the ConfigMap.
+
 Until they exist an apply fails on the missing Secret, which is the point: a
 placeholder with a password in git would come up working and never mention it
-again.
+again. Nothing under `../secrets/` is a kustomize input: no kustomization lists a
+path there, the build emits no `Secret` at all, and both are asserted.
 
 The model weights are the third thing this repo does not supply. No GGUF is
 committed, no image carries one and no container downloads one: an unverified
@@ -376,8 +388,9 @@ metrics stack lands.
 - The rest of `apps/` - the console with its `console.` Ingress.
 - The nightly eval CronJob in `evals/`, and the metrics stack in `monitoring/`
   with its `grafana.` Ingress.
-- SOPS-encrypted secrets, including the four named above - the last open half of
-  the network and secrets work.
+- The four `../secrets/*.enc.yaml` themselves. The policy, the contracts and the
+  guard are in place; the ciphertext waits on an age key being generated, which
+  is one pass with `sops` installed.
 - NetworkPolicies for `evals` and `monitoring`; the two namespaces that serve
   traffic are covered above.
 

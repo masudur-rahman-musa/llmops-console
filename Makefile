@@ -1,4 +1,4 @@
-.PHONY: help setup run test select-tests test-adjacent lint typecheck format verify eval infra-check k8s-check migrate purge-residency refresh-rollup
+.PHONY: help setup run test select-tests test-adjacent lint typecheck format verify eval infra-check k8s-check migrate purge-residency refresh-rollup secrets-encrypt secrets-decrypt secrets-check
 
 # The console arrives in a later milestone. Until then its checks are skipped
 # rather than deleted, so the intended gate stays visible in this file. The
@@ -77,3 +77,57 @@ infra-check: ## Validate infrastructure as code (no apply)
 # to produce.
 k8s-check:  ## Build the kustomization and validate it against the schemas (no apply)
 	kustomize build infra/k8s | kubeconform -strict -summary -schema-location default -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+
+# The three secrets targets. `sops` is NOT a build dependency of this repository
+# and the age key is never in it, so each of the two that shell out to `sops`
+# starts by refusing when the binary is absent, with a message naming it - a bare
+# `sops --encrypt` inside a loop exits 127 with `command not found`, and a loop
+# over an empty glob reports success over a no-op, which is an operator believing
+# four files were written when none were. Written as `if ! command -v` and not as
+# `A && B || C`, which reports success the moment B fails.
+#
+# `--output` rather than a shell redirect: `> out` creates the file before sops
+# runs, so a failed encrypt would leave an empty `.enc.yaml` behind that looks
+# like a result.
+#
+# Pinned by `tests/infra/test_secrets.py`
+# (`test_the_sops_targets_refuse_to_run_when_sops_is_missing` and
+# `test_the_sops_targets_refuse_to_report_success_over_an_empty_glob`).
+SECRETS_DIR = infra/secrets
+secrets-encrypt: ## Encrypt every infra/secrets/*.dec.yaml to its *.enc.yaml
+	@if ! command -v sops >/dev/null 2>&1; then \
+	  echo "sops is not on PATH: install sops before encrypting - $(SECRETS_DIR)/README.md" >&2; \
+	  exit 1; \
+	fi
+	@found=0; \
+	for plain in $(SECRETS_DIR)/*.dec.yaml; do \
+	  [ -e "$$plain" ] || continue; \
+	  found=1; \
+	  sops --encrypt --output "$${plain%.dec.yaml}.enc.yaml" "$$plain" || exit 1; \
+	  echo "encrypted $$plain"; \
+	done; \
+	if [ "$$found" = 0 ]; then \
+	  echo "nothing to encrypt: no $(SECRETS_DIR)/*.dec.yaml - copy a *.example.yaml and fill it in" >&2; \
+	  exit 1; \
+	fi
+secrets-decrypt: ## Decrypt every infra/secrets/*.enc.yaml to its *.dec.yaml
+	@if ! command -v sops >/dev/null 2>&1; then \
+	  echo "sops is not on PATH: install sops before decrypting - $(SECRETS_DIR)/README.md" >&2; \
+	  exit 1; \
+	fi
+	@found=0; \
+	for sealed in $(SECRETS_DIR)/*.enc.yaml; do \
+	  [ -e "$$sealed" ] || continue; \
+	  found=1; \
+	  sops --decrypt --output "$${sealed%.enc.yaml}.dec.yaml" "$$sealed" || exit 1; \
+	  echo "decrypted $$sealed"; \
+	done; \
+	if [ "$$found" = 0 ]; then \
+	  echo "nothing to decrypt: no $(SECRETS_DIR)/*.enc.yaml yet" >&2; \
+	  exit 1; \
+	fi
+# The guard, which needs neither sops nor age: it asserts on file structure, on
+# `git ls-files` and on the kustomize build, so it is the one secrets target that
+# runs on any machine and in CI.
+secrets-check: ## Check the secrets policy and contracts (no sops, no age needed)
+	uv run pytest -q tests/infra/test_secrets.py

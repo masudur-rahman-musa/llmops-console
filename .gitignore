@@ -21,7 +21,12 @@ evals/reports/local*/
 *.tfstate
 *.tfstate.backup
 crash.log
+# The age private key, sops' decrypted output, and age-keygen's default
+# output file. Encrypted `infra/secrets/*.enc.yaml` IS committed; nothing
+# that decrypts it ever is.
 *.agekey
+keys.txt
+*.dec.yaml
 
 # local working files
 automode.md

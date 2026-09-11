@@ -1,0 +1,28 @@
+# What `sops` encrypts in this repository, and for whom.
+#
+# Read automatically by every `sops` invocation started from the repository
+# root, which is why `make secrets-encrypt` passes a file name and no flags: the
+# rule below decides both the algorithm and the recipient, so an operator cannot
+# encrypt one file to a different key by typing a different command.
+#
+# Pinned by `tests/infra/test_secrets.py`
+# (`test_the_sops_rule_covers_the_encrypted_file_and_leaves_the_example_alone`
+# and `test_the_sops_policy_encrypts_exactly_the_two_data_keys`).
+creation_rules:
+  # `\.enc\.yaml$`, never `\.yaml$`: the plaintext contracts live in the same
+  # directory as `*.example.yaml`, and a rule covering those would encrypt the
+  # templates a human reads before an apply.
+  - path_regex: ^infra/secrets/.*\.enc\.yaml$
+    # Values only. `^(data|stringData)$` and not `data`, which also matches
+    # `metadata` - encrypting a Secret's own name and namespace produces a file
+    # `kustomize` cannot read and `kubectl apply` cannot route anywhere.
+    encrypted_regex: ^(data|stringData)$
+    # The age PUBLIC key the four `*.enc.yaml` are encrypted to. A recipient is
+    # not a secret and belongs in git; the matching PRIVATE key never does - it
+    # lives in the operator's password manager and in the `SOPS_AGE_KEY` GitHub
+    # secret that CD decrypts with. `infra/secrets/README.md` is the procedure.
+    #
+    # REPLACE_ME until the key exists: `sops` refuses outright on this value,
+    # which is the intended direction. A placeholder that happened to parse as a
+    # recipient would encrypt four files to a key nobody holds.
+    age: REPLACE_ME
