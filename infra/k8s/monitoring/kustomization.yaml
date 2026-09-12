@@ -1,0 +1,18 @@
+# The scrape plane: Prometheus, the two exporters and the RBAC one of them
+# needs. Grafana, its `grafana.` Ingress and the six dashboards land in this
+# directory next, and Alertmanager and its rules after that (23c).
+#
+# No `namespace:` transformer here on purpose, the same reason `platform/` has
+# none: it would stamp `metadata.namespace` onto the cluster-scoped ClusterRole
+# and ClusterRoleBinding as well. Each namespaced document writes
+# `metadata.namespace: monitoring` itself instead.
+#
+# No `images:` block either. That transformer flips the tag CD builds, and none
+# of these three images is built in this repo: each is pinned to an exact
+# upstream tag in the file that names it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - prometheus.yaml
+  - exporters.yaml

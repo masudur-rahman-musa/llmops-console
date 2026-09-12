@@ -1,6 +1,6 @@
-r"""`infra/k8s/base/networkpolicies.yaml`: the ten NetworkPolicies an earlier change agrees, read off
-what kustomize actually emits rather than off the file, so a policy written and never listed in
-`base/kustomization.yaml`'s `resources` is the same failure as a policy never written.
+r"""`infra/k8s/base/networkpolicies.yaml`: the fifteen NetworkPolicies an earlier change agree,
+read off what kustomize actually emits rather than off the file, so a policy written and never
+listed in `base/kustomization.yaml`'s `resources` is the same failure as a policy never written.
 
 The stream comes from the session-scoped `built` fixture in `tests/infra/conftest.py`: one
 `kubectl kustomize infra/k8s` for the whole session, shared with
@@ -51,6 +51,10 @@ NETWORK_POLICY = "NetworkPolicy"
 APPS = "apps"
 PLATFORM = "platform"
 
+#: The scrape plane's namespace: Prometheus and the two exporters live here, which is
+#: why it joins `NAMESPACES_WITH_POD_TEMPLATES` below.
+MONITORING = "monitoring"
+
 #: k3s's own namespace: Traefik (the ingress path into `gateway` and `helpdesk-web`) and
 #: kube-dns live here. This build emits no pod template in it, which is why the selector scan
 #: skips peers scoped to it.
@@ -58,7 +62,7 @@ KUBE_SYSTEM = "kube-system"
 
 #: The namespaces this build writes pod templates for, and therefore the only ones the selector
 #: scan can resolve a peer against.
-NAMESPACES_WITH_POD_TEMPLATES = frozenset({APPS, PLATFORM})
+NAMESPACES_WITH_POD_TEMPLATES = frozenset({APPS, PLATFORM, MONITORING})
 
 #: The one label every pod template in this build carries and the only one any selector keys
 #: off. A workload's value here is also its Deployment name and its Service name.
@@ -100,13 +104,28 @@ APPS_POLICIES = frozenset(
     }
 )
 
-#: Criterion 1, the `platform` half: two policies, by name.
-PLATFORM_POLICIES = frozenset({"default-deny-ingress", "data-ingress-from-apps"})
+#: Criterion 1, the `platform` half: three policies, by name. `metrics-ingress-from-monitoring`
+#: is an earlier change's - a NEW policy for Qdrant rather than a widening of `data-ingress-from-apps`, so
+#: that policy's `apps`-only guarantee is untouched.
+PLATFORM_POLICIES = frozenset(
+    {"default-deny-ingress", "data-ingress-from-apps", "metrics-ingress-from-monitoring"}
+)
+
+#: An earlier change criterion 6, the `monitoring` half: four policies, by name. Its own catch-all in both
+#: directions, DNS, the named-port scrape ingress every pod in the namespace carries, and
+#: Prometheus's egress to the four things it scrapes.
+MONITORING_POLICIES = frozenset(
+    {"default-deny", "allow-dns", "metrics-ingress-from-monitoring", "prometheus-egress"}
+)
 
 #: Criterion 1 as `(namespace, name)` pairs, which is the identity a NetworkPolicy actually has:
-#: two policies of the same name in different namespaces are two different objects.
+#: two policies of the same name in different namespaces are two different objects - which is
+#: exactly the shape `metrics-ingress-from-monitoring` has, one in `platform` and one in
+#: `monitoring`.
 POLICY_NAMES: frozenset[tuple[str, str]] = frozenset(
-    {(APPS, name) for name in APPS_POLICIES} | {(PLATFORM, name) for name in PLATFORM_POLICIES}
+    {(APPS, name) for name in APPS_POLICIES}
+    | {(PLATFORM, name) for name in PLATFORM_POLICIES}
+    | {(MONITORING, name) for name in MONITORING_POLICIES}
 )
 
 #: Criterion 2: `apps`'s catch-all closes both directions, `platform`'s closes ingress only
@@ -487,7 +506,8 @@ def selector_scope(
     ("namespace", "expected"),
     [
         pytest.param(APPS, APPS_POLICIES, id="apps-eight"),
-        pytest.param(PLATFORM, PLATFORM_POLICIES, id="platform-two"),
+        pytest.param(PLATFORM, PLATFORM_POLICIES, id="platform-three"),
+        pytest.param(MONITORING, MONITORING_POLICIES, id="monitoring-four"),
     ],
 )
 def test_each_namespace_emits_exactly_the_policies_the_plan_names(
@@ -508,11 +528,11 @@ def test_each_namespace_emits_exactly_the_policies_the_plan_names(
     )
 
 
-def test_the_whole_build_emits_exactly_the_ten_policies_and_nowhere_else(
+def test_the_whole_build_emits_exactly_the_fifteen_policies_and_nowhere_else(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 1 over the WHOLE stream as `(namespace, name)`. Catches an eleventh policy
-    landing in a third namespace, which the two per-namespace rows above cannot see because each
+    """Criterion 1 over the WHOLE stream as `(namespace, name)`. Catches a sixteenth policy
+    landing in a fourth namespace, which the three per-namespace rows above cannot see because each
     filters to its own namespace first; and catches a policy emitted with no
     `metadata.namespace` at all, which the API server would file into whatever namespace the
     apply ran against rather than the one the plan names."""
@@ -644,9 +664,9 @@ def test_the_helpdesk_may_reach_exactly_six_destinations_and_no_ip_block(
         ),
         pytest.param(
             "gateway-ingress",
-            {(KUBE_SYSTEM, ANY_POD), (APPS, ANY_POD)},
+            {(KUBE_SYSTEM, ANY_POD), (APPS, ANY_POD), (MONITORING, ANY_POD)},
             {GATEWAY: {("TCP", 8080)}},
-            id="gateway-from-traefik-and-apps",
+            id="gateway-from-traefik-apps-and-monitoring",
         ),
         pytest.param(
             "helpdesk-web-ingress",

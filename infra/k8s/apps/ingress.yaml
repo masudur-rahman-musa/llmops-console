@@ -21,9 +21,10 @@
 # the admin key stays in front of the three admin routes for callers that reach
 # the pod another way. In-cluster callers are unaffected - they dial
 # `Service/gateway` directly and every path the app mounts answers there, which
-# is how a Prometheus scrape will reach `/metrics` once `monitoring` has a
-# NetworkPolicy allowing it. `/readyz` is public nowhere: the kubelet dials the
-# pod, and the readiness body names which dependencies are reachable.
+# is how the Prometheus in `monitoring/` reaches `/metrics`: a scrape target in
+# its config and a `monitoring` peer on `gateway-ingress`, neither of them a
+# router. `/readyz` is public nowhere: the kubelet dials the pod, and the
+# readiness body names which dependencies are reachable.
 #
 # On the Helpdesk pair, `helpdesk-web` is the only public surface - the agent API
 # is the shape a project rule rejects for the console, and the MCP server is a tool

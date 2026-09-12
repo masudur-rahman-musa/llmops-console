@@ -1,4 +1,5 @@
-# The ten NetworkPolicies. They live in `base/` rather than beside the workloads
+# The fifteen NetworkPolicies: eight in `apps`, three in `platform`, four in
+# `monitoring`. They live in `base/` rather than beside the workloads
 # they constrain because the design puts them here: a policy is part of the
 # envelope a namespace admits work into, like its quota and its LimitRange, and
 # splitting them across `apps/` and `platform/` would mean reading two files to
@@ -9,8 +10,8 @@
 # the cluster-scoped objects `base/` also emits - so the namespace is written
 # where it is read.
 #
-# The shape is deny-first. `default-deny` selects every pod in `apps` in both
-# directions and everything after it is an additive allow, because Kubernetes
+# The shape is deny-first. `apps`'s `default-deny` selects every pod in it in
+# both directions and everything after it is an additive allow, because Kubernetes
 # unions allows and has no deny rule. So the guarantee #54 asks for - only the
 # gateway reaches the internet - is a property of what is ABSENT from this file,
 # not of anything written in it, which is why `tests/infra/test_k8s_netpol.py`
@@ -77,9 +78,12 @@ spec:
         - protocol: TCP
           port: 53
 
-# Two sources, one port. `kube-system` is Traefik, which is how both public
+# Three sources, one port. `kube-system` is Traefik, which is how both public
 # hosts reach anything; the empty `podSelector` is every pod in `apps`, which is
-# how the four Helpdesk workloads call the gateway rather than a provider.
+# how the four Helpdesk workloads call the gateway rather than a provider; and
+# `monitoring` is Prometheus scraping `/metrics`, which the gateway already
+# serves on this same port. The scrape needed no port, Service or probe change
+# on the gateway - only a source admitted here.
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -98,6 +102,9 @@ spec:
             matchLabels:
               kubernetes.io/metadata.name: kube-system
         - podSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
       ports:
         - protocol: TCP
           port: http
@@ -411,3 +418,161 @@ spec:
           port: 6379
         - protocol: TCP
           port: 6333
+
+# Qdrant's scrape, as a NEW policy rather than a `monitoring` peer added to
+# `data-ingress-from-apps`. That policy's guarantee is that the data services
+# admit `apps` and nothing else, and widening it would spend that guarantee to
+# save a document. This one selects Qdrant alone - Postgres and Redis are
+# scraped by nothing until an exporter for each lands - and admits 6333, the
+# HTTP port it already serves `/metrics` on. 6334 (gRPC) is absent for the same
+# reason it is absent there: nothing scrapes it.
+#
+# Numeric rather than named, the same exception `data-ingress-from-apps` carries:
+# Qdrant calls its port `http`, and a policy written in `monitoring`'s port
+# vocabulary would not resolve against a pod in `platform`.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: metrics-ingress-from-monitoring
+  namespace: platform
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: qdrant
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 6333
+
+# Every pod in `monitoring`, both directions. `monitoring` is closed the way
+# `apps` is rather than the way `platform` is: nothing here needs to reach the
+# internet, so the namespace holding fifteen days of everything the cluster has
+# done gets no route off it.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: monitoring
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+
+# DNS, the same shape and the same reason as `apps`'s copy: every target in the
+# scrape config is a Service DNS name, so a Prometheus that cannot resolve is a
+# Prometheus whose five targets are all DOWN.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: monitoring
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+# One policy, three pods, three different numbers. Every container port in this
+# namespace is named `metrics` (9090, 9100, 8080), and Kubernetes resolves a
+# named port against each target pod's own container port - so this one rule is
+# Prometheus admitted to both exporters AND, in 23b and 23c, Grafana and
+# Alertmanager admitted to Prometheus, with no edit here when they land. A
+# literal number would be right for one pod and a silent deny for the other two.
+#
+# The peer is the namespace rather than `prometheus` by name for the same
+# reason: the scrapers this admits do not all exist yet.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: metrics-ingress-from-monitoring
+  namespace: monitoring
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: metrics
+
+# What Prometheus may open, and it is exactly the four things it scrapes that
+# are not itself. No `ipBlock` at all: nothing in the scrape config is off the
+# cluster, and this is the pod whose store would be worth exfiltrating.
+#
+# One rule per destination rather than one rule listing four peers and four
+# ports: a rule crosses every peer with every port, so the compact form would
+# allow all sixteen pairs, including Prometheus reaching the gateway on Qdrant's
+# port. The two exporter rules read in the port NAME, which resolves against
+# each pod's own number; the two cross-namespace rules read in numbers, because
+# the pods they name are in namespaces with their own port vocabulary.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prometheus-egress
+  namespace: monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: apps
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gateway
+      ports:
+        - protocol: TCP
+          port: 8080
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: platform
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: qdrant
+      ports:
+        - protocol: TCP
+          port: 6333
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: node-exporter
+      ports:
+        - protocol: TCP
+          port: metrics
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kube-state-metrics
+      ports:
+        - protocol: TCP
+          port: metrics

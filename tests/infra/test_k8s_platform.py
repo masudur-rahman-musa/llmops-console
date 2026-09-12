@@ -80,6 +80,15 @@ PLATFORM_OBJECTS: frozenset[tuple[str, str, str | None]] = frozenset(
         # `tests/infra/test_k8s_netpol.py` owns what they contain; these are the two names.
         ("NetworkPolicy", "default-deny-ingress", PLATFORM),
         ("NetworkPolicy", "data-ingress-from-apps", PLATFORM),
+        # Row 23a, the same way: Qdrant's scrape is a NEW policy in this namespace rather than a
+        # widening of `data-ingress-from-apps`, so that policy's `apps`-only guarantee is
+        # untouched and this is a third name here.
+        ("NetworkPolicy", "metrics-ingress-from-monitoring", PLATFORM),
+        # Row 23a's RBAC, cluster-scoped and therefore inside this case's `None` half although it
+        # belongs to `monitoring/`. `tests/infra/test_k8s_monitoring.py` owns what it grants and
+        # that there is no third ClusterRole in the build; these are the two names.
+        ("ClusterRole", "kube-state-metrics", None),
+        ("ClusterRoleBinding", "kube-state-metrics", None),
     }
 )
 

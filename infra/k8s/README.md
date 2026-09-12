@@ -9,6 +9,7 @@ kustomization.yaml     the single root; `resources` grows as directories land
 base/                  namespaces, quotas, limit ranges, network policies
 platform/              Postgres, Redis, Qdrant, the ACME issuers, the middlewares
 apps/                  the gateway, llama.cpp, the Helpdesk, their config and the four public Ingresses
+monitoring/            Prometheus, node-exporter, kube-state-metrics
 ```
 
 Build it:
@@ -139,6 +140,35 @@ first gave it: llama.cpp is sized for 3 GiB on its own, and trimming its ceiling
 to fit would be shrinking the model to fit the table. The requests column, the
 one the scheduler actually packs, did not move.
 
+## The monitoring budget
+
+What `monitoring/` spends of the 512Mi / 400m / 1Gi the envelope gives it. One
+row per pod; `node-exporter` is a DaemonSet and this cluster is one node, so it
+is one pod here and would be one per node on a larger one.
+
+| workload | requests.memory | requests.cpu | limits.memory |
+|---|---|---|---|
+| `prometheus`, 1 pod | 256Mi | 150m | 512Mi |
+| `node-exporter`, 1 pod per node | 32Mi | 50m | 64Mi |
+| `kube-state-metrics`, 1 pod | 64Mi | 50m | 128Mi |
+| **total** | **352Mi** | **250m** | **704Mi** |
+
+`tests/infra/test_k8s_monitoring.py` derives those three totals from the built
+pod templates and checks them against the `monitoring` quota, the same way the
+two budgets above are checked.
+
+What is left is 160Mi of requests and 296Mi of the limits ceiling, and it is
+spoken for: Grafana at 128Mi and Alertmanager at 32Mi fill
+the requests column to the byte. A Grafana that needs more is a conversation
+about the envelope in that plan, not a quiet edit here.
+
+There is no operator and no CustomResourceDefinition: this stack is written by
+hand rather than installed from `kube-prometheus-stack`, because the whole build
+has to pass `kubeconform -strict` offline and a custom resource has no stock
+schema. Prometheus scrapes five static targets by Service DNS and
+holds no RBAC at all; `kube-state-metrics` is the one subject in the repo with a
+ClusterRole, and its verbs are `get`, `list` and `watch`.
+
 ## The public hosts
 
 Four Ingresses, two hosts, one pair per host. The pair exists because a Traefik
@@ -173,7 +203,9 @@ that reaches the pod another way - the router rule removed a surface, it did not
 replace a control. `/readyz` is published nowhere either, because its body names
 which dependencies are reachable and the kubelet dials the pod directly. Every
 path the app mounts still answers on `Service/gateway` in-cluster, which is what
-"cluster-internal" means here and how row 23's Prometheus will scrape `/metrics`.
+"cluster-internal" means here and how the Prometheus in `monitoring/` scrapes
+`/metrics`: a scrape target in its config and a `monitoring` peer on
+`gateway-ingress`, neither of them a router.
 
 A future public surface that is not under `/v1` - the console's `console-api` -
 needs a router of its own on this table, or it is a 404 on a host that is up.
@@ -200,9 +232,10 @@ nothing rather than one that answers too much.
 
 ## What may reach what
 
-Ten `NetworkPolicy` objects in `base/networkpolicies.yaml`, eight in `apps` and
-two in `platform`. `apps` is denied in both directions and every row below is an
-additive allow on top of that; `platform` is denied inbound only, because
+Fifteen `NetworkPolicy` objects in `base/networkpolicies.yaml`: eight in `apps`,
+three in `platform` and four in `monitoring`. `apps` and `monitoring` are denied
+in both directions and every row below is an additive allow on top of that;
+`platform` is denied inbound only, because
 cert-manager lives there and a cluster that cannot reach the ACME endpoint is a
 cluster with no certificate on any of the four public hosts. What that costs is
 that a compromised data pod can still talk out. The namespace holding the
@@ -212,7 +245,7 @@ provider keys is the one closed both ways.
 |---|---|---|---|
 | `default-deny` | `apps` | every pod | nothing, in either direction |
 | `allow-dns` | `apps` | every pod | egress to `kube-system` on UDP 53 and TCP 53 |
-| `gateway-ingress` | `apps` | `gateway` | ingress from `kube-system` (Traefik) and from any pod in `apps`, on its serving port |
+| `gateway-ingress` | `apps` | `gateway` | ingress from `kube-system` (Traefik), from any pod in `apps` and from any pod in `monitoring`, on its serving port |
 | `gateway-egress` | `apps` | `gateway` | egress to the public internet on TCP 443, to llama 8082, llama-embed 8083, and to Postgres, Redis and Qdrant in `platform` |
 | `helpdesk-web-ingress` | `apps` | `helpdesk-web` | ingress from `kube-system` on its serving port |
 | `helpdesk-api-ingress` | `apps` | `helpdesk-agent-api`, `helpdesk-mcp-server` | ingress from the four Helpdesk pods, each on its own serving port |
@@ -220,6 +253,11 @@ provider keys is the one closed both ways.
 | `llama-ingress` | `apps` | `llama`, `llama-embed` | ingress from `gateway`, each on its own serving port |
 | `default-deny-ingress` | `platform` | every pod | nothing inbound; egress is not constrained |
 | `data-ingress-from-apps` | `platform` | `postgres`, `redis`, `qdrant` | ingress from any pod in `apps` on 5432, 6379 and 6333 |
+| `metrics-ingress-from-monitoring` | `platform` | `qdrant` | ingress from any pod in `monitoring` on 6333 |
+| `default-deny` | `monitoring` | every pod | nothing, in either direction |
+| `allow-dns` | `monitoring` | every pod | egress to `kube-system` on UDP 53 and TCP 53 |
+| `metrics-ingress-from-monitoring` | `monitoring` | every pod | ingress from any pod in `monitoring`, each on its own `metrics` port |
+| `prometheus-egress` | `monitoring` | `prometheus` | egress to `gateway:8080`, `qdrant:6333` and the two exporters on their `metrics` ports - and no route off the cluster at all |
 
 The gateway is the only pod in the cluster with a route to the internet, and
 that is the point of the whole file: the Helpdesk holds no provider key, and
@@ -233,7 +271,15 @@ is the one worth naming: it closes `169.254.169.254`, the metadata endpoint an
 SSRF through a provider `base_url` would otherwise reach from the one pod that
 holds every key.
 
-Three rows read `on its own serving port` because the port is written by NAME
+Qdrant's scrape is a separate `platform` policy rather than a `monitoring` peer
+added to `data-ingress-from-apps`: that policy's guarantee is that the data
+services admit `apps` and nothing else, and widening it would spend the
+guarantee to save a document. Postgres and Redis are scraped by nothing until an
+exporter for each lands, so the platform dashboard in 23b arrives with two empty
+panels.
+
+Four rows read `on its own serving port` or `on its own metrics port` because
+the port is written by NAME
 rather than by number. A policy has one `podSelector` and its ports apply to
 every pod that selector matches, so `llama-ingress` - one policy over two pods
 listening on 8082 and 8083 - cannot say "each on its own port" with a literal.
@@ -245,9 +291,8 @@ Two things these policies do NOT do. They cannot see a URL path: what takes
 `/admin/*` and `/metrics` off the public side is the `gateway` Ingress routing
 `/v1` and nothing wider, a router rule rather than a policy. These policies
 decide only which pods may open a connection, and Traefik is one of them. And
-`evals` and
-`monitoring` have no policies at all yet, so a Prometheus installed today
-reaches nothing in `apps`: its scrape allow lands with the metrics stack.
+`evals` still has no policies at all, so the nightly CronJob's allows land with
+that row.
 
 Nothing here has ever been applied, so none of it has ever denied a packet. What
 the tests prove is shape, by equality in both directions, so an allow nobody
@@ -380,19 +425,22 @@ shared service name would collapse five processes into one in the trace viewer.
 The scheduler has no liveness signal and that is a decision, not an omission: it
 serves no port, so a health probe would have to be a command no code in this
 repo defines, and a liveness probe against a command that does not exist
-restarts the pod forever. A wedged scheduler is therefore invisible until the
-metrics stack lands.
+restarts the pod forever. A wedged scheduler is therefore visible only as an
+object in kube-state-metrics; nothing pages on it until the alert rules land in
+row 23c.
 
 ## Still to land
 
 - The rest of `apps/` - the console with its `console.` Ingress.
-- The nightly eval CronJob in `evals/`, and the metrics stack in `monitoring/`
-  with its `grafana.` Ingress.
+- The nightly eval CronJob in `evals/`.
+- The rest of `monitoring/` - Grafana with its `grafana.` Ingress and the six
+  provisioned dashboards, then Alertmanager and the rules in
+  `../../project-obs/alerts/`. Postgres and Redis exporters are not planned yet
+  and are what the platform dashboard's two empty panels are waiting on.
 - The four `../secrets/*.enc.yaml` themselves. The policy, the contracts and the
   guard are in place; the ciphertext waits on an age key being generated, which
   is one pass with `sops` installed.
-- NetworkPolicies for `evals` and `monitoring`; the two namespaces that serve
-  traffic are covered above.
+- NetworkPolicies for `evals`; the other three namespaces are covered above.
 
 Each of those is admitted against the envelope above, so a workload that does
 not fit is a conversation about this table rather than a silent edit to it.

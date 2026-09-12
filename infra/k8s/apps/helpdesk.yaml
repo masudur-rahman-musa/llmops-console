@@ -34,7 +34,8 @@
 # an exec probe for a process no code in this repo defines would be worse than
 # the gap - a liveness probe against a command that does not exist restarts the
 # pod forever. What it costs is stated rather than half-fixed: a wedged
-# scheduler is invisible until row 23's metrics stack.
+# scheduler is visible in kube-state-metrics from row 23a but nothing PAGES on
+# it until the alert rules land in 23c.
 #
 # `helpdesk-secrets` is NAMED here and supplied nowhere in this repo. It carries
 # the gateway API key the Helpdesk calls with, its own database URL and the

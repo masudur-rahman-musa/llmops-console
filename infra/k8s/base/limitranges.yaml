@@ -1,10 +1,11 @@
 # The backstop under the quota, identical in all four namespaces.
 #
 # Without it the quota's effect on a manifest that declares no resources is
-# REJECTION, which would make an unedited upstream chart uninstallable -
-# kube-prometheus-stack is the one still in front of us. cert-manager
-# is NOT an example of it: its chart takes resource values, so the platform
-# install sets all three explicitly and never reaches this default. With the
+# REJECTION, which would make an unedited upstream chart uninstallable. Nothing
+# in this repo is now such a chart: cert-manager's takes resource values and the
+# platform install sets all three on the command line, and the metrics stack is
+# hand-written with all three declared on every container. The
+# backstop stays for the chart nobody has picked yet. With the
 # LimitRange such a container is defaulted instead, and the quota still holds.
 #
 # `defaultRequest` is what the scheduler packs, `default` the ceiling. Both are

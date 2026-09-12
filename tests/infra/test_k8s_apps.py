@@ -188,6 +188,14 @@ CLUSTER_SCOPED_OBJECTS: frozenset[tuple[str, str]] = frozenset(
     {
         ("ClusterIssuer", "letsencrypt-staging"),
         ("ClusterIssuer", "letsencrypt-prod"),
+        # An earlier change, from `monitoring/exporters.yaml`: the one subject in this repo with
+        # cluster-wide RBAC. They are listed here because this case asserts the build's
+        # cluster-scoped objects by EQUALITY, so an addition anywhere has to be agreed here;
+        # `tests/infra/test_k8s_monitoring.py`'s
+        # `test_kube_state_metrics_is_the_only_subject_with_rbac_and_reads_only` owns what they
+        # grant and that there is no third.
+        ("ClusterRole", "kube-state-metrics"),
+        ("ClusterRoleBinding", "kube-state-metrics"),
     }
 )
 

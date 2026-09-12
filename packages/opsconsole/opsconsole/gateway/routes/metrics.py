@@ -15,8 +15,8 @@ Two network facts sit under that and neither is a path rule. `apps`'s
 `default-deny` closes ingress and `gateway-ingress` admits `kube-system` and pods
 in `apps`, so Traefik itself can still open a connection to this port - a policy
 decides which pods may connect and never which path they may ask for. And
-`monitoring` has no policy at all yet (21a decision C), so a Prometheus installed
-before row 23 adds its allow sees no gateway target.
+`apps`'s `gateway-ingress` admits the `monitoring` namespace on this same port, which is the one thing the scrape needed here: no port, no Service
+and no probe changed for it.
 
 The path is deliberately outside `/v1/`, which is what keeps a scrape every
 fifteen seconds out of `gateway_requests_total` without a rule of its own

@@ -344,9 +344,10 @@ def test_each_namespace_has_one_limit_range_with_the_agreed_defaults(
 ) -> None:
     """Criterion 5. The LimitRange is the backstop under the quota: without it a third-party
     manifest that declares no resources is REJECTED at admission rather than defaulted, so an
-    unedited upstream chart - kube-prometheus-stack in row 23 - stops being installable at all.
-    cert-manager is no longer an example of that: 20b's decision A installs it with all three
-    quantities set on the command line, so it is admitted on its own values and not these.
+    unedited upstream chart stops being installable at all. Neither of this repo's two
+    candidates is an example of that any more: 20b's decision A installs cert-manager with all
+    three quantities set on the command line, and an earlier change's metrics stack is hand-written
+    rather than the upstream chart, with all three declared on every container.
     Catches the `Container` entry retyped as `Pod` (which defaults nothing per container),
     catches `default` and `defaultRequest` swapped - a 256Mi request against a 64Mi ceiling is
     unschedulable - and catches either resource dropped from either side."""
