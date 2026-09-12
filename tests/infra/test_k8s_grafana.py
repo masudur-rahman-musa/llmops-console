@@ -133,9 +133,19 @@ FORBIDDEN_API_GROUP = "monitoring.coreos.com"
 #: therefore also the prefix every hashed spelling of it would start with.
 DASHBOARDS_CONFIGMAP = "grafana-dashboards"
 
-#: Criterion 2: the one dashboard this plan ships. 23e adds the other five, and the case compares
-#: the ConfigMap's keys against the DIRECTORY as well, so that row is a one-line change there.
-DASHBOARD_FILENAMES: frozenset[str] = frozenset({"gateway-overview.json"})
+#: Criterion 2 and 23e criterion 1: the six dashboards this plan ships (gateway shipped in 23b,
+#: the other five in 23e), and the case compares the ConfigMap's keys against the DIRECTORY as
+#: well, both directions, by equality.
+DASHBOARD_FILENAMES: frozenset[str] = frozenset(
+    {
+        "gateway-overview.json",
+        "cost.json",
+        "residency.json",
+        "platform.json",
+        "evals.json",
+        "helpdesk-agent.json",
+    }
+)
 
 #: Criterion 3 and criterion 4: the uid the provisioned datasource declares, which is also the
 #: uid every panel target has to name. A target naming anything else renders an empty panel with
@@ -147,6 +157,25 @@ DATASOURCE_UID = "prometheus"
 #: the default flag that makes a panel with no explicit datasource still resolve.
 DATASOURCE_URL = "http://prometheus.monitoring.svc.cluster.local:9090"
 DATASOURCE_ACCESS = "proxy"
+
+#: 23e decision C: the only cluster-infra metric names platform.json's (and the Helpdesk pod
+#: panels') kube-state-metrics/node-exporter panels may use, verified against
+#: `infra/k8s/monitoring/exporters.yaml`'s RBAC and scrape targets - kept separate from
+#: `registered_metric_names()` (which reads only the gateway's own registry) so a typo'd
+#: `gateway_` name still fails against the real registry instead of being waved through here.
+CLUSTER_INFRA_METRIC_NAMES: frozenset[str] = frozenset(
+    {
+        "kube_pod_container_status_restarts_total",
+        "kube_pod_status_phase",
+        "kube_node_status_condition",
+        "kube_node_info",
+        "kube_deployment_status_replicas",
+        "kube_deployment_status_replicas_available",
+        "node_cpu_seconds_total",
+        "node_memory_MemAvailable_bytes",
+        "node_memory_MemTotal_bytes",
+    }
+)
 DATASOURCE_IS_DEFAULT = True
 
 #: The two provisioning files, as the keys their ConfigMaps hold them under. Grafana reads a
@@ -1101,9 +1130,10 @@ def test_every_dashboard_target_names_the_provisioned_datasource_and_a_registere
     built: list[dict[str, Any]],
 ) -> None:
     """Criterion 3: every panel target in every dashboard key names the datasource uid
-    `prometheus`, and every metric name in every `expr` is one
+    `prometheus`, and every metric name in every `expr` is either one
     `packages/opsconsole/opsconsole/core/metrics.py` registers - resolved from that module at run
-    time and never from a list copied here.
+    time and never from a list copied here - or one of the nine cluster-infra
+    names in `CLUSTER_INFRA_METRIC_NAMES` (23e decision C).
 
     The accepted spellings are each family's `name` expanded by the series suffixes its TYPE
     exposes, probed against the installed `prometheus_client`: a Counter registered as
@@ -1133,10 +1163,10 @@ def test_every_dashboard_target_names_the_provisioned_datasource_and_a_registere
                 )
                 expr = str(target.get("expr", ""))
                 assert expr, f"{key}/{panel.get('title')!r} has a target with no expr"
-                unknown = sorted(metric_names_in(expr) - accepted)
+                unknown = sorted(metric_names_in(expr) - accepted - CLUSTER_INFRA_METRIC_NAMES)
                 assert unknown == [], (
-                    f"{key}/{panel.get('title')!r} reads {unknown}, which "
-                    "opsconsole.core.metrics does not register"
+                    f"{key}/{panel.get('title')!r} reads {unknown}, which is neither "
+                    "registered by opsconsole.core.metrics nor a cluster-infra name"
                 )
     assert seen, "no dashboard panel declares a target; this case asserted nothing"
 

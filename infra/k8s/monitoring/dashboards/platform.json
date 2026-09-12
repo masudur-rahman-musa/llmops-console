@@ -1,0 +1,177 @@
+{
+  "uid": "platform",
+  "title": "Platform",
+  "description": "Cluster-wide pod and node health from kube-state-metrics and node-exporter, plus two Postgres/Redis panels that read empty until an exporter exists for them (decision F, 23a) - named here, not silently missing. Provisioned from infra/k8s/monitoring/dashboards/; edits made in the Grafana UI are not saved.",
+  "tags": ["platform", "opsconsole"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Pod restarts, by pod",
+      "description": "Container restart count across the whole cluster, from kube-state-metrics.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "min": 0 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{namespace}}/{{pod}}",
+          "expr": "sum by (namespace, pod) (kube_pod_container_status_restarts_total)"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Deployments, desired vs available replicas",
+      "description": "A gap between the two lines is a Deployment that is not fully rolled out or is failing readiness.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "min": 0 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{deployment}} desired",
+          "expr": "kube_deployment_status_replicas"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{deployment}} available",
+          "expr": "kube_deployment_status_replicas_available"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Node CPU usage",
+      "description": "Fraction of CPU time not idle, from node-exporter.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit", "min": 0, "max": 1 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{instance}}",
+          "expr": "1 - avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Node memory available",
+      "description": "Memory available as a fraction of total, from node-exporter.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit", "min": 0, "max": 1 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{instance}}",
+          "expr": "node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Node health",
+      "description": "1 when a node condition is true. Watch for Ready leaving 1 or any pressure condition (MemoryPressure, DiskPressure) entering it.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "min": 0, "max": 1 },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "background",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "instant": true,
+          "legendFormat": "{{node}} {{condition}}",
+          "expr": "kube_node_status_condition{status=\"true\"}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Postgres pod phase",
+      "description": "Postgres has no database-level exporter (23a decision F), so no connection, replication or query metric exists to plot. This shows pod phase from kube-state-metrics as the closest available signal - a proxy for liveness, not for the database itself.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "min": 0, "max": 1 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{pod}} {{phase}}",
+          "expr": "kube_pod_status_phase{pod=~\"postgres.*\"}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Redis pod phase",
+      "description": "Redis has no database-level exporter (23a decision F), so no connection, hit-rate or memory metric exists to plot. This shows pod phase from kube-state-metrics as the closest available signal - a proxy for liveness, not for Redis itself.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "min": 0, "max": 1 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{pod}} {{phase}}",
+          "expr": "kube_pod_status_phase{pod=~\"redis.*\"}"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,151 @@
+{
+  "uid": "helpdesk-agent",
+  "title": "Helpdesk agent",
+  "description": "Requests, latency, cost and residency violations filtered to the Helpdesk-shaped routing aliases (agent-default, agent-strong, embed - from this repo's routing.yaml), plus pod health for the three Helpdesk workloads. No Helpdesk tenant or metric exists in any committed file yet, so this dashboard reads the same gateway families every other dashboard reads, scoped by alias rather than by a tenant id nobody has created. Provisioned from infra/k8s/monitoring/dashboards/; edits made in the Grafana UI are not saved.",
+  "tags": ["helpdesk", "opsconsole"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Requests per second, by alias",
+      "description": "Requests routed to a Helpdesk-shaped alias, by status. Reads empty until the companion Helpdesk repo sends traffic.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "min": 0 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{alias}} {{status}}",
+          "expr": "sum by (alias, status) (rate(gateway_requests_total{alias=~\"agent-default|agent-strong|embed\"}[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Latency p50 and p95, by alias",
+      "description": "End-to-end duration for Helpdesk-shaped aliases. Reads empty until the companion repo sends traffic.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "min": 0 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "p50 {{alias}}",
+          "expr": "histogram_quantile(0.5, sum by (alias, le) (rate(gateway_request_latency_seconds_bucket{alias=~\"agent-default|agent-strong|embed\"}[5m])))"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "p95 {{alias}}",
+          "expr": "histogram_quantile(0.95, sum by (alias, le) (rate(gateway_request_latency_seconds_bucket{alias=~\"agent-default|agent-strong|embed\"}[5m])))"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Cost per second, by provider and model",
+      "description": "gateway_cost_usd_total carries no alias label (only tenant, provider and model), so this panel cannot be scoped to Helpdesk-shaped aliases and shows total gateway spend for context instead - it will overcount once other traffic exists alongside Helpdesk's, and narrows to Helpdesk-only spend only once a dedicated tenant is created for it.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "currencyUSD", "min": 0 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{provider}} {{model}}",
+          "expr": "sum by (provider, model) (rate(gateway_cost_usd_total[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Residency violations per second",
+      "description": "Expected flat at zero, same as the residency dashboard's panel of the same family, scoped to nothing beyond that expectation - Helpdesk traffic has no dedicated tenant to filter by.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "min": 0 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "total",
+          "expr": "sum(rate(gateway_residency_violations_total[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Pod restarts, Helpdesk workloads",
+      "description": "Container restart count for helpdesk-api, helpdesk-worker and helpdesk-scheduler. Reads empty until the companion Helpdesk repo's four workloads exist in the cluster (STATUS: images not yet built).",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "min": 0 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{pod}}",
+          "expr": "sum by (pod) (kube_pod_container_status_restarts_total{pod=~\"helpdesk-api.*|helpdesk-worker.*|helpdesk-scheduler.*\"})"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Pod phase, Helpdesk workloads",
+      "description": "1 when a Helpdesk pod is in the given phase, 0 otherwise. Reads empty until those pods exist.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "min": 0, "max": 1 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{pod}} {{phase}}",
+          "expr": "kube_pod_status_phase{pod=~\"helpdesk-api.*|helpdesk-worker.*|helpdesk-scheduler.*\"}"
+        }
+      ]
+    }
+  ]
+}

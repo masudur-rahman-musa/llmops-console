@@ -1,0 +1,59 @@
+{
+  "uid": "residency",
+  "title": "Residency",
+  "description": "Where requests are actually served from, by region and tenant, and the residency violation counter. Provisioned from infra/k8s/monitoring/dashboards/; edits made in the Grafana UI are not saved.",
+  "tags": ["residency", "opsconsole"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Requests per second, by region and tenant",
+      "description": "Every request the gateway served, split by the region it was resolved to and the tenant that sent it.",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "min": 0 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{region}} {{tenant}}",
+          "expr": "sum by (region, tenant) (rate(gateway_requests_total[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Residency violations per second, by tenant",
+      "description": "Expected flat at zero. A residency refusal is a deny-by-default 451 and moves only gateway_requests_total's status label (see that family's own docstring), not this counter - the resolver never widens regions on failure, so this counter is zero by construction rather than by luck.",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "min": 0 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{tenant}}",
+          "expr": "sum by (tenant) (rate(gateway_residency_violations_total[5m]))"
+        }
+      ]
+    }
+  ]
+}
