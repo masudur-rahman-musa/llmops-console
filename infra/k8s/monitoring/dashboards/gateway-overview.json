@@ -1,0 +1,152 @@
+{
+  "uid": "gateway-overview",
+  "title": "Gateway overview",
+  "description": "Request rate, latency, errors, fallbacks and breaker state for the LLM gateway. Provisioned from infra/k8s/monitoring/dashboards/; edits made in the Grafana UI are not saved.",
+  "tags": ["gateway", "opsconsole"],
+  "timezone": "utc",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Requests per second, by status",
+      "description": "Every request the gateway served, split by the status it answered with. A 451 is a residency refusal and is expected to be visible rather than zero.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "min": 0 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{status}}",
+          "expr": "sum by (status) (rate(gateway_requests_total[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Latency p50 and p95",
+      "description": "End-to-end duration, measured until the last byte is sent. Quantiles come from the histogram buckets, so a bucket edge is the resolution limit.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "min": 0 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "p50 {{alias}}",
+          "expr": "histogram_quantile(0.5, sum by (alias, le) (rate(gateway_request_latency_seconds_bucket[5m])))"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "p95 {{alias}}",
+          "expr": "histogram_quantile(0.95, sum by (alias, le) (rate(gateway_request_latency_seconds_bucket[5m])))"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Provider errors per second, by code",
+      "description": "Provider call failures by typed error code. A residency refusal is deliberately NOT counted here: it is a decision, not an outage, and it moves gateway_requests_total's status label only.",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "min": 0 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{provider}} {{code}}",
+          "expr": "sum by (provider, code) (rate(gateway_provider_errors_total[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Fallbacks per second",
+      "description": "Requests a later candidate served after an earlier one failed. A rising line here is the breaker working; a flat line with errors above is a fallback that never fires.",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "min": 0 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{alias}} to {{provider}}",
+          "expr": "sum by (alias, provider) (rate(gateway_fallbacks_total[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Circuit state, by provider",
+      "description": "0 closed, 1 half-open, 2 open. Anything but 0 is a provider the gateway is currently routing around.",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 2,
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "closed", "index": 0 } } },
+            { "type": "value", "options": { "1": { "text": "half-open", "index": 1 } } },
+            { "type": "value", "options": { "2": { "text": "open", "index": 2 } } }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 },
+              { "color": "red", "value": 2 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "background",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "instant": true,
+          "legendFormat": "{{provider}}",
+          "expr": "max by (provider) (gateway_circuit_state)"
+        }
+      ]
+    }
+  ]
+}

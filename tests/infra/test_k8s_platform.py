@@ -174,8 +174,17 @@ ACME_SOLVERS = [{"http01": {"ingress": {"class": "traefik"}}}]
 #: (`tests/infra/test_k8s_apps.py`) rather than added here. `helpdesk-secrets` joined the list
 #: with row 20f's four workloads, which name it and supply it nowhere; this constant is
 #: build-wide, so it has to move in the same change or a correct manifest reddens here.
+#: `grafana-admin` joined with an earlier change's Grafana, which names it by `envFrom` in `monitoring`,
+#: for exactly the reason the sentence above gives: this constant is build-wide, so it moves in
+#: the same change as the manifest or a correct manifest reddens here.
 PINNED_SECRET_NAMES = frozenset(
-    {"postgres-credentials", BASIC_AUTH_SECRET, "gateway-secrets", "helpdesk-secrets"}
+    {
+        "postgres-credentials",
+        BASIC_AUTH_SECRET,
+        "gateway-secrets",
+        "helpdesk-secrets",
+        "grafana-admin",
+    }
 )
 
 #: Criterion 9's file scan, first shape: a credential KEY with a scalar value on the same

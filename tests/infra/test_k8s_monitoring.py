@@ -1,30 +1,38 @@
-r"""`infra/k8s/monitoring/`: the scrape plane an earlier change agrees, read off what kustomize emits.
+r"""`infra/k8s/monitoring/`: the scrape plane an earlier change agree, as kustomize emits it.
 
 The stream comes from the session-scoped `built` fixture in `tests/infra/conftest.py`: one
 `kubectl kustomize infra/k8s` for the whole session, shared with
-`test_k8s_base.py`, `test_k8s_apps.py`, `test_k8s_platform.py` and `test_k8s_netpol.py`.
-Nothing here builds again and nothing here reads a raw manifest file, so a manifest written and
-never listed in a `resources:` block is the same failure as a manifest never written.
+`test_k8s_base.py`, `test_k8s_apps.py`, `test_k8s_platform.py`, `test_k8s_netpol.py` and
+`test_k8s_grafana.py`. Nothing here builds again and nothing here reads a raw manifest file, so a
+manifest written and never listed in a `resources:` block is the same failure as a manifest never
+written.
 
-Everything is asserted by EQUALITY in both directions. For the object inventory that is because
-an object nobody agreed to is as dangerous as a missing one; for the policies it is because
-Kubernetes unions allows, so an extra `to` peer or an extra port is an opening no containment
-check can see.
+This file no longer owns the namespace's OBJECT INVENTORY. An earlier change's §8 entry 1 moved that
+equality to `tests/infra/test_k8s_grafana.py`, which pins every object `monitoring` carries -
+23a's eleven, the two envelope objects and 23b's nine - by `(kind, name, namespace)` in both
+directions. What stays here is the scrape plane's BEHAVIOUR: the scrape config, the retention
+window, the envelope arithmetic, the RBAC and the scrape policies. Two files asserting one
+equality would be two places to edit for every object 23e, 23c and 23d add.
 
-Three scoping decisions this file had to make, because the plan's criteria cannot all be read
+Everything is asserted by EQUALITY in both directions. For the resource rows that is because an
+extra `limits.cpu` nobody agreed to is as dangerous as a missing request; for the policies it is
+because Kubernetes unions allows, so an extra `to` peer or an extra port is an opening no
+containment check can see.
+
+Three scoping decisions this file had to make, because the plans' criteria cannot all be read
 literally at once:
 
-* Criterion 1 names ELEVEN objects "in `monitoring`, nothing else", while criterion 5 requires
-  the pre-existing `ResourceQuota/monitoring-envelope` and `LimitRange/monitoring-defaults` to
-  stay in that same namespace unchanged, and criterion 6 puts four NetworkPolicies in it. A
-  literal eleven would therefore be red against a correct build. `MONITORING_OBJECTS` is the
-  eleven plus those two envelope objects, thirteen rows; the four policies are excluded from the
-  scan and pinned by `test_k8s_netpol.py` instead, with the reason next to the filter.
+* 23a's criterion 1 names ELEVEN objects "in `monitoring`, nothing else", while its criterion 5
+  requires the pre-existing `ResourceQuota/monitoring-envelope` and `LimitRange/monitoring-defaults`
+  to stay in that same namespace unchanged, and its criterion 6 puts NetworkPolicies in it. A
+  literal eleven would therefore be red against a correct build, and 23b adds nine more objects
+  on top. That whole reconciliation now lives with the equality, in `test_k8s_grafana.py`.
 * `ClusterRole/kube-state-metrics` and `ClusterRoleBinding/kube-state-metrics` are cluster
   scoped and carry no `metadata.namespace`, so they cannot be found by namespace. They are
-  scoped into the inventory by KIND instead - every `ClusterRole` and `ClusterRoleBinding`
-  ANYWHERE in the build is expected to be one of the two, which is the same claim criterion 1
-  makes and which also catches a third one landing in some other directory.
+  scoped by KIND instead - every `ClusterRole` and `ClusterRoleBinding` ANYWHERE in the build is
+  expected to be one of the two, which is what
+  `test_kube_state_metrics_is_the_only_subject_with_rbac_and_reads_only` asserts here and what
+  the moved inventory asserts there.
 * Criterion 1 says "no CustomResource of ANY kind", and the build already emits
   `cert-manager.io/v1` `ClusterIssuer` and `traefik.io/v1alpha1` `Middleware`, which are custom
   resources. What the criterion means is decision A - no operator - so it is asserted as the two
@@ -34,29 +42,30 @@ literally at once:
   `test_k8s_base.py` forbids by name.
 
 Three cases here pin NetworkPolicy behaviour, which normally lives in `test_k8s_netpol.py`. They
-are here because the plan's §8 authorises exactly four edits to that file - three constants and
-one renamed case - and adding a case to it is not among them. What those four edits carry is the
-fifteen-policy NAME set, `gateway-ingress`'s new peer and the selector scan; what they do not
-reach is `prometheus-egress`'s destination set and the two new ingress policies' ports, and
-`test_k8s_netpol.py`'s ingress parametrization resolves inside `apps` only, so neither new policy
-could be a row in it. Criteria 7 and 8 would otherwise be pinned by nothing.
+are here because 23a's §8 authorised exactly four edits to that file - three constants and one
+renamed case - and adding a case to it was not among them; 23b's §8 widens the same constants to
+the seventeen-policy NAME set and touches no case there either. What those edits carry is the
+policy NAME set, `gateway-ingress`'s peer and the selector scan; what they do not reach is
+`prometheus-egress`'s destination set and the two scrape ingress policies' ports, and
+`test_k8s_netpol.py`'s ingress parametrization resolves inside `apps` only, so neither policy
+could be a row in it. 23a's criteria 7 and 8 would otherwise be pinned by nothing.
 
 Named ports are why the ingress case resolves rather than compares. One NetworkPolicy has one
 `podSelector` and its `ports` apply to every pod that selector matches, and `monitoring`'s
-`metrics-ingress-from-monitoring` protects three pods listening on 9090, 9100 and 8080. The
-manifest resolves that by naming the port (`port: metrics`), which Kubernetes resolves against
-each target pod's own container port, so `resolved_ports` reads in numbers while the manifest
-reads in names. That shared name is the whole mechanism criterion 2 exists to protect.
+`metrics-ingress-from-monitoring` selects EVERY pod in the namespace while naming one port
+(`port: metrics`), which Kubernetes resolves against each target pod's own container port. So
+`resolved_ports` reads in numbers while the manifest reads in names, and the three scrape targets
+on 9090, 9100 and 8080 are covered by one rule. That shared name is the whole mechanism 23a's
+criterion 2 exists to protect, and it is exactly what an earlier change's decision D takes away from
+Grafana: a fourth pod in this namespace publishing `http` is not covered by a named-port allow at
+all, which is why 23b gives it `grafana-ingress` of its own.
 
-The quantity helpers (`memory_bytes`, `cpu_millicores`, `quota_hard`, `resource_quantities`) and
-the policy helpers are COPIES of `test_k8s_base.py`'s, `test_k8s_platform.py`'s and
-`test_k8s_netpol.py`'s, not imports - the convention of this suite. CPU is summed in whole
-millicores, never floats.
-
-Pod COUNT, and the one value the plan does not name: `node-exporter` is a DaemonSet, which
-declares no `spec.replicas` and runs one pod per node. The envelope arithmetic counts it once,
-which is the one-node CAX21 §5's second risk describes; criterion 5's own 352Mi total
-(256 + 32 + 64) is only reachable that way, so the plan agrees with it implicitly.
+`resource_quantities` and the policy helpers are COPIES of `test_k8s_base.py`'s,
+`test_k8s_platform.py`'s and `test_k8s_netpol.py`'s, not imports - the convention of this suite.
+The quantity ARITHMETIC that used to live here (`memory_bytes`, `cpu_millicores`, `quota_hard`,
+`pods_of` and the namespace totals) went with the envelope case to `test_k8s_grafana.py`, which
+sums all four pod templates; what is left here is one row per scrape workload, compared as
+written strings.
 """
 
 from __future__ import annotations
@@ -90,32 +99,6 @@ NAMESPACE_NAME_LABEL = "kubernetes.io/metadata.name"
 #: empty one.
 ANY_POD = "*"
 
-#: The two cluster-scoped kinds this plan adds. The inventory scopes them by kind because they
-#: carry no `metadata.namespace` to be found by - see the module docstring.
-RBAC_KINDS = ("ClusterRole", "ClusterRoleBinding")
-
-#: Criterion 1, as `(kind, name, namespace)`. The first eleven rows are what this plan adds;
-#: `None` is what a cluster-scoped object's `metadata.namespace` reads as. The last two rows are
-#: the envelope objects criterion 5 keeps UNCHANGED, present in `monitoring` before this plan
-#: and therefore part of any equality over the namespace.
-MONITORING_OBJECTS: frozenset[tuple[str, str, str | None]] = frozenset(
-    {
-        ("Deployment", PROMETHEUS, MONITORING),
-        ("Service", PROMETHEUS, MONITORING),
-        ("ConfigMap", "prometheus-config", MONITORING),
-        ("PersistentVolumeClaim", "prometheus-data", MONITORING),
-        ("DaemonSet", NODE_EXPORTER, MONITORING),
-        ("Service", NODE_EXPORTER, MONITORING),
-        ("Deployment", KUBE_STATE_METRICS, MONITORING),
-        ("Service", KUBE_STATE_METRICS, MONITORING),
-        ("ServiceAccount", KUBE_STATE_METRICS, MONITORING),
-        ("ClusterRole", KUBE_STATE_METRICS, None),
-        ("ClusterRoleBinding", KUBE_STATE_METRICS, None),
-        ("ResourceQuota", "monitoring-envelope", MONITORING),
-        ("LimitRange", "monitoring-defaults", MONITORING),
-    }
-)
-
 #: Decision A, the half the build can actually contradict: an operator install would bring this
 #: kind, and `kubeconform -strict` has no stock schema for what it declares.
 FORBIDDEN_KIND = "CustomResourceDefinition"
@@ -126,13 +109,20 @@ FORBIDDEN_KIND = "CustomResourceDefinition"
 #: the build and have nothing to do with decision A.
 FORBIDDEN_API_GROUP = "monitoring.coreos.com"
 
-#: Criterion 2: one shared port NAME across all three pods, which is what lets ONE ingress policy
-#: cover three pods listening on three different numbers.
+#: Criterion 2: one shared port NAME across the three SCRAPE TARGETS, which is what lets ONE
+#: ingress policy cover three pods listening on three different numbers.
 METRICS_PORT_NAME = "metrics"
 
 #: Criterion 2's three numbers, by workload. Pinned separately from the name so a renamed port
 #: cannot silently move one.
 METRICS_PORT_NUMBERS = {PROMETHEUS: 9090, NODE_EXPORTER: 9100, KUBE_STATE_METRICS: 8080}
+
+#: An earlier change decision D, the narrowing this file pays for it: Grafana is the fourth pod template in
+#: `monitoring` and it is NOT scraped, so its port serves the UI its Ingress points at and is
+#: named `http`. The scrape case asserts that spelling rather than dropping Grafana from the scan,
+#: so a fifth pod renaming its way into the scrape allow is still visible here.
+GRAFANA = "grafana"
+GRAFANA_PORT_NAME = "http"
 
 #: Criterion 3 and decision C: the five static targets, as Service DNS. Every one is a Service
 #: this build emits, in the namespace it emits it in.
@@ -172,17 +162,6 @@ WORKLOAD_RESOURCES: dict[str, dict[str, str]] = {
     },
 }
 
-#: Criterion 5's totals. Stated here once and DERIVED in the case from the built pod templates
-#:: 256 + 32 + 64 = 352Mi, 150 + 50 + 50 = 250m, 512 + 64 + 128 = 704Mi.
-EXPECTED_REQUEST_MEMORY_BYTES = 352 * 1024**2
-EXPECTED_REQUEST_CPU_MILLICORES = 250
-EXPECTED_LIMIT_MEMORY_BYTES = 704 * 1024**2
-
-#: Criterion 5's other half: decision B keeps the envelope exactly where an earlier change set it, so
-#: these three are asserted as STRINGS against the built quota - the API server compares
-#: quantities, and a test that parsed first would accept `1024Mi` for a table that says `1Gi`.
-MONITORING_QUOTA = {"requests.memory": "512Mi", "requests.cpu": "400m", "limits.memory": "1Gi"}
-
 #: Decision C: the read-only verb set kube-state-metrics gets, and the ceiling every rule's
 #: `verbs` list must sit inside. `create`, `patch` or `*` here is a scraper that can mutate.
 READ_ONLY_VERBS = frozenset({"get", "list", "watch"})
@@ -198,23 +177,19 @@ PROMETHEUS_EGRESS_DESTINATIONS: frozenset[tuple[str, int]] = frozenset(
     }
 )
 
-#: Criterion 7: the only two `monitoring` policies that may declare an `egress` block at all.
+#: Criterion 7: the only `monitoring` policies that may declare an `egress` block at all.
 #: `default-deny` names `Egress` in its `policyTypes` and carries no block, which is what makes
 #: it a deny.
-MONITORING_EGRESS_POLICIES: frozenset[str] = frozenset({"allow-dns", "prometheus-egress"})
-
-#: Binary and decimal suffixes a `resources.requests.memory` may carry. Copied from
-#: `test_k8s_base.py` with the helper that reads it.
-MEMORY_SUFFIXES = {
-    "Ki": 1024,
-    "Mi": 1024**2,
-    "Gi": 1024**3,
-    "Ti": 1024**4,
-    "k": 1000,
-    "M": 1000**2,
-    "G": 1000**3,
-    "T": 1000**4,
-}
+#:
+#: `grafana-egress` joined with an earlier change. This set is what stops an outbound allow appearing in
+#: this namespace unnoticed, so it is deliberately a NAME set rather than a count and it moves in
+#: the same change as the policy; what that policy may actually reach is asserted in
+#: `tests/infra/test_k8s_grafana.py`, by
+#: `test_grafana_is_reachable_only_from_the_router_and_reaches_only_prometheus`, including its
+#: own absent `ipBlock`.
+MONITORING_EGRESS_POLICIES: frozenset[str] = frozenset(
+    {"allow-dns", "prometheus-egress", "grafana-egress"}
+)
 
 
 def name_of(document: dict[str, Any]) -> str:
@@ -350,38 +325,6 @@ def resource_quantities(container: dict[str, Any]) -> dict[str, str]:
         for resource, quantity in values.items():
             flattened[f"{side}.{resource}"] = str(quantity)
     return flattened
-
-
-def pods_of(owner: dict[str, Any]) -> int:
-    """How many pods a pod-owning object costs the quota. `spec.replicas` when it declares one,
-    otherwise 1 - a DaemonSet declares none and runs one pod per node, and this cluster is the
-    one-node CAX21 the envelope was sized for (see the module docstring)."""
-    declared = owner["spec"].get("replicas", 1)
-    return int(declared)
-
-
-def memory_bytes(quantity: str) -> int:
-    """`512Mi` as an integer count of bytes. Raises on a quantity this repo does not write."""
-    for suffix, multiplier in MEMORY_SUFFIXES.items():
-        if quantity.endswith(suffix):
-            return int(quantity[: -len(suffix)]) * multiplier
-    return int(quantity)
-
-
-def cpu_millicores(quantity: str) -> int:
-    """`150m` as 150, `2` as 2000. Whole millicores, never floats - see the module docstring."""
-    if quantity.endswith("m"):
-        return int(quantity[:-1])
-    return round(float(quantity) * 1000)
-
-
-def quota_hard(quota: dict[str, Any]) -> dict[str, str]:
-    """A ResourceQuota's `spec.hard` mapping, values as written."""
-    spec = quota.get("spec", {})
-    assert isinstance(spec, dict), f"{name_of(quota)} has no spec"
-    hard = spec.get("hard", {})
-    assert isinstance(hard, dict), f"{name_of(quota)} has no spec.hard"
-    return {str(key): str(value) for key, value in hard.items()}
 
 
 def scrape_config(documents: list[dict[str, Any]]) -> dict[str, Any]:
@@ -571,20 +514,55 @@ def ports_against(rule: dict[str, Any], ports: dict[str, int], label: str) -> se
     return resolved
 
 
-def resolved_ports(
-    documents: list[dict[str, Any]], document: dict[str, Any], rule: dict[str, Any]
-) -> dict[str, set[tuple[str, int]]]:
-    """An INGRESS rule's ports resolved per pod the policy's own `podSelector` protects,
-    `{workload: {(protocol, number)}}` - the shape one rule saying `port: metrics` needs when it
-    protects three pods listening on 9090, 9100 and 8080."""
+def selected_workloads(
+    documents: list[dict[str, Any]], document: dict[str, Any]
+) -> dict[str, dict[str, Any]]:
+    """The pod templates a policy's own `podSelector` protects, keyed by workload."""
     namespace = namespace_of(document)
     assert namespace is not None, f"{name_of(document)} declares no metadata.namespace"
     selector = pod_selector(document)
-    label = f"{namespace}/{name_of(document)}"
     return {
-        workload: ports_against(rule, container_ports(template), label)
+        workload: template
         for workload, template in pod_templates(documents, namespace).items()
         if selector_matches(selector, template_labels(template))
+    }
+
+
+def unreachable_workloads(
+    documents: list[dict[str, Any]], document: dict[str, Any], rule: dict[str, Any]
+) -> set[str]:
+    """The workloads a policy selects that a named port in `rule` cannot resolve against, because
+    none of their container ports carries that name.
+
+    Kubernetes resolves a named port per target pod, so such a pod is selected by the policy and
+    reached by none of its allows - the allow simply does not apply to it. Naming them is what
+    lets the case ASSERT the exclusion instead of a
+    resolution helper raising on the first pod that does not publish `metrics`.
+    """
+    unreachable: set[str] = set()
+    for workload, template in selected_workloads(documents, document).items():
+        ports = container_ports(template)
+        names = {port for _, port in declared_ports(rule, workload) if isinstance(port, str)}
+        if names and not names & set(ports):
+            unreachable.add(workload)
+    return unreachable
+
+
+def resolved_ports(
+    documents: list[dict[str, Any]], document: dict[str, Any], rule: dict[str, Any]
+) -> dict[str, set[tuple[str, int]]]:
+    """An INGRESS rule's ports resolved per pod the policy's own `podSelector` protects AND can
+    reach, `{workload: {(protocol, number)}}` - the shape one rule saying `port: metrics` needs
+    when it protects three pods listening on 9090, 9100 and 8080. A pod the named port cannot
+    resolve against is left out here and asserted by `unreachable_workloads` instead."""
+    namespace = namespace_of(document)
+    assert namespace is not None, f"{name_of(document)} declares no metadata.namespace"
+    label = f"{namespace}/{name_of(document)}"
+    unreachable = unreachable_workloads(documents, document, rule)
+    return {
+        workload: ports_against(rule, container_ports(template), label)
+        for workload, template in selected_workloads(documents, document).items()
+        if workload not in unreachable
     }
 
 
@@ -628,45 +606,30 @@ def ip_blocks(document: dict[str, Any]) -> list[dict[str, Any]]:
     return found
 
 
-def test_the_monitoring_namespace_emits_exactly_the_eleven_objects_the_plan_names(
+def test_the_monitoring_namespace_emits_exactly_the_objects_the_two_plans_name(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 1, by `(kind, name, namespace)` EQUALITY in both directions over everything the
-    build files into `monitoring`, plus every `ClusterRole` and `ClusterRoleBinding` anywhere in
-    the build (they are cluster scoped and carry no namespace to be found by - see the module
-    docstring, which also says why the two envelope objects are in the expected set).
+    """An earlier change's criterion 1, the half that is a PROHIBITION rather than an inventory: no
+    `CustomResourceDefinition` anywhere in the build and no document in the
+    `monitoring.coreos.com` group, which is what decision A actually forbids (see the module
+    docstring for why a `Middleware` and a `ClusterIssuer` are custom resources this build keeps).
 
-    Catches the commonest failure of a new directory: manifests written correctly and the
-    directory never added to the root kustomization's `resources`, or a document left out of
-    `monitoring/kustomization.yaml` - valid YAML that reaches no cluster and that no schema check
-    can see, and which here would be a Prometheus with no ConfigMap or a DaemonSet with no
-    Service to scrape it through. Catches a document that forgets its own `metadata.namespace`,
-    which the API server would file into whatever namespace the apply ran against rather than
-    into `monitoring`. Catches the `kube-state-metrics` ClusterRoleBinding shipped without its
-    ServiceAccount, which is an exporter that CrashLoopBackOffs on every API call. Catches an
-    operator install sneaking in through `helmCharts:` - it would bring a
-    CustomResourceDefinition and `monitoring.coreos.com` custom resources, which decision A
-    forbids because `kubeconform -strict` has no stock schema for them and tests/infra/
-    test_k8s_base.py's test_infra_check_runs_the_kustomize_half_for_real_now_that_the_file_exists
-    refuses the flag that would skip them.
+    The `(kind, name, namespace)` EQUALITY that used to stand here moved to
+    tests/infra/test_k8s_grafana.py's
+    test_the_monitoring_namespace_emits_grafana_and_nothing_else_new when an earlier change added nine
+    objects to this namespace (its §8 entry 1): that file owns the inventory from here on, so
+    23e, 23c and 23d each edit one expected set instead of two that drift apart. What is left
+    here is scanned over the WHOLE build rather than over one namespace, so it is not an
+    inventory at all.
+
+    Catches an operator install sneaking in through `helmCharts:` - it would bring a
+    CustomResourceDefinition and `monitoring.coreos.com` custom resources (`ServiceMonitor`,
+    `PrometheusRule`, `Prometheus`, `Alertmanager`), which decision A forbids because
+    `kubeconform -strict` has no stock schema for them and tests/infra/test_k8s_base.py's
+    test_infra_check_runs_the_kustomize_half_for_real_now_that_the_file_exists refuses the flag
+    that would skip them. Catches such a document landing in ANY namespace, not only this one,
+    which is the scope the claim is made at and which no per-namespace inventory can see.
     """
-    emitted = {
-        (str(document.get("kind")), name_of(document), namespace_of(document))
-        for document in built
-        if (namespace_of(document) == MONITORING or document.get("kind") in RBAC_KINDS)
-        # The four `monitoring` NetworkPolicies are in this namespace too, and they are pinned by
-        # equality in both directions - `(namespace, name)` and per namespace - by
-        # tests/infra/test_k8s_netpol.py's
-        # test_the_whole_build_emits_exactly_the_fifteen_policies_and_nowhere_else and
-        # test_each_namespace_emits_exactly_the_policies_the_plan_names. Listing them here as well
-        # would be two files pinning one set, which drift apart.
-        and document.get("kind") != NETWORK_POLICY
-    }
-    assert emitted == MONITORING_OBJECTS, (
-        f"unexpected: {sorted(map(str, emitted - MONITORING_OBJECTS))}; "
-        f"missing: {sorted(map(str, MONITORING_OBJECTS - emitted))}"
-    )
-
     definitions = sorted(name_of(document) for document in objects_of_kind(built, FORBIDDEN_KIND))
     assert definitions == [], f"the build emits {FORBIDDEN_KIND}s: {definitions}"
 
@@ -680,39 +643,52 @@ def test_the_monitoring_namespace_emits_exactly_the_eleven_objects_the_plan_name
     )
 
 
-def test_every_container_port_in_monitoring_is_named_metrics_on_its_agreed_number(
+def test_every_scraped_container_port_is_named_metrics_on_its_agreed_number(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 2, both halves: the shared NAME by set equality across all three pod templates,
-    and the three NUMBERS by workload.
+    """Criterion 2, narrowed by an earlier change decision D to the THREE SCRAPE TARGETS (its §8 entry 2):
+    the shared NAME by set equality across their pod templates, the three NUMBERS by workload,
+    and Grafana's own port asserted to be named `http` rather than excluded from the scan.
 
-    The name is the mechanism criterion 8 depends on - one ingress policy has one `podSelector`
-    and its `ports` apply to every pod it matches, so three pods on 9090, 9100 and 8080 can only
-    be covered by one rule if all three call the port the same thing. Catches
-    an exporter whose port is written `http`, or left unnamed, which builds and validates
+    The name is the mechanism 23a's criterion 8 depends on - one ingress policy has one
+    `podSelector` and its `ports` apply to every pod it matches, so three pods on 9090, 9100 and
+    8080 can only be covered by one rule if all three call the port the same thing (standing rule
+    50). Grafana is the fourth pod in this namespace and is NOT scraped: its 3000 serves the UI
+    `Ingress/grafana` points at, and calling it `metrics` would make the Ingress backend read
+    `port: name: metrics` for a browser, which is why 23b gives it `grafana-ingress` instead.
+
+    Catches an exporter whose port is written `http`, or left unnamed, which builds and validates
     perfectly and then silently drops that pod out of the ingress allow: Prometheus connects to
     nothing and the target simply reads DOWN. Catches a number transposed between the two
     exporters (9100 for kube-state-metrics), which the shared name alone cannot see because the
     name would still resolve. Catches a second container port added beside `metrics` - an admin
-    or pprof surface the policy would then also open, since the allow is written by name.
+    or pprof surface the policy would then also open, since the allow is written by name. Catches
+    Grafana's port renamed to `metrics` to make one assertion whole again, which is the plan
+    bending to the test and which would put a UI port inside the scrape allow.
     """
     templates = pod_templates(built, MONITORING)
-    assert sorted(templates) == sorted(METRICS_PORT_NUMBERS), (
+    scraped = sorted(METRICS_PORT_NUMBERS)
+    assert sorted(templates) == sorted([*scraped, GRAFANA]), (
         f"monitoring has pod templates {sorted(templates)}"
     )
 
-    names = {name for template in templates.values() for name, _ in port_entries(template)}
+    names = {name for workload in scraped for name, _ in port_entries(templates[workload])}
     # An unnamed port reads as None here rather than being dropped, so it is printed as `None`
     # and the set comparison sees it.
     printable = sorted(str(name) for name in names)
-    assert names == {METRICS_PORT_NAME}, f"container port names in monitoring are {printable}"
+    assert names == {METRICS_PORT_NAME}, f"scraped container port names are {printable}"
 
     numbers = {
-        workload: [number for _, number in port_entries(template)]
-        for workload, template in templates.items()
+        workload: [number for _, number in port_entries(templates[workload])]
+        for workload in scraped
     }
     expected = {workload: [number] for workload, number in METRICS_PORT_NUMBERS.items()}
     assert numbers == expected, f"container ports are {numbers}, not {expected}"
+
+    grafana_names = sorted(str(name) for name, _ in port_entries(templates[GRAFANA]))
+    assert grafana_names == [GRAFANA_PORT_NAME], (
+        f"grafana publishes ports named {grafana_names}, not [{GRAFANA_PORT_NAME!r}]"
+    )
 
 
 def test_the_scrape_config_carries_exactly_the_five_static_targets(
@@ -723,7 +699,7 @@ def test_the_scrape_config_carries_exactly_the_five_static_targets(
     every `metrics_path` `/metrics`, and no key ending `_sd_configs` anywhere in the document.
 
     Catches a sixth job nobody agreed to and a fifth that never landed - a missing job is a
-    dashboard panel in 23b that is empty forever with no error anywhere, since a scrape config
+    dashboard panel that is empty forever with no error anywhere, since a scrape config
     that omits a target is as valid as one that names it. Catches a target written against a
     Service name or a namespace this build does not emit (`qdrant.apps...`,
     `node-exporter.platform...`), which resolves to nothing and reads as a permanently DOWN
@@ -777,7 +753,7 @@ def test_the_retention_window_the_scrape_interval_and_the_volume_are_the_agreed_
 
     These three are one budget: 30s over five targets for 15 days is what 4Gi was sized for, so a
     wrong value anywhere shows up as a disk that fills silently and a TSDB that starts dropping
-    the oldest blocks - the series 23b's "evals over time" panel and row 24's 7-day median read.
+    the oldest blocks - the series the "evals over time" panel and row 24's 7-day median read.
     Catches `15d` written on a second `--storage.tsdb.retention.time` flag beside a first, where
     Prometheus takes one of them and the manifest reads as if it takes the other. Catches the
     retention flag dropped entirely, which leaves Prometheus's own 15d default in place today and
@@ -807,20 +783,24 @@ def test_the_retention_window_the_scrape_interval_and_the_volume_are_the_agreed_
     )
 
 
-def test_the_monitoring_workloads_fit_the_unchanged_envelope(built: list[dict[str, Any]]) -> None:
-    """Criterion 5 and decision B: the three workloads' resources one row at a time by VALUE, the
-    three totals DERIVED from the built pod templates rather than restated, and
-    the `monitoring-envelope` quota still reading the three quantities an earlier change set.
+def test_each_scrape_workload_declares_the_quantities_the_budget_prices(
+    built: list[dict[str, Any]],
+) -> None:
+    """An earlier change criterion 5, narrowed by an earlier change to the THREE SCRAPE WORKLOADS' rows, one at a
+    time by VALUE. The namespace TOTALS and the `monitoring-envelope` quota moved with the
+    inventory to tests/infra/test_k8s_grafana.py's
+    test_grafana_fits_what_the_scrape_plane_left_and_leaves_alertmanager_its_row, which sums
+    every pod template in `monitoring` - Grafana's included - and pins the remainder as exactly
+    32Mi, 50m and 64Mi. A totals assertion written for three workloads is red against a correct
+    four-workload build, and two files summing one namespace would drift.
 
     Catches a quantity raised in isolation to make a pod start - the state where the namespace is
-    over its quota and the THIRD pod is refused at admission, with the two that were applied
-    first running fine and nothing saying why the exporter never appeared. Catches Prometheus
-    given a limit under its request, and catches an extra `limits.cpu` nobody agreed to, which
-    throttles the scraper rather than protecting anything - the whole
-    flattened mapping is compared, so an added key is a failure. Catches the envelope quietly
-    raised to 768Mi to make the arithmetic work, which is decision B's rejected alternative and
-    would take the 160Mi that 23b's Grafana and 23c's Alertmanager are holding. Catches a second
-    replica on Prometheus, which the totals see and the per-row values cannot.
+    over its quota and whichever pod is admitted LAST is refused, with the others running fine
+    and nothing saying why the exporter never appeared. Catches Prometheus given a limit under
+    its request. Catches an extra `limits.cpu` nobody agreed to, which throttles the scraper
+    rather than protecting anything - the whole flattened mapping is
+    compared, so an added key is a failure. Catches a row silently dropped, since every workload
+    in `WORKLOAD_RESOURCES` must have a pod template to read.
     """
     templates = pod_templates(built, MONITORING)
     for workload, expected in WORKLOAD_RESOURCES.items():
@@ -828,34 +808,6 @@ def test_the_monitoring_workloads_fit_the_unchanged_envelope(built: list[dict[st
         container = sole_container(templates[workload], f"{MONITORING}/{workload}")
         quantities = resource_quantities(container)
         assert quantities == expected, f"{workload} declares {quantities}, not {expected}"
-
-    owners = pod_owners(built, MONITORING)
-    assert len(owners) == len(WORKLOAD_RESOURCES), f"{len(owners)} monitoring workloads built"
-    totals = {"requests.memory": 0, "requests.cpu": 0, "limits.memory": 0}
-    for owner in owners:
-        pods = pods_of(owner)
-        for container in containers_of(owner["spec"]["template"]):
-            quantities = resource_quantities(container)
-            totals["requests.memory"] += pods * memory_bytes(quantities["requests.memory"])
-            totals["requests.cpu"] += pods * cpu_millicores(quantities["requests.cpu"])
-            totals["limits.memory"] += pods * memory_bytes(quantities["limits.memory"])
-
-    assert totals["requests.memory"] == EXPECTED_REQUEST_MEMORY_BYTES, (
-        f"monitoring requests {totals['requests.memory']} bytes, not "
-        f"{EXPECTED_REQUEST_MEMORY_BYTES}"
-    )
-    assert totals["requests.cpu"] == EXPECTED_REQUEST_CPU_MILLICORES, (
-        f"monitoring requests {totals['requests.cpu']}m, not {EXPECTED_REQUEST_CPU_MILLICORES}m"
-    )
-    assert totals["limits.memory"] == EXPECTED_LIMIT_MEMORY_BYTES, (
-        f"monitoring limits {totals['limits.memory']} bytes, not {EXPECTED_LIMIT_MEMORY_BYTES}"
-    )
-
-    hard = quota_hard(object_named(built, "ResourceQuota", "monitoring-envelope"))
-    assert hard == MONITORING_QUOTA, f"the monitoring quota reads {hard}, not {MONITORING_QUOTA}"
-    assert totals["requests.memory"] <= memory_bytes(hard["requests.memory"])
-    assert totals["requests.cpu"] <= cpu_millicores(hard["requests.cpu"])
-    assert totals["limits.memory"] <= memory_bytes(hard["limits.memory"])
 
 
 def test_kube_state_metrics_is_the_only_subject_with_rbac_and_reads_only(
@@ -976,7 +928,7 @@ def test_prometheus_egress_reaches_exactly_the_four_scrape_targets_and_nothing_o
 
 
 @pytest.mark.parametrize(
-    ("namespace", "expected_peers", "expected_ports"),
+    ("namespace", "expected_peers", "expected_ports", "expected_unreachable"),
     [
         pytest.param(
             MONITORING,
@@ -986,12 +938,20 @@ def test_prometheus_egress_reaches_exactly_the_four_scrape_targets_and_nothing_o
                 NODE_EXPORTER: {("TCP", 9100)},
                 KUBE_STATE_METRICS: {("TCP", 8080)},
             },
+            # Grafana is selected by this policy (it selects every pod) and reached by none of
+            # it: an earlier change decision D names its port `http`, not `metrics`, so the named-port
+            # allow resolves against nothing on that pod - which is exactly why 23b gives it
+            # `grafana-ingress` of its own. Excluded here by NAME so a fourth scrape target that
+            # quietly loses its `metrics` port is still a failure and not a silent exemption.
+            {GRAFANA},
             id="monitoring-every-pod-by-port-name",
         ),
         pytest.param(
             PLATFORM,
             {(MONITORING, ANY_POD)},
             {QDRANT: {("TCP", 6333)}},
+            # `platform`'s policy selects `qdrant` alone, so there is no pod for the name to miss.
+            frozenset(),
             id="platform-qdrant-alone",
         ),
     ],
@@ -1001,12 +961,16 @@ def test_each_metrics_ingress_policy_admits_monitoring_on_exactly_its_own_scrape
     namespace: str,
     expected_peers: set[tuple[str, str]],
     expected_ports: dict[str, set[tuple[str, int]]],
+    expected_unreachable: set[str],
 ) -> None:
     """Criteria 8 and 9, for both `metrics-ingress-from-monitoring` policies, with every port
     RESOLVED against the target pod's own container port rather than compared to a literal. The
-    resolved mapping is keyed by the pods the policy's own `podSelector` matches, so comparing it
-    by equality pins the SCOPE as well as the ports: three pods in `monitoring`, `qdrant` alone
-    in `platform`.
+    resolved mapping is keyed by the pods the policy's own `podSelector` matches AND the named
+    port can reach, so comparing it by equality pins the SCOPE as well as the ports: three pods
+    in `monitoring`, `qdrant` alone in `platform`. The pods the name cannot reach are compared by
+    equality too, against `expected_unreachable` - an earlier change's Grafana is the only one, for the
+    reason written on that parametrize row, and an exemption nobody agreed to is as red as a
+    missing allow.
 
     Both rows live here rather than in `test_k8s_netpol.py` because that file's §8 authorises no
     new case and its ingress parametrization resolves inside `apps` only - see the module
@@ -1022,7 +986,8 @@ def test_each_metrics_ingress_policy_admits_monitoring_on_exactly_its_own_scrape
     Catches either `from` peer written as a bare `podSelector` with no `namespaceSelector`, which
     scopes it to the policy's OWN namespace and so denies every packet Prometheus sends. Catches
     a second port smuggled into either rule, since each rule's resolved ports are compared by
-    equality.
+    equality. Catches Grafana's port renamed to `metrics`, which would put a UI port inside the
+    scrape allow and which shows up here as an empty unreachable set rather than as an extra row.
     """
     document = policy(built, namespace, "metrics-ingress-from-monitoring")
     rules = rules_of(document, "ingress")
@@ -1037,6 +1002,11 @@ def test_each_metrics_ingress_policy_admits_monitoring_on_exactly_its_own_scrape
         assert listed, f"{namespace}/metrics-ingress has a rule with no `from`, admitting everyone"
         for peer in listed:
             peers |= peer_targets(built, peer, namespace)
+        unreachable = unreachable_workloads(built, document, rule)
+        assert unreachable == set(expected_unreachable), (
+            f"{namespace}/metrics-ingress-from-monitoring does not reach "
+            f"{sorted(unreachable)}, and the plans agree on {sorted(expected_unreachable)}"
+        )
         assert resolved_ports(built, document, rule) == expected_ports, (
             f"{namespace}/metrics-ingress-from-monitoring resolves to "
             f"{resolved_ports(built, document, rule)}"

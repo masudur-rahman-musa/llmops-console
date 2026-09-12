@@ -15,20 +15,22 @@ template - still runs on a machine with no `kubectl`, where `built` skips.
 Criterion 3 is the reason this file has a README parser at all. The contract
 `{name: (namespaces, keys)}` is compared file-against-README, never file-against-a-literal:
 a constant restated here would let the templates and the table a human reads before an apply
-drift together in silence, which is exactly the failure the criterion names. Only the four
-NAMES and their NAMESPACES are written down (the plan pins them, and the build's own
+drift together in silence, which is exactly the failure the criterion names. Only the five
+NAMES and their NAMESPACES are written down (the plans pin them, and the build's own
 references are the third side of the comparison); the KEY SETS live in the two places the
-criterion says they must agree, and nowhere else.
+criterion says they must agree, and nowhere else - `grafana-admin`'s included, which is why
+an earlier change's own module does not restate them here either.
 
-The four `tls[*].secretName` values (`gateway-tls`, `gateway-healthz-tls`, `helpdesk-tls`,
-`helpdesk-healthz-tls`) are EXCLUDED from the reference comparison and pinned separately:
-cert-manager CREATES those, so "every Secret the build references is one this plan supplies"
+The five `tls[*].secretName` values (`gateway-tls`, `gateway-healthz-tls`, `helpdesk-tls`,
+`helpdesk-healthz-tls`, `grafana-tls`) are EXCLUDED from the reference comparison and pinned
+separately: cert-manager CREATES those, so "every Secret the build references is one this repo
+supplies"
 and "every Ingress names a tls secret" cannot both be read literally. The
 exclusion is written as a subtraction of a pinned set rather than as a walk that never looks
 at `tls`, so an exclusion gone stale is a readable red rather than an invisible pass.
 
 `test_k8s_apps.py` already asserts build-wide that the stream emits no `Secret` and that every
-referenced name is one of four LITERALS; the case here is the other direction - the names come
+referenced name is one of the `apps` LITERALS; the case here is the other direction - the names come
 from the example FILES, so it catches a template renamed or never written, which a literal set
 cannot see.
 """
@@ -56,23 +58,27 @@ SECRETS_DIR = REPO_ROOT / "infra" / "secrets"
 SOPS_CONFIG = REPO_ROOT / ".sops.yaml"
 GITIGNORE = REPO_ROOT / ".gitignore"
 
-#: The four Secrets, by name. The plan pins these; the key SETS are deliberately absent (see
-#: the module docstring) because criterion 3 compares them file-against-README.
+#: The five Secrets, by name. The plans pin these; the key SETS are deliberately absent (see
+#: the module docstring) because criterion 3 compares them file-against-README. `grafana-admin`
+#: is an earlier change's criterion 8, the fifth contract this repo publishes and does not supply.
 POSTGRES_CREDENTIALS = "postgres-credentials"
 TRAEFIK_BASIC_AUTH = "traefik-basic-auth"
 GATEWAY_SECRETS = "gateway-secrets"
 HELPDESK_SECRETS = "helpdesk-secrets"
+GRAFANA_ADMIN = "grafana-admin"
 
 PLATFORM = "platform"
 APPS = "apps"
+MONITORING = "monitoring"
 
-#: Criterion 3's namespaces, which the plan pins. `traefik-basic-auth` exists TWICE: a
+#: Criterion 3's namespaces, which the plans pin. `traefik-basic-auth` exists TWICE: a
 #: `Middleware` reads its Secret from its own namespace, so one copy per routing namespace.
 EXPECTED_NAMESPACES: dict[str, frozenset[str]] = {
     POSTGRES_CREDENTIALS: frozenset({PLATFORM}),
     TRAEFIK_BASIC_AUTH: frozenset({PLATFORM, APPS}),
     GATEWAY_SECRETS: frozenset({APPS}),
     HELPDESK_SECRETS: frozenset({APPS}),
+    GRAFANA_ADMIN: frozenset({MONITORING}),
 }
 
 #: One template per Secret (decision B), `traefik-basic-auth`'s being one file of two
@@ -83,6 +89,7 @@ EXAMPLE_FILENAMES: frozenset[str] = frozenset(
         f"{TRAEFIK_BASIC_AUTH}.example.yaml",
         f"{GATEWAY_SECRETS}.example.yaml",
         f"{HELPDESK_SECRETS}.example.yaml",
+        f"{GRAFANA_ADMIN}.example.yaml",
     }
 )
 
@@ -138,13 +145,15 @@ SOPS_TARGETS = ("secrets-encrypt", "secrets-decrypt")
 #: live in, so the case means the same thing on a machine where `sops` IS installed.
 PATH_WITHOUT_SOPS = "/usr/bin:/bin"
 
-#: cert-manager writes these four from the Ingresses' `spec.tls[*].secretName`; this plan
+#: cert-manager writes these five from the Ingresses' `spec.tls[*].secretName`; this repo
 #: supplies none of them. They are subtracted from the referenced set in criterion 3's build
-#: half, because "every referenced Secret is one of the four" and "every Ingress names a tls
+#: half, because "every referenced Secret is one of the five" and "every Ingress names a tls
 #: secret" are both true only with this exclusion named. Pinned
-#: rather than filtered by shape so a stale exclusion is a readable red.
+#: rather than filtered by shape so a stale exclusion is a readable red. `grafana-tls` is plan
+#: 23b's, and its disjointness from `grafana-admin` is what keeps an issued certificate from
+#: overwriting the admin credential in one namespace.
 INGRESS_TLS_SECRETS: frozenset[str] = frozenset(
-    {"gateway-tls", "gateway-healthz-tls", "helpdesk-tls", "helpdesk-healthz-tls"}
+    {"gateway-tls", "gateway-healthz-tls", "helpdesk-tls", "helpdesk-healthz-tls", "grafana-tls"}
 )
 
 #: The header the secrets table in `infra/k8s/README.md` carries, cell for cell. The table is

@@ -1,6 +1,8 @@
-# The scrape plane: Prometheus, the two exporters and the RBAC one of them
-# needs. Grafana, its `grafana.` Ingress and the six dashboards land in this
-# directory next, and Alertmanager and its rules after that (23c).
+# The monitoring stack: Prometheus and the two exporters (the scrape plane),
+# Grafana with its provisioning pair and its `grafana.` Ingress, and the
+# `monitoring` copies of the two middlewares that Ingress names. Alertmanager
+# and the alert rules land here next, and the remaining five
+# dashboards with them in row 23e.
 #
 # No `namespace:` transformer here on purpose, the same reason `platform/` has
 # none: it would stamp `metadata.namespace` onto the cluster-scoped ClusterRole
@@ -8,7 +10,7 @@
 # `metadata.namespace: monitoring` itself instead.
 #
 # No `images:` block either. That transformer flips the tag CD builds, and none
-# of these three images is built in this repo: each is pinned to an exact
+# of these four images is built in this repo: each is pinned to an exact
 # upstream tag in the file that names it.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -16,3 +18,39 @@ kind: Kustomization
 resources:
   - prometheus.yaml
   - exporters.yaml
+  - grafana.yaml
+  - middlewares.yaml
+  - ingress.yaml
+
+# The dashboards are ordinary JSON files in a directory, generated into one
+# ConfigMap rather than pasted into a manifest as a quoted blob - a dashboard is
+# a few hundred lines of JSON, and embedded it would be unreadable and
+# unformattable.
+#
+# They live HERE, under the kustomization root, and not in
+# `project-obs/dashboards/` where the spec names them: a `files:` entry pointing
+# above the root is refused outright (`security; file '...' is not in or below
+# '...'`), and so is a symlink to the same place, against the resolved path. The
+# alternative is `--load-restrictor LoadRestrictionsNone` on every build, which
+# `make k8s-check`, CI's `k8s` job and the tests would each have to carry. ADR
+# 0016 records the deviation; `../../project-obs/dashboards/README.md` points
+# here.
+configMapGenerator:
+  - name: grafana-dashboards
+    # Per-entry, because there is no `namespace:` transformer in this file (see
+    # above - it would stamp one onto the cluster-scoped RBAC pair too). A
+    # generated object writes no `metadata.namespace` of its own, so without this
+    # line the ConfigMap builds and validates perfectly and then applies into
+    # whatever namespace the human's kubeconfig happens to be pointing at, while
+    # the pod's volume waits on a ConfigMap that is not in `monitoring`.
+    namespace: monitoring
+    files:
+      - dashboards/gateway-overview.json
+
+generatorOptions:
+  # No name-suffix hash. The usual argument for the hash is that it rolls the
+  # pod when a dashboard changes; here the file provider POLLS the mounted
+  # directory, so the edit lands without a restart either way. What the stable
+  # name buys is that `grafana.yaml`'s volume can reference it and the object
+  # inventory can pin it by equality like every other object in this namespace.
+  disableNameSuffixHash: true

@@ -1,0 +1,234 @@
+# Grafana: the one thing in this repo a human looks at. One Deployment reading
+# its datasource and its dashboard provider from mounted ConfigMaps, and writing
+# its sqlite database to a claim.
+#
+# NOTHING here is configured through Grafana's API. The datasource and the
+# provider are provisioning FILES, and the dashboards are a generated ConfigMap
+# mounted at the directory the provider polls - so a dashboard is a reviewed diff
+# in this repo rather than a click somebody made once and nobody can reproduce.
+#
+# The port is named `http`, NOT `metrics`. Every other
+# container port in this namespace shares the name `metrics` so that ONE ingress
+# policy covers three pods on three numbers; this port serves the UI an Ingress
+# points at, and calling it `metrics` would make an Ingress backend read
+# `port: name: metrics` for a browser. The cost is stated rather than hidden:
+# Grafana is not scraped, so its own health is visible only through
+# kube-state-metrics, and it is not covered by the namespace-wide named-port
+# allow either - which is why `../base/networkpolicies.yaml` gives it
+# `grafana-ingress` of its own.
+#
+# Authentication is Grafana's OWN login against the `grafana-admin` Secret this
+# repo does not supply (decision B). There is deliberately no variable here that
+# admits an unauthenticated viewer or hides the login form:
+# `tests/infra/test_k8s_grafana.py::test_the_only_way_into_grafana_is_the_secret_this_repo_does_not_supply`
+# scans this container's `env` AND the contract template's key set for both,
+# because a variable moved from one to the other would otherwise pass.
+#
+# `app.kubernetes.io/name` is written on the selector, on the pod template and on
+# the Service because the root kustomization's `labels:` block carries
+# `includeSelectors: false` and reaches none of them.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: grafana
+data:
+  # Grafana reads a DIRECTORY of YAML here, so the key name is the file name
+  # this lands as. Held as a string, which means a typo is valid YAML inside a
+  # valid ConfigMap and reaches the cluster unchallenged;
+  # `tests/infra/test_k8s_grafana.py::test_the_provisioning_files_point_at_prometheus_and_at_the_mounted_directory`
+  # parses this value and asserts all four fields.
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      # Fully qualified: nothing resolves a bare `prometheus` from outside this
+      # namespace, and row 26 deploys this same build to a second cluster.
+      - name: Prometheus
+        type: prometheus
+        # The uid every panel target names. A panel pointing at anything else
+        # renders empty with no error in any log, which is why the tests resolve
+        # every target against this string.
+        uid: prometheus
+        url: http://prometheus.monitoring.svc.cluster.local:9090
+        # `proxy`, never `direct`: `direct` has the BROWSER dial the URL, and a
+        # ClusterIP is unreachable from a laptop. It would also put the query
+        # path outside the NetworkPolicy that allows it.
+        access: proxy
+        isDefault: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-providers
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: grafana
+data:
+  # The file provider: it POLLS the directory below rather than importing once,
+  # so an edited dashboard lands on a `kubectl apply` with no pod restart. That
+  # is also why the generated ConfigMap disables the name-suffix hash
+  # (`kustomization.yaml`, decision E) - the restart the hash exists to trigger
+  # buys nothing here.
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: opsconsole
+        type: file
+        # No `folder`, so the dashboards land at the top level. `foldersFromFilesStructure`
+        # is off: the ConfigMap mount is flat, one key per file, with no structure to read.
+        disableDeletion: false
+        allowUiUpdates: false
+        options:
+          # MUST equal the `mountPath` of the dashboards volume below. They are
+          # two literals in one file on purpose - the provider names a path and
+          # the pod mounts one, and nothing in Kubernetes connects them. A
+          # mismatch is an empty directory, a provider that finds nothing and no
+          # dashboard in the UI, with nothing in any log. The test asserts the
+          # two as ONE equality, reading the mount off the built pod template.
+          path: /etc/grafana/dashboards
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-data
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: grafana
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+  # `storageClassName` deliberately absent, the same reason `prometheus.yaml`'s
+  # claim and `platform`'s Postgres omit it: k3s defaults to `local-path` and
+  # EKS to `gp2`, and row 26 deploys this same build to both.
+  #
+  # A claim rather than an `emptyDir` (decision C). Dashboards and the datasource
+  # are provisioned and survive either way, but Grafana's sqlite also holds the
+  # service-account token CD annotates releases with and the annotations
+  # themselves - so `emptyDir` would silently invalidate the token and erase the
+  # release history on every restart.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: grafana
+spec:
+  replicas: 1
+  # `Recreate`, not the default rolling update, for the same reason Prometheus
+  # uses it: the claim is `ReadWriteOnce`, so a rolling update is a new pod
+  # waiting forever for a volume the old pod still holds.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: grafana
+    spec:
+      # The image runs as uid 472 and the claim is created owned by root, so
+      # without this the first write to the sqlite database fails and the pod
+      # crash-loops with a permission error nothing else explains.
+      securityContext:
+        fsGroup: 472
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.4.0
+          # No `env` at all, and that is the decision rather than an omission:
+          # the two admin variables come from the Secret below, and every other
+          # setting this deployment needs is a provisioning file. The absence is
+          # what criterion 9 asserts over.
+          envFrom:
+            # The fifth Secret this repo contracts for and does not supply. The
+            # contract is `../../secrets/grafana-admin.example.yaml`; until it is
+            # applied the pod fails to start, which is the intended direction -
+            # a default `admin:admin` on a public host would come up working and
+            # never mention itself again.
+            - secretRef:
+                name: grafana-admin
+          ports:
+            - name: http
+              containerPort: 3000
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+          # 128Mi of the 160Mi the scrape plane left in the namespace's 512Mi,
+          # and 256Mi of its 1Gi ceiling. What remains after this pod is exactly
+          # 32Mi, 50m and 64Mi - Alertmanager's whole row in 23c, to the byte, and
+          # the test asserts that remainder as an equality rather than as a band.
+          #
+          # No `limits.cpu`, the same reason the scrape plane declares none: a CPU
+          # limit throttles rather than kills, and a throttled UI is a slow page
+          # nobody can diagnose.
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: 100m
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources
+              readOnly: true
+            - name: dashboard-providers
+              mountPath: /etc/grafana/provisioning/dashboards
+              readOnly: true
+            # The path the provider above polls. Kept out of
+            # `/var/lib/grafana` deliberately: that directory is the claim, and a
+            # ConfigMap mounted inside it would be a mount nested in a volume.
+            - name: dashboards
+              mountPath: /etc/grafana/dashboards
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/grafana
+      volumes:
+        - name: datasources
+          configMap:
+            name: grafana-datasources
+        - name: dashboard-providers
+          configMap:
+            name: grafana-dashboard-providers
+        - name: dashboards
+          configMap:
+            # Generated by the `configMapGenerator` in `kustomization.yaml` with
+            # the name-suffix hash disabled, so this reference is the name the
+            # build actually emits (decision E).
+            name: grafana-dashboards
+        - name: data
+          persistentVolumeClaim:
+            claimName: grafana-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: grafana
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: grafana
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http

@@ -491,15 +491,21 @@ spec:
         - protocol: TCP
           port: 53
 
-# One policy, three pods, three different numbers. Every container port in this
-# namespace is named `metrics` (9090, 9100, 8080), and Kubernetes resolves a
-# named port against each target pod's own container port - so this one rule is
-# Prometheus admitted to both exporters AND, in 23b and 23c, Grafana and
-# Alertmanager admitted to Prometheus, with no edit here when they land. A
-# literal number would be right for one pod and a silent deny for the other two.
+# One policy, three pods, three different numbers. Every SCRAPED container port
+# in this namespace is named `metrics` (9090, 9100, 8080), and Kubernetes
+# resolves a named port against each target pod's own container port - so this
+# one rule is Prometheus admitted to both exporters and to itself. A literal
+# number would be right for one pod and a silent deny for the other two.
 #
-# The peer is the namespace rather than `prometheus` by name for the same
-# reason: the scrapers this admits do not all exist yet.
+# What it does NOT cover is a pod whose port is named something else, because a
+# named port that does not resolve on a pod is no allowance for that pod. Grafana
+# is exactly that case - its port serves a browser and is named `http` - so it
+# carries `grafana-ingress` below instead of being admitted here. This comment
+# used to predict the opposite, that Grafana and Alertmanager would land with no
+# edit to this file; the first half turned out false, and 23c decides the second.
+#
+# The peer is the namespace rather than `prometheus` by name so that a second
+# scraper is admitted without widening anything.
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -576,3 +582,68 @@ spec:
       ports:
         - protocol: TCP
           port: metrics
+
+# Grafana is the first pod in `monitoring` that the namespace-wide named-port
+# allow above does NOT cover. `metrics-ingress-from-monitoring` opens the port
+# NAMED `metrics`, and Grafana's port is named `http` (an earlier change decision D,
+# because an Ingress backend points at it and it serves a browser) - a named
+# port that does not resolve on a pod is no allowance for that pod. So the UI
+# gets a policy of its own, and the two together say exactly who may open a
+# connection to it: Traefik, and nothing else.
+#
+# `kube-system` is where k3s runs Traefik, so that is where the browser's packet
+# actually arrives from. The peer is the whole namespace because this build
+# writes no pod template there to name.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: grafana-ingress
+  namespace: monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: TCP
+          port: http
+
+# What Grafana may open, and it is Prometheus and nothing else: every panel on
+# every dashboard is a query against the one provisioned datasource. No
+# `ipBlock` at all - a Grafana that can dial the internet is a Grafana whose
+# plugin catalogue, update check and alerting webhooks all reach out, and this
+# namespace deliberately has no route off the cluster.
+#
+# DNS is NOT here. It lives in `allow-dns` above, which selects every pod in the
+# namespace, and without it the Service name below resolves to nothing.
+#
+# The port is the NUMBER rather than the name `metrics`: Prometheus's port is
+# named for the scrape plane, and this rule is a UI reading a query API on the
+# same socket. The number is what 23a pinned and what the scrape config dials.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: grafana-egress
+  namespace: monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090

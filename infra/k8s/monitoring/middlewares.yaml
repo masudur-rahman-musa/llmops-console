@@ -1,0 +1,42 @@
+# Two of the three middlewares `../platform/traefik-middlewares.yaml` declares,
+# copied into `monitoring` rather than referenced across namespaces.
+#
+# Traefik v3's CRD provider defaults `allowCrossNamespace` to false, so the
+# `grafana.` Ingress naming `platform-rate-limit@kubernetescrd` would resolve to
+# nothing - and Traefik treats an unresolvable middleware reference as NO
+# middleware rather than as an error, which on a public host is traffic with no
+# rate limit and no security headers and nothing anywhere saying so.
+#
+# There is no `basic-auth` copy here, and that is the decision. Nothing in this
+# namespace references one: Grafana authenticates its own callers against the
+# `grafana-admin` Secret, and a Traefik 401 in front of it would also sit in
+# front of the `/api/annotations` POST that CD makes with a Bearer token. A
+# Middleware nobody names is a document that exists to be copied into the next
+# Ingress by mistake.
+#
+# Every value below is a copy. The comments explaining WHY each value is what it
+# is live once, beside the original.
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: rate-limit
+  namespace: monitoring
+spec:
+  rateLimit:
+    average: 50
+    burst: 100
+    period: 1s
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: security-headers
+  namespace: monitoring
+spec:
+  headers:
+    stsSeconds: 31536000
+    stsIncludeSubdomains: true
+    contentTypeNosniff: true
+    frameDeny: true
+    referrerPolicy: strict-origin-when-cross-origin

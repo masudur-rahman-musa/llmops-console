@@ -9,7 +9,7 @@ kustomization.yaml     the single root; `resources` grows as directories land
 base/                  namespaces, quotas, limit ranges, network policies
 platform/              Postgres, Redis, Qdrant, the ACME issuers, the middlewares
 apps/                  the gateway, llama.cpp, the Helpdesk, their config and the four public Ingresses
-monitoring/            Prometheus, node-exporter, kube-state-metrics
+monitoring/            Prometheus, node-exporter, kube-state-metrics, Grafana and the `grafana.` Ingress
 ```
 
 Build it:
@@ -151,16 +151,20 @@ is one pod here and would be one per node on a larger one.
 | `prometheus`, 1 pod | 256Mi | 150m | 512Mi |
 | `node-exporter`, 1 pod per node | 32Mi | 50m | 64Mi |
 | `kube-state-metrics`, 1 pod | 64Mi | 50m | 128Mi |
-| **total** | **352Mi** | **250m** | **704Mi** |
+| `grafana`, 1 pod | 128Mi | 100m | 256Mi |
+| **total** | **480Mi** | **350m** | **960Mi** |
 
-`tests/infra/test_k8s_monitoring.py` derives those three totals from the built
-pod templates and checks them against the `monitoring` quota, the same way the
-two budgets above are checked.
+`tests/infra/test_k8s_grafana.py` derives those three totals from the built pod
+templates and checks them against the `monitoring` quota, the same way the two
+budgets above are checked; `tests/infra/test_k8s_monitoring.py` holds the three
+scrape rows against the values they are priced at here.
 
-What is left is 160Mi of requests and 296Mi of the limits ceiling, and it is
-spoken for: Grafana at 128Mi and Alertmanager at 32Mi fill
-the requests column to the byte. A Grafana that needs more is a conversation
-about the envelope in that plan, not a quiet edit here.
+What is left is 32Mi of requests, 50m of CPU and 64Mi of the limits ceiling, and
+every byte of it is spoken for: Alertmanager is exactly that row.
+There is no slack left in this namespace at all, so an Alertmanager that needs
+more is a conversation about this table in that plan rather than a quiet edit
+here — which is the direction the test enforces, because it asserts the
+remainder as an exact equality and not as a floor.
 
 There is no operator and no CustomResourceDefinition: this stack is written by
 hand rather than installed from `kube-prometheus-stack`, because the whole build
@@ -171,10 +175,11 @@ ClusterRole, and its verbs are `get`, `list` and `watch`.
 
 ## The public hosts
 
-Four Ingresses, two hosts, one pair per host. The pair exists because a Traefik
+Five Ingresses, three hosts. Two of the hosts carry a PAIR, because a Traefik
 middleware annotation is per Ingress and not per path: one Ingress cannot exempt
 `/healthz` from basic auth, and `/healthz` behind a 401 is an uptime monitor
-reporting an outage that is not happening.
+reporting an outage that is not happening. The third, `grafana.`, is a single
+Ingress — it is not behind basic auth at all, so there is nothing to carve out.
 
 | host | Ingress | path | backend Service | middlewares | TLS Secret |
 |---|---|---|---|---|---|
@@ -182,6 +187,17 @@ reporting an outage that is not happening.
 | `api.example.com` | `gateway-healthz` | `/healthz` (Exact) | `gateway` | rate-limit, security-headers | `gateway-healthz-tls` |
 | `helpdesk.example.com` | `helpdesk` | `/` (Prefix) | `helpdesk-web` | basic-auth, rate-limit, security-headers | `helpdesk-tls` |
 | `helpdesk.example.com` | `helpdesk-healthz` | `/healthz` (Exact) | `helpdesk-web` | rate-limit, security-headers | `helpdesk-healthz-tls` |
+| `grafana.example.com` | `grafana` | `/` (Prefix) | `grafana` | rate-limit, security-headers | `grafana-tls` |
+
+`grafana.` is the one public host with no basic auth in front of it, and the
+reason is specific rather than an oversight. Grafana authenticates its own
+callers against the `grafana-admin` Secret below, so the host is not open; what
+basic auth would add is a second credential to rotate in front of the first. It
+would also sit in front of `/api/annotations`, which CD POSTs a release marker to
+with a Bearer token — a 401 there breaks the deploy for a credential Grafana is
+already asking for. The trade is that this host's access control is the
+application's rather than the proxy's, and that the rate limit and the security
+headers are therefore the only middlewares doing anything on it.
 
 `Exact` on the `/healthz` rows is what keeps the split honest: `Prefix` there
 would put everything under `/healthz/...` outside basic auth. On the Helpdesk
@@ -210,14 +226,17 @@ path the app mounts still answers on `Service/gateway` in-cluster, which is what
 A future public surface that is not under `/v1` - the console's `console-api` -
 needs a router of its own on this table, or it is a 404 on a host that is up.
 
-Every middleware reference is namespace-qualified as `apps-<name>@kubernetescrd`
-and resolves to the `apps` copy of that middleware. Traefik treats a
-reference it cannot resolve as no middleware at all rather than as an error, so
-a `platform-` prefix here would serve unauthenticated traffic silently;
-`tests/infra/test_k8s_apps.py` resolves every parsed reference against the
-`Middleware`s the build actually emits.
+Every middleware reference is namespace-qualified — `apps-<name>@kubernetescrd`
+on the four `apps` routers, `monitoring-<name>@kubernetescrd` on the Grafana one
+— and each resolves to that namespace's own copy of the middleware.
+Traefik treats a reference it cannot resolve as no middleware at all rather than
+as an error, so a `platform-` prefix here, or an `apps-` prefix copied onto the
+Grafana row, would serve unprotected traffic silently;
+`tests/infra/test_k8s_apps.py` and `tests/infra/test_k8s_grafana.py` each
+resolve every parsed reference against the `Middleware`s the build actually
+emits.
 
-The rate limit is instantiated PER ROUTER, so these four do not share one
+The rate limit is instantiated PER ROUTER, so these five do not share one
 budget: each gets the middleware's own 50/s average and 100 burst. Nobody has
 measured a browser page load against that number, and a Next.js page fanning out
 past the burst takes a 429 on assets, which looks like a broken page rather than
@@ -232,8 +251,8 @@ nothing rather than one that answers too much.
 
 ## What may reach what
 
-Fifteen `NetworkPolicy` objects in `base/networkpolicies.yaml`: eight in `apps`,
-three in `platform` and four in `monitoring`. `apps` and `monitoring` are denied
+Seventeen `NetworkPolicy` objects in `base/networkpolicies.yaml`: eight in
+`apps`, three in `platform` and six in `monitoring`. `apps` and `monitoring` are denied
 in both directions and every row below is an additive allow on top of that;
 `platform` is denied inbound only, because
 cert-manager lives there and a cluster that cannot reach the ACME endpoint is a
@@ -256,8 +275,10 @@ provider keys is the one closed both ways.
 | `metrics-ingress-from-monitoring` | `platform` | `qdrant` | ingress from any pod in `monitoring` on 6333 |
 | `default-deny` | `monitoring` | every pod | nothing, in either direction |
 | `allow-dns` | `monitoring` | every pod | egress to `kube-system` on UDP 53 and TCP 53 |
-| `metrics-ingress-from-monitoring` | `monitoring` | every pod | ingress from any pod in `monitoring`, each on its own `metrics` port |
+| `metrics-ingress-from-monitoring` | `monitoring` | every pod with a `metrics` port | ingress from any pod in `monitoring`, each on its own `metrics` port |
 | `prometheus-egress` | `monitoring` | `prometheus` | egress to `gateway:8080`, `qdrant:6333` and the two exporters on their `metrics` ports - and no route off the cluster at all |
+| `grafana-ingress` | `monitoring` | `grafana` | ingress from `kube-system` (Traefik) on its serving port, and from nowhere else |
+| `grafana-egress` | `monitoring` | `grafana` | egress to `prometheus:9090` - and no route off the cluster at all |
 
 The gateway is the only pod in the cluster with a route to the internet, and
 that is the point of the whole file: the Helpdesk holds no provider key, and
@@ -275,17 +296,27 @@ Qdrant's scrape is a separate `platform` policy rather than a `monitoring` peer
 added to `data-ingress-from-apps`: that policy's guarantee is that the data
 services admit `apps` and nothing else, and widening it would spend the
 guarantee to save a document. Postgres and Redis are scraped by nothing until an
-exporter for each lands, so the platform dashboard in 23b arrives with two empty
-panels.
+exporter for each lands, so the platform dashboard, whenever it lands, arrives
+with two empty panels.
 
-Four rows read `on its own serving port` or `on its own metrics port` because
-the port is written by NAME
-rather than by number. A policy has one `podSelector` and its ports apply to
-every pod that selector matches, so `llama-ingress` - one policy over two pods
-listening on 8082 and 8083 - cannot say "each on its own port" with a literal.
-Both pods call their port `http`, and Kubernetes resolves a named port against
-each target pod's own container port. `platform`'s policy is the exception and
-reads in numbers: its three targets name their ports differently.
+Every row above that reads `on its serving port`, `on its own serving port` or
+`on its own metrics port` is written by NAME rather than by number. A policy has
+one `podSelector` and its ports apply to every pod that selector matches, so
+`llama-ingress` - one policy over two pods listening on 8082 and 8083 - cannot
+say "each on its own port" with a literal. Both pods call their port `http`, and
+Kubernetes resolves a named port against each target pod's own container port.
+`platform`'s policy is the exception and reads in numbers: its three targets
+name their ports differently.
+
+The same mechanism is why Grafana has two policies of its own. A named port that
+does not resolve on a pod is no allowance for that pod, and Grafana's port is
+named `http` rather than `metrics`, because an Ingress backend points at it and
+it serves a browser. So `metrics-ingress-from-monitoring` - written to cover
+three scrape targets on three different numbers with one rule - reaches Grafana
+not at all, and `grafana-ingress` is what admits Traefik to it. That is a real
+narrowing of one rule's reach, stated here rather than discovered later: a fifth
+pod added to this namespace is covered by that rule only if it publishes a
+`metrics` port.
 
 Two things these policies do NOT do. They cannot see a URL path: what takes
 `/admin/*` and `/metrics` off the public side is the `gateway` Ingress routing
@@ -330,7 +361,7 @@ If the chart's real footprint is larger than that, the quota refuses the install
 with the namespace named, which is the intended direction: raising it means
 re-totalling the table above and the reserve constant in the test together.
 
-The four Secrets nothing here writes, each supplied SOPS-encrypted before the
+The five Secrets nothing here writes, each supplied SOPS-encrypted before the
 first apply. `../secrets/` holds one plaintext contract per Secret
 (`*.example.yaml`, every value `REPLACE_ME`), the workflow that encrypts a filled
 copy, and the key procedure; `../../.sops.yaml` is the policy that decides what
@@ -344,13 +375,16 @@ are asserted equal, and equal to the names the build references, by
 | `traefik-basic-auth` | `platform`, `apps` | `users` (htpasswd lines) | the `basic-auth` middleware in each namespace |
 | `gateway-secrets` | `apps` | `OPSCONSOLE_DATABASE_URL`, `OPSCONSOLE_API_KEYS`, `OPSCONSOLE_ADMIN_KEY_SHA256`, `OPSCONSOLE_BUDGET_OVERRIDE_SECRET`, `OPSCONSOLE_OTLP_ENDPOINT`, `OPSCONSOLE_OTLP_HEADERS`, `ANTHROPIC_API_KEY`, `ANTHROPIC_EU_API_KEY`, `OPENAI_API_KEY`, `AZURE_OPENAI_KEY`, `AZURE_OPENAI_ENDPOINT` | the gateway Deployment, by `envFrom` |
 | `helpdesk-secrets` | `apps` | `HELPDESK_GATEWAY_API_KEY`, `HELPDESK_DATABASE_URL`, `HELPDESK_LANGFUSE_PUBLIC_KEY`, `HELPDESK_LANGFUSE_SECRET_KEY`, `HELPDESK_LANGFUSE_HOST` | the four Helpdesk Deployments, by `envFrom` |
+| `grafana-admin` | `monitoring` | `GF_SECURITY_ADMIN_USER`, `GF_SECURITY_ADMIN_PASSWORD` | the Grafana Deployment, by `envFrom` |
 
 `traefik-basic-auth` is supplied once per routing namespace, not once per
 cluster: a `Middleware` reads its Secret from its own namespace, and a design note is
-why each namespace carries its own copy of the three middlewares. The four TLS
-Secrets the four Ingresses name are not in this table - cert-manager writes
-those, and their names have to stay disjoint from the four above, or an issued
-certificate overwrites a set of credentials.
+why each namespace carries its own copy of the middlewares it uses. The five TLS
+Secrets the five Ingresses name are not in this table - cert-manager writes
+those, and their names have to stay disjoint from the five above, or an issued
+certificate overwrites a set of credentials. `grafana-tls` and `grafana-admin`
+are the pair where that is easiest to get wrong, because they sit in one
+namespace and share a prefix; the disjointness is asserted.
 
 Three of those key names are endpoints rather than credentials
 (`OPSCONSOLE_OTLP_ENDPOINT`, `AZURE_OPENAI_ENDPOINT`, `HELPDESK_LANGFUSE_HOST`).
@@ -433,13 +467,16 @@ row 23c.
 
 - The rest of `apps/` - the console with its `console.` Ingress.
 - The nightly eval CronJob in `evals/`.
-- The rest of `monitoring/` - Grafana with its `grafana.` Ingress and the six
-  provisioned dashboards, then Alertmanager and the rules in
-  `../../project-obs/alerts/`. Postgres and Redis exporters are not planned yet
-  and are what the platform dashboard's two empty panels are waiting on.
-- The four `../secrets/*.enc.yaml` themselves. The policy, the contracts and the
-  guard are in place; the ciphertext waits on an age key being generated, which
-  is one pass with `sops` installed.
+- The rest of `monitoring/`. Grafana is here, with its Ingress and one
+  provisioned dashboard, `gateway-overview`; the other five - cost, residency
+  and redaction, the Helpdesk agent, evals over time and the platform view - are
+  still to write. Then Alertmanager and the rules in
+  `../../project-obs/alerts/`, which is what the 32Mi left in the monitoring
+  envelope is held for. Postgres and Redis exporters are not planned yet and are
+  what the platform dashboard's two empty panels are waiting on.
+- The `../secrets/*.enc.yaml` themselves, one per contract in the table above.
+  The policy, the contracts and the guard are in place; the ciphertext waits on
+  an age key being generated, which is one pass with `sops` installed.
 - NetworkPolicies for `evals`; the other three namespaces are covered above.
 
 Each of those is admitted against the envelope above, so a workload that does

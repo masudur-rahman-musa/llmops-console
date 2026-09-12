@@ -1,6 +1,7 @@
-r"""`infra/k8s/base/networkpolicies.yaml`: the fifteen NetworkPolicies an earlier change agree,
-read off what kustomize actually emits rather than off the file, so a policy written and never
-listed in `base/kustomization.yaml`'s `resources` is the same failure as a policy never written.
+r"""`infra/k8s/base/networkpolicies.yaml`: the seventeen NetworkPolicies an earlier change
+agree, read off what kustomize actually emits rather than off the file, so a policy written and
+never listed in `base/kustomization.yaml`'s `resources` is the same failure as a policy never
+written.
 
 The stream comes from the session-scoped `built` fixture in `tests/infra/conftest.py`: one
 `kubectl kustomize infra/k8s` for the whole session, shared with
@@ -111,11 +112,21 @@ PLATFORM_POLICIES = frozenset(
     {"default-deny-ingress", "data-ingress-from-apps", "metrics-ingress-from-monitoring"}
 )
 
-#: An earlier change criterion 6, the `monitoring` half: four policies, by name. Its own catch-all in both
-#: directions, DNS, the named-port scrape ingress every pod in the namespace carries, and
-#: Prometheus's egress to the four things it scrapes.
+#: An earlier change criterion 6 and an earlier change criterion 7, the `monitoring` half: six policies, by name.
+#: Its own catch-all in both directions, DNS, the named-port scrape ingress every pod in the
+#: namespace carries, Prometheus's egress to the four things it scrapes, and Grafana's own pair -
+#: 23b decision D leaves Grafana publishing `http` rather than `metrics`, so it is the first pod
+#: here that the namespace-wide named-port allow cannot cover and it gets an ingress and an
+#: egress policy of its own.
 MONITORING_POLICIES = frozenset(
-    {"default-deny", "allow-dns", "metrics-ingress-from-monitoring", "prometheus-egress"}
+    {
+        "default-deny",
+        "allow-dns",
+        "metrics-ingress-from-monitoring",
+        "prometheus-egress",
+        "grafana-ingress",
+        "grafana-egress",
+    }
 )
 
 #: Criterion 1 as `(namespace, name)` pairs, which is the identity a NetworkPolicy actually has:
@@ -507,7 +518,7 @@ def selector_scope(
     [
         pytest.param(APPS, APPS_POLICIES, id="apps-eight"),
         pytest.param(PLATFORM, PLATFORM_POLICIES, id="platform-three"),
-        pytest.param(MONITORING, MONITORING_POLICIES, id="monitoring-four"),
+        pytest.param(MONITORING, MONITORING_POLICIES, id="monitoring-six"),
     ],
 )
 def test_each_namespace_emits_exactly_the_policies_the_plan_names(
@@ -528,10 +539,10 @@ def test_each_namespace_emits_exactly_the_policies_the_plan_names(
     )
 
 
-def test_the_whole_build_emits_exactly_the_fifteen_policies_and_nowhere_else(
+def test_the_whole_build_emits_exactly_the_seventeen_policies_and_nowhere_else(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 1 over the WHOLE stream as `(namespace, name)`. Catches a sixteenth policy
+    """Criterion 1 over the WHOLE stream as `(namespace, name)`. Catches an eighteenth policy
     landing in a fourth namespace, which the three per-namespace rows above cannot see because each
     filters to its own namespace first; and catches a policy emitted with no
     `metadata.namespace` at all, which the API server would file into whatever namespace the

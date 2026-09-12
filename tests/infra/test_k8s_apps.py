@@ -118,6 +118,12 @@ HEALTHZ_INGRESS = "gateway-healthz"
 HELPDESK_INGRESS = "helpdesk"
 HELPDESK_HEALTHZ_INGRESS = "helpdesk-healthz"
 
+#: An earlier change's router, which is in `monitoring` and not in `apps`. It is named in this file
+#: because one case here is BUILD-WIDE - `INGRESS_TLS_SECRETS` below says why - and for no other
+#: reason: nothing else here scopes over it, and `test_k8s_grafana.py` owns everything else
+#: about it.
+GRAFANA_INGRESS = "grafana"
+
 #: Row 20f criterion 1, as `(kind, name, namespace)`: the eight objects the Helpdesk adds.
 #: `Service/helpdesk-scheduler` is absent on purpose (criterion 2) and its absence is asserted
 #: by name in its own case rather than left to this set. Written as its own frozenset because
@@ -527,14 +533,21 @@ ADMIN_PREFIX = "/admin/"
 NO_ENVIRON: Mapping[str, str] = {}
 
 #: Row 20g criterion 3: the Secret cert-manager WRITES for each router, by name. An earlier change
-#: criterion 10 named the two Helpdesk ones before this row existed. All four are asserted
+#: criterion 10 named the two Helpdesk ones before this row existed. All of them are asserted
 #: distinct from one another and disjoint from `PINNED_SECRET_NAMES`, because ingress-shim owns
 #: one `Certificate` per `secretName` through the Ingress that asked for it.
+#:
+#: The case reading this is BUILD-WIDE, not scoped to `apps`: the failure it exists to catch is
+#: two Ingresses claiming one `secretName`, which is only visible across every router the build
+#: emits. So an earlier change's `grafana` router is a row here rather than an exemption - the one-owner
+#: guarantee is worth more covering five routers than four, and this constant has to move in the
+#: same change as the manifest or a correct Ingress reddens here.
 INGRESS_TLS_SECRETS: dict[str, str] = {
     ROOT_INGRESS: "gateway-tls",
     HEALTHZ_INGRESS: "gateway-healthz-tls",
     HELPDESK_INGRESS: "helpdesk-tls",
     HELPDESK_HEALTHZ_INGRESS: "helpdesk-healthz-tls",
+    GRAFANA_INGRESS: "grafana-tls",
 }
 
 #: The two routers the design exempts from basic auth, one per host. Named rather than derived
@@ -720,12 +733,18 @@ HELPDESK_IMAGE_TAG = "0.0.0-unbuilt"
 KUSTOMIZE_WIDE_LABELS = frozenset({"app.kubernetes.io/part-of", "app.kubernetes.io/managed-by"})
 
 #: Decision E and row 20f criterion 10: the only Secret names anything in the build may
-#: reference. Four, and row 21c contracts all four in `infra/secrets/*.example.yaml` -
+#: reference. Row 21c contracts each of them in `infra/secrets/*.example.yaml` -
 #: `helpdesk-secrets` is the gateway API key the Helpdesk calls with, its database URL and the
 #: Langfuse pair, supplied SOPS-encrypted and never here. The emitted-Secret half of the
 #: same case is build-wide and stays that way.
+#:
+#: `grafana-admin` is an earlier change's, in `monitoring`. It is here because this constant is
+#: build-wide and so is the case that reads it: an `envFrom` anywhere in the build naming a
+#: Secret nothing contracts is what it catches, so a correct Grafana reddens it unless the name
+#: moves in the same change. `test_k8s_platform.py` holds a second copy of
+#: this constant and takes the same row.
 PINNED_SECRET_NAMES = frozenset(
-    {"postgres-credentials", "traefik-basic-auth", GATEWAY_SECRET, HELPDESK_SECRET}
+    {"postgres-credentials", "traefik-basic-auth", GATEWAY_SECRET, HELPDESK_SECRET, "grafana-admin"}
 )
 
 #: Criterion 9's file scan, first shape: a credential KEY with a scalar value on the same line.

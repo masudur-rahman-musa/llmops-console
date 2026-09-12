@@ -16,7 +16,7 @@ Filled by /setup from the context; no stub may remain.
 
 ## Layout
 - `README.md` — this checklist: what is traced, measured, logged, alerted. Filled by /setup; no stub may remain.
-- `dashboards/` — dashboard definitions as code (e.g. Grafana JSON), provisioned by infra, never hand-edited in a UI only.
+- `dashboards/` — a pointer. The Grafana JSON lives in `infra/k8s/monitoring/dashboards/`, because kustomize cannot read a file from above its own root. Dashboards are definitions as code, provisioned by infra, never hand-edited in a UI only.
 - `alerts/` — alert rules as code, tied to the SLOs.
 Audit the codebase against this folder with `/project-obs`.
 

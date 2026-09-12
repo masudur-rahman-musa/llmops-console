@@ -106,10 +106,10 @@ metadata:
   labels:
     app.kubernetes.io/name: kube-state-metrics
 rules:
-  # Every rule reads and nothing more. The resource list is what the six
-  # dashboards of 23b actually plot - workloads, their pods, the namespaces they
-  # run in and the envelope they are admitted against - rather than the whole
-  # API surface the upstream chart grants.
+  # Every rule reads and nothing more. The resource list is what the platform
+  # dashboard actually plots - workloads, their pods, the namespaces they run in
+  # and the envelope they are admitted against - rather than the whole API
+  # surface the upstream chart grants.
   - apiGroups: [""]
     resources:
       - namespaces

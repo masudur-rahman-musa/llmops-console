@@ -1,0 +1,66 @@
+# The one public router of `monitoring`: `grafana.example.com` to
+# `Service/grafana`.
+#
+# One Ingress, not a pair. The `apps` hosts each carry two because a Traefik
+# middleware annotation is per Ingress and not per path, and `/healthz` behind
+# basic auth would be an uptime monitor reporting an outage that is not
+# happening. Nothing on this host is exempt from anything, because this host is
+# not behind basic auth at all - so there is nothing to carve out.
+#
+# `/` with `Prefix`, deliberately wider than the gateway's `/v1`: Grafana is a
+# whole browser application, and its API, its assets and its login page are all
+# under paths this repo does not enumerate.
+#
+# Authentication is Grafana's own, so the annotation below
+# carries rate-limit and security-headers and NOT basic-auth. The reason is
+# concrete rather than aesthetic: `.github/workflows/deploy.yml` POSTs a release
+# annotation to `$GRAFANA_URL/api/annotations` with a Bearer token, and a Traefik
+# 401 in front of that call would break it for a credential Grafana is already
+# asking for. The cost is that `grafana.` is the one public host whose access
+# control is the application's rather than the proxy's, and `../README.md`'s
+# hosts table says so on the row.
+#
+# Both references are namespace-qualified as `monitoring-<name>@kubernetescrd`
+# and resolve to the copies in `middlewares.yaml`. An `apps-` prefix
+# copied from the gateway Ingress would resolve to nothing, and Traefik treats
+# that as no middleware at all;
+# `tests/infra/test_k8s_grafana.py::test_the_grafana_ingress_publishes_one_host_behind_two_middlewares_and_no_basic_auth`
+# resolves every parsed reference against the `Middleware`s the build emits.
+#
+# `grafana-tls` is cert-manager's to create, from this `tls` block, and it is
+# named nowhere in `../README.md`'s Secret table for that reason. Its name has to
+# stay disjoint from `grafana-admin`, or an issued certificate would overwrite
+# the admin credential; the test asserts that disjointness.
+#
+# The host comes from `infra/terraform/hetzner/variables.tf`, which publishes
+# `api`, `console`, `helpdesk` and `grafana` as A records. a design note keeps every
+# one of them proxy-off, which is what lets the HTTP-01 solver answer at all.
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: grafana
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.middlewares: >-
+      monitoring-rate-limit@kubernetescrd,monitoring-security-headers@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - grafana.example.com
+      secretName: grafana-tls
+  rules:
+    - host: grafana.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: grafana
+                port:
+                  name: http
