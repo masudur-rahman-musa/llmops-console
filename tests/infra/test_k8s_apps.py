@@ -742,8 +742,9 @@ KUSTOMIZE_WIDE_LABELS = frozenset({"app.kubernetes.io/part-of", "app.kubernetes.
 #: build-wide and so is the case that reads it: an `envFrom` anywhere in the build naming a
 #: Secret nothing contracts is what it catches, so a correct Grafana reddens it unless the name
 #: moves in the same change. `alertmanager-secrets` is an earlier change's, in
-#: `monitoring` too. `test_k8s_platform.py` holds a second copy of this constant and takes the
-#: same row.
+#: `monitoring` too. `backup-secrets` is an earlier change's, in `platform`, read by both backup
+#: CronJobs' `rclone-sync` container. `test_k8s_platform.py` holds a second copy of this
+#: constant and takes the same row.
 PINNED_SECRET_NAMES = frozenset(
     {
         "postgres-credentials",
@@ -752,6 +753,7 @@ PINNED_SECRET_NAMES = frozenset(
         HELPDESK_SECRET,
         "grafana-admin",
         "alertmanager-secrets",
+        "backup-secrets",
     }
 )
 

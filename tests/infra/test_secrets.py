@@ -58,16 +58,17 @@ SECRETS_DIR = REPO_ROOT / "infra" / "secrets"
 SOPS_CONFIG = REPO_ROOT / ".sops.yaml"
 GITIGNORE = REPO_ROOT / ".gitignore"
 
-#: The six Secrets, by name. The plans pin these; the key SETS are deliberately absent (see
+#: The seven Secrets, by name. The plans pin these; the key SETS are deliberately absent (see
 #: the module docstring) because criterion 3 compares them file-against-README. `grafana-admin`
 #: is an earlier change's criterion 8, the fifth contract this repo publishes and does not supply.
-#: `alertmanager-secrets` is an earlier change's, the sixth.
+#: `alertmanager-secrets` is an earlier change's, the sixth. `backup-secrets` is an earlier change's, the seventh.
 POSTGRES_CREDENTIALS = "postgres-credentials"
 TRAEFIK_BASIC_AUTH = "traefik-basic-auth"
 GATEWAY_SECRETS = "gateway-secrets"
 HELPDESK_SECRETS = "helpdesk-secrets"
 GRAFANA_ADMIN = "grafana-admin"
 ALERTMANAGER_SECRETS = "alertmanager-secrets"
+BACKUP_SECRETS = "backup-secrets"
 
 PLATFORM = "platform"
 APPS = "apps"
@@ -82,6 +83,7 @@ EXPECTED_NAMESPACES: dict[str, frozenset[str]] = {
     HELPDESK_SECRETS: frozenset({APPS}),
     GRAFANA_ADMIN: frozenset({MONITORING}),
     ALERTMANAGER_SECRETS: frozenset({MONITORING}),
+    BACKUP_SECRETS: frozenset({PLATFORM}),
 }
 
 #: One template per Secret (decision B), `traefik-basic-auth`'s being one file of two
@@ -94,6 +96,7 @@ EXAMPLE_FILENAMES: frozenset[str] = frozenset(
         f"{HELPDESK_SECRETS}.example.yaml",
         f"{GRAFANA_ADMIN}.example.yaml",
         f"{ALERTMANAGER_SECRETS}.example.yaml",
+        f"{BACKUP_SECRETS}.example.yaml",
     }
 )
 
@@ -305,11 +308,20 @@ def envfrom_secret_names(document: dict[str, Any]) -> set[str]:
     """Every `spec.template.spec.containers[*].envFrom[*].secretRef.name` of one object.
 
     Covers `initContainers` too, and reads any object carrying a pod template rather than a
-    list of kinds, so a Job or a CronJob added later is scanned without editing this file.
+    list of kinds, so a Job added later is scanned without editing this file. A CronJob is
+    NOT one of those: its template sits one level deeper, at `spec.jobTemplate.spec.template`,
+    so this unwraps that one extra key when present - found by running this scan against
+    an earlier change's two CronJobs and getting back an empty set, disproving the claim this
+    docstring made before that plan existed.
     """
     spec = document.get("spec")
     if not isinstance(spec, dict):
         return set()
+    job_template = spec.get("jobTemplate")
+    if isinstance(job_template, dict):
+        spec = job_template.get("spec")
+        if not isinstance(spec, dict):
+            return set()
     template = spec.get("template")
     if not isinstance(template, dict):
         return set()

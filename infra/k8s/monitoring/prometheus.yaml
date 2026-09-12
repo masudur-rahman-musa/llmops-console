@@ -204,7 +204,6 @@ data:
             annotations:
               summary: A backup CronJob's Job has failed.
               runbook: docs/runbook.md#backupjobfailed
-              note: Inert until row 23d creates the backup CronJobs.
 
           - alert: CertificateExpiringSoon
             expr: certmanager_certificate_expiration_timestamp_seconds - time() < 14 * 86400

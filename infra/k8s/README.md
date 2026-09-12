@@ -79,11 +79,15 @@ for (see below), held as a reserve rather than discovered at install time.
 | `redis` | 256Mi | 100m | 512Mi |
 | `qdrant` | 512Mi | 200m | 768Mi |
 | cert-manager, 3 pods at 32Mi / 10m / 128Mi each | 96Mi | 30m | 384Mi |
-| **total** | **1376Mi** | **530m** | **2688Mi** |
+| `postgres-backup`, `pg-dump` init + `rclone-sync` (64Mi/50m/96Mi each) | 128Mi | 100m | 192Mi |
+| `qdrant-backup`, `qdrant-snapshot` init (32Mi/25m/64Mi) + `rclone-sync` (64Mi/50m/96Mi) | 96Mi | 75m | 160Mi |
+| **total** | **1600Mi** | **705m** | **3040Mi** |
 
 `tests/infra/test_k8s_platform.py` derives those three totals from the built pod
 templates plus the same reserve and checks them against the `platform` quota, so
-a row raised in isolation fails there rather than at `helm install`.
+a row raised in isolation fails there rather than at `helm install`. Row 23d's two
+CronJobs leave the namespace 448Mi / 95m / 32Mi of headroom - the limits column is
+now the tight one.
 
 ## The apps budget
 
@@ -368,7 +372,7 @@ If the chart's real footprint is larger than that, the quota refuses the install
 with the namespace named, which is the intended direction: raising it means
 re-totalling the table above and the reserve constant in the test together.
 
-The five Secrets nothing here writes, each supplied SOPS-encrypted before the
+The seven Secrets nothing here writes, each supplied SOPS-encrypted before the
 first apply. `../secrets/` holds one plaintext contract per Secret
 (`*.example.yaml`, every value `REPLACE_ME`), the workflow that encrypts a filled
 copy, and the key procedure; `../../.sops.yaml` is the policy that decides what
@@ -384,6 +388,7 @@ are asserted equal, and equal to the names the build references, by
 | `helpdesk-secrets` | `apps` | `HELPDESK_GATEWAY_API_KEY`, `HELPDESK_DATABASE_URL`, `HELPDESK_LANGFUSE_PUBLIC_KEY`, `HELPDESK_LANGFUSE_SECRET_KEY`, `HELPDESK_LANGFUSE_HOST` | the four Helpdesk Deployments, by `envFrom` |
 | `grafana-admin` | `monitoring` | `GF_SECURITY_ADMIN_USER`, `GF_SECURITY_ADMIN_PASSWORD` | the Grafana Deployment, by `envFrom` |
 | `alertmanager-secrets` | `monitoring` | `SMTP_SMARTHOST`, `SMTP_FROM`, `SMTP_AUTH_USERNAME`, `SMTP_AUTH_PASSWORD`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | the Alertmanager Deployment, by `envFrom` |
+| `backup-secrets` | `platform` | `RCLONE_CONFIG_HETZNER_ACCESS_KEY_ID`, `RCLONE_CONFIG_HETZNER_SECRET_ACCESS_KEY`, `RCLONE_CONFIG_HETZNER_ENDPOINT`, `BACKUP_BUCKET` | both backup CronJobs' `rclone-sync` container, by `envFrom` |
 
 `traefik-basic-auth` is supplied once per routing namespace, not once per
 cluster: a `Middleware` reads its Secret from its own namespace, and a design note is
@@ -481,7 +486,7 @@ still a gap, not one this row closes.
   Alertmanager with the rules in `../../project-obs/alerts/` - the
   namespace's envelope is now spent exactly, to the byte. Postgres and Redis
   exporters are not planned yet and are what the platform dashboard's two empty
-  panels are waiting on. Row 23d (backups) is still to come.
+  panels are waiting on.
 - The `../secrets/*.enc.yaml` themselves, one per contract in the table above.
   The policy, the contracts and the guard are in place; the ciphertext waits on
   an age key being generated, which is one pass with `sops` installed.

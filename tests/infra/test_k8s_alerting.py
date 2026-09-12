@@ -150,9 +150,10 @@ PUBLIC_EXCEPT: frozenset[str] = frozenset(
 )
 PUBLIC_PORTS: frozenset[tuple[str, int]] = frozenset({("TCP", 443)})
 
-#: Criterion: the two named-inert alerts, an explicit allow-list of exactly two names so a third
-#: undocumented gap cannot slip in silently.
-INERT_ALERT_NAMES: frozenset[str] = frozenset({"NightlyEvalRegression", "BackupJobFailed"})
+#: Criterion: the one named-inert alert, an explicit allow-list of exactly one name so a second
+#: undocumented gap cannot slip in silently. `BackupJobFailed` left this set with row 23d's
+#: CronJobs, which feed `kube_job_status_failed{job_name=~".*-backup.*"}` for real.
+INERT_ALERT_NAMES: frozenset[str] = frozenset({"NightlyEvalRegression"})
 
 #: The non-gateway metric family PREFIXES this plan's rules read, beside a family
 #: `metrics.py` registers: Prometheus's own `up`, cluster infra (kube-state-metrics,
@@ -553,8 +554,7 @@ def test_the_rules_file_is_mounted_and_every_expr_names_a_registered_family_or_a
     """Criterion 1 and 2, over the PARSED rules file and the PARSED `prometheus.yml`: `rule_files`
     names `alert-rules.yml`, `alerting.alertmanagers` names Alertmanager's Service DNS, and every
     `expr` in every rule either reads a metric family `metrics.py` registers, reads a family under
-    one of `up`/`kube_`/`node_`/`certmanager_`, or belongs to one of exactly two named-inert
-    alerts.
+    one of `up`/`kube_`/`node_`/`certmanager_`, or belongs to the one named-inert alert.
 
     Catches `rules.yml` written and never referenced by `rule_files`, which builds and
     schema-validates a ConfigMap that Prometheus never reads - every alert permanently absent with
@@ -562,8 +562,8 @@ def test_the_rules_file_is_mounted_and_every_expr_names_a_registered_family_or_a
     firing into a void: the rule evaluates, the state changes, and nothing ever notifies anyone.
     Catches an `expr` reading a family name that is a typo of a real one
     (`gateway_residual_violations_total`), which this scan cannot mistake for a documented gap
-    because it matches no registered name and no allowed prefix. Catches a THIRD alert quietly
-    marked inert to dodge this check - `INERT_ALERT_NAMES` is an explicit two-name allow-list, so
+    because it matches no registered name and no allowed prefix. Catches a SECOND alert quietly
+    marked inert to dodge this check - `INERT_ALERT_NAMES` is an explicit one-name allow-list, so
     a new alert reading an unregistered, unprefixed family fails here rather than being waved
     through by a docstring nobody enforces.
     """

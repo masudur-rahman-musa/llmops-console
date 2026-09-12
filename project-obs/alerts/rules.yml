@@ -12,10 +12,10 @@
 # target this plan adds. `tests/infra/test_k8s_alerting.py` enforces this: an
 # unrecognised name is a typo this file would otherwise ship silently.
 #
-# `NightlyEvalRegression` and `BackupJobFailed` are the two documented
-# exceptions - the families they read are not fed by anything in this build yet
-#, so both alerts
-# are wired and inert rather than fabricated against a guessed metric name.
+# `NightlyEvalRegression` is the one documented exception - the family it reads
+# is not fed by anything in this build yet, so it is
+# wired and inert rather than fabricated against a guessed metric name.
+# `BackupJobFailed` was the same way until row 23d's CronJobs made it live.
 #
 # Response commands for every alert below live in `docs/runbook.md`'s
 # "Respond to each alert" section.
@@ -123,7 +123,6 @@ groups:
         annotations:
           summary: A backup CronJob's Job has failed.
           runbook: docs/runbook.md#backupjobfailed
-          note: Inert until row 23d creates the backup CronJobs.
 
       - alert: CertificateExpiringSoon
         expr: certmanager_certificate_expiration_timestamp_seconds - time() < 14 * 86400

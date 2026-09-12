@@ -89,6 +89,10 @@ PLATFORM_OBJECTS: frozenset[tuple[str, str, str | None]] = frozenset(
         # that there is no third ClusterRole in the build; these are the two names.
         ("ClusterRole", "kube-state-metrics", None),
         ("ClusterRoleBinding", "kube-state-metrics", None),
+        # Row 23d: the shared PVC and the two nightly backup CronJobs.
+        ("PersistentVolumeClaim", "backups-data", PLATFORM),
+        ("CronJob", "postgres-backup", PLATFORM),
+        ("CronJob", "qdrant-backup", PLATFORM),
     }
 )
 
@@ -99,6 +103,50 @@ WORKLOAD_RESOURCES: dict[str, dict[str, str]] = {
     "redis": {"requests.memory": "256Mi", "requests.cpu": "100m", "limits.memory": "512Mi"},
     "qdrant": {"requests.memory": "512Mi", "requests.cpu": "200m", "limits.memory": "768Mi"},
 }
+
+#: Row 23d's two CronJobs, by NAME - deliberately separate from `WORKLOAD_RESOURCES`, whose
+#: probe-and-Service case is parametrized over every key in it and would otherwise be asked to
+#: find a readinessProbe and a Service on a CronJob, neither of which one carries.
+BACKUP_CRONJOB_NAMES = ("postgres-backup", "qdrant-backup")
+
+#: The exact schedule, policy and history limits decision D pins, shared by both CronJobs.
+BACKUP_SCHEDULE = "0 3 * * *"
+BACKUP_CONCURRENCY_POLICY = "Forbid"
+BACKUP_RESTART_POLICY = "OnFailure"
+BACKUP_HISTORY_LIMITS = {"successfulJobsHistoryLimit": 3, "failedJobsHistoryLimit": 3}
+
+#: Each CronJob's containers by NAME, image and resources (by value, the same convention as
+#: `WORKLOAD_RESOURCES`). The init container produces the artifact onto the shared PVC; the
+#: main container is the `rclone/rclone` sync, named identically in both CronJobs.
+BACKUP_CONTAINERS: dict[str, dict[str, tuple[str, dict[str, str]]]] = {
+    "postgres-backup": {
+        "pg-dump": (
+            "postgres:16",
+            {"requests.memory": "64Mi", "requests.cpu": "50m", "limits.memory": "96Mi"},
+        ),
+        "rclone-sync": (
+            "rclone/rclone:1.68.2",
+            {"requests.memory": "64Mi", "requests.cpu": "50m", "limits.memory": "96Mi"},
+        ),
+    },
+    "qdrant-backup": {
+        "qdrant-snapshot": (
+            "curlimages/curl:8.11.0",
+            {"requests.memory": "32Mi", "requests.cpu": "25m", "limits.memory": "64Mi"},
+        ),
+        "rclone-sync": (
+            "rclone/rclone:1.68.2",
+            {"requests.memory": "64Mi", "requests.cpu": "50m", "limits.memory": "96Mi"},
+        ),
+    },
+}
+
+#: Criterion re decision B: the account-specific Secret both `rclone-sync` containers read.
+BACKUP_SECRET_NAME = "backup-secrets"
+
+#: The shared PVC row 23d adds, and the mount path both CronJobs' containers agree on.
+BACKUPS_DATA_PVC = "backups-data"
+BACKUP_MOUNT_PATH = "/backup"
 
 #: Decision A: cert-manager is installed by helm into `platform` with these per-pod values, so
 #: this repo writes no manifest for it and holds its share of the quota as a named reserve.
@@ -178,6 +226,7 @@ ACME_SOLVERS = [{"http01": {"ingress": {"class": "traefik"}}}]
 #: for exactly the reason the sentence above gives: this constant is build-wide, so it moves in
 #: the same change as the manifest or a correct manifest reddens here.
 #: `alertmanager-secrets` joins the same way with an earlier change's Alertmanager.
+#: `backup-secrets` joins the same way with an earlier change's two backup CronJobs.
 PINNED_SECRET_NAMES = frozenset(
     {
         "postgres-credentials",
@@ -186,6 +235,7 @@ PINNED_SECRET_NAMES = frozenset(
         "helpdesk-secrets",
         "grafana-admin",
         "alertmanager-secrets",
+        "backup-secrets",
     }
 )
 
@@ -277,31 +327,46 @@ def quota_hard(quota: dict[str, Any]) -> dict[str, str]:
     return {str(key): str(value) for key, value in hard.items()}
 
 
+def owner_spec(owner: dict[str, Any]) -> dict[str, Any]:
+    """The mapping that carries a `template` key: `spec` itself for every kind here except a
+    CronJob, whose template sits one level deeper at `spec.jobTemplate.spec` - found the same
+    way `test_secrets.py`'s `envfrom_secret_names` found the same gap in itself (standing rule
+    12): an earlier change's two CronJobs read back no pod template at all from the plain `spec.template`
+    path this file used before them."""
+    spec = owner["spec"]
+    assert isinstance(spec, dict)
+    job_template = spec.get("jobTemplate")
+    if isinstance(job_template, dict) and isinstance(job_template.get("spec"), dict):
+        return dict(job_template["spec"])
+    return spec
+
+
 def pod_owners(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Every built document carrying a pod template, found by the PRESENCE of
-    `spec.template.spec` rather than by a list of kinds - a Job, a CronJob or a DaemonSet
-    added by a later row is covered without editing this file."""
+    `spec.template.spec` (or, for a CronJob, `spec.jobTemplate.spec.template.spec` - see
+    `owner_spec`) rather than by a list of kinds - a Job, a CronJob or a DaemonSet added by a
+    later row is covered without editing this file."""
     owners: list[dict[str, Any]] = []
     for document in documents:
         spec = document.get("spec")
         if not isinstance(spec, dict):
             continue
-        template = spec.get("template")
+        template = owner_spec(document).get("template")
         if isinstance(template, dict) and isinstance(template.get("spec"), dict):
             owners.append(document)
     return owners
 
 
 def pod_spec(owner: dict[str, Any]) -> dict[str, Any]:
-    """The `spec.template.spec` of a document `pod_owners` selected."""
-    spec = owner["spec"]["template"]["spec"]
+    """The pod template's `spec` of a document `pod_owners` selected."""
+    spec = owner_spec(owner)["template"]["spec"]
     assert isinstance(spec, dict)
     return dict(spec)
 
 
 def template_labels(owner: dict[str, Any]) -> dict[str, str]:
-    """`spec.template.metadata.labels`, the labels a selector has to match."""
-    metadata = owner["spec"]["template"].get("metadata", {})
+    """The pod template's `metadata.labels`, the labels a selector has to match."""
+    metadata = owner_spec(owner)["template"].get("metadata", {})
     assert isinstance(metadata, dict), f"{name_of(owner)}'s pod template has no metadata"
     labels = metadata.get("labels", {})
     assert isinstance(labels, dict), f"{name_of(owner)}'s pod template has no labels"
@@ -539,7 +604,8 @@ def test_the_platform_subtotals_fit_inside_the_namespace_quota(built: list[dict[
     }
 
     owners = [owner for owner in pod_owners(built) if namespace_of(owner) == PLATFORM]
-    assert len(owners) == len(WORKLOAD_RESOURCES), f"{len(owners)} platform workloads built"
+    expected_owners = len(WORKLOAD_RESOURCES) + len(BACKUP_CRONJOB_NAMES)
+    assert len(owners) == expected_owners, f"{len(owners)} platform workloads built"
     for owner in owners:
         replicas = replicas_of(owner)
         for container in all_containers(owner):
@@ -664,6 +730,146 @@ def test_each_workload_has_both_probes_and_a_service_that_resolves(
     assert unresolved == [], (
         f"{workload_name}'s Service targets {unresolved}, declared by nothing in its own "
         f"template (containerPorts {sorted(numbers)}, names {sorted(names)})"
+    )
+
+
+def container_named(owner: dict[str, Any], container_name: str) -> dict[str, Any]:
+    """The one container (`initContainers` or `containers`) of `owner` named `container_name`,
+    asserting exactly one carries that name - the two backup CronJobs each name their sync
+    container `rclone-sync`, so a name is not unique across CronJobs, only within one."""
+    found = [
+        container for container in all_containers(owner) if container.get("name") == container_name
+    ]
+    assert len(found) == 1, (
+        f"{name_of(owner)} declares {len(found)} containers named {container_name}"
+    )
+    return found[0]
+
+
+@pytest.mark.parametrize("cronjob_name", BACKUP_CRONJOB_NAMES)
+def test_each_backup_cronjob_carries_the_agreed_schedule_and_policy(
+    cronjob_name: str, built: list[dict[str, Any]]
+) -> None:
+    """Decision D, by value. Catches a schedule drifted off `0 3 * * *`, a `concurrencyPolicy`
+    other than `Forbid` (two overlapping dumps against the same PVC subdirectory), a
+    `restartPolicy` other than `OnFailure` (a CronJob's pod template may not say `Always`,
+    which `kubeconform` would catch too, but not with this message), and either history limit
+    drifted off 3 - all read from the CronJob document directly, not through `pod_owners`,
+    because `schedule` and the two history limits sit on `spec` itself rather than inside the
+    nested pod template `pod_owners`/`pod_spec` unwrap."""
+    cronjobs = [
+        document
+        for document in objects_of_kind(built, "CronJob")
+        if name_of(document) == cronjob_name and namespace_of(document) == PLATFORM
+    ]
+    assert len(cronjobs) == 1, f"{len(cronjobs)} CronJobs named {cronjob_name} in {PLATFORM}"
+    spec = cronjobs[0]["spec"]
+    assert spec.get("schedule") == BACKUP_SCHEDULE, (
+        f"{cronjob_name} schedule is {spec.get('schedule')}"
+    )
+    assert spec.get("concurrencyPolicy") == BACKUP_CONCURRENCY_POLICY
+    for key, expected in BACKUP_HISTORY_LIMITS.items():
+        assert spec.get(key) == expected, f"{cronjob_name}.{key} is {spec.get(key)}"
+
+    owner = workload(built, cronjob_name)
+    assert pod_spec(owner).get("restartPolicy") == BACKUP_RESTART_POLICY
+
+
+@pytest.mark.parametrize("cronjob_name", BACKUP_CRONJOB_NAMES)
+def test_each_backup_cronjobs_containers_carry_the_agreed_images_and_resources(
+    cronjob_name: str, built: list[dict[str, Any]]
+) -> None:
+    """Criterion re images and resources, by value, over BOTH the init container that produces
+    the artifact and the `rclone-sync` container that uploads it - `all_containers` rather than
+    `sole_container`, since a CronJob here always carries exactly one of each and the quantity
+    check in `test_every_container_in_the_build_declares_requests_and_a_memory_limit` already
+    proves the three required keys exist for every container in the build; this pins the
+    VALUES, the same distinction `test_each_platform_workload_carries_the_agreed_quantities`
+    draws for the three StatefulSet/Deployment workloads."""
+    owner = workload(built, cronjob_name)
+    for container_name, (image, resources) in BACKUP_CONTAINERS[cronjob_name].items():
+        container = container_named(owner, container_name)
+        assert container.get("image") == image, (
+            f"{cronjob_name}.{container_name} image is {container.get('image')}"
+        )
+        assert resource_quantities(container) == resources, (
+            f"{cronjob_name}.{container_name} resources are {resource_quantities(container)}"
+        )
+
+
+def test_the_backups_data_pvc_is_the_agreed_shape(built: list[dict[str, Any]]) -> None:
+    """Decision A: one `ReadWriteOnce` PVC, 2Gi, shared by both CronJobs - by value, so a size
+    raised or an access mode changed to `ReadWriteMany` (which no storage class here provides)
+    is a failure rather than a silent drift from the plan's own decision."""
+    pvcs = [
+        document
+        for document in objects_of_kind(built, "PersistentVolumeClaim")
+        if name_of(document) == BACKUPS_DATA_PVC and namespace_of(document) == PLATFORM
+    ]
+    assert len(pvcs) == 1, f"{len(pvcs)} PVCs named {BACKUPS_DATA_PVC} in {PLATFORM}"
+    spec = pvcs[0]["spec"]
+    assert spec.get("accessModes") == ["ReadWriteOnce"], spec.get("accessModes")
+    assert spec.get("resources", {}).get("requests", {}).get("storage") == "2Gi"
+
+
+@pytest.mark.parametrize("cronjob_name", BACKUP_CRONJOB_NAMES)
+def test_each_backup_cronjobs_containers_mount_the_shared_pvc_at_the_agreed_path(
+    cronjob_name: str, built: list[dict[str, Any]]
+) -> None:
+    """Every container of a backup CronJob - the init container that writes the artifact and
+    the `rclone-sync` container that reads it back - mounts the SAME `backups-data` PVC at the
+    SAME path, or the artifact the first container wrote is invisible to the second one."""
+    owner = workload(built, cronjob_name)
+    volumes = pod_spec(owner).get("volumes", [])
+    claims = {
+        volume["name"]: volume["persistentVolumeClaim"]["claimName"]
+        for volume in volumes
+        if isinstance(volume, dict) and isinstance(volume.get("persistentVolumeClaim"), dict)
+    }
+    assert claims, f"{cronjob_name} declares no PVC volume"
+    for container_name in BACKUP_CONTAINERS[cronjob_name]:
+        container = container_named(owner, container_name)
+        mounts = {
+            str(mount["name"]): str(mount["mountPath"])
+            for mount in container.get("volumeMounts", [])
+            if isinstance(mount, dict)
+        }
+        mounted_pvcs = {claims[name] for name in mounts if name in claims}
+        assert mounted_pvcs == {BACKUPS_DATA_PVC}, (
+            f"{cronjob_name}.{container_name} mounts {mounted_pvcs}, not {{{BACKUPS_DATA_PVC!r}}}"
+        )
+        assert BACKUP_MOUNT_PATH in mounts.values(), (
+            f"{cronjob_name}.{container_name} mounts {mounts}, missing {BACKUP_MOUNT_PATH}"
+        )
+
+
+@pytest.mark.parametrize("cronjob_name", BACKUP_CRONJOB_NAMES)
+def test_each_rclone_sync_container_reads_backup_secrets_and_guards_backup_bucket(
+    cronjob_name: str, built: list[dict[str, Any]]
+) -> None:
+    """Decision B and the unhappy-path criterion: `rclone-sync` reads `backup-secrets` by
+    `envFrom` (never a literal credential - `test_no_secret_is_emitted_and_no_credential_is_
+    written_inline` already scans the whole build for that), and its command guards
+    `BACKUP_BUCKET` with `: "${BACKUP_BUCKET:?}"` before `rclone` runs, so an unset value fails
+    loudly instead of writing to the bucket root. Read from the built command string rather
+    than run, because no fixture here reaches a real Hetzner Object Storage bucket (the plan's
+    own stated exception to building a backing-service fixture)."""
+    owner = workload(built, cronjob_name)
+    container = container_named(owner, "rclone-sync")
+    sources = container.get("envFrom", [])
+    names = {
+        entry["secretRef"]["name"]
+        for entry in sources
+        if isinstance(entry, dict) and isinstance(entry.get("secretRef"), dict)
+    }
+    assert names == {BACKUP_SECRET_NAME}, f"{cronjob_name}.rclone-sync envFrom is {names}"
+
+    command = " ".join(str(part) for part in container.get("command", []))
+    assert ': "${BACKUP_BUCKET:?}"' in command, (
+        f"{cronjob_name}.rclone-sync's command does not guard BACKUP_BUCKET: {command!r}"
+    )
+    assert "rclone copy" in command, (
+        f"{cronjob_name}.rclone-sync's command carries no rclone copy: {command!r}"
     )
 
 
