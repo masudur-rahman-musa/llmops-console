@@ -12,10 +12,11 @@
 # target this plan adds. `tests/infra/test_k8s_alerting.py` enforces this: an
 # unrecognised name is a typo this file would otherwise ship silently.
 #
-# `NightlyEvalRegression` is the one documented exception - the family it reads
-# is not fed by anything in this build yet, so it is
-# wired and inert rather than fabricated against a guessed metric name.
-# `BackupJobFailed` was the same way until row 23d's CronJobs made it live.
+# `gateway_eval_*` (`NightlyEvalRegression`'s own family) is never registered by
+# `metrics.py` - row 24's nightly CronJob pushes it to a Pushgateway instead, so
+# it is allow-listed by prefix below rather than read off the gateway's own
+# registry. `BackupJobFailed` was the last alert marked inert this way, until
+# row 23d's CronJobs made it live.
 #
 # Response commands for every alert below live in `docs/runbook.md`'s
 # "Respond to each alert" section.
@@ -92,13 +93,12 @@ groups:
           runbook: docs/runbook.md#budgetexceeded
 
       - alert: NightlyEvalRegression
-        expr: gateway_eval_decision_accuracy - avg_over_time(gateway_eval_decision_accuracy[7d]) < -2
+        expr: gateway_eval_decision_accuracy - quantile_over_time(0.5, gateway_eval_decision_accuracy[7d]) < -2
         labels:
           severity: warning
         annotations:
-          summary: The nightly eval's decision accuracy dropped more than 2 points against its 7-day average.
+          summary: The nightly eval's decision accuracy dropped more than 2 points against its 7-day median.
           runbook: docs/runbook.md#nightlyevalregression
-          note: Inert until row 24 registers gateway_eval_decision_accuracy.
 
       - alert: DiskSpaceLow
         expr: node_filesystem_avail_bytes{fstype!="tmpfs"} / node_filesystem_size_bytes{fstype!="tmpfs"} < 0.2

@@ -58,10 +58,11 @@ SECRETS_DIR = REPO_ROOT / "infra" / "secrets"
 SOPS_CONFIG = REPO_ROOT / ".sops.yaml"
 GITIGNORE = REPO_ROOT / ".gitignore"
 
-#: The seven Secrets, by name. The plans pin these; the key SETS are deliberately absent (see
+#: The eight Secrets, by name. The plans pin these; the key SETS are deliberately absent (see
 #: the module docstring) because criterion 3 compares them file-against-README. `grafana-admin`
 #: is an earlier change's criterion 8, the fifth contract this repo publishes and does not supply.
 #: `alertmanager-secrets` is an earlier change's, the sixth. `backup-secrets` is an earlier change's, the seventh.
+#: `evals-secrets` is an earlier change's, the eighth: the nightly-eval CronJob's `OPSCONSOLE_DATABASE_URL`.
 POSTGRES_CREDENTIALS = "postgres-credentials"
 TRAEFIK_BASIC_AUTH = "traefik-basic-auth"
 GATEWAY_SECRETS = "gateway-secrets"
@@ -69,10 +70,12 @@ HELPDESK_SECRETS = "helpdesk-secrets"
 GRAFANA_ADMIN = "grafana-admin"
 ALERTMANAGER_SECRETS = "alertmanager-secrets"
 BACKUP_SECRETS = "backup-secrets"
+EVALS_SECRETS = "evals-secrets"
 
 PLATFORM = "platform"
 APPS = "apps"
 MONITORING = "monitoring"
+EVALS = "evals"
 
 #: Criterion 3's namespaces, which the plans pin. `traefik-basic-auth` exists TWICE: a
 #: `Middleware` reads its Secret from its own namespace, so one copy per routing namespace.
@@ -84,6 +87,7 @@ EXPECTED_NAMESPACES: dict[str, frozenset[str]] = {
     GRAFANA_ADMIN: frozenset({MONITORING}),
     ALERTMANAGER_SECRETS: frozenset({MONITORING}),
     BACKUP_SECRETS: frozenset({PLATFORM}),
+    EVALS_SECRETS: frozenset({EVALS}),
 }
 
 #: One template per Secret (decision B), `traefik-basic-auth`'s being one file of two
@@ -97,6 +101,7 @@ EXAMPLE_FILENAMES: frozenset[str] = frozenset(
         f"{GRAFANA_ADMIN}.example.yaml",
         f"{ALERTMANAGER_SECRETS}.example.yaml",
         f"{BACKUP_SECRETS}.example.yaml",
+        f"{EVALS_SECRETS}.example.yaml",
     }
 )
 

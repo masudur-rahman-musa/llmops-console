@@ -227,6 +227,7 @@ ACME_SOLVERS = [{"http01": {"ingress": {"class": "traefik"}}}]
 #: the same change as the manifest or a correct manifest reddens here.
 #: `alertmanager-secrets` joins the same way with an earlier change's Alertmanager.
 #: `backup-secrets` joins the same way with an earlier change's two backup CronJobs.
+#: `evals-secrets` joins the same way with an earlier change's nightly-eval CronJob.
 PINNED_SECRET_NAMES = frozenset(
     {
         "postgres-credentials",
@@ -236,6 +237,7 @@ PINNED_SECRET_NAMES = frozenset(
         "grafana-admin",
         "alertmanager-secrets",
         "backup-secrets",
+        "evals-secrets",
     }
 )
 

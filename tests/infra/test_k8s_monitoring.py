@@ -124,11 +124,12 @@ METRICS_PORT_NUMBERS = {PROMETHEUS: 9090, NODE_EXPORTER: 9100, KUBE_STATE_METRIC
 GRAFANA = "grafana"
 GRAFANA_PORT_NAME = "http"
 
-#: Criterion 3 and decision C: the SIX static targets, as Service DNS. Every one is a Service
+#: Criterion 3 and decision C: the SEVEN static targets, as Service DNS. Every one is a Service
 #: this build emits, in the namespace it emits it in. `cert-manager` joined with an earlier change
 #: decision A, to back `CertificateExpiringSoon` with a real metric - it is helm-installed and
 #: unmanaged by this kustomize build, so this is the one target with no pod template here to
 #: check its port against; `tests/infra/test_k8s_alerting.py` covers the egress side of it.
+#: `evals-pushgateway` joined with an earlier change, so `NightlyEvalRegression` reads a real series.
 SCRAPE_TARGETS: frozenset[str] = frozenset(
     {
         "gateway.apps.svc.cluster.local:8080",
@@ -137,6 +138,7 @@ SCRAPE_TARGETS: frozenset[str] = frozenset(
         "node-exporter.monitoring.svc.cluster.local:9100",
         "prometheus.monitoring.svc.cluster.local:9090",
         "cert-manager.cert-manager.svc.cluster.local:9402",
+        "pushgateway.evals.svc.cluster.local:9091",
     }
 )
 
@@ -176,6 +178,10 @@ READ_ONLY_VERBS = frozenset({"get", "list", "watch"})
 ALERTMANAGER = "alertmanager"
 CERT_MANAGER = "cert-manager"
 
+#: An earlier change's destination: the Pushgateway in `evals`, so its seventh scrape target above is
+#: actually reachable and not merely configured.
+PUSHGATEWAY = "pushgateway"
+
 #: Criterion 7: every destination `prometheus-egress` may reach, as `(workload, resolved port)`.
 #: The DNS allow is NOT here - it lives in `allow-dns`, which selects every pod in `monitoring`.
 PROMETHEUS_EGRESS_DESTINATIONS: frozenset[tuple[str, int]] = frozenset(
@@ -186,6 +192,7 @@ PROMETHEUS_EGRESS_DESTINATIONS: frozenset[tuple[str, int]] = frozenset(
         (KUBE_STATE_METRICS, 8080),
         (ALERTMANAGER, 9093),
         (CERT_MANAGER, 9402),
+        (PUSHGATEWAY, 9091),
     }
 )
 
@@ -708,13 +715,14 @@ def test_every_scraped_container_port_is_named_metrics_on_its_agreed_number(
     )
 
 
-def test_the_scrape_config_carries_exactly_the_six_static_targets(
+def test_the_scrape_config_carries_exactly_the_seven_static_targets(
     built: list[dict[str, Any]],
 ) -> None:
     """Criterion 3 and decision C, over the PARSED `prometheus.yml` the ConfigMap holds as a
-    string: six jobs, each with exactly one
-    `static_configs` entry, the targets by set equality, every `metrics_path` `/metrics`, and no
-    key ending `_sd_configs` anywhere in the document.
+    string: seven jobs (an earlier change decision A adds `cert-manager`, an earlier change adds
+    `evals-pushgateway`), each with exactly one `static_configs` entry, the targets by set
+    equality, every `metrics_path` `/metrics`, and no key ending `_sd_configs` anywhere in the
+    document.
 
     Catches a seventh job nobody agreed to and a sixth that never landed - a missing job is a
     dashboard panel that is empty forever with no error anywhere, since a scrape config
@@ -894,7 +902,7 @@ def test_kube_state_metrics_is_the_only_subject_with_rbac_and_reads_only(
     )
 
 
-def test_prometheus_egress_reaches_exactly_the_six_agreed_destinations_and_nothing_off_cluster(
+def test_prometheus_egress_reaches_exactly_the_seven_agreed_destinations_and_nothing_off_cluster(
     built: list[dict[str, Any]],
 ) -> None:
     """Criterion 7, by EQUALITY of `(destination, resolved port)` pairs, plus the two absences it
@@ -903,7 +911,10 @@ def test_prometheus_egress_reaches_exactly_the_six_agreed_destinations_and_nothi
     An earlier change adds Alertmanager (9093, resolved against its pod template) and cert-manager (9402,
     by number - see `tests/infra/test_k8s_alerting.py`'s
     test_prometheus_can_reach_alertmanager_and_cert_manager_and_nothing_new_besides for why that
-    one destination cannot be resolved the same way as the other five).
+    one destination cannot be resolved the same way as the other five). An earlier change adds the
+    Pushgateway in `evals` (9091, resolved against its pod template the same way Alertmanager's
+    is) - `evals` itself carries no NetworkPolicy of its own yet, so this egress entry is the
+    only side of that connection anything in this build restricts today.
 
     It lives here and not in `test_k8s_netpol.py` because that file's §8 authorises three
     constant changes and one rename, and no new case - see the module docstring.

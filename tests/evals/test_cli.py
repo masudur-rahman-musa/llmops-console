@@ -279,15 +279,17 @@ def argv(
     run_kind: str | None = None,
     judge_url: str | None = None,
     calibration: Path | None = None,
+    pushgateway_url: str | None = None,
 ) -> list[str]:
     """One `ops-eval run` command line.
 
-    `--set-sha`, `--run-kind`, `--judge-url` and `--calibration` are omitted unless
-    a case names one, which is what lets the default cases below tell "absent" from
-    "passed as empty" - and, for the judge, "off because no URL" from "off because
-    no key". Every case written before `17f` therefore runs the command line it
-    always ran, which is criterion 1's "without the flag a run behaves exactly as
-    it does today".
+    `--set-sha`, `--run-kind`, `--judge-url`, `--calibration` and `--pushgateway-url`
+    are omitted unless a case names one, which is what lets the default cases below
+    tell "absent" from "passed as empty" - and, for the judge, "off because no URL"
+    from "off because no key". Every case written before `17f` (and, for the
+    pushgateway, before an earlier change) therefore runs the command line it always ran,
+    which is criterion 1's "without the flag a run behaves exactly as it does
+    today".
     """
     arguments = ["run", "--target", target, "--set", str(case_set), "--tenant", tenant]
     if out is not None:
@@ -302,6 +304,8 @@ def argv(
         arguments += ["--judge-url", judge_url]
     if calibration is not None:
         arguments += ["--calibration", str(calibration)]
+    if pushgateway_url is not None:
+        arguments += ["--pushgateway-url", pushgateway_url]
     return arguments
 
 
@@ -320,6 +324,7 @@ def run_cli(
     judge_url: str | None = None,
     judge_key: str | None = None,
     calibration: Path | None = None,
+    pushgateway_url: str | None = None,
 ) -> int:
     """Run the CLI with a stand-in runner and a policy defining the tenant under test.
 
@@ -346,6 +351,7 @@ def run_cli(
             run_kind=run_kind,
             judge_url=judge_url,
             calibration=calibration,
+            pushgateway_url=pushgateway_url,
         )
     )
 
@@ -1137,6 +1143,129 @@ def test_a_store_that_fails_reports_two_unless_the_run_already_answered_three(
     assert (out / REPORT_JSON_NAME).is_file()
     assert (out / REPORT_MD_NAME).is_file()
     assert "Traceback" not in printed.err
+
+
+# --------------------------------------------------------------------------
+# --pushgateway-url: pushed after the run, never load-bearing for its exit code (24)
+# --------------------------------------------------------------------------
+
+
+PUSHGATEWAY_URL = "http://pushgateway.example:9091"
+
+
+def install_push(monkeypatch: pytest.MonkeyPatch, *, answer: str | None) -> list[tuple[Any, str]]:
+    """Replace `cli.push_metrics`, recording every `(metrics, pushgateway_url)` call and
+    answering `answer` every time - the same seam-replacement convention `install_store`
+    uses for `cli.build_pool`/`cli.PostgresEvalStore`."""
+    calls: list[tuple[Any, str]] = []
+
+    def fake_push_metrics(metrics: Any, pushgateway_url: str, *, client: object) -> str | None:  # noqa: ANN401
+        calls.append((metrics, pushgateway_url))
+        return answer
+
+    monkeypatch.setattr(cli, "push_metrics", fake_push_metrics)
+    return calls
+
+
+def forbid_push(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail the test if `cli.push_metrics` is reached at all - the regression guard for
+    "no `--pushgateway-url` behaves exactly as today"."""
+
+    def forbidden(*args: object, **kwargs: object) -> NoReturn:
+        raise AssertionError(
+            "push_metrics was called with no --pushgateway-url on the command line"
+        )
+
+    monkeypatch.setattr(cli, "push_metrics", forbidden)
+
+
+def test_with_no_pushgateway_url_nothing_is_pushed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Regression guard for criterion 1's "off unless the flag is set". Catches a CLI that
+    always builds a push client and calls `push_metrics` regardless of the flag, which would
+    make every existing case in this file - none of which passes `--pushgateway-url` - start
+    reaching for a Pushgateway that is never configured in this suite."""
+    forbid_push(monkeypatch)
+
+    code = run_cli(monkeypatch, tmp_path)
+
+    assert code == EXIT_OK
+
+
+@pytest.mark.parametrize(
+    ("verdict", "expected"),
+    [("pass", EXIT_OK), ("fail", EXIT_FAILED), ("residency", EXIT_RESIDENCY)],
+    ids=["a clean run", "a failed assertion", "a residency violation"],
+)
+def test_a_pushgateway_failure_never_changes_the_exit_code(
+    verdict: str,
+    expected: int,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The plan's unhappy path, at the CLI boundary: UNLIKE a storage failure (which can turn
+    a clean run's `0` into `2`, see `test_a_store_that_fails_reports_two_...` above), a
+    pushgateway failure changes NOTHING about the exit code - the decision this plan states
+    explicitly. All three of the run's own codes are exercised, because a CLI that only kept
+    the clean row's `0` intact could still let a push failure clobber the residency `3` the
+    same way a store failure is ALLOWED to. The failure line lands on stderr and never
+    stdout, which the module's own convention reserves for `_summary(result)` alone."""
+    forbid_store(monkeypatch)
+    install_push(monkeypatch, answer="pushgateway unreachable: connection refused")
+
+    code = run_cli(
+        monkeypatch,
+        tmp_path,
+        runner=RecordingRunner("pass", verdict, "pass"),
+        pushgateway_url=PUSHGATEWAY_URL,
+    )
+
+    printed = capsys.readouterr()
+    assert code == expected
+    assert "pushgateway unreachable" in printed.err
+    assert "pushgateway unreachable" not in printed.out
+
+
+def test_a_pushgateway_url_reaches_push_metrics_with_the_reports_own_metrics(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Catches `--pushgateway-url` being parsed and never used - `push_metrics` reached with
+    the wrong metrics mapping (an empty one, or one built before the run finished) would
+    push a Pushgateway that never reflects this run at all. The metrics handed to the seam
+    are compared against the SAME report written to disk, so a CLI reading a stale or
+    default-shaped dict fails here even though it does call the seam."""
+    out = tmp_path / "reports"
+    calls = install_push(monkeypatch, answer=None)
+
+    code = run_cli(monkeypatch, tmp_path, out=out, pushgateway_url=PUSHGATEWAY_URL)
+
+    assert code == EXIT_OK
+    assert len(calls) == 1
+    metrics, url = calls[0]
+    assert url == PUSHGATEWAY_URL
+    assert metrics == read_report(out)["metrics"]
+
+
+def test_a_successful_push_prints_nothing_extra(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The success half of the same seam: `push_metrics` answering `None` must add no line to
+    either stream, since a silent success is what "no news" means for a side channel that
+    was never load-bearing. Catches a CLI that prints an unconditional confirmation line,
+    which would grow the two-lines-exactly budget `UNSTORED_LINE`/`UNJUDGED_LINE`'s own test
+    already pins for the no-database, no-judge case."""
+    forbid_store(monkeypatch)
+    install_push(monkeypatch, answer=None)
+
+    code = run_cli(monkeypatch, tmp_path, pushgateway_url=PUSHGATEWAY_URL)
+
+    printed = capsys.readouterr()
+    assert code == EXIT_OK
+    assert printed.err.count(UNSTORED_LINE) == 1
+    assert printed.err.count(UNJUDGED_LINE) == 1
+    assert len(printed.err.strip().splitlines()) == 2
 
 
 # --------------------------------------------------------------------------

@@ -59,6 +59,16 @@ services:
       timeout: 3s
       retries: 10
 
+  pushgateway:
+    # Local target for `ops-eval run --pushgateway-url`, matching
+    # `infra/k8s/evals/pushgateway.yaml`'s pinned version. No healthcheck and no
+    # `depends_on` anywhere: this image is a scratch binary with no shell, and
+    # nothing in this compose file's own startup path needs it up first - it is
+    # a manual convenience for exercising `--pushgateway-url` against something
+    # real, not a dependency any other service waits on.
+    image: prom/pushgateway:v1.11.3
+    ports: ["9091:9091"]
+
   qdrant:
     image: qdrant/qdrant:v1.12.4
     ports: ["6333:6333"]

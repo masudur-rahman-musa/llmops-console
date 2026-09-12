@@ -125,6 +125,7 @@ from opsconsole.evals.gate import (
     verdict_line,
 )
 from opsconsole.evals.judge import JudgeClient, judge_prompt_version
+from opsconsole.evals.metrics_push import push_metrics
 from opsconsole.evals.report import (
     REPORT_JSON_NAME,
     SET_SHA_PATTERN,
@@ -643,6 +644,11 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         help="a calibration.json from `ops-eval calibrate`; publishes its kappa and trust",
     )
+    run.add_argument(
+        "--pushgateway-url",
+        dest="pushgateway_url",
+        help="base URL of a Pushgateway; without it, gateway_eval_* metrics are not pushed",
+    )
     calibrate_command = subcommands.add_parser(
         "calibrate", help="score human labels through the judge and report the agreement"
     )
@@ -824,6 +830,17 @@ def _run(options: argparse.Namespace) -> int:
         return EXIT_USAGE
 
     stored = _store_rows(report, out)
+
+    if options.pushgateway_url is not None:
+        # `model_dump(mode="json")`, not `report.metrics`: a Decimal cost serialises to a
+        # STRING on the written report (`report.py`'s `_serialise_cost`), and this is the
+        # SAME document `eval_runs.metrics` and the eval gate both read - pushing the raw
+        # in-memory `Decimal` would push a value no other reader of this run's metrics sees.
+        written_metrics = report.model_dump(mode="json")["metrics"]
+        with httpx.Client() as push_client:
+            pushed = push_metrics(written_metrics, options.pushgateway_url, client=push_client)
+        if pushed is not None:
+            print(pushed, file=sys.stderr)
 
     print(_summary(result))
     code = _exit_code(result)

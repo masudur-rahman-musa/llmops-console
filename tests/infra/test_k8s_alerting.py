@@ -150,16 +150,23 @@ PUBLIC_EXCEPT: frozenset[str] = frozenset(
 )
 PUBLIC_PORTS: frozenset[tuple[str, int]] = frozenset({("TCP", 443)})
 
-#: Criterion: the one named-inert alert, an explicit allow-list of exactly one name so a second
-#: undocumented gap cannot slip in silently. `BackupJobFailed` left this set with row 23d's
-#: CronJobs, which feed `kube_job_status_failed{job_name=~".*-backup.*"}` for real.
-INERT_ALERT_NAMES: frozenset[str] = frozenset({"NightlyEvalRegression"})
+#: Criterion: no named-inert alert. `BackupJobFailed` left this set with row 23d's CronJobs,
+#: which feed `kube_job_status_failed{job_name=~".*-backup.*"}` for real; an earlier change empties it
+#: the same way, by registering `gateway_eval_*` under `ALLOWED_METRIC_PREFIXES` below instead
+#: of naming `NightlyEvalRegression` an exception - the family is fed by the nightly CronJob's
+#: Pushgateway push, never by `metrics.py`'s own registry, so it belongs beside `certmanager_`
+#: and not on this list. An empty set still works as a membership check (`in frozenset()` is
+#: always `False`), so a SECOND alert reading an unregistered, unprefixed family still fails
+#: the loop below rather than being waved through silently.
+INERT_ALERT_NAMES: frozenset[str] = frozenset()
 
 #: The non-gateway metric family PREFIXES this plan's rules read, beside a family
 #: `metrics.py` registers: Prometheus's own `up`, cluster infra (kube-state-metrics,
-#: node-exporter), and cert-manager's own metrics - not registered in this repo's code, since
-#: cert-manager is helm-installed and unmanaged by this kustomize build.
-ALLOWED_METRIC_PREFIXES: tuple[str, ...] = ("up", "kube_", "node_", "certmanager_")
+#: node-exporter), cert-manager's own metrics - not registered in this repo's code, since
+#: cert-manager is helm-installed and unmanaged by this kustomize build - and, from an earlier change,
+#: `gateway_eval_*`: pushed by the nightly CronJob to a Pushgateway rather than registered by
+#: any in-process `prometheus_client` registry this repo owns.
+ALLOWED_METRIC_PREFIXES: tuple[str, ...] = ("up", "kube_", "node_", "certmanager_", "gateway_eval_")
 
 #: The series suffixes each `prometheus_client` family TYPE exposes beside its own name, probed
 #: against the installed version, copied from
@@ -553,8 +560,9 @@ def test_the_rules_file_is_mounted_and_every_expr_names_a_registered_family_or_a
 ) -> None:
     """Criterion 1 and 2, over the PARSED rules file and the PARSED `prometheus.yml`: `rule_files`
     names `alert-rules.yml`, `alerting.alertmanagers` names Alertmanager's Service DNS, and every
-    `expr` in every rule either reads a metric family `metrics.py` registers, reads a family under
-    one of `up`/`kube_`/`node_`/`certmanager_`, or belongs to the one named-inert alert.
+    `expr` in every rule reads a metric family `metrics.py` registers or one under
+    `up`/`kube_`/`node_`/`certmanager_`/`gateway_eval_` - an earlier change empties `INERT_ALERT_NAMES`, so
+    every alert this build carries is checked here with no exception left at all.
 
     Catches `rules.yml` written and never referenced by `rule_files`, which builds and
     schema-validates a ConfigMap that Prometheus never reads - every alert permanently absent with
@@ -562,10 +570,9 @@ def test_the_rules_file_is_mounted_and_every_expr_names_a_registered_family_or_a
     firing into a void: the rule evaluates, the state changes, and nothing ever notifies anyone.
     Catches an `expr` reading a family name that is a typo of a real one
     (`gateway_residual_violations_total`), which this scan cannot mistake for a documented gap
-    because it matches no registered name and no allowed prefix. Catches a SECOND alert quietly
-    marked inert to dodge this check - `INERT_ALERT_NAMES` is an explicit one-name allow-list, so
-    a new alert reading an unregistered, unprefixed family fails here rather than being waved
-    through by a docstring nobody enforces.
+    because it matches no registered name and no allowed prefix. Catches an alert quietly marked
+    inert to dodge this check - `INERT_ALERT_NAMES` is empty, so ANY name reading an unregistered,
+    unprefixed family fails here rather than being waved through by a docstring nobody enforces.
     """
     parsed = prometheus_config(built)
     rule_files = [str(entry) for entry in parsed.get("rule_files", [])]
@@ -597,8 +604,31 @@ def test_the_rules_file_is_mounted_and_every_expr_names_a_registered_family_or_a
             allowed = metric in registered or metric.startswith(ALLOWED_METRIC_PREFIXES)
             assert allowed, (
                 f"{alert_name}'s expr reads {metric!r}, which is neither a registered gateway "
-                f"family nor a documented non-gateway prefix nor a named-inert alert"
+                f"family nor a documented non-gateway prefix"
             )
+
+
+#: An earlier change decision A's exact expression, character for character: the
+#: median rather than the average, over the same 7-day window and the same 2-point drop.
+NIGHTLY_EVAL_REGRESSION_EXPR = (
+    "gateway_eval_decision_accuracy - "
+    "quantile_over_time(0.5, gateway_eval_decision_accuracy[7d]) < -2"
+)
+
+
+def test_nightly_eval_regression_reads_the_seven_day_median_and_not_the_average(
+    built: list[dict[str, Any]],
+) -> None:
+    """Decision A, pinned by exact string. Catches the alert left on `avg_over_time` while
+    every OTHER trace of "inert until row 24" is cleaned up - a rename or an annotation edit
+    with the operator left unchanged would still pass the generic scan above, since
+    `avg_over_time(...)` and `quantile_over_time(0.5, ...)` read the exact same metric family
+    and neither is a typo of a family name that scan can catch. Only a character-for-character
+    comparison of the whole expression tells "reads the average" from "reads the median" -
+    the request's own wording, and the whole reason this row exists."""
+    alerts = {str(rule.get("alert", "")): rule for rule in rule_alerts(built)}
+    assert "NightlyEvalRegression" in alerts, sorted(alerts)
+    assert str(alerts["NightlyEvalRegression"].get("expr", "")) == NIGHTLY_EVAL_REGRESSION_EXPR
 
 
 def test_alertmanager_fits_the_exact_remainder_23b_left_it(built: list[dict[str, Any]]) -> None:

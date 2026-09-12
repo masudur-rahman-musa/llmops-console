@@ -10,9 +10,11 @@
 # a design note's alternative of a `configMapGenerator` for it was not taken, so
 # there is exactly one ConfigMap in `monitoring` for Prometheus rather than two
 # - see `tests/infra/test_k8s_alerting.py`'s module docstring), and `alerting`,
-# naming `Service/alertmanager`'s DNS as the one place firing alerts go.
+# naming `Service/alertmanager`'s DNS as the one place firing alerts go. An earlier change
+# adds a seventh, `evals-pushgateway`, the Pushgateway the nightly-eval CronJob
+# pushes `gateway_eval_*` to.
 #
-# Scraping is now SIX static targets by Service DNS, so this pod needs no
+# Scraping is now SEVEN static targets by Service DNS, so this pod needs no
 # ServiceAccount and no RBAC at all: nothing here may read the API server.
 # Discovery would buy a workload opting itself in without an edit to this file
 # and cost a cluster-wide read on Services, Endpoints and Pods held by the one
@@ -40,15 +42,15 @@ metadata:
 data:
   # Held as a string, so a typo here is valid YAML inside a valid ConfigMap and
   # reaches the cluster unchallenged. `tests/infra/test_k8s_monitoring.py`
-  # parses this value and asserts the six targets by set equality, which is the
+  # parses this value and asserts the seven targets by set equality, which is the
   # only thing between a wrong Service name and a target that reads DOWN
   # forever with no error anywhere.
   #
-  # Every target is fully qualified: this pod is in `monitoring` and three of
-  # the six services are not, so a bare `gateway` resolves to nothing.
+  # Every target is fully qualified: this pod is in `monitoring` and four of
+  # the seven services are not, so a bare `gateway` resolves to nothing.
   prometheus.yml: |
     global:
-      # 30s over six targets for 15 days is what the 4Gi claim was sized for.
+      # 30s over seven targets for 15 days is what the 4Gi claim was sized for.
       # Tightening it doubles every series' sample count against an unchanged
       # volume, and the disk fills silently.
       scrape_interval: 30s
@@ -89,6 +91,10 @@ data:
         metrics_path: /metrics
         static_configs:
           - targets: ["cert-manager.cert-manager.svc.cluster.local:9402"]
+      - job_name: evals-pushgateway
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["pushgateway.evals.svc.cluster.local:9091"]
   # A literal copy of `../../project-obs/alerts/rules.yml`. Held as
   # its own key, mounted next to `prometheus.yml` in the same ConfigMap, rather
   # than a `configMapGenerator` of its own - the same object-count reasoning
@@ -173,13 +179,12 @@ data:
               runbook: docs/runbook.md#budgetexceeded
 
           - alert: NightlyEvalRegression
-            expr: gateway_eval_decision_accuracy - avg_over_time(gateway_eval_decision_accuracy[7d]) < -2
+            expr: gateway_eval_decision_accuracy - quantile_over_time(0.5, gateway_eval_decision_accuracy[7d]) < -2
             labels:
               severity: warning
             annotations:
-              summary: The nightly eval's decision accuracy dropped more than 2 points against its 7-day average.
+              summary: The nightly eval's decision accuracy dropped more than 2 points against its 7-day median.
               runbook: docs/runbook.md#nightlyevalregression
-              note: Inert until row 24 registers gateway_eval_decision_accuracy.
 
           - alert: DiskSpaceLow
             expr: node_filesystem_avail_bytes{fstype!="tmpfs"} / node_filesystem_size_bytes{fstype!="tmpfs"} < 0.2

@@ -372,7 +372,7 @@ If the chart's real footprint is larger than that, the quota refuses the install
 with the namespace named, which is the intended direction: raising it means
 re-totalling the table above and the reserve constant in the test together.
 
-The seven Secrets nothing here writes, each supplied SOPS-encrypted before the
+The eight Secrets nothing here writes, each supplied SOPS-encrypted before the
 first apply. `../secrets/` holds one plaintext contract per Secret
 (`*.example.yaml`, every value `REPLACE_ME`), the workflow that encrypts a filled
 copy, and the key procedure; `../../.sops.yaml` is the policy that decides what
@@ -389,6 +389,7 @@ are asserted equal, and equal to the names the build references, by
 | `grafana-admin` | `monitoring` | `GF_SECURITY_ADMIN_USER`, `GF_SECURITY_ADMIN_PASSWORD` | the Grafana Deployment, by `envFrom` |
 | `alertmanager-secrets` | `monitoring` | `SMTP_SMARTHOST`, `SMTP_FROM`, `SMTP_AUTH_USERNAME`, `SMTP_AUTH_PASSWORD`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | the Alertmanager Deployment, by `envFrom` |
 | `backup-secrets` | `platform` | `RCLONE_CONFIG_HETZNER_ACCESS_KEY_ID`, `RCLONE_CONFIG_HETZNER_SECRET_ACCESS_KEY`, `RCLONE_CONFIG_HETZNER_ENDPOINT`, `BACKUP_BUCKET` | both backup CronJobs' `rclone-sync` container, by `envFrom` |
+| `evals-secrets` | `evals` | `OPSCONSOLE_DATABASE_URL` | the nightly-eval CronJob, by `envFrom` |
 
 `traefik-basic-auth` is supplied once per routing namespace, not once per
 cluster: a `Middleware` reads its Secret from its own namespace, and a design note is

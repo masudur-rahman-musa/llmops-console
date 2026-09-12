@@ -1,7 +1,7 @@
 {
   "uid": "evals",
   "title": "Evals",
-  "description": "Requests, latency, cost and residency violations filtered to the evals tenant. No gateway_eval_* family is registered yet (that is row 24's job, REQUIREMENTS #43); this dashboard reads the same gateway families every other dashboard reads, scoped to tenant=\"evals\", so it renders real data as soon as the eval runner sends traffic under that tenant and needs no rewrite when row 24 lands. Provisioned from infra/k8s/monitoring/dashboards/; edits made in the Grafana UI are not saved.",
+  "description": "Requests, latency, cost and residency violations filtered to the evals tenant. This dashboard reads the same gateway families every other dashboard reads, scoped to tenant=\"evals\", so it renders real data as soon as the eval runner sends traffic under that tenant; the nightly eval's own gateway_eval_* score metrics (row 24, REQUIREMENTS #43) are pushed to a Pushgateway rather than tagged with a tenant, and are read by NightlyEvalRegression, not by this dashboard. Provisioned from infra/k8s/monitoring/dashboards/; edits made in the Grafana UI are not saved.",
   "tags": ["evals", "opsconsole"],
   "timezone": "utc",
   "schemaVersion": 39,

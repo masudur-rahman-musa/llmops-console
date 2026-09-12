@@ -609,6 +609,20 @@ spec:
       ports:
         - protocol: TCP
           port: metrics
+    # An earlier change's seventh scrape target: the Pushgateway the nightly-eval CronJob
+    # pushes `gateway_eval_*` to. `evals` carries no NetworkPolicy of its own
+    # yet (that namespace held no workload before this plan), so this is the
+    # only side of the connection anything here restricts today.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: evals
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: pushgateway
+      ports:
+        - protocol: TCP
+          port: metrics
 
 # Grafana is the first pod in `monitoring` that the namespace-wide named-port
 # allow above does NOT cover. `metrics-ingress-from-monitoring` opens the port

@@ -56,6 +56,11 @@ PLATFORM = "platform"
 #: why it joins `NAMESPACES_WITH_POD_TEMPLATES` below.
 MONITORING = "monitoring"
 
+#: The nightly eval's namespace: the Pushgateway and the nightly-eval CronJob live
+#: here, which is why it joins `NAMESPACES_WITH_POD_TEMPLATES` below - `prometheus-egress`'s
+#: seventh destination is a cross-namespace peer naming a workload in this namespace.
+EVALS = "evals"
+
 #: k3s's own namespace: Traefik (the ingress path into `gateway` and `helpdesk-web`) and
 #: kube-dns live here. This build emits no pod template in it, which is why the selector scan
 #: skips peers scoped to it.
@@ -63,7 +68,7 @@ KUBE_SYSTEM = "kube-system"
 
 #: The namespaces this build writes pod templates for, and therefore the only ones the selector
 #: scan can resolve a peer against.
-NAMESPACES_WITH_POD_TEMPLATES = frozenset({APPS, PLATFORM, MONITORING})
+NAMESPACES_WITH_POD_TEMPLATES = frozenset({APPS, PLATFORM, MONITORING, EVALS})
 
 #: The one label every pod template in this build carries and the only one any selector keys
 #: off. A workload's value here is also its Deployment name and its Service name.

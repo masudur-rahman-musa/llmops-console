@@ -1,0 +1,48 @@
+name: nightly-eval
+# SPEC line 344's documented backup path to the k3s CronJob (`infra/k8s/evals/
+# nightly-eval-cronjob.yaml`, REQUIREMENTS #43): if the cluster's own nightly job is
+# ever missed or the cluster is down, this workflow can run the same golden set on
+# the same schedule from a clean checkout.
+#
+# Gated exactly the way `eval-gate.yml`'s `eval` job is (decision A there): there is
+# no `EVAL_TARGET_URL` repository variable yet - no target exists to run this
+# against - so the job is wired but SKIPPED until that variable is set. See
+# `docs/adr/0009-the-eval-gate-ships-inert-without-a-target.md`.
+on:
+  schedule:
+    # 02:00 UTC, mirroring the k3s CronJob's own `0 2 * * *` (see that manifest's
+    # comment on why this is UTC and not the Berlin wall-clock time SPEC names).
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-eval
+  cancel-in-progress: false
+
+jobs:
+  nightly-eval:
+    if: vars.EVAL_TARGET_URL != ''
+    runs-on: ubuntu-latest
+    env:
+      OPSCONSOLE_EVAL_JUDGE_KEY: ${{ secrets.OPSCONSOLE_EVAL_JUDGE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Run the golden set against the nightly target
+        run: |
+          uv run ops-eval run \
+            --target "${{ vars.EVAL_TARGET_URL }}" \
+            --set project-evals/golden/example.jsonl \
+            --tenant evals \
+            --run-kind nightly \
+            --out reports \
+            --pushgateway-url "${{ vars.NIGHTLY_PUSHGATEWAY_URL }}"
+      - name: Publish the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-eval-report-${{ github.run_id }}
+          path: reports/

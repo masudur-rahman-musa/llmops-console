@@ -1,0 +1,10 @@
+# The Pushgateway and the nightly-eval CronJob.
+#
+# No `namespace:` transformer, for the same reason `../platform` and `../apps` have none:
+# each file writes `metadata.namespace: evals` itself.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - pushgateway.yaml
+  - nightly-eval-cronjob.yaml
