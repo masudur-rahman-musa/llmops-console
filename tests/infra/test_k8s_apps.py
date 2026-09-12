@@ -192,8 +192,9 @@ CLUSTER_SCOPED_OBJECTS: frozenset[tuple[str, str]] = frozenset(
 )
 
 #: Decision D: the repository the `images:` transformer sets, and the honest placeholder tag.
-#: Row 22's deploy replaces the tag with a SHA; until then an apply fails on a pull, which is
-#: the intended direction.
+#: `deploy.yml` rewrites the tag to the deployed SHA in the runner and commits nothing back,
+#: so this value is permanent here and an apply from a checkout fails on the pull, which is the
+#: intended direction.
 GATEWAY_IMAGE_REPOSITORY = "ghcr.io/developermusa/ai-operations-console/gateway"
 GATEWAY_IMAGE_TAG = "0.0.0-unbuilt"
 
@@ -1440,8 +1441,8 @@ def test_the_gateway_image_is_pinned_and_not_a_floating_tag(built: list[dict[str
     whose running code no commit names and a rollout that changes meaning without a diff; and
     catches the repository pointed at another owner or another image name, which is an apply
     that pulls somebody else's code. The tag is asserted as an exact string as well as against
-    the refusal list, because `0.0.0-unbuilt` is the honest placeholder row 22b replaces -
-    `build.yml` publishes the image this tag does not yet name."""
+    the refusal list, because `0.0.0-unbuilt` is the placeholder the tree keeps: `build.yml` publishes the image this tag does not name, and `deploy.yml` chooses one only
+    inside the runner, committing nothing back (its ADR is 0014)."""
     image = str(sole_container(gateway_pod_owner(built)).get("image", ""))
     assert image, f"{GATEWAY} declares no image"
     assert "@" not in image, f"{GATEWAY} is pinned by digest ({image}); decision D names a tag"

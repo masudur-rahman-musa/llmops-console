@@ -15,7 +15,10 @@ resource "hcloud_firewall" "edge" {
     direction  = "in"
     protocol   = "tcp"
     port       = "22"
-    source_ips = var.admin_ips
+    # The admin CIDRs plus the CD runner's, concatenated rather than split into a
+    # fourth rule: the rule COUNT is what pins this firewall's default-deny, so one
+    # port-22 rule with two sources says the same thing without loosening the guard.
+    source_ips = concat(var.admin_ips, var.ci_ips)
   }
 
   rule {

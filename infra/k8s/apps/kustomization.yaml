@@ -22,8 +22,9 @@ resources:
 # applied without this transformer fails on the pull rather than running
 # something nobody chose. `0.0.0-unbuilt` is the honest placeholder: `build.yml`
 # pushes an image tagged with the commit SHA on every push to `main`,
-# and this overlay has not been told which of them to run - the deploy that
-# chooses replaces the tag with that SHA (`kustomize edit set image`, row 22b).
+# and this overlay is never told which of them to run: `deploy.yml` rewrites the
+# tag to the deployed SHA with `kustomize edit set image` in the runner and
+# commits nothing back, so this value stays `0.0.0-unbuilt` in git for good.
 # A `latest` or a `main` here would be a cluster whose running code no commit
 # names, and a rollout that changes meaning with no diff to show for it.
 #
@@ -43,8 +44,9 @@ images:
     newTag: server-b10902
   # The four Helpdesk workloads, each its own image out of the companion repo's
   # registry. The same placeholder tag as the gateway, for a stronger reason:
-  # nothing has been published under this path at all, so an apply made before
-  # row 22b's deploy fails on the pull.
+  # nothing has been published under this path at all, and `deploy.yml` rewrites
+  # the `gateway` tag only - so these four stay unresolved until the companion
+  # repo publishes and something chooses a tag, and any apply fails on the pull.
   - name: helpdesk-agent-api
     newName: ghcr.io/developermusa/ai-helpdesk-governed-access/helpdesk-agent-api
     newTag: 0.0.0-unbuilt

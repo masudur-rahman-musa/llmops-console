@@ -42,9 +42,9 @@
 # apply fails on the missing Secret - which is the intended direction.
 #
 # The images are set by `kustomization.yaml`'s `images:` transformer, not here.
-# `0.0.0-unbuilt` is honest: the companion repo has published nothing yet, so an
-# apply made before row 22b's deploy fails on the pull rather than running
-# something nobody chose.
+# `0.0.0-unbuilt` is honest: the companion repo has published nothing yet, and
+# `deploy.yml` rewrites the `gateway` tag only, so any apply fails on the pull
+# rather than running something nobody chose.
 #
 # `app.kubernetes.io/name` is written three times per serving workload - on the
 # selector, on the pod template and on the Service - because the root

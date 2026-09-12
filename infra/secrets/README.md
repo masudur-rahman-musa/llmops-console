@@ -18,8 +18,8 @@ Secret's name, namespace and kind stay readable and only its values become
 ciphertext. The rule deliberately does not match `*.example.yaml`.
 
 Nothing in this directory is a kustomize input. `infra/k8s` lists no path under
-it and the build emits no `Secret` at all; these files are applied by hand (and,
-from row 22b, by CD) before the manifests that name them. Until they exist an
+it and the build emits no `Secret` at all; these files are applied by hand (and
+by CD, in `.github/workflows/deploy.yml`) before the manifests that name them. Until they exist an
 apply fails on the missing Secret, which is the intended direction - a
 placeholder with a working password in git would come up running and never
 mention itself again.
@@ -65,9 +65,10 @@ asserts `git ls-files` matches none of them. That is a backstop, not the plan:
 the private key should not be in the working tree at all.
 
 For CD, the same private key is stored as the `SOPS_AGE_KEY` GitHub secret. The
-deploy workflow exports it and runs `sops --decrypt` on each
-`*.enc.yaml` immediately before `kubectl apply`, so the decrypted form exists
-only in the runner's memory for the length of one job.
+deploy workflow (`.github/workflows/deploy.yml`) exports it and runs
+`sops --decrypt` on each `*.enc.yaml` immediately before `kubectl apply`, so the
+decrypted form exists only in the runner's memory for the length of one job. An
+empty glob fails that step rather than applying the manifests without them.
 
 ## Encrypting
 

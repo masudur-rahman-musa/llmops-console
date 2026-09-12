@@ -195,6 +195,32 @@ def test_the_firewall_opens_ssh_to_the_admins_and_nothing_else_to_them() -> None
         assert "admin_ips" not in sources, f"port {port} is restricted to the admin CIDRs"
 
 
+def test_ci_reaches_ssh_through_a_declared_list_that_defaults_to_empty() -> None:
+    """An earlier change criterion 5 and decision A: CD cannot reach port 22 while it is `admin_ips`
+    alone, so `var.ci_ips` is concatenated into that one rule. Catches the variable declared
+    with NO default, which makes every `plan` and every `apply` fail until someone invents a
+    value for a list that is meant to be empty until the owner sets it - and catches the
+    default written as anything but the empty list, which is the whole point of the decision:
+    a default of `["0.0.0.0/0"]` would open SSH to the internet the moment the variable is
+    forgotten, exactly the failure `admin_ips` has no default to avoid. The rule COUNT is
+    re-asserted here as well as in the port-22 case above, because the tempting alternative
+    implementation is a FOURTH rule opening 22 to the CI list separately, which satisfies
+    "22 still names admin_ips" and quietly widens the firewall; and the port-22 source is
+    re-read so the concat cannot land on 80 or 443 instead. Read as text, as everything in
+    this module is: `terraform validate` accepts every one of those shapes."""
+    variables = named_blocks(read(VARIABLES_TF), "variable")
+    firewalls = named_blocks(read(MAIN_TF), "resource")
+    assert "ci_ips" in variables, f"variables.tf declares no ci_ips, only {sorted(variables)}"
+    assert "hcloud_firewall" in firewalls, "main.tf declares no hcloud_firewall"
+    rules = inner_blocks(firewalls["hcloud_firewall"], "rule")
+    by_port = {argument(rule, "port").strip('"'): rule for rule in rules}
+
+    assert argument(variables["ci_ips"], "default") == "[]", "ci_ips does not default to empty"
+    assert len(rules) == 3, f"the firewall carries {len(rules)} rule blocks, not 3"
+    assert "var.ci_ips" in argument(by_port["22"], "source_ips")
+    assert "var.admin_ips" in argument(by_port["22"], "source_ips")
+
+
 def test_the_server_is_the_arm_box_in_the_agreed_region() -> None:
     """Criterion 1's hardware, pinned by value. Catches a `server_type`
     default of `cx22`, which is x86 and would run an arm64 image nowhere, and catches a

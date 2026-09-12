@@ -16,6 +16,26 @@ variable "admin_ips" {
   }
 }
 
+# Decision A of an earlier change: CD reaches the node over SSH, so the deploy runner's
+# egress ranges are a DECLARED list rather than an ephemeral firewall opened by a
+# cloud token in CI - a token that can open a port can also delete the server.
+#
+# Defaulted to empty, unlike `admin_ips` above, and the two defaults are opposite
+# on purpose: an unset `admin_ips` would lock the operator out of a box they have
+# to reach, while an unset `ci_ips` means only that CD cannot connect yet. A
+# default that worked would be a default that opened port 22 to a range nobody
+# chose.
+variable "ci_ips" {
+  description = "CIDRs the CD runner reaches SSH from. Empty until the operator names them."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for entry in var.ci_ips : can(cidrhost(entry, 0))])
+    error_message = "every ci_ips entry must be a CIDR such as 192.0.2.0/24; a bare address is refused."
+  }
+}
+
 variable "zone" {
   description = "The Cloudflare zone the records live in, as a bare apex domain."
   type        = string
