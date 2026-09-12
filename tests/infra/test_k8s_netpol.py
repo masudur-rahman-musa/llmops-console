@@ -1,6 +1,6 @@
-r"""`infra/k8s/base/networkpolicies.yaml`: the seventeen NetworkPolicies an earlier change
-agree, read off what kustomize actually emits rather than off the file, so a policy written and
-never listed in `base/kustomization.yaml`'s `resources` is the same failure as a policy never
+r"""`infra/k8s/base/networkpolicies.yaml`: the eighteen NetworkPolicies an earlier change and
+23c agree, read off what kustomize actually emits rather than off the file, so a policy written
+and never listed in `base/kustomization.yaml`'s `resources` is the same failure as a policy never
 written.
 
 The stream comes from the session-scoped `built` fixture in `tests/infra/conftest.py`: one
@@ -74,6 +74,8 @@ NAME_LABEL = "app.kubernetes.io/name"
 NAMESPACE_NAME_LABEL = "kubernetes.io/metadata.name"
 
 GATEWAY = "gateway"
+#: An earlier change's own pod, the second and last one in the build with a route to the public internet.
+ALERTMANAGER = "alertmanager"
 LLAMA = "llama"
 LLAMA_EMBED = "llama-embed"
 HELPDESK_AGENT_API = "helpdesk-agent-api"
@@ -112,12 +114,15 @@ PLATFORM_POLICIES = frozenset(
     {"default-deny-ingress", "data-ingress-from-apps", "metrics-ingress-from-monitoring"}
 )
 
-#: An earlier change criterion 6 and an earlier change criterion 7, the `monitoring` half: six policies, by name.
-#: Its own catch-all in both directions, DNS, the named-port scrape ingress every pod in the
-#: namespace carries, Prometheus's egress to the four things it scrapes, and Grafana's own pair -
-#: 23b decision D leaves Grafana publishing `http` rather than `metrics`, so it is the first pod
-#: here that the namespace-wide named-port allow cannot cover and it gets an ingress and an
-#: egress policy of its own.
+#: An earlier change criterion 6, an earlier change criterion 7 and an earlier change's own criterion, the `monitoring`
+#: half: SEVEN policies, by name. Its own catch-all in both directions, DNS, the named-port
+#: scrape ingress every pod in the namespace carries, Prometheus's egress to what it scrapes plus
+#: Alertmanager, Grafana's own pair - 23b decision D leaves Grafana publishing `http` rather than
+#: `metrics`, so it is the first pod here that the namespace-wide named-port allow cannot cover
+#: and it gets an ingress and an egress policy of its own - and 23c's `alertmanager-egress`,
+#: scoped to the one pod that needs a route to the public internet (decision B). Alertmanager
+#: needs no ingress policy of its own: `metrics-ingress-from-monitoring` already covers it, since
+#: its container port is named `metrics` like the three scrape targets.
 MONITORING_POLICIES = frozenset(
     {
         "default-deny",
@@ -126,6 +131,7 @@ MONITORING_POLICIES = frozenset(
         "prometheus-egress",
         "grafana-ingress",
         "grafana-egress",
+        "alertmanager-egress",
     }
 )
 
@@ -518,7 +524,7 @@ def selector_scope(
     [
         pytest.param(APPS, APPS_POLICIES, id="apps-eight"),
         pytest.param(PLATFORM, PLATFORM_POLICIES, id="platform-three"),
-        pytest.param(MONITORING, MONITORING_POLICIES, id="monitoring-six"),
+        pytest.param(MONITORING, MONITORING_POLICIES, id="monitoring-seven"),
     ],
 )
 def test_each_namespace_emits_exactly_the_policies_the_plan_names(
@@ -539,10 +545,10 @@ def test_each_namespace_emits_exactly_the_policies_the_plan_names(
     )
 
 
-def test_the_whole_build_emits_exactly_the_seventeen_policies_and_nowhere_else(
+def test_the_whole_build_emits_exactly_the_eighteen_policies_and_nowhere_else(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 1 over the WHOLE stream as `(namespace, name)`. Catches an eighteenth policy
+    """Criterion 1 over the WHOLE stream as `(namespace, name)`. Catches a nineteenth policy
     landing in a fourth namespace, which the three per-namespace rows above cannot see because each
     filters to its own namespace first; and catches a policy emitted with no
     `metadata.namespace` at all, which the API server would file into whatever namespace the
@@ -601,38 +607,53 @@ def test_the_dns_policy_opens_both_protocols_on_53_for_every_pod_in_apps(
     assert opened == DNS_PORTS, f"DNS ports are {sorted(opened)}, not {sorted(DNS_PORTS)}"
 
 
-def test_the_gateway_is_the_only_pod_with_a_route_to_the_public_internet(
+def test_the_gateway_and_alertmanager_are_the_only_pods_with_a_route_to_the_public_internet(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 4 and decision E, scanned over EVERY policy in the build rather than read off
-    `gateway-egress` alone - the claim is that no other policy has one, and a case that opened
-    the gateway's policy by name could not see a second `ipBlock` added anywhere else. Catches a
-    later row granting the Helpdesk or llama a public egress. Catches an `except` list missing
-    `169.254.0.0/16`, which reopens the `169.254.169.254` metadata route SSRF via `base_url`
-    reaches. Catches port 80 or an unported rule beside 443, and catches the rule hung on a
-    `podSelector` that is not the gateway's."""
+    """Criterion 4 and decision E, widened by an earlier change decision B: scanned over EVERY policy in
+    the build rather than read off `gateway-egress` and `alertmanager-egress` by name - the claim
+    is that no OTHER policy has one, and a case that opened the two by name could not see a third
+    `ipBlock` added anywhere else. Both are asserted to share the SAME excluded-ranges list, by
+    VALUE (a project rule - copied, not re-derived): `alertmanager-egress`'s own shape is pinned
+    a second time, more narrowly, by `tests/infra/test_k8s_alerting.py`'s
+    test_alertmanager_is_the_second_and_last_pod_with_internet_egress.
+
+    Catches a later row granting the Helpdesk or llama a public egress. Catches an `except` list
+    missing `169.254.0.0/16` on EITHER policy, which reopens the `169.254.169.254` metadata route
+    SSRF via `base_url` reaches. Catches port 80 or an unported rule beside 443 on either, and
+    catches a rule hung on a `podSelector` that is not the workload's own."""
     reaching = {
         (str(namespace_of(document)), name_of(document))
         for document in policies(built)
         if ip_blocks(document)
     }
-    assert reaching == {(APPS, "gateway-egress")}, f"policies with an ipBlock: {sorted(reaching)}"
+    assert reaching == {(APPS, "gateway-egress"), (MONITORING, "alertmanager-egress")}, (
+        f"policies with an ipBlock: {sorted(reaching)}"
+    )
 
     gateway_egress = policy(built, APPS, "gateway-egress")
     assert pod_selector(gateway_egress) == {"matchLabels": {NAME_LABEL: GATEWAY}}
+    alertmanager_egress = policy(built, MONITORING, "alertmanager-egress")
+    assert pod_selector(alertmanager_egress) == {"matchLabels": {NAME_LABEL: ALERTMANAGER}}
 
-    rules = rules_with_ip_block(gateway_egress)
-    assert len(rules) == 1, f"{len(rules)} rules carry an ipBlock, not 1"
-    blocks = ip_blocks(gateway_egress)
-    assert len(blocks) == 1, f"{len(blocks)} ipBlocks in gateway-egress, not 1"
-    assert str(blocks[0].get("cidr")) == PUBLIC_CIDR
-    excepted = {str(entry) for entry in blocks[0].get("except", [])}
-    assert excepted == PUBLIC_EXCEPT, (
-        f"unexpected: {sorted(excepted - PUBLIC_EXCEPT)}; "
-        f"missing: {sorted(PUBLIC_EXCEPT - excepted)}"
-    )
-    ports = numeric_ports(rules[0], f"{APPS}/gateway-egress")
-    assert ports == PUBLIC_PORTS, f"public egress ports are {sorted(ports)}"
+    for label, document in (
+        (f"{APPS}/gateway-egress", gateway_egress),
+        (f"{MONITORING}/alertmanager-egress", alertmanager_egress),
+    ):
+        rules = rules_with_ip_block(document)
+        assert len(rules) == 1, f"{label}: {len(rules)} rules carry an ipBlock, not 1"
+        blocks = ip_blocks(document)
+        assert len(blocks) == 1, f"{label}: {len(blocks)} ipBlocks, not 1"
+        assert str(blocks[0].get("cidr")) == PUBLIC_CIDR, (
+            f"{label}: cidr is {blocks[0].get('cidr')!r}"
+        )
+        excepted = {str(entry) for entry in blocks[0].get("except", [])}
+        assert excepted == PUBLIC_EXCEPT, (
+            f"{label} unexpected: {sorted(excepted - PUBLIC_EXCEPT)}; "
+            f"missing: {sorted(PUBLIC_EXCEPT - excepted)}"
+        )
+        ports = numeric_ports(rules[0], label)
+        assert ports == PUBLIC_PORTS, f"{label}: public egress ports are {sorted(ports)}"
 
 
 def test_the_helpdesk_may_reach_exactly_six_destinations_and_no_ip_block(

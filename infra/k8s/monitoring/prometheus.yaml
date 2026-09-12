@@ -4,7 +4,15 @@
 # build has to pass `kubeconform -strict` with no `-ignore-missing-schemas`, and
 # a custom resource has no stock schema to validate against.
 #
-# Scraping is five STATIC targets by Service DNS, so this pod needs no
+# An earlier change adds a sixth scrape target (cert-manager, decision A) and two keys
+# this ConfigMap did not carry before: `rule_files`, naming the second data key
+# below (`alert-rules.yml`, a copy of `../../project-obs/alerts/rules.yml` -
+# a design note's alternative of a `configMapGenerator` for it was not taken, so
+# there is exactly one ConfigMap in `monitoring` for Prometheus rather than two
+# - see `tests/infra/test_k8s_alerting.py`'s module docstring), and `alerting`,
+# naming `Service/alertmanager`'s DNS as the one place firing alerts go.
+#
+# Scraping is now SIX static targets by Service DNS, so this pod needs no
 # ServiceAccount and no RBAC at all: nothing here may read the API server.
 # Discovery would buy a workload opting itself in without an edit to this file
 # and cost a cluster-wide read on Services, Endpoints and Pods held by the one
@@ -32,18 +40,30 @@ metadata:
 data:
   # Held as a string, so a typo here is valid YAML inside a valid ConfigMap and
   # reaches the cluster unchallenged. `tests/infra/test_k8s_monitoring.py`
-  # parses this value and asserts the five targets by set equality, which is the
+  # parses this value and asserts the six targets by set equality, which is the
   # only thing between a wrong Service name and a target that reads DOWN
   # forever with no error anywhere.
   #
-  # Every target is fully qualified: this pod is in `monitoring` and two of the
-  # five services are not, so a bare `gateway` resolves to nothing.
+  # Every target is fully qualified: this pod is in `monitoring` and three of
+  # the six services are not, so a bare `gateway` resolves to nothing.
   prometheus.yml: |
     global:
-      # 30s over five targets for 15 days is what the 4Gi claim was sized for.
+      # 30s over six targets for 15 days is what the 4Gi claim was sized for.
       # Tightening it doubles every series' sample count against an unchanged
       # volume, and the disk fills silently.
       scrape_interval: 30s
+    # `rule_files` names the second key below by its bare filename, the same
+    # way this key names itself to Prometheus - both are mounted at
+    # `/etc/prometheus` by the single `config` volume in the Deployment.
+    rule_files:
+      - alert-rules.yml
+    # Where a firing alert goes. No TLS, no auth: both pods are in the same
+    # namespace, behind `default-deny`, and `prometheus-egress` is the only
+    # policy that opens this path.
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: ["alertmanager.monitoring.svc.cluster.local:9093"]
     scrape_configs:
       - job_name: gateway
         metrics_path: /metrics
@@ -65,6 +85,134 @@ data:
         metrics_path: /metrics
         static_configs:
           - targets: ["prometheus.monitoring.svc.cluster.local:9090"]
+      - job_name: cert-manager
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["cert-manager.cert-manager.svc.cluster.local:9402"]
+  # A literal copy of `../../project-obs/alerts/rules.yml`. Held as
+  # its own key, mounted next to `prometheus.yml` in the same ConfigMap, rather
+  # than a `configMapGenerator` of its own - the same object-count reasoning
+  # a design note already gives for keeping the dashboards in one generated
+  # ConfigMap applies here to keep `monitoring`'s inventory at exactly the
+  # three new objects this plan's manifest adds
+  # (`tests/infra/test_k8s_alerting.py::test_the_monitoring_namespace_emits_alertmanager_and_nothing_else_new`).
+  # A second copy is the tradeoff: nothing here enforces the two staying
+  # byte-identical, the same limitation a design note names for its own duplicated
+  # path.
+  alert-rules.yml: |
+    groups:
+      - name: gateway
+        rules:
+          - alert: GatewayDown
+            expr: up{job="gateway"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: The gateway has been unreachable by its own scrape target for 2 minutes.
+              runbook: docs/runbook.md#gatewaydown
+
+          - alert: HighErrorRate
+            expr: |
+              sum(rate(gateway_requests_total{status=~"5.."}[10m]))
+              /
+              sum(rate(gateway_requests_total[10m]))
+              > 0.02
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: More than 2% of gateway requests have returned a 5xx status over 10 minutes.
+              runbook: docs/runbook.md#higherrorrate
+
+          - alert: LatencyOverSLO
+            expr: |
+              histogram_quantile(
+                0.95,
+                sum(rate(gateway_request_latency_seconds_bucket[5m])) by (le)
+              ) > 6
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: The gateway's p95 request latency has stayed above 6 seconds for 15 minutes.
+              runbook: docs/runbook.md#latencyoverslo
+
+          - alert: ResidencyViolation
+            expr: increase(gateway_residency_violations_total[5m]) > 0
+            for: 0m
+            labels:
+              severity: critical
+            annotations:
+              summary: A request was served from a region the tenant's residency policy does not allow.
+              runbook: docs/runbook.md#residencyviolation
+
+          - alert: ProviderCircuitOpen
+            expr: gateway_circuit_state == 2
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: A provider's circuit breaker has stayed open for 5 minutes.
+              runbook: docs/runbook.md#providercircuitopen
+
+          - alert: BudgetWarning
+            expr: gateway_budget_ratio >= 0.8
+            labels:
+              severity: warning
+            annotations:
+              summary: A tenant has consumed at least 80% of its period budget.
+              runbook: docs/runbook.md#budgetwarning
+
+          - alert: BudgetExceeded
+            expr: gateway_budget_ratio >= 1.0
+            labels:
+              severity: critical
+            annotations:
+              summary: A tenant has consumed its entire period budget.
+              runbook: docs/runbook.md#budgetexceeded
+
+          - alert: NightlyEvalRegression
+            expr: gateway_eval_decision_accuracy - avg_over_time(gateway_eval_decision_accuracy[7d]) < -2
+            labels:
+              severity: warning
+            annotations:
+              summary: The nightly eval's decision accuracy dropped more than 2 points against its 7-day average.
+              runbook: docs/runbook.md#nightlyevalregression
+              note: Inert until row 24 registers gateway_eval_decision_accuracy.
+
+          - alert: DiskSpaceLow
+            expr: node_filesystem_avail_bytes{fstype!="tmpfs"} / node_filesystem_size_bytes{fstype!="tmpfs"} < 0.2
+            labels:
+              severity: warning
+            annotations:
+              summary: A node's free disk space has dropped below 20% on a real filesystem.
+              runbook: docs/runbook.md#diskspacelow
+
+          - alert: PodCrashLooping
+            expr: increase(kube_pod_container_status_restarts_total[15m]) >= 3
+            labels:
+              severity: warning
+            annotations:
+              summary: A container has restarted 3 or more times in the last 15 minutes.
+              runbook: docs/runbook.md#podcrashlooping
+
+          - alert: BackupJobFailed
+            expr: kube_job_status_failed{job_name=~".*-backup.*"} > 0
+            labels:
+              severity: critical
+            annotations:
+              summary: A backup CronJob's Job has failed.
+              runbook: docs/runbook.md#backupjobfailed
+              note: Inert until row 23d creates the backup CronJobs.
+
+          - alert: CertificateExpiringSoon
+            expr: certmanager_certificate_expiration_timestamp_seconds - time() < 14 * 86400
+            labels:
+              severity: warning
+            annotations:
+              summary: A cert-manager certificate expires in less than 14 days.
+              runbook: docs/runbook.md#certificateexpiringsoon
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

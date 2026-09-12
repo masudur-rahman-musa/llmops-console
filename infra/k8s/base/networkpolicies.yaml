@@ -502,7 +502,9 @@ spec:
 # is exactly that case - its port serves a browser and is named `http` - so it
 # carries `grafana-ingress` below instead of being admitted here. This comment
 # used to predict the opposite, that Grafana and Alertmanager would land with no
-# edit to this file; the first half turned out false, and 23c decides the second.
+# edit to this file; the first half turned out false, and the second held:
+# Alertmanager's port IS named `metrics`, so this one rule is what
+# admits Prometheus's alert-firing POST with no ingress policy of its own.
 #
 # The peer is the namespace rather than `prometheus` by name so that a second
 # scraper is admitted without widening anything.
@@ -582,6 +584,31 @@ spec:
       ports:
         - protocol: TCP
           port: metrics
+    # An earlier change's sixth scrape target: cert-manager's own `/metrics`, read by
+    # NUMBER rather than by name. Every other destination here resolves a
+    # named port against a pod template this build actually writes; nothing in
+    # this kustomize build owns a cert-manager pod template to resolve one
+    # against (it is helm-installed, unmanaged by this repo), so this is the
+    # one entry that has to be asserted by the number 23a's scrape config
+    # dials - `tests/infra/test_k8s_alerting.py` documents why this peer
+    # carries no `podSelector` at all.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cert-manager
+      ports:
+        - protocol: TCP
+          port: 9402
+    # An earlier change: where a firing alert goes. Read by NAME - the pod template
+    # exists in this same build - the same mechanism the exporter rules above
+    # use.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alertmanager
+      ports:
+        - protocol: TCP
+          port: metrics
 
 # Grafana is the first pod in `monitoring` that the namespace-wide named-port
 # allow above does NOT cover. `metrics-ingress-from-monitoring` opens the port
@@ -647,3 +674,46 @@ spec:
       ports:
         - protocol: TCP
           port: 9090
+
+# Alertmanager is the second and last pod anywhere in this build with a route
+# to the public internet (`gateway-egress` above is the first and only other
+# one - `tests/infra/test_k8s_netpol.py` scans the whole build for an
+# `ipBlock` and pins the set to exactly these two). SMTP and Telegram are both
+# public endpoints, so this is the one genuinely new capability an earlier change adds
+# to the cluster rather than a rewiring of an existing one.
+#
+# Scoped to this one pod rather than opened namespace-wide (a design note, decision
+# B): `monitoring` is single-tenant and has exactly one pod that will ever
+# need this, so the narrower shape costs nothing and keeps req #54's guarantee
+# closer to true than a namespace where "nothing else needs it today" is the
+# only thing stopping a future pod from getting it for free.
+#
+# The excluded ranges are copied from `gateway-egress`, not re-derived
+#: the same private-range and link-local addresses are
+# unreachable from either pod for the same reason, most sharply the
+# `169.254.169.254` cloud metadata endpoint a leaked credential could
+# otherwise reach.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: alertmanager-egress
+  namespace: monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: alertmanager
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443

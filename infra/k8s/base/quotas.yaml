@@ -22,9 +22,9 @@
 # hold.
 #
 # Raising any row means re-totalling it here AND in `../README.md`. `monitoring`
-# is the one with the least room left: Prometheus, the two exporters and Grafana
-# spend 480Mi of its 512Mi, which leaves Alertmanager exactly 32Mi, 50m and 64Mi
-# and no slack at all.
+# is the one with no room left at all: Prometheus, the two exporters, Grafana
+# and Alertmanager spend the full 512Mi/400m/1Gi between them, to the
+# byte.
 ---
 apiVersion: v1
 kind: ResourceQuota

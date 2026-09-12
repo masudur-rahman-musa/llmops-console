@@ -1,6 +1,6 @@
 # Secrets
 
-Four Secrets the cluster needs and this repository does not contain. What is
+Six Secrets the cluster needs and this repository does not contain. What is
 here is the contract for each one, the policy that encrypts them, and the
 workflow. What is never here is a private key or a filled-in value.
 
@@ -24,7 +24,7 @@ apply fails on the missing Secret, which is the intended direction - a
 placeholder with a working password in git would come up running and never
 mention itself again.
 
-## The four contracts
+## The six contracts
 
 | Secret | namespace | template |
 |---|---|---|
@@ -32,6 +32,8 @@ mention itself again.
 | `traefik-basic-auth` | `platform`, `apps` | `traefik-basic-auth.example.yaml` |
 | `gateway-secrets` | `apps` | `gateway-secrets.example.yaml` |
 | `helpdesk-secrets` | `apps` | `helpdesk-secrets.example.yaml` |
+| `grafana-admin` | `monitoring` | `grafana-admin.example.yaml` |
+| `alertmanager-secrets` | `monitoring` | `alertmanager-secrets.example.yaml` |
 
 The key names and who reads them are in `../k8s/README.md`'s secrets table; the
 templates carry the same sets, and `tests/infra/test_secrets.py` fails if the two

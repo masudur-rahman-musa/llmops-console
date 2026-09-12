@@ -152,19 +152,23 @@ is one pod here and would be one per node on a larger one.
 | `node-exporter`, 1 pod per node | 32Mi | 50m | 64Mi |
 | `kube-state-metrics`, 1 pod | 64Mi | 50m | 128Mi |
 | `grafana`, 1 pod | 128Mi | 100m | 256Mi |
-| **total** | **480Mi** | **350m** | **960Mi** |
+| `alertmanager`, 1 pod | 32Mi | 50m | 64Mi |
+| **total** | **512Mi** | **400m** | **1024Mi** |
+
+The total now reads the envelope exactly, with nothing left over: Alertmanager is the exact remainder the four rows above it left.
 
 `tests/infra/test_k8s_grafana.py` derives those three totals from the built pod
 templates and checks them against the `monitoring` quota, the same way the two
 budgets above are checked; `tests/infra/test_k8s_monitoring.py` holds the three
-scrape rows against the values they are priced at here.
+scrape rows and `tests/infra/test_k8s_alerting.py` holds Alertmanager's own row
+against the values they are priced at here.
 
-What is left is 32Mi of requests, 50m of CPU and 64Mi of the limits ceiling, and
-every byte of it is spoken for: Alertmanager is exactly that row.
-There is no slack left in this namespace at all, so an Alertmanager that needs
-more is a conversation about this table in that plan rather than a quiet edit
-here — which is the direction the test enforces, because it asserts the
-remainder as an exact equality and not as a floor.
+What used to be left - 32Mi of requests, 50m of CPU and 64Mi of the limits
+ceiling - is now Alertmanager's own row, spent to the byte. There is
+no slack left in this namespace at all, so a future Alertmanager change that
+needs more is a conversation about this table rather than a quiet edit here -
+which is the direction the test enforces, because it asserts the total as an
+exact equality against the quota and not as a `<=`.
 
 There is no operator and no CustomResourceDefinition: this stack is written by
 hand rather than installed from `kube-prometheus-stack`, because the whole build
@@ -276,21 +280,24 @@ provider keys is the one closed both ways.
 | `default-deny` | `monitoring` | every pod | nothing, in either direction |
 | `allow-dns` | `monitoring` | every pod | egress to `kube-system` on UDP 53 and TCP 53 |
 | `metrics-ingress-from-monitoring` | `monitoring` | every pod with a `metrics` port | ingress from any pod in `monitoring`, each on its own `metrics` port |
-| `prometheus-egress` | `monitoring` | `prometheus` | egress to `gateway:8080`, `qdrant:6333` and the two exporters on their `metrics` ports - and no route off the cluster at all |
+| `prometheus-egress` | `monitoring` | `prometheus` | egress to `gateway:8080`, `qdrant:6333`, the two exporters on their `metrics` ports, `alertmanager:9093` and cert-manager on 9402 - and no other route off the cluster |
 | `grafana-ingress` | `monitoring` | `grafana` | ingress from `kube-system` (Traefik) on its serving port, and from nowhere else |
 | `grafana-egress` | `monitoring` | `grafana` | egress to `prometheus:9090` - and no route off the cluster at all |
+| `alertmanager-egress` | `monitoring` | `alertmanager` | egress to the public internet on TCP 443 only |
 
-The gateway is the only pod in the cluster with a route to the internet, and
-that is the point of the whole file: the Helpdesk holds no provider key, and
-with no `ipBlock` in any policy that selects it, even a bug in the companion
-repo cannot dial a provider directly. The Langfuse pair in `helpdesk-secrets` is
-dead config for the same reason, until an in-cluster collector relays it.
+The gateway and Alertmanager are the only two pods in the cluster with a route
+to the internet, and that is the point of the whole file:
+the Helpdesk holds no provider key, and with no `ipBlock` in any policy that
+selects it, even a bug in the companion repo cannot dial a provider directly.
+The Langfuse pair in `helpdesk-secrets` is dead config for the same reason,
+until an in-cluster collector relays it.
 
-The public destination is `0.0.0.0/0` minus `10.0.0.0/8`, `172.16.0.0/12`,
-`192.168.0.0/16` and `169.254.0.0/16`, on TCP 443 only. The link-local carve-out
-is the one worth naming: it closes `169.254.169.254`, the metadata endpoint an
-SSRF through a provider `base_url` would otherwise reach from the one pod that
-holds every key.
+Both public destinations are `0.0.0.0/0` minus `10.0.0.0/8`, `172.16.0.0/12`,
+`192.168.0.0/16` and `169.254.0.0/16`, on TCP 443 only - `alertmanager-egress`
+copies the gateway's excluded ranges exactly rather than re-deriving them. The
+link-local carve-out is the one worth naming: it closes `169.254.169.254`, the
+metadata endpoint an SSRF through a provider `base_url`, or a leaked credential
+inside Alertmanager's SMTP/Telegram relay, would otherwise reach.
 
 Qdrant's scrape is a separate `platform` policy rather than a `monitoring` peer
 added to `data-ingress-from-apps`: that policy's guarantee is that the data
@@ -376,6 +383,7 @@ are asserted equal, and equal to the names the build references, by
 | `gateway-secrets` | `apps` | `OPSCONSOLE_DATABASE_URL`, `OPSCONSOLE_API_KEYS`, `OPSCONSOLE_ADMIN_KEY_SHA256`, `OPSCONSOLE_BUDGET_OVERRIDE_SECRET`, `OPSCONSOLE_OTLP_ENDPOINT`, `OPSCONSOLE_OTLP_HEADERS`, `ANTHROPIC_API_KEY`, `ANTHROPIC_EU_API_KEY`, `OPENAI_API_KEY`, `AZURE_OPENAI_KEY`, `AZURE_OPENAI_ENDPOINT` | the gateway Deployment, by `envFrom` |
 | `helpdesk-secrets` | `apps` | `HELPDESK_GATEWAY_API_KEY`, `HELPDESK_DATABASE_URL`, `HELPDESK_LANGFUSE_PUBLIC_KEY`, `HELPDESK_LANGFUSE_SECRET_KEY`, `HELPDESK_LANGFUSE_HOST` | the four Helpdesk Deployments, by `envFrom` |
 | `grafana-admin` | `monitoring` | `GF_SECURITY_ADMIN_USER`, `GF_SECURITY_ADMIN_PASSWORD` | the Grafana Deployment, by `envFrom` |
+| `alertmanager-secrets` | `monitoring` | `SMTP_SMARTHOST`, `SMTP_FROM`, `SMTP_AUTH_USERNAME`, `SMTP_AUTH_PASSWORD`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | the Alertmanager Deployment, by `envFrom` |
 
 `traefik-basic-auth` is supplied once per routing namespace, not once per
 cluster: a `Middleware` reads its Secret from its own namespace, and a design note is
@@ -460,20 +468,20 @@ The scheduler has no liveness signal and that is a decision, not an omission: it
 serves no port, so a health probe would have to be a command no code in this
 repo defines, and a liveness probe against a command that does not exist
 restarts the pod forever. A wedged scheduler is therefore visible only as an
-object in kube-state-metrics; nothing pages on it until the alert rules land in
-row 23c.
+object in kube-state-metrics. Row 23c's `PodCrashLooping` alert pages on a
+container that keeps RESTARTING; a scheduler that hangs without crashing trips
+no alert at all, since nothing here reads a liveness signal it does not have -
+still a gap, not one this row closes.
 
 ## Still to land
 
 - The rest of `apps/` - the console with its `console.` Ingress.
 - The nightly eval CronJob in `evals/`.
-- The rest of `monitoring/`. Grafana is here, with its Ingress and one
-  provisioned dashboard, `gateway-overview`; the other five - cost, residency
-  and redaction, the Helpdesk agent, evals over time and the platform view - are
-  still to write. Then Alertmanager and the rules in
-  `../../project-obs/alerts/`, which is what the 32Mi left in the monitoring
-  envelope is held for. Postgres and Redis exporters are not planned yet and are
-  what the platform dashboard's two empty panels are waiting on.
+- `monitoring/` carries Grafana with all six dashboards and
+  Alertmanager with the rules in `../../project-obs/alerts/` - the
+  namespace's envelope is now spent exactly, to the byte. Postgres and Redis
+  exporters are not planned yet and are what the platform dashboard's two empty
+  panels are waiting on. Row 23d (backups) is still to come.
 - The `../secrets/*.enc.yaml` themselves, one per contract in the table above.
   The policy, the contracts and the guard are in place; the ciphertext waits on
   an age key being generated, which is one pass with `sops` installed.

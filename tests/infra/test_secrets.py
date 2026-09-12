@@ -58,14 +58,16 @@ SECRETS_DIR = REPO_ROOT / "infra" / "secrets"
 SOPS_CONFIG = REPO_ROOT / ".sops.yaml"
 GITIGNORE = REPO_ROOT / ".gitignore"
 
-#: The five Secrets, by name. The plans pin these; the key SETS are deliberately absent (see
+#: The six Secrets, by name. The plans pin these; the key SETS are deliberately absent (see
 #: the module docstring) because criterion 3 compares them file-against-README. `grafana-admin`
 #: is an earlier change's criterion 8, the fifth contract this repo publishes and does not supply.
+#: `alertmanager-secrets` is an earlier change's, the sixth.
 POSTGRES_CREDENTIALS = "postgres-credentials"
 TRAEFIK_BASIC_AUTH = "traefik-basic-auth"
 GATEWAY_SECRETS = "gateway-secrets"
 HELPDESK_SECRETS = "helpdesk-secrets"
 GRAFANA_ADMIN = "grafana-admin"
+ALERTMANAGER_SECRETS = "alertmanager-secrets"
 
 PLATFORM = "platform"
 APPS = "apps"
@@ -79,6 +81,7 @@ EXPECTED_NAMESPACES: dict[str, frozenset[str]] = {
     GATEWAY_SECRETS: frozenset({APPS}),
     HELPDESK_SECRETS: frozenset({APPS}),
     GRAFANA_ADMIN: frozenset({MONITORING}),
+    ALERTMANAGER_SECRETS: frozenset({MONITORING}),
 }
 
 #: One template per Secret (decision B), `traefik-basic-auth`'s being one file of two
@@ -90,6 +93,7 @@ EXAMPLE_FILENAMES: frozenset[str] = frozenset(
         f"{GATEWAY_SECRETS}.example.yaml",
         f"{HELPDESK_SECRETS}.example.yaml",
         f"{GRAFANA_ADMIN}.example.yaml",
+        f"{ALERTMANAGER_SECRETS}.example.yaml",
     }
 )
 
@@ -224,9 +228,9 @@ def namespace_of(document: dict[str, Any]) -> str | None:
 
 
 def example_contracts() -> dict[str, tuple[frozenset[str], frozenset[str]]]:
-    """`{name: (namespaces, keys)}` read off the four templates in `infra/secrets/`.
+    """`{name: (namespaces, keys)}` read off the templates in `infra/secrets/`.
 
-    Asserts the directory holds exactly the four files the plan names first, so a missing
+    Asserts the directory holds exactly the files `EXAMPLE_FILENAMES` names, so a missing
     template is a loud red rather than a contract map that is quietly one entry short.
     """
     assert SECRETS_DIR.is_dir(), f"{SECRETS_DIR} does not exist"

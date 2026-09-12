@@ -1,8 +1,8 @@
 # The monitoring stack: Prometheus and the two exporters (the scrape plane),
-# Grafana with its provisioning pair and its `grafana.` Ingress, and the
-# `monitoring` copies of the two middlewares that Ingress names. Alertmanager
-# and the alert rules land here next, and the remaining five
-# dashboards with them in row 23e.
+# Grafana with its provisioning pair and its `grafana.` Ingress, the
+# `monitoring` copies of the two middlewares that Ingress names, all six
+# dashboards and Alertmanager with the alert rules mounted into
+# Prometheus.
 #
 # No `namespace:` transformer here on purpose, the same reason `platform/` has
 # none: it would stamp `metadata.namespace` onto the cluster-scoped ClusterRole
@@ -19,6 +19,7 @@ resources:
   - prometheus.yaml
   - exporters.yaml
   - grafana.yaml
+  - alertmanager.yaml
   - middlewares.yaml
   - ingress.yaml
 

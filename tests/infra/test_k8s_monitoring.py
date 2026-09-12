@@ -124,8 +124,11 @@ METRICS_PORT_NUMBERS = {PROMETHEUS: 9090, NODE_EXPORTER: 9100, KUBE_STATE_METRIC
 GRAFANA = "grafana"
 GRAFANA_PORT_NAME = "http"
 
-#: Criterion 3 and decision C: the five static targets, as Service DNS. Every one is a Service
-#: this build emits, in the namespace it emits it in.
+#: Criterion 3 and decision C: the SIX static targets, as Service DNS. Every one is a Service
+#: this build emits, in the namespace it emits it in. `cert-manager` joined with an earlier change
+#: decision A, to back `CertificateExpiringSoon` with a real metric - it is helm-installed and
+#: unmanaged by this kustomize build, so this is the one target with no pod template here to
+#: check its port against; `tests/infra/test_k8s_alerting.py` covers the egress side of it.
 SCRAPE_TARGETS: frozenset[str] = frozenset(
     {
         "gateway.apps.svc.cluster.local:8080",
@@ -133,6 +136,7 @@ SCRAPE_TARGETS: frozenset[str] = frozenset(
         "kube-state-metrics.monitoring.svc.cluster.local:8080",
         "node-exporter.monitoring.svc.cluster.local:9100",
         "prometheus.monitoring.svc.cluster.local:9090",
+        "cert-manager.cert-manager.svc.cluster.local:9402",
     }
 )
 
@@ -166,6 +170,12 @@ WORKLOAD_RESOURCES: dict[str, dict[str, str]] = {
 #: `verbs` list must sit inside. `create`, `patch` or `*` here is a scraper that can mutate.
 READ_ONLY_VERBS = frozenset({"get", "list", "watch"})
 
+#: An earlier change's two new destinations: Alertmanager, so Prometheus can deliver a firing alert, and
+#: cert-manager's own metrics port, resolved by NUMBER rather than by name - no pod template for
+#: it exists in this build (it is helm-installed and unmanaged by this kustomize build).
+ALERTMANAGER = "alertmanager"
+CERT_MANAGER = "cert-manager"
+
 #: Criterion 7: every destination `prometheus-egress` may reach, as `(workload, resolved port)`.
 #: The DNS allow is NOT here - it lives in `allow-dns`, which selects every pod in `monitoring`.
 PROMETHEUS_EGRESS_DESTINATIONS: frozenset[tuple[str, int]] = frozenset(
@@ -174,6 +184,8 @@ PROMETHEUS_EGRESS_DESTINATIONS: frozenset[tuple[str, int]] = frozenset(
         (QDRANT, 6333),
         (NODE_EXPORTER, 9100),
         (KUBE_STATE_METRICS, 8080),
+        (ALERTMANAGER, 9093),
+        (CERT_MANAGER, 9402),
     }
 )
 
@@ -186,9 +198,10 @@ PROMETHEUS_EGRESS_DESTINATIONS: frozenset[tuple[str, int]] = frozenset(
 #: the same change as the policy; what that policy may actually reach is asserted in
 #: `tests/infra/test_k8s_grafana.py`, by
 #: `test_grafana_is_reachable_only_from_the_router_and_reaches_only_prometheus`, including its
-#: own absent `ipBlock`.
+#: own absent `ipBlock`. `alertmanager-egress` joined with an earlier change - the second and last pod in
+#: this namespace with an `ipBlock` at all, asserted in `tests/infra/test_k8s_alerting.py`.
 MONITORING_EGRESS_POLICIES: frozenset[str] = frozenset(
-    {"allow-dns", "prometheus-egress", "grafana-egress"}
+    {"allow-dns", "prometheus-egress", "grafana-egress", "alertmanager-egress"}
 )
 
 
@@ -345,7 +358,7 @@ def scrape_config(documents: list[dict[str, Any]]) -> dict[str, Any]:
 def every_key(value: object) -> list[str]:
     """Every mapping key anywhere in a parsed structure, at any depth.
 
-    A whole-document walk rather than a look at the five jobs: service discovery can be declared
+    A whole-document walk rather than a look at the jobs alone: service discovery can be declared
     beside `static_configs` in a job, under `global`, or inside a `relabel_configs` entry, and a
     scan of the jobs alone would report a discovered target as absent.
     """
@@ -572,8 +585,9 @@ def egress_destinations(
     """An egress policy's destinations as `(workload-or-namespace, resolved port)`.
 
     Every peer of a rule is crossed with every port of that rule, which is what the rule means:
-    grouping four targets and four numbers into one rule allows all sixteen, and this set says so
-    rather than flattering the manifest into the four the criterion names.
+    grouping several targets and several numbers into one rule allows every pairing between them,
+    and this set says so rather than flattering the manifest into only the pairs the criterion
+    names.
     """
     namespace = namespace_of(document)
     assert namespace is not None, f"{name_of(document)} declares no metadata.namespace"
@@ -668,7 +682,10 @@ def test_every_scraped_container_port_is_named_metrics_on_its_agreed_number(
     """
     templates = pod_templates(built, MONITORING)
     scraped = sorted(METRICS_PORT_NUMBERS)
-    assert sorted(templates) == sorted([*scraped, GRAFANA]), (
+    # An earlier change adds a fifth pod template, Alertmanager - not scraped by this plan (it carries
+    # no scrape target of its own), so it joins Grafana as a NAMED exclusion from the three
+    # SCRAPE TARGETS this case narrows to, rather than silently reddening this equality.
+    assert sorted(templates) == sorted([*scraped, GRAFANA, ALERTMANAGER]), (
         f"monitoring has pod templates {sorted(templates)}"
     )
 
@@ -691,14 +708,15 @@ def test_every_scraped_container_port_is_named_metrics_on_its_agreed_number(
     )
 
 
-def test_the_scrape_config_carries_exactly_the_five_static_targets(
+def test_the_scrape_config_carries_exactly_the_six_static_targets(
     built: list[dict[str, Any]],
 ) -> None:
     """Criterion 3 and decision C, over the PARSED `prometheus.yml` the ConfigMap holds as a
-    string: five jobs, each with exactly one `static_configs` entry, the targets by set equality,
-    every `metrics_path` `/metrics`, and no key ending `_sd_configs` anywhere in the document.
+    string: six jobs, each with exactly one
+    `static_configs` entry, the targets by set equality, every `metrics_path` `/metrics`, and no
+    key ending `_sd_configs` anywhere in the document.
 
-    Catches a sixth job nobody agreed to and a fifth that never landed - a missing job is a
+    Catches a seventh job nobody agreed to and a sixth that never landed - a missing job is a
     dashboard panel that is empty forever with no error anywhere, since a scrape config
     that omits a target is as valid as one that names it. Catches a target written against a
     Service name or a namespace this build does not emit (`qdrant.apps...`,
@@ -790,9 +808,10 @@ def test_each_scrape_workload_declares_the_quantities_the_budget_prices(
     time by VALUE. The namespace TOTALS and the `monitoring-envelope` quota moved with the
     inventory to tests/infra/test_k8s_grafana.py's
     test_grafana_fits_what_the_scrape_plane_left_and_leaves_alertmanager_its_row, which sums
-    every pod template in `monitoring` - Grafana's included - and pins the remainder as exactly
-    32Mi, 50m and 64Mi. A totals assertion written for three workloads is red against a correct
-    four-workload build, and two files summing one namespace would drift.
+    every pod template in `monitoring` - Grafana's and, since an earlier change, Alertmanager's included -
+    and pins the remainder as exactly zero on every quantity, Alertmanager having filled what
+    used to be left over. A totals assertion written for three workloads is red against a correct
+    five-workload build, and two files summing one namespace would drift.
 
     Catches a quantity raised in isolation to make a pod start - the state where the namespace is
     over its quota and whichever pod is admitted LAST is refused, with the others running fine
@@ -875,12 +894,16 @@ def test_kube_state_metrics_is_the_only_subject_with_rbac_and_reads_only(
     )
 
 
-def test_prometheus_egress_reaches_exactly_the_four_scrape_targets_and_nothing_off_cluster(
+def test_prometheus_egress_reaches_exactly_the_six_agreed_destinations_and_nothing_off_cluster(
     built: list[dict[str, Any]],
 ) -> None:
     """Criterion 7, by EQUALITY of `(destination, resolved port)` pairs, plus the two absences it
-    names: no `ipBlock` on `prometheus-egress`, and no `monitoring` policy other than `allow-dns`
-    and `prometheus-egress` declaring an `egress` block at all.
+    names: no `ipBlock` on `prometheus-egress`, and no `monitoring` policy other than `allow-dns`,
+    `prometheus-egress` and an earlier change's `alertmanager-egress` declaring an `egress` block at all.
+    An earlier change adds Alertmanager (9093, resolved against its pod template) and cert-manager (9402,
+    by number - see `tests/infra/test_k8s_alerting.py`'s
+    test_prometheus_can_reach_alertmanager_and_cert_manager_and_nothing_new_besides for why that
+    one destination cannot be resolved the same way as the other five).
 
     It lives here and not in `test_k8s_netpol.py` because that file's §8 authorises three
     constant changes and one rename, and no new case - see the module docstring.
@@ -891,9 +914,9 @@ def test_prometheus_egress_reaches_exactly_the_four_scrape_targets_and_nothing_o
     egress side reads as DOWN with no error in either pod's logs, which is the single most
     expensive failure shape in this namespace. Catches an `ipBlock` added so Prometheus can reach
     a hosted endpoint, which is the exfiltration path tests/infra/test_k8s_netpol.py's
-    test_the_gateway_is_the_only_pod_with_a_route_to_the_public_internet keeps to the gateway
-    alone - that case sees the CIDR build-wide and this one sees it on the policy, so neither
-    depends on the other being written. Catches an egress block added to
+    test_the_gateway_and_alertmanager_are_the_only_pods_with_a_route_to_the_public_internet keeps
+    to those two pods alone - that case sees the CIDR build-wide and this one sees it on the
+    policy, so neither depends on the other being written. Catches an egress block added to
     `metrics-ingress-from-monitoring` or to `default-deny`, which would make the deny an allow.
     """
     document = policy(built, MONITORING, "prometheus-egress")
@@ -937,12 +960,17 @@ def test_prometheus_egress_reaches_exactly_the_four_scrape_targets_and_nothing_o
                 PROMETHEUS: {("TCP", 9090)},
                 NODE_EXPORTER: {("TCP", 9100)},
                 KUBE_STATE_METRICS: {("TCP", 8080)},
+                # Not scraped (Alertmanager carries no scrape target of its own) but reachable
+                # anyway: this policy admits every pod whose port resolves the name `metrics`,
+                # and Alertmanager's does - the same mechanism that is what lets
+                # Prometheus reach it to POST a firing alert with no ingress policy of its own.
+                ALERTMANAGER: {("TCP", 9093)},
             },
             # Grafana is selected by this policy (it selects every pod) and reached by none of
             # it: an earlier change decision D names its port `http`, not `metrics`, so the named-port
             # allow resolves against nothing on that pod - which is exactly why 23b gives it
-            # `grafana-ingress` of its own. Excluded here by NAME so a fourth scrape target that
-            # quietly loses its `metrics` port is still a failure and not a silent exemption.
+            # `grafana-ingress` of its own. Excluded here by NAME so a fifth pod in `monitoring`
+            # that quietly loses its `metrics` port is still a failure and not a silent exemption.
             {GRAFANA},
             id="monitoring-every-pod-by-port-name",
         ),

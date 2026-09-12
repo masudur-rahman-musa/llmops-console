@@ -177,6 +177,7 @@ ACME_SOLVERS = [{"http01": {"ingress": {"class": "traefik"}}}]
 #: `grafana-admin` joined with an earlier change's Grafana, which names it by `envFrom` in `monitoring`,
 #: for exactly the reason the sentence above gives: this constant is build-wide, so it moves in
 #: the same change as the manifest or a correct manifest reddens here.
+#: `alertmanager-secrets` joins the same way with an earlier change's Alertmanager.
 PINNED_SECRET_NAMES = frozenset(
     {
         "postgres-credentials",
@@ -184,6 +185,7 @@ PINNED_SECRET_NAMES = frozenset(
         "gateway-secrets",
         "helpdesk-secrets",
         "grafana-admin",
+        "alertmanager-secrets",
     }
 )
 

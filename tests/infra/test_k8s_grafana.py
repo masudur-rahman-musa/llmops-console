@@ -80,6 +80,7 @@ GRAFANA = "grafana"
 PROMETHEUS = "prometheus"
 NODE_EXPORTER = "node-exporter"
 KUBE_STATE_METRICS = "kube-state-metrics"
+ALERTMANAGER = "alertmanager"
 
 NETWORK_POLICY = "NetworkPolicy"
 
@@ -92,7 +93,8 @@ RBAC_KINDS = ("ClusterRole", "ClusterRoleBinding")
 
 #: Criterion 1, as `(kind, name, namespace)`, and the equality this module now owns. The first
 #: eleven rows are an earlier change's, the next two are the envelope objects criterion 5 keeps UNCHANGED,
-#: and the last nine are this plan's. `None` is what a cluster-scoped object's namespace reads as.
+#: the next nine are 23b's, and the last three are an earlier change's Alertmanager (its manifest's own
+#: "emits exactly" wording). `None` is what a cluster-scoped object's namespace reads as.
 MONITORING_OBJECTS: frozenset[tuple[str, str, str | None]] = frozenset(
     {
         ("Deployment", PROMETHEUS, MONITORING),
@@ -117,6 +119,10 @@ MONITORING_OBJECTS: frozenset[tuple[str, str, str | None]] = frozenset(
         ("Ingress", GRAFANA, MONITORING),
         ("Middleware", "rate-limit", MONITORING),
         ("Middleware", "security-headers", MONITORING),
+        # An earlier change's three (its §7 step 5 sweep, this file's own entry).
+        ("Deployment", ALERTMANAGER, MONITORING),
+        ("Service", ALERTMANAGER, MONITORING),
+        ("ConfigMap", "alertmanager-config", MONITORING),
     }
 )
 
@@ -193,27 +199,32 @@ GRAFANA_RESOURCES: dict[str, str] = {
 }
 
 #: Criterion 5's totals, DERIVED in the case from the built pod templates rather than restated
-#:: 256 + 32 + 64 + 128 = 480Mi, 150 + 50 + 50 + 100 = 350m,
-#: 512 + 64 + 128 + 256 = 960Mi.
-EXPECTED_REQUEST_MEMORY_BYTES = 480 * 1024**2
-EXPECTED_REQUEST_CPU_MILLICORES = 350
-EXPECTED_LIMIT_MEMORY_BYTES = 960 * 1024**2
+#:: 256 + 32 + 64 + 128 + 32 = 512Mi, 150 + 50 + 50 + 100 + 50 = 400m,
+#: 512 + 64 + 128 + 256 + 64 = 1024Mi - the fifth term each time is an earlier change's Alertmanager,
+#: which fills what this namespace used to leave over.
+EXPECTED_REQUEST_MEMORY_BYTES = 512 * 1024**2
+EXPECTED_REQUEST_CPU_MILLICORES = 400
+EXPECTED_LIMIT_MEMORY_BYTES = 1024 * 1024**2
 
 #: Criterion 5's other half: the envelope is UNCHANGED, so these three are asserted as STRINGS
 #: against the built quota - the API server compares quantities, and a test that parsed first
 #: would accept `1024Mi` for a table that says `1Gi`.
 MONITORING_QUOTA = {"requests.memory": "512Mi", "requests.cpu": "400m", "limits.memory": "1Gi"}
 
-#: Criterion 5's remainder, to the byte: what 23c's Alertmanager has left, each an EXACT equality
-#: and never a band. 512 - 480 = 32Mi, 400 - 350 = 50m, 1024 - 960 = 64Mi.
-HEADROOM_REQUEST_MEMORY_BYTES = 32 * 1024**2
-HEADROOM_REQUEST_CPU_MILLICORES = 50
-HEADROOM_LIMIT_MEMORY_BYTES = 64 * 1024**2
+#: An earlier change's Alertmanager fills what this row used to leave over, to the byte - the reason
+#: `EXPECTED_REQUEST_MEMORY_BYTES` and its two siblings above already read the totals AT quota
+#: (512Mi/400m/1Gi) rather than the 480Mi/350m/960Mi four pods alone would sum to: 480 + 32 =
+#: 512Mi, 350 + 50 = 400m, 960 + 64 = 1024Mi. `HEADROOM_*` is now the remainder left after
+#: Alertmanager too - zero on every quantity, an equality and never a `<=`.
+HEADROOM_REQUEST_MEMORY_BYTES = 0
+HEADROOM_REQUEST_CPU_MILLICORES = 0
+HEADROOM_LIMIT_MEMORY_BYTES = 0
 
-#: The four pod templates `monitoring` carries after this plan. Pinned so the totals cannot be
-#: reached by a fifth workload that happens to cancel a wrong quantity out.
+#: The five pod templates `monitoring` carries after an earlier change (23a's three, this plan's Grafana,
+#: 23c's Alertmanager). Pinned so the totals cannot be reached by a sixth workload that happens
+#: to cancel a wrong quantity out.
 MONITORING_WORKLOADS: frozenset[str] = frozenset(
-    {PROMETHEUS, NODE_EXPORTER, KUBE_STATE_METRICS, GRAFANA}
+    {PROMETHEUS, NODE_EXPORTER, KUBE_STATE_METRICS, GRAFANA, ALERTMANAGER}
 )
 
 #: Decision D: Grafana's container port serves the UI the Ingress points at, so it is named
@@ -1053,10 +1064,10 @@ def test_the_monitoring_namespace_emits_grafana_and_nothing_else_new(
         (str(document.get("kind")), name_of(document), namespace_of(document))
         for document in built
         if (namespace_of(document) == MONITORING or document.get("kind") in RBAC_KINDS)
-        # The six `monitoring` NetworkPolicies are in this namespace too, and they are pinned by
+        # The `monitoring` NetworkPolicies are in this namespace too, and they are pinned by
         # equality in both directions - `(namespace, name)` and per namespace - by
         # tests/infra/test_k8s_netpol.py's
-        # test_the_whole_build_emits_exactly_the_seventeen_policies_and_nowhere_else and
+        # test_the_whole_build_emits_exactly_the_eighteen_policies_and_nowhere_else and
         # test_each_namespace_emits_exactly_the_policies_the_plan_names. Listing them here as
         # well would be two files pinning one set, which drift apart.
         and document.get("kind") != NETWORK_POLICY
@@ -1237,18 +1248,20 @@ def test_grafana_fits_what_the_scrape_plane_left_and_leaves_alertmanager_its_row
     built: list[dict[str, Any]],
 ) -> None:
     """Criterion 5 and decision C: Grafana's resources by VALUE as the whole flattened mapping,
-    the three namespace totals DERIVED from the built pod templates rather than restated, the `monitoring-envelope` quota still reading the three quantities plan
-    20a set, and the remainder pinned as EXACTLY 32Mi, 50m and 64Mi - an equality, never a `<=`.
+    the three namespace totals DERIVED from the built pod templates rather than restated
+    (a project rule, now summed over FIVE pod templates since an earlier change's Alertmanager fills
+    what this namespace used to leave over), the `monitoring-envelope` quota still reading the
+    three quantities an earlier change set, and the remainder pinned as EXACTLY zero on every quantity -
+    an equality, never a `<=`.
 
-    The remainder is the assertion with teeth. A Grafana sized at 96Mi would still fit the quota
-    and would still leave the namespace inside its envelope; what it would break is 23c, which is
-    drafted against exactly 32Mi of headroom, and a `<=` check could never say so. Catches a
-    quantity raised in isolation to make the pod start, which is the state where the namespace is
-    over quota and whichever pod is admitted LAST is refused, with the others running fine and
-    nothing saying why Grafana never appeared. Catches an extra `limits.cpu` nobody agreed to,
-    which throttles the UI rather than protecting anything - the whole mapping is compared, so an
-    added key fails. Catches a second replica, which the totals see and the per-row values cannot,
-    and which would also mean two Grafanas writing one RWO sqlite volume. Catches the envelope
+    The remainder is the assertion with teeth even at zero. A Grafana sized at 96Mi would still
+    fit the quota; what it would break is Alertmanager, admitted last, which a `<=` check could
+    never say. Catches a quantity raised in isolation to make a pod start, which is the state
+    where the namespace goes OVER quota and whichever pod is admitted LAST is refused, with the
+    others running fine and nothing saying why. Catches an extra `limits.cpu` nobody agreed to,
+    which throttles rather than protecting anything - the whole mapping is compared, so an added
+    key fails. Catches a second replica, which the totals see and the per-row values cannot, and
+    which would also mean two Grafanas writing one RWO sqlite volume. Catches the envelope
     quietly raised to make the arithmetic work, since the quota is compared as written strings.
     """
     templates = pod_templates(built, MONITORING)
@@ -1466,8 +1479,8 @@ def test_grafana_is_reachable_only_from_the_router_and_reaches_only_prometheus(
     two exporters as well. Catches `grafana-egress` widened to every pod in `monitoring`, which
     would let the UI dial the exporters directly, and catches an `ipBlock` added so a panel can
     reach a hosted datasource - the exfiltration path tests/infra/test_k8s_netpol.py's
-    test_the_gateway_is_the_only_pod_with_a_route_to_the_public_internet keeps to the gateway
-    alone. Catches an `egress` block added to `grafana-ingress`, which under
+    test_the_gateway_and_alertmanager_are_the_only_pods_with_a_route_to_the_public_internet keeps
+    to those two pods alone. Catches an `egress` block added to `grafana-ingress`, which under
     `default-deny`'s `Egress` type would quietly become the only thing deciding where Grafana
     may dial.
     """
