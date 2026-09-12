@@ -19,7 +19,7 @@ ciphertext. The rule deliberately does not match `*.example.yaml`.
 
 Nothing in this directory is a kustomize input. `infra/k8s` lists no path under
 it and the build emits no `Secret` at all; these files are applied by hand (and,
-from row 22, by CD) before the manifests that name them. Until they exist an
+from row 22b, by CD) before the manifests that name them. Until they exist an
 apply fails on the missing Secret, which is the intended direction - a
 placeholder with a working password in git would come up running and never
 mention itself again.

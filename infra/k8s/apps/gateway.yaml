@@ -14,9 +14,11 @@
 # forever.
 #
 # The image is set by `kustomization.yaml`'s `images:` transformer, not here.
-# `0.0.0-unbuilt` is honest: no image has been pushed yet, and the deploy that
-# publishes one sets its SHA with `kustomize edit set image`. A floating
-# `latest` or `main` here would be a cluster whose running code no commit names.
+# `0.0.0-unbuilt` is honest: `build.yml` publishes an image per commit on `main`
+#, and nothing has yet told this overlay WHICH of them to run - the
+# deploy that does sets that commit's SHA with `kustomize edit set image`
+#. A floating `latest` or `main` here would be a cluster whose running
+# code no commit names.
 #
 # Configuration arrives as two whole objects by `envFrom`: the `ConfigMap`
 # below, which is a property of the cluster and readable by anyone with

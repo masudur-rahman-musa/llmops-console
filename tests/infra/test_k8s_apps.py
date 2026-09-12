@@ -1440,7 +1440,8 @@ def test_the_gateway_image_is_pinned_and_not_a_floating_tag(built: list[dict[str
     whose running code no commit names and a rollout that changes meaning without a diff; and
     catches the repository pointed at another owner or another image name, which is an apply
     that pulls somebody else's code. The tag is asserted as an exact string as well as against
-    the refusal list, because `0.0.0-unbuilt` is the honest placeholder row 22 replaces."""
+    the refusal list, because `0.0.0-unbuilt` is the honest placeholder row 22b replaces -
+    `build.yml` publishes the image this tag does not yet name."""
     image = str(sole_container(gateway_pod_owner(built)).get("image", ""))
     assert image, f"{GATEWAY} declares no image"
     assert "@" not in image, f"{GATEWAY} is pinned by digest ({image}); decision D names a tag"

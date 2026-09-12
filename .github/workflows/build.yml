@@ -1,0 +1,126 @@
+name: build
+# the design's image pipeline: the gateway image built for both architectures, pushed
+# to GHCR, scanned by Trivy, and published with its SBOM. Nothing here touches a
+# cluster - the deploy is `deploy.yml`, and it is gated on this workflow
+# being green.
+#
+# The gateway only. This repository has one `Dockerfile`; the four `helpdesk-*`
+# images belong to the companion workload repo and are published under its own
+# registry path, which is why `infra/k8s/apps/kustomization.yaml` names them from
+# a different owner path and this file never mentions them.
+#
+# No `pull_request` trigger, deliberately. A fork's pull request would arrive with
+# a `GITHUB_TOKEN` and reach the login step below with `packages: write`
+# requested - an untrusted `Dockerfile` running against this repository's registry.
+# Pre-merge checks live in `ci.yml`, which pushes nothing.
+#
+# `workflow_dispatch` is here so that rebuilding an image - after a base-image CVE,
+# or a runner change - is a button rather than an empty commit on `main`.
+on:
+  push:
+    branches: [main]
+    # Release tags produce an image too: without this the tag that names a release
+    # points at nothing in the registry.
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  # Per ref, and NOT cancel-in-progress: an interrupted push leaves a partially
+  # uploaded manifest, and the run that would have scanned it never reports. A
+  # queued second build is cheaper than an unscanned image.
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    # Exactly the three the push needs, declared on the job so the scope is the
+    # job's own: `contents: read` to check out, `packages: write` to push to GHCR,
+    # `id-token: write` for the attestations buildx attaches to the image. No
+    # `contents: write` - nothing in this pipeline writes to the repository.
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    env:
+      SBOM_FILE: sbom.spdx.json
+    steps:
+      - uses: actions/checkout@v4
+
+      # arm64 is emulated here: the Hetzner CAX21 nodes are arm64 and a developer's
+      # machine is either, so an image that runs on one only fails at the pull with
+      # `exec format error`. The emulated half is slow, which is what the GitHub
+      # Actions layer cache below is for.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      # The `GITHUB_TOKEN`, not a personal access token: it is scoped to this run
+      # and expires with it. `registry` is required - omitted, the action logs in to
+      # Docker Hub and the push goes somewhere nobody deploys from.
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # One tag, the full commit SHA, and nothing else. A `latest` or a `main` here
+      # would be a cluster whose running code no commit names and a rollback with
+      # no fixed meaning - the same reason `infra/k8s/apps/kustomization.yaml`
+      # refuses a floating tag and carries `0.0.0-unbuilt` until a deploy runs.
+      #
+      # `sbom: true` attaches the SPDX document to the image as an attestation, so
+      # the answer to "which version of that library shipped" travels with the
+      # artefact rather than living in a run that ages out.
+      - name: Build and push the gateway image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/developermusa/ai-operations-console/gateway:${{ github.sha }}
+          sbom: true
+          provenance: mode=max
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The same attestation, read back out of the registry into a file. The
+      # attestation is the record; this is so a reader can answer the question from
+      # the run page without pulling a multi-arch image first. Multi-platform, so
+      # the document is keyed by platform.
+      - name: Extract the SBOM from the pushed image
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect \
+            "ghcr.io/developermusa/ai-operations-console/gateway:${{ github.sha }}" \
+            --format '{{ json .SBOM }}' > "$SBOM_FILE"
+
+      # Uploaded BEFORE the scan, and on `always()`: a run whose Trivy step fails is
+      # exactly the run someone needs the component list for, and a step with no
+      # condition is skipped once an earlier one has failed.
+      - name: Publish the SBOM
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ github.sha }}
+          path: ${{ env.SBOM_FILE }}
+          if-no-files-found: error
+
+      # The gate. `exit-code: '1'` is the whole point: the action's default is 0,
+      # which prints a CRITICAL table under a green tick. CRITICAL alone, and
+      # `ignore-unfixed: true`, so the gate blocks on what a rebuild can actually
+      # clear - a threshold nobody switches off in week two.
+      #
+      # The reference that was just pushed, not an image loaded into the runner:
+      # what reached the registry is what gets scanned. On a multi-arch tag Trivy resolves the
+      # runner's own platform (amd64); the arm64 half shares this base image and
+      # this lockfile, so the CVE set it would report is the same one.
+      - name: Scan the pushed image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ghcr.io/developermusa/ai-operations-console/gateway:${{ github.sha }}
+          severity: CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+          format: table

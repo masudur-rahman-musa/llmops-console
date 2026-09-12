@@ -20,11 +20,12 @@ resources:
 
 # The Deployment writes a bare `gateway`, which nothing can pull, so a manifest
 # applied without this transformer fails on the pull rather than running
-# something nobody chose. `0.0.0-unbuilt` is the honest placeholder: no image
-# has been pushed yet, and the deploy that publishes one replaces the tag with a
-# commit SHA (`kustomize edit set image`). A `latest` or a `main` here would be
-# a cluster whose running code no commit names, and a rollout that changes
-# meaning with no diff to show for it.
+# something nobody chose. `0.0.0-unbuilt` is the honest placeholder: `build.yml`
+# pushes an image tagged with the commit SHA on every push to `main`,
+# and this overlay has not been told which of them to run - the deploy that
+# chooses replaces the tag with that SHA (`kustomize edit set image`, row 22b).
+# A `latest` or a `main` here would be a cluster whose running code no commit
+# names, and a rollout that changes meaning with no diff to show for it.
 #
 # Both llama.cpp pods write the bare name `llama` and share the one entry below,
 # which is pinned to an exact upstream build for the same reason, and
@@ -41,8 +42,9 @@ images:
     newName: ghcr.io/ggml-org/llama.cpp
     newTag: server-b10902
   # The four Helpdesk workloads, each its own image out of the companion repo's
-  # registry. Same honest placeholder tag as the gateway: nothing has been
-  # published yet, so an apply made before row 22's deploy fails on the pull.
+  # registry. The same placeholder tag as the gateway, for a stronger reason:
+  # nothing has been published under this path at all, so an apply made before
+  # row 22b's deploy fails on the pull.
   - name: helpdesk-agent-api
     newName: ghcr.io/developermusa/ai-helpdesk-governed-access/helpdesk-agent-api
     newTag: 0.0.0-unbuilt
