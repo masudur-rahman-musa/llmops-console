@@ -1,4 +1,4 @@
-.PHONY: help setup run test select-tests test-adjacent lint typecheck format verify eval infra-check k8s-check migrate purge-residency refresh-rollup secrets-encrypt secrets-decrypt secrets-check
+.PHONY: help setup run test select-tests test-adjacent lint typecheck format verify eval infra-check k8s-check migrate purge-residency refresh-rollup secrets-encrypt secrets-decrypt secrets-check load
 
 # The console arrives in a later milestone. Until then its checks are skipped
 # rather than deleted, so the intended gate stays visible in this file. The
@@ -53,6 +53,30 @@ refresh-rollup: ## Refresh the daily cost rollup the console reads
 	uv run ops-refresh-rollup
 eval:       ## Project evals: golden set vs project-evals/baseline.json
 	uv run ops-eval run --target http://localhost:8080 --set "$$GOLDEN_SET" --tenant evals --out project-evals/reports/local
+# The k6 load run: 50 RPS for ten minutes against the real gateway over the
+# fixed-delay mock provider (`docker-compose.load.yml`).
+#
+# One logical shell line, so the throwaway key lives in one shell's environment
+# and nowhere else: it is generated here, its digest is handed to the gateway and
+# the key itself to k6, and neither is written to a file. The stack comes up and
+# is migrated before k6 starts, since every served request writes the ledger.
+# k6's exit code is captured straight after it runs and is the target's own, so
+# a breached threshold fails `make load` and the workflow that calls it.
+# The results directory is opened to every uid because the k6 image runs as its
+# own non-root user, which on a Linux runner does not own the bind mount.
+LOAD_COMPOSE = docker compose -f docker-compose.yml -f docker-compose.load.yml --profile load
+load:       ## k6 load test, 50 RPS for 10 minutes, against a mock provider
+	@mkdir -p project-evals/load/results
+	@chmod a+rwx project-evals/load/results
+	@key=$$(openssl rand -hex 32); \
+	digest=$$(printf '%s' "$$key" | openssl dgst -sha256 -r | cut -d' ' -f1); \
+	export LOAD_API_KEY="$$key"; \
+	export OPSCONSOLE_API_KEYS="load:$$digest"; \
+	$(LOAD_COMPOSE) up -d --build --wait gateway mock-provider || exit $$?; \
+	$(LOAD_COMPOSE) exec -T gateway ops-migrate || exit $$?; \
+	$(LOAD_COMPOSE) run --rm k6; \
+	status=$$?; \
+	exit $$status
 # Two halves, each on its own line so a failure in either is the target's exit
 # code. The terraform half runs for real; the kustomize half is a delegation to
 # `k8s-check`, still written as a conditional rather than `A && B || C`, which

@@ -37,6 +37,7 @@ pl/
 .claude/hooks/local_*
 # AI
 project-evals/reports/
+project-evals/load/results/
 # Service
 .terraform/
 *.tfstate

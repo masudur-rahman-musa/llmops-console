@@ -1,0 +1,44 @@
+# The k6 load run: `make load`, never `docker compose up` on its own.
+#
+# An override over `docker-compose.yml`, under profile `load`, so the everyday
+# stack never starts either service below. The gateway is the real image; its
+# providers are the fixed-delay mock, through a whole routing policy of its own,
+# so no request can reach a real provider or a model on disk.
+#
+# No credential is written in this file. `make load` generates a throwaway
+# tenant key per run and passes it, and its digest, as environment only.
+services:
+  gateway:
+    environment:
+      # Written out rather than derived: `tests/load/test_load_compose.py` checks
+      # this path against the mount target below, and a drift between the two is
+      # a gateway that refuses to start.
+      OPSCONSOLE_ROUTING_POLICY_PATH: /etc/opsconsole/routing.load.yaml
+      OPSCONSOLE_API_KEYS: ${OPSCONSOLE_API_KEYS}
+    volumes:
+      - ./project-evals/load/routing.load.yaml:/etc/opsconsole/routing.load.yaml:ro
+    depends_on:
+      mock-provider: { condition: service_healthy }
+
+  mock-provider:
+    build: project-evals/load/mock-provider
+    profiles: [load]
+    healthcheck:
+      # The slim image carries no curl, so the check is the interpreter itself.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  k6:
+    image: grafana/k6:1.3.0
+    profiles: [load]
+    command: ["run", "/scripts/gateway.js"]
+    environment:
+      LOAD_API_KEY: ${LOAD_API_KEY}
+      GATEWAY_URL: http://gateway:8080
+    volumes:
+      - ./project-evals/load/k6:/scripts:ro
+      - ./project-evals/load/results:/results
+    depends_on:
+      gateway: { condition: service_healthy }
