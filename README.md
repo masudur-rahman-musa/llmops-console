@@ -90,6 +90,34 @@ as a floor the detectors have to keep clearing rather than as a field measuremen
 | Recall | 1.000 |
 <!-- redaction-table:end -->
 
+## Load
+
+`make load` runs k6 against the real gateway at a constant 50 requests a second
+for ten minutes. The providers behind it are a mock that answers in a fixed
+time, so every millisecond above that is the gateway's own work: auth, routing,
+residency, redaction, both caches, rate limits, budgets and the ledger write.
+The traffic is 80% chat, 10% streamed chat and 10% embeddings, and one chat
+request in five repeats a prompt so the caches take part.
+
+The run fails if chat p95 reaches 6 s, if more than 0.5% of requests fail, or if
+k6 drops a single iteration because the gateway could not keep up. The same run
+can be started by hand from the `load` workflow in GitHub Actions.
+
+One run, on an Apple M1 (8 cores, Docker Desktop with 10 GB), one gateway worker:
+
+| Metric | Value |
+| --- | --- |
+| Requests | 30,001 in 10 min |
+| Achieved rate | 49.98 req/s |
+| Dropped iterations | 0 |
+| Error rate | 0.00% |
+| Chat p50 / p95 / p99 | 438 / 497 / 583 ms |
+| Mock delay, chat | 400 ms (streamed: 10 chunks, 40 ms apart) |
+| Mock delay, embeddings | 20 ms |
+
+With 400 ms of mock delay, the gateway adds about 38 ms at the median and 97 ms
+at p95. Requests answered from the cache come back in about 25 ms.
+
 **Status: under active development.** Architecture docs, dashboards, and measured self-hosted-vs-API tradeoffs land as milestones complete.
 
 Companion project: [ai-help-desk-governed-access](https://github.com/developermusa/ai-help-desk-governed-access) — the agent workload this platform routes, measures, and evaluates.
