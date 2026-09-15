@@ -94,6 +94,60 @@ jobs:
         run: |
           echo "skip: TF_API_TOKEN is unset, so terraform plan did not run; fmt and validate did"
 
+  # The same three unconditional checks on the AWS module, in a job of its own:
+  # its plan needs AWS credentials the Hetzner job must never hold, so the two
+  # differ in permissions as well as directory. The plan assumes a read-only
+  # role through GitHub OIDC, so no long-lived AWS key exists anywhere. It runs
+  # only when BOTH the Terraform Cloud token and the role ARN are set; until the
+  # owner creates that role (infra/terraform/aws/README.md) it skips out loud.
+  tf-aws:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      TF_API_TOKEN_PRESENT: ${{ secrets.TF_API_TOKEN != '' }}
+    defaults:
+      run:
+        working-directory: infra/terraform/aws
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform fmt -check -recursive
+      # One init, always run, choosing its backend from what it has, exactly as
+      # the `tf` job does: keeping it one step keeps `validate` unconditional.
+      - name: terraform init
+        env:
+          TF_TOKEN_app_terraform_io: ${{ secrets.TF_API_TOKEN }}
+        run: |
+          if [ -n "$TF_TOKEN_app_terraform_io" ]; then
+            terraform init -input=false
+          else
+            terraform init -backend=false -input=false
+            echo "note: no TF_API_TOKEN, initialised without the Terraform Cloud backend"
+          fi
+      - run: terraform validate
+      - name: assume the read-only plan role
+        if: env.TF_API_TOKEN_PRESENT == 'true' && vars.AWS_PLAN_ROLE_ARN != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: eu-central-1
+      # The workspace runs in local execution mode, so its variables are not
+      # read; the two required inputs are documentation-range placeholders. A
+      # plan proves the configuration against the real API and is never applied.
+      - name: terraform plan
+        if: env.TF_API_TOKEN_PRESENT == 'true' && vars.AWS_PLAN_ROLE_ARN != ''
+        env:
+          TF_TOKEN_app_terraform_io: ${{ secrets.TF_API_TOKEN }}
+          TF_VAR_admin_ips: '["203.0.113.7/32"]'
+          TF_VAR_budget_email: you@example.com
+        run: terraform plan -input=false -lock=false
+      - name: no credentials, no plan
+        if: env.TF_API_TOKEN_PRESENT != 'true' || vars.AWS_PLAN_ROLE_ARN == ''
+        run: |
+          echo "skip: TF_API_TOKEN or vars.AWS_PLAN_ROLE_ARN is unset, so terraform plan did not run; fmt and validate did"
+
   # kustomize and kubeconform need no credential of any kind, so unlike the `tf`
   # job's plan step nothing here is gated: this runs whole on a fork pull
   # request, which is where a manifest first arrives from someone who cannot

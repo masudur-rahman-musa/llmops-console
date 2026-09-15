@@ -1,0 +1,11 @@
+# Copy to terraform.tfvars and fill in. The filled-in copy is gitignored. AWS
+# credentials are NOT in this file at all: the provider reads them from the
+# environment, for example after `aws sso login`.
+
+admin_ips    = ["203.0.113.7/32"]
+budget_email = "you@example.com"
+
+# Optional, shown with their defaults:
+# region             = "eu-central-1"
+# name               = "aioc-evidence"
+# kubernetes_version = "1.36"

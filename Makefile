@@ -88,6 +88,9 @@ infra-check: ## Validate infrastructure as code (no apply)
 	terraform -chdir=infra/terraform/hetzner fmt -check -recursive
 	terraform -chdir=infra/terraform/hetzner init -backend=false -input=false
 	terraform -chdir=infra/terraform/hetzner validate
+	terraform -chdir=infra/terraform/aws fmt -check -recursive
+	terraform -chdir=infra/terraform/aws init -backend=false -input=false
+	terraform -chdir=infra/terraform/aws validate
 	@if [ -f infra/k8s/kustomization.yaml ]; then $(MAKE) k8s-check; \
 	else echo "skip: no infra/k8s/kustomization.yaml yet - kustomize build"; fi
 # The kustomize half on its own target, so CI can run it without installing a
