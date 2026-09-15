@@ -1,0 +1,20 @@
+#cloud-config
+# Rendered by templatefile() from main.tf; `auto_terminate_minutes` is the only
+# substitution this file takes.
+
+write_files:
+  - path: /etc/rancher/k3s/config.yaml
+    permissions: "0600"
+    content: |
+      write-kubeconfig-mode: "0600"
+
+runcmd:
+  # First, before anything that can fail: the shutdown timer. The instance
+  # terminates on shutdown, so this is the destroy that happens even if nobody
+  # runs one.
+  - shutdown -h +${auto_terminate_minutes}
+  # The same exact release as the Hetzner cluster, so a manifest valid on one is
+  # valid on the other. k3s finds the NVIDIA container runtime the AMI ships and
+  # registers it as the containerd runtime `nvidia`, which the RuntimeClass in
+  # infra/k8s/gpu names.
+  - curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.31.5+k3s1 sh -s - server

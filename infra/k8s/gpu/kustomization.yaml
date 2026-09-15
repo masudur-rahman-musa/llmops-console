@@ -1,0 +1,27 @@
+# The vLLM deployment for one GPU host: what the owner applies to the k3s node
+# `infra/terraform/aws-gpu` creates, for a measurement run, before destroying it.
+#
+# Standalone on purpose. The root `infra/k8s/kustomization.yaml` does not list
+# this directory, so the long-lived cluster (which has no GPU) never carries a
+# 10Gi pod, a second Prometheus or a cluster-wide APIService. Everything this
+# build needs travels with it: its own namespace, quota, limit range, policies
+# and metrics path, so it applies to a bare k3s with nothing else installed.
+#
+# There is no `namespace:` transformer. Two objects live outside `gpu`
+# (the device plugin in `kube-system`, `gateway-egress-vllm` in `apps`), and a
+# transformer would silently move both. Every object names its own namespace.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/part-of: ai-operations-console
+      app.kubernetes.io/managed-by: kustomize
+
+resources:
+  - namespace.yaml
+  - device-plugin.yaml
+  - vllm.yaml
+  - metrics.yaml
+  - networkpolicies.yaml

@@ -1,4 +1,4 @@
-.PHONY: help setup run test select-tests test-adjacent lint typecheck format verify eval infra-check k8s-check k8s-aws-check aws-evidence aws-evidence-cost migrate purge-residency refresh-rollup secrets-encrypt secrets-decrypt secrets-check load
+.PHONY: help setup run test select-tests test-adjacent lint typecheck format verify eval infra-check k8s-check k8s-aws-check k8s-gpu-check aws-evidence aws-evidence-cost migrate purge-residency refresh-rollup secrets-encrypt secrets-decrypt secrets-check load
 
 # The console arrives in a later milestone. Until then its checks are skipped
 # rather than deleted, so the intended gate stays visible in this file. The
@@ -91,6 +91,9 @@ infra-check: ## Validate infrastructure as code (no apply)
 	terraform -chdir=infra/terraform/aws fmt -check -recursive
 	terraform -chdir=infra/terraform/aws init -backend=false -input=false
 	terraform -chdir=infra/terraform/aws validate
+	terraform -chdir=infra/terraform/aws-gpu fmt -check -recursive
+	terraform -chdir=infra/terraform/aws-gpu init -backend=false -input=false
+	terraform -chdir=infra/terraform/aws-gpu validate
 	@if [ -f infra/k8s/kustomization.yaml ]; then $(MAKE) k8s-check; \
 	else echo "skip: no infra/k8s/kustomization.yaml yet - kustomize build"; fi
 # The kustomize half on its own target, so CI can run it without installing a
@@ -109,6 +112,10 @@ k8s-check:  ## Build the kustomization and validate it against the schemas (no a
 # own directory, the kind llama patch among them.
 k8s-aws-check: ## Build the AWS evidence overlay and validate it (no apply)
 	kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/aws | kubeconform -strict -summary -schema-location default -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+# The GPU measurement build, with the same kubeconform flags as `k8s-check`. It
+# is standalone (the root build does not include it), so nothing else checks it.
+k8s-gpu-check: ## Build the GPU measurement kustomization and validate it (no apply)
+	kustomize build infra/k8s/gpu | kubeconform -strict -summary -schema-location default -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
 # The one-off AWS evidence run and its cost capture, from the owner's shell only:
 # `run` applies real infrastructure, so no workflow calls either target.
 # docs/aws-evidence/README.md lists what has to be in place first.

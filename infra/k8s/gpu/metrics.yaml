@@ -1,0 +1,356 @@
+# The path from vLLM's queue to the HPA:
+#
+#   vllm /metrics  ->  local Prometheus  ->  prometheus-adapter  ->  custom.metrics.k8s.io  ->  HPA
+#
+# A Prometheus local to `gpu` rather than a target added to `monitoring/`: that
+# one runs on the long-lived cluster, where a vLLM target would be permanently
+# down between measurement runs and page someone about it. This one exists only
+# while the GPU host does, scrapes only vLLM, and keeps a day of data in memory.
+#
+# prometheus-adapter rather than KEDA: no CRD and no operator, so kubeconform
+# validates every object here from its default schemas.
+
+# --- Prometheus ---------------------------------------------------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: gpu
+  labels:
+    app.kubernetes.io/name: prometheus
+---
+# Namespaced, not a ClusterRole: the scrape config lists pods in `gpu` only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: prometheus-discovery
+  namespace: gpu
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: prometheus-discovery
+  namespace: gpu
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: prometheus-discovery
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: gpu
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus
+  namespace: gpu
+  labels:
+    app.kubernetes.io/name: prometheus
+data:
+  # One job. `namespaces` keeps discovery inside `gpu`, and the `keep` rule
+  # drops every pod but vLLM. `namespace` and `pod` are copied onto each series
+  # because the adapter attributes the metric to a pod by exactly those labels.
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+    scrape_configs:
+      - job_name: vllm
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - gpu
+        relabel_configs:
+          - action: keep
+            source_labels:
+              - __meta_kubernetes_pod_label_app_kubernetes_io_name
+            regex: vllm
+          - action: keep
+            source_labels:
+              - __meta_kubernetes_pod_container_port_number
+            regex: "8000"
+          - action: replace
+            source_labels:
+              - __meta_kubernetes_namespace
+            target_label: namespace
+          - action: replace
+            source_labels:
+              - __meta_kubernetes_pod_name
+            target_label: pod
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: gpu
+  labels:
+    app.kubernetes.io/name: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: prometheus
+    spec:
+      serviceAccountName: prometheus
+      containers:
+        - name: prometheus
+          # The same literal as `monitoring/prometheus.yaml`, written out rather
+          # than shared, so a test compares the two files and a bump to one of
+          # them shows as a diff.
+          image: prom/prometheus:v3.1.0
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time=1d
+          ports:
+            - name: http
+              containerPort: 9090
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 150m
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+              readOnly: true
+            - name: data
+              mountPath: /prometheus
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus
+        # An emptyDir: the host lives for hours, and the run's numbers are
+        # captured from the benchmark, not from this TSDB.
+        - name: data
+          emptyDir:
+            sizeLimit: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: gpu
+  labels:
+    app.kubernetes.io/name: prometheus
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: prometheus
+  ports:
+    - name: http
+      port: 9090
+      targetPort: http
+
+# --- prometheus-adapter -------------------------------------------------------
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus-adapter
+  namespace: gpu
+  labels:
+    app.kubernetes.io/name: prometheus-adapter
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-adapter
+  namespace: gpu
+  labels:
+    app.kubernetes.io/name: prometheus-adapter
+data:
+  # vLLM exports `vllm:num_requests_waiting`. A colon is legal in a Prometheus
+  # name and not in a Kubernetes metric name, so the rule renames it; the HPA
+  # asks for the renamed one.
+  config.yaml: |
+    rules:
+      - seriesQuery: 'vllm:num_requests_waiting{namespace!="",pod!=""}'
+        resources:
+          overrides:
+            namespace:
+              resource: namespace
+            pod:
+              resource: pod
+        name:
+          matches: "^vllm:num_requests_waiting$"
+          as: vllm_num_requests_waiting
+        metricsQuery: 'sum(<<.Series>>{<<.LabelMatchers>>}) by (<<.GroupBy>>)'
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus-adapter
+  namespace: gpu
+  labels:
+    app.kubernetes.io/name: prometheus-adapter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus-adapter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: prometheus-adapter
+    spec:
+      serviceAccountName: prometheus-adapter
+      containers:
+        - name: prometheus-adapter
+          image: registry.k8s.io/prometheus-adapter/prometheus-adapter:v0.12.0
+          # `--cert-dir` on a writable emptyDir: the adapter generates a
+          # self-signed serving certificate there at start, which is why the
+          # APIService below skips TLS verification.
+          args:
+            - --cert-dir=/var/run/serving-cert
+            - --config=/etc/adapter/config.yaml
+            - --prometheus-url=http://prometheus.gpu.svc:9090/
+            - --metrics-relist-interval=1m
+            - --secure-port=6443
+          ports:
+            - name: https
+              containerPort: 6443
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: 100m
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/adapter
+              readOnly: true
+            - name: serving-cert
+              mountPath: /var/run/serving-cert
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-adapter
+        - name: serving-cert
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-adapter
+  namespace: gpu
+  labels:
+    app.kubernetes.io/name: prometheus-adapter
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: prometheus-adapter
+  ports:
+    - name: https
+      port: 443
+      targetPort: https
+---
+# The API server proxies `custom.metrics.k8s.io` reads to the adapter's Service.
+# `insecureSkipTLSVerify` because the adapter's certificate is self-signed at
+# start; the hop is in-cluster, and the host is destroyed within hours.
+apiVersion: apiregistration.k8s.io/v1
+kind: APIService
+metadata:
+  name: v1beta1.custom.metrics.k8s.io
+spec:
+  group: custom.metrics.k8s.io
+  version: v1beta1
+  groupPriorityMinimum: 100
+  versionPriority: 100
+  insecureSkipTLSVerify: true
+  service:
+    name: prometheus-adapter
+    namespace: gpu
+    port: 443
+---
+# What the adapter reads to map a series onto a Kubernetes object.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gpu-prometheus-adapter-resource-reader
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces", "pods", "services"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gpu-prometheus-adapter-resource-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gpu-prometheus-adapter-resource-reader
+subjects:
+  - kind: ServiceAccount
+    name: prometheus-adapter
+    namespace: gpu
+---
+# An aggregated API server must check the caller's token and authorisation with
+# the main API server: `system:auth-delegator` grants exactly that.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gpu-prometheus-adapter-auth-delegator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: prometheus-adapter
+    namespace: gpu
+---
+# ...and read the client-CA ConfigMap the API server publishes in `kube-system`.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gpu-prometheus-adapter-auth-reader
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: extension-apiserver-authentication-reader
+subjects:
+  - kind: ServiceAccount
+    name: prometheus-adapter
+    namespace: gpu
+---
+# The HPA controller's read of the metric the adapter serves.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gpu-custom-metrics-reader
+rules:
+  - apiGroups: ["custom.metrics.k8s.io"]
+    resources: ["*"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gpu-custom-metrics-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gpu-custom-metrics-reader
+subjects:
+  - kind: ServiceAccount
+    name: horizontal-pod-autoscaler
+    namespace: kube-system

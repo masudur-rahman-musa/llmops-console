@@ -1,0 +1,241 @@
+# vLLM serving Qwen2.5-7B-Instruct on the host's one GPU, and the Job that puts
+# the weights on disk first.
+#
+# The order is enforced, not hoped for. The fetch Job downloads a pinned
+# revision, then writes a marker file named after that revision. The vLLM pod's
+# initContainer loops until the marker exists. Waiting on the model DIRECTORY
+# would not do: it exists from the first file the download writes, so vLLM
+# would start on half a model.
+#
+# The weights never come from vLLM itself. It runs with `HF_HUB_OFFLINE=1` and
+# no egress beyond DNS (`networkpolicies.yaml`); the Job is the only pod in this
+# build that reaches the internet, and it never receives a prompt.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vllm-models
+  namespace: gpu
+  labels:
+    app.kubernetes.io/name: vllm
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 40Gi
+  # `storageClassName` deliberately absent, as everywhere else in `infra/k8s`:
+  # k3s defaults to `local-path`, and the claim stays portable.
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vllm-model-fetch
+  namespace: gpu
+  labels:
+    app.kubernetes.io/name: vllm-model-fetch
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: vllm-model-fetch
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: fetch
+          # The server's own image: it already carries `huggingface_hub`, and one
+          # image pulled once is 20GB less on the root volume than two.
+          image: vllm/vllm-openai:v0.29.0
+          command: ["python3", "-c"]
+          # A pinned revision makes every file content-addressed: two runs a week
+          # apart download the same bytes. The marker is written only after the
+          # call returns, so a Job killed mid-download leaves no marker behind and
+          # its retry resumes into the same directory.
+          args:
+            - |
+              from pathlib import Path
+              from huggingface_hub import snapshot_download
+
+              snapshot_download(
+                  "Qwen/Qwen2.5-7B-Instruct",
+                  revision="a09a35458c702b33eeacc393d103063234e8bc28",
+                  local_dir="/models/Qwen2.5-7B-Instruct",
+              )
+              Path("/models/.complete-a09a35458c702b33eeacc393d103063234e8bc28").touch()
+          env:
+            - name: HF_HUB_DISABLE_TELEMETRY
+              value: "1"
+          resources:
+            requests:
+              memory: 512Mi
+              cpu: 200m
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: models
+              mountPath: /models
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: vllm-models
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm
+  namespace: gpu
+  labels:
+    app.kubernetes.io/name: vllm
+spec:
+  replicas: 1
+  # `Recreate`: a rolling update starts the new pod first, and it waits forever
+  # for the one GPU (and the `ReadWriteOnce` claim) the old pod still holds.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vllm
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: vllm
+    spec:
+      runtimeClassName: nvidia
+      initContainers:
+        - name: wait-for-model
+          image: busybox:1.37.0
+          command:
+            - sh
+            - -c
+            - until [ -f /models/.complete-a09a35458c702b33eeacc393d103063234e8bc28 ]; do sleep 10; done
+          volumeMounts:
+            - name: models
+              mountPath: /models
+              readOnly: true
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:v0.29.0
+          # `--max-model-len 8192` and `--gpu-memory-utilization 0.90` fit the
+          # weights plus a KV cache for 16 sequences into the A10G's 24GB.
+          # `hermes` is the tool-call parser Qwen2.5's serving guide names.
+          args:
+            - --model
+            - /models/Qwen2.5-7B-Instruct
+            - --served-model-name
+            - qwen2.5-7b-instruct
+            - --max-model-len
+            - "8192"
+            - --max-num-seqs
+            - "16"
+            - --gpu-memory-utilization
+            - "0.90"
+            - --enable-auto-tool-choice
+            - --tool-call-parser
+            - hermes
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8000"
+          env:
+            - name: HF_HUB_OFFLINE
+              value: "1"
+          ports:
+            - name: http
+              containerPort: 8000
+          # Loading 15GB of weights and warming CUDA graphs takes minutes, so the
+          # startup probe allows 15 of them before liveness takes over.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            failureThreshold: 90
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 5
+          # No `limits.cpu`: a throttled server stalls token generation. The GPU
+          # request equals its limit, which Kubernetes requires for extended
+          # resources.
+          resources:
+            requests:
+              nvidia.com/gpu: 1
+              cpu: "2"
+              memory: 10Gi
+            limits:
+              nvidia.com/gpu: 1
+              memory: 14Gi
+          volumeMounts:
+            - name: models
+              mountPath: /models
+              readOnly: true
+            - name: shm
+              mountPath: /dev/shm
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: vllm-models
+        # The container runtime's default `/dev/shm` is 64Mi, which vLLM's worker
+        # processes outgrow under load. Memory-backed, so it counts against the
+        # container's memory limit, and capped so it cannot eat all of it.
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm
+  namespace: gpu
+  labels:
+    app.kubernetes.io/name: vllm
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: vllm
+  # The port `routing.yaml`'s `providers.vllm.base_url` dials, written out in
+  # both files so a test can compare them.
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+# Scales on the queue, not on CPU: a GPU-bound server's CPU says nothing about
+# how many requests are waiting for a slot.
+#
+# On a one-GPU host replica 2 never runs. It stays Pending with no GPU to
+# schedule on (and the quota's `requests.nvidia.com/gpu: "1"` refuses its pod
+# outright). The HPA is here to prove the metrics path end to end: the adapter
+# publishes the metric, the HPA reads it and asks for a second replica, and the
+# measurement run records that request. A second GPU node is what would make it serve.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: vllm
+  namespace: gpu
+  labels:
+    app.kubernetes.io/name: vllm
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: vllm
+  minReplicas: 1
+  maxReplicas: 2
+  metrics:
+    - type: Pods
+      pods:
+        metric:
+          name: vllm_num_requests_waiting
+        target:
+          type: AverageValue
+          averageValue: "4"

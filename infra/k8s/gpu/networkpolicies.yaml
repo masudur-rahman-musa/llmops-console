@@ -1,0 +1,218 @@
+# The `gpu` namespace denies everything both ways, then gives back exactly what
+# each pod needs. The same shape as `base/networkpolicies.yaml`, and the same
+# conventions: cross-namespace peers key off `kubernetes.io/metadata.name`, and
+# DNS is one policy for every pod on both protocols.
+#
+# The model server gets DNS and nothing else outbound. The fetch Job is the one
+# pod here with internet egress, and only on 443; it downloads weights and never
+# sees a prompt.
+#
+# The API-server rules name a port and no peer. The API server is reached
+# through the `kubernetes` Service's cluster IP, which a NetworkPolicy peer
+# cannot select, and on k3s it is the node itself. So those rules are wider
+# than a pod selector: any destination on 6443 or 443. a design note records that.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: gpu
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: gpu
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# The gateway in `apps`, and the local Prometheus scraping `/metrics`, both on
+# the one port vLLM listens on. Ingress only: this policy grants vLLM no egress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vllm-ingress
+  namespace: gpu
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: vllm
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: apps
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gateway
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 8000
+---
+# Hugging Face over HTTPS, and no private range. The except list is
+# `apps/gateway-egress`'s, written out again rather than shared so a test
+# compares the two: it keeps the pod off the node network and off the cloud
+# metadata endpoint and the instance role behind it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vllm-model-fetch-egress
+  namespace: gpu
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: vllm-model-fetch
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prometheus-egress
+  namespace: gpu
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: vllm
+      ports:
+        - protocol: TCP
+          port: 8000
+    # Pod discovery through the API server.
+    - ports:
+        - protocol: TCP
+          port: 6443
+        - protocol: TCP
+          port: 443
+---
+# The adapter's queries. Without this, `adapter-egress` allows the call out and
+# `default-deny` refuses it at the door, and the HPA reads nothing.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prometheus-ingress
+  namespace: gpu
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus-adapter
+      ports:
+        - protocol: TCP
+          port: 9090
+---
+# The API server calling the aggregated API. Its source is the node, which a
+# peer selector cannot name, so the rule is by port.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: adapter-ingress
+  namespace: gpu
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus-adapter
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 6443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: adapter-egress
+  namespace: gpu
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus-adapter
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
+    # Token review and resource lookups through the API server.
+    - ports:
+        - protocol: TCP
+          port: 6443
+        - protocol: TCP
+          port: 443
+---
+# The one change on the gateway's side. Lives here, not in `base/`, so the
+# long-lived cluster never carries a rule to a namespace it does not have.
+# Kubernetes unions allows, so this adds to `apps/gateway-egress` without
+# editing it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway-egress-vllm
+  namespace: apps
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gpu
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: vllm
+      ports:
+        - protocol: TCP
+          port: 8000

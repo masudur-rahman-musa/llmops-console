@@ -53,7 +53,7 @@ providers:
   vllm:
     kind: openai_compatible
     region: self
-    base_url: http://vllm:8000/v1
+    base_url: http://vllm.gpu.svc.cluster.local:8000/v1
     enabled: false
 
 # The regions an `eu` tenant may reach. `self` is the box we run ourselves.

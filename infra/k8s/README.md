@@ -10,6 +10,7 @@ base/                  namespaces, quotas, limit ranges, network policies
 platform/              Postgres, Redis, Qdrant, the ACME issuers, the middlewares
 apps/                  the gateway, llama.cpp, the Helpdesk, their config and the four public Ingresses
 monitoring/            Prometheus, node-exporter, kube-state-metrics, Grafana and the `grafana.` Ingress
+gpu/                   vLLM on one GPU host; standalone, not in the root build (`make k8s-gpu-check`)
 ```
 
 Build it:

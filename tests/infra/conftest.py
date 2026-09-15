@@ -53,3 +53,36 @@ def built() -> list[dict[str, Any]]:
     ]
     assert documents, f"`kubectl kustomize {K8S_ROOT}` emitted no objects"
     return documents
+
+
+#: The standalone GPU kustomization. Deliberately NOT under the root build's `resources`, so
+#: `built` never sees it and it needs its own build.
+K8S_GPU = K8S_ROOT / "gpu"
+
+
+@pytest.fixture(scope="session")
+def built_gpu() -> list[dict[str, Any]]:
+    """`kubectl kustomize infra/k8s/gpu`, run ONCE for the whole session.
+
+    The same body shape as `built`: skips only when `kubectl` is absent from `PATH`, and a
+    non-zero exit fails with kubectl's stderr, because a GPU build that cannot run is the
+    failure `test_k8s_gpu.py` exists to report.
+    """
+    if shutil.which("kubectl") is None:
+        pytest.skip("kubectl is not on PATH; CI's `k8s` job is the copy that cannot skip")
+    completed = subprocess.run(
+        ["kubectl", "kustomize", str(K8S_GPU)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, (
+        f"`kubectl kustomize {K8S_GPU}` exited {completed.returncode}:\n{completed.stderr}"
+    )
+    documents = [
+        document
+        for document in yaml.safe_load_all(completed.stdout)
+        if isinstance(document, dict) and document
+    ]
+    assert documents, f"`kubectl kustomize {K8S_GPU}` emitted no objects"
+    return documents

@@ -1,0 +1,59 @@
+# How a pod gets a GPU on k3s.
+#
+# The host AMI already carries the NVIDIA driver and container toolkit. When k3s
+# starts and finds `nvidia-container-runtime` on the node, it registers a
+# containerd runtime named `nvidia`; the RuntimeClass below points pods at it.
+# Without the RuntimeClass a pod runs on the default runtime and sees no device.
+#
+# The device plugin is what advertises `nvidia.com/gpu` to the scheduler. It
+# needs the same runtime class to see the GPU it is advertising; on the default
+# runtime it starts, finds nothing, and the node reports zero GPUs.
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: nvidia
+handler: nvidia
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nvidia-device-plugin
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: nvidia-device-plugin
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nvidia-device-plugin
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: nvidia-device-plugin
+    spec:
+      runtimeClassName: nvidia
+      priorityClassName: system-node-critical
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: nvidia-device-plugin
+          image: nvcr.io/nvidia/k8s-device-plugin:v0.20.0
+          env:
+            # Exit rather than idle when no GPU is visible, so a wrong runtime
+            # shows as a crash loop instead of a healthy pod advertising nothing.
+            - name: FAIL_ON_INIT_ERROR
+              value: "true"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: device-plugin
+              mountPath: /var/lib/kubelet/device-plugins
+      volumes:
+        - name: device-plugin
+          hostPath:
+            path: /var/lib/kubelet/device-plugins
