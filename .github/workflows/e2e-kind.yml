@@ -1,0 +1,93 @@
+name: e2e-kind
+# #68 (part, kind e2e): a full local deploy of the gateway and the real local
+# llama.cpp server, exercised end to end through `ops-eval run` against ten
+# golden cases.
+#
+# No dependency on `build.yml` or GHCR (decision D): the gateway's and the
+# stub's images are BUILT and `kind load docker-image`d fresh in the runner, so
+# a pull request with no push to `main` yet - and therefore no image published
+# under its SHA - can still run this whole. `project-evals/ci/kind/` narrows the
+# production kustomization to what a bare kind cluster can actually run; see
+# that directory's own comments for why the four Helpdesk workloads, the
+# console, every Ingress and two of `platform`'s files are absent.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: e2e-kind-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e-kind:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the gateway image
+        run: docker build -t gateway:e2e-kind .
+
+      - name: Build the eval-target-stub image
+        run: docker build -t eval-target-stub:e2e-kind project-evals/ci/eval-target-stub
+
+      - name: Create the kind cluster
+        uses: helm/kind-action@v1.15.0
+        with:
+          version: v0.33.0
+          cluster_name: e2e-kind
+
+      - name: Load the two locally built images into kind
+        run: |
+          kind load docker-image gateway:e2e-kind --name e2e-kind
+          kind load docker-image eval-target-stub:e2e-kind --name e2e-kind
+
+      # `kubectl apply -k` has no `--load-restrictor` flag of its own (only
+      # `kubectl kustomize` does), so the relaxed build is piped in rather than
+      # built inline - `project-evals/ci/kind/kustomization.yaml`'s own comment
+      # says why this overlay needs it at all.
+      - name: Apply the CI-only kind kustomization
+        run: |
+          kubectl kustomize --load-restrictor=LoadRestrictionsNone project-evals/ci/kind \
+            | kubectl apply -f -
+
+      - name: Wait for the gateway and the stub target to roll out
+        run: |
+          kubectl -n apps rollout status deployment/gateway --timeout=5m
+          kubectl -n apps rollout status deployment/eval-target-stub --timeout=5m
+
+      # The stub, never the gateway directly: `ops-eval run --target` is the
+      # eval harness's own contract (`/admin/test/reset` + `/v1/eval/turn`),
+      # which the stub answers and the gateway does not. Never a NodePort or a
+      # public address - a `port-forward` is the one path out of this cluster
+      # the workflow opens.
+      - name: Port-forward the eval-target-stub
+        run: |
+          kubectl -n apps port-forward svc/eval-target-stub 8090:8090 &
+          sleep 3
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+
+      - name: Run the golden set against the deployed stack
+        run: |
+          uv run ops-eval run \
+            --target http://127.0.0.1:8090 \
+            --set project-evals/golden/e2e-kind.jsonl \
+            --tenant evals \
+            --run-kind ci \
+            --out reports
+
+      # `always()`, the same reason `eval-gate.yml`'s upload is: a FAILED run -
+      # a cluster-up failure, a rollout timeout, or a failed case - is exactly
+      # when the report is needed, and a step with no `if` is skipped once an
+      # earlier step fails.
+      - name: Publish the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-kind-report-${{ github.run_id }}
+          path: reports/

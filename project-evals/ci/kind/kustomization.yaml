@@ -1,0 +1,57 @@
+# The kind e2e's own kustomization. Base plus three of
+# `platform`'s files plus a trimmed `apps` set - never `infra/k8s/apps` or
+# `infra/k8s/platform` whole, and never the root `infra/k8s`, which is what the
+# production build and this one would otherwise have to stay in step over.
+#
+# `infra/k8s/platform`'s OTHER three files are left out because a bare `kind`
+# cluster has neither cert-manager nor Traefik installed: `cert-manager-issuers.yaml`
+# (a `ClusterIssuer`) and `traefik-middlewares.yaml` (a `Middleware`) both name CRDs
+# no bare kind cluster carries, and `kubectl apply` of an object naming an absent
+# CRD fails the WHOLE apply rather than skipping just that object - not a matter of
+# taste, the same reason this overlay carries no Ingress at all. `backup.yaml` is
+# left out too: its two CronJobs read a `backup-secrets` this overlay does not
+# supply, and it proves nothing this plan's ten cases need.
+#
+# `infra/k8s/apps/helpdesk.yaml`, `middlewares.yaml` and `ingress.yaml` are left out
+# for the acceptance criteria's own reason: the four Helpdesk images and
+# `services/console` do not exist anywhere to pull (STATUS's Known issues), and kind
+# has no DNS/TLS/basic-auth path for an Ingress to exercise.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../../infra/k8s/base
+  - ../../../infra/k8s/platform/postgres.yaml
+  - ../../../infra/k8s/platform/redis.yaml
+  - ../../../infra/k8s/platform/qdrant.yaml
+  - ../../../infra/k8s/apps/gateway.yaml
+  - ../../../infra/k8s/apps/llama.yaml
+  - ../../../infra/k8s/apps/llama-embed.yaml
+  - gateway-secrets.yaml
+  - eval-target-stub-secrets.yaml
+  - stub.yaml
+
+# `llama.yaml` ships with no `initContainers`, so this ADDS the one that fetches
+# and verifies the real model weight the pod's own startup probe needs - see that
+# file's own comment for why this is here rather than a change to
+# `infra/k8s/apps/llama.yaml` itself, which stays exactly as production leaves it.
+patches:
+  - path: llama-model-init-patch.yaml
+    target:
+      kind: Deployment
+      name: llama
+
+# `gateway` and `llama`/`llama-embed` read the SAME values `infra/k8s/apps/
+# kustomization.yaml` sets for them (a project rule: written out literally, not
+# templated, so the two cannot drift silently) - except `gateway`'s tag, which
+# names what THIS workflow builds and `kind load docker-image`s rather than
+# `build.yml`'s published SHA (plan decision D: no dependency on GHCR from a PR
+# run). `eval-target-stub` has no production counterpart to copy a tag from at all.
+images:
+  - name: gateway
+    newTag: e2e-kind
+  - name: llama
+    newName: ghcr.io/ggml-org/llama.cpp
+    newTag: server-b10902
+  - name: eval-target-stub
+    newTag: e2e-kind

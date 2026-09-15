@@ -1,0 +1,56 @@
+# The eval-target-stub workload: this plan's own, applied by the CI-only kind
+# kustomization and nowhere else. No PVC, no HPA, no PDB - it holds no state, and
+# this cluster is created and torn down inside one workflow run.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eval-target-stub
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: eval-target-stub
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: eval-target-stub
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: eval-target-stub
+    spec:
+      containers:
+        - name: eval-target-stub
+          # Replaced by the `images:` transformer with the tag the workflow
+          # `kind load docker-image`s, the same reason the gateway's own `image:
+          # gateway` is left bare.
+          image: eval-target-stub
+          ports:
+            - name: http
+              containerPort: 8090
+          env:
+            # In-cluster, fully qualified: the stub is in `apps` beside the
+            # gateway, same reason `gateway-config`'s Redis and Qdrant addresses
+            # are.
+            - name: GATEWAY_BASE_URL
+              value: http://gateway.apps.svc.cluster.local:8080
+            - name: GATEWAY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: eval-target-stub-secrets
+                  key: GATEWAY_API_KEY
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: eval-target-stub
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: eval-target-stub
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: eval-target-stub
+  ports:
+    - name: http
+      port: 8090
+      targetPort: http
