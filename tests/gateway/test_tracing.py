@@ -36,7 +36,8 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx import Response
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.trace import ReadableSpan
+from opentelemetry.propagate import inject
+from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter, SpanExportResult
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import SpanContext, StatusCode
@@ -542,6 +543,78 @@ def test_the_redact_route_emits_a_trace_without_a_header(
     assert len({trace_id_of(span) for span in recorded}) == 1
     assert REDACT_SPAN in stage_names(recorded)
     assert not [name for name in response.headers if name.lower().startswith("x-gateway-")]
+
+
+# --------------------------------------------------------------------------
+# an independent tracer standing in for Helpdesk
+# --------------------------------------------------------------------------
+
+
+def simulated_helpdesk_turn(exporter: InMemorySpanExporter) -> tuple[str, ReadableSpan]:
+    """One simulated Helpdesk request: a root span on its OWN `TracerProvider`, and the
+    `traceparent` a real client would send from it.
+
+    Never `opsconsole.core.tracing.tracer_provider()` - that is the gateway's own
+    process-wide provider, and a span started on it would share the gateway's context
+    trivially rather than by the header the two services actually exchange. The provider is
+    never shut down: `InMemorySpanExporter.shutdown()` clears its own buffer, and this
+    exporter is shared across turns so a caller can read every span it has recorded."""
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = provider.get_tracer("simulated-helpdesk")
+    carrier: dict[str, str] = {}
+    with tracer.start_as_current_span("helpdesk-turn"):
+        inject(carrier)
+    traceparent = carrier["traceparent"]
+    helpdesk_span = exporter.get_finished_spans()[-1]
+    return traceparent, helpdesk_span
+
+
+def test_a_span_from_a_second_tracer_shares_the_gateways_trace_id(
+    chat_client: TestClient, spans: InMemorySpanExporter
+) -> None:
+    """Proves the "Helpdesk and gateway spans share one trace" claim at the only end that
+    exists today: a genuinely separate
+    provider's span, propagated through a real `traceparent`, lands the gateway's root span
+    and every stage span under it in that same trace."""
+    helpdesk_exporter = InMemorySpanExporter()
+    traceparent, helpdesk_span = simulated_helpdesk_turn(helpdesk_exporter)
+
+    response = send_chat(chat_client, traceparent)
+    assert response.status_code == 200, response.text
+
+    recorded = finished(spans)
+    gateway_trace_id = trace_id_of(helpdesk_span)
+
+    assert gateway_trace_id == trace_id_of(root_of(recorded))
+    assert {trace_id_of(span) for span in recorded} == {gateway_trace_id}
+
+
+def test_two_separate_simulated_turns_never_share_a_trace_id(
+    chat_client: TestClient, spans: InMemorySpanExporter
+) -> None:
+    """Catches the shared-id assertion above being trivially true - a constant header, or a
+    provider that always mints the same id: two independent simulated Helpdesk turns, each
+    with its own root span and its own request to the gateway, must produce two DIFFERENT
+    trace ids end to end, on both the simulated and the gateway side."""
+    helpdesk_exporter = InMemorySpanExporter()
+
+    first_traceparent, first_helpdesk_span = simulated_helpdesk_turn(helpdesk_exporter)
+    first_response = send_chat(chat_client, first_traceparent)
+    assert first_response.status_code == 200, first_response.text
+    first_gateway_trace_id = trace_id_of(root_of(finished(spans)))
+
+    spans.clear()
+
+    second_traceparent, second_helpdesk_span = simulated_helpdesk_turn(helpdesk_exporter)
+    second_response = send_chat(chat_client, second_traceparent)
+    assert second_response.status_code == 200, second_response.text
+    second_gateway_trace_id = trace_id_of(root_of(finished(spans)))
+
+    assert trace_id_of(first_helpdesk_span) != trace_id_of(second_helpdesk_span)
+    assert first_gateway_trace_id != second_gateway_trace_id
+    assert first_gateway_trace_id == trace_id_of(first_helpdesk_span)
+    assert second_gateway_trace_id == trace_id_of(second_helpdesk_span)
 
 
 # --------------------------------------------------------------------------
