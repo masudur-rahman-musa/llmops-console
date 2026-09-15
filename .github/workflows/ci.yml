@@ -174,3 +174,6 @@ jobs:
           kustomize version && kubeconform -v
       # The same target the Makefile gives a developer, so the two cannot drift.
       - run: make k8s-check
+      # The AWS evidence overlay, built and validated the same way. It is only ever
+      # applied from the owner's shell, so this is its one automated check.
+      - run: make k8s-aws-check

@@ -1,4 +1,4 @@
-.PHONY: help setup run test select-tests test-adjacent lint typecheck format verify eval infra-check k8s-check migrate purge-residency refresh-rollup secrets-encrypt secrets-decrypt secrets-check load
+.PHONY: help setup run test select-tests test-adjacent lint typecheck format verify eval infra-check k8s-check k8s-aws-check aws-evidence aws-evidence-cost migrate purge-residency refresh-rollup secrets-encrypt secrets-decrypt secrets-check load
 
 # The console arrives in a later milestone. Until then its checks are skipped
 # rather than deleted, so the intended gate stays visible in this file. The
@@ -104,6 +104,18 @@ infra-check: ## Validate infrastructure as code (no apply)
 # to produce.
 k8s-check:  ## Build the kustomization and validate it against the schemas (no apply)
 	kustomize build infra/k8s | kubeconform -strict -summary -schema-location default -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+# The AWS evidence overlay, with the same kubeconform flags as `k8s-check`. The
+# relaxed load restrictor is needed because the overlay reuses files outside its
+# own directory, the kind llama patch among them.
+k8s-aws-check: ## Build the AWS evidence overlay and validate it (no apply)
+	kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/aws | kubeconform -strict -summary -schema-location default -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+# The one-off AWS evidence run and its cost capture, from the owner's shell only:
+# `run` applies real infrastructure, so no workflow calls either target.
+# docs/aws-evidence/README.md lists what has to be in place first.
+aws-evidence: ## Apply, deploy, capture and destroy the AWS stack once (SHA=<commit>)
+	scripts/aws_evidence.sh run "$(SHA)"
+aws-evidence-cost: ## Write docs/aws-evidence/cost.json (START=YYYY-MM-DD END=YYYY-MM-DD)
+	scripts/aws_evidence.sh cost "$(START)" "$(END)"
 
 # The three secrets targets. `sops` is NOT a build dependency of this repository
 # and the age key is never in it, so each of the two that shell out to `sops`

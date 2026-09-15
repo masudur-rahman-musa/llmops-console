@@ -1,0 +1,48 @@
+# The IRSA evidence: one pod running as `platform/backups` asks STS who it is and
+# writes one object to the backups bucket. Success means the pod assumed the bucket
+# role through the cluster's OIDC provider, not the node role, which has no bucket
+# access at all. Its log is captured as `irsa.txt`.
+#
+# Applied by `scripts/aws_evidence.sh run`, never by the overlay: the script first
+# annotates the ServiceAccount and creates the `irsa-evidence` ConfigMap holding the
+# bucket name, which exists only while the module is applied.
+#
+# `amazon/aws-cli:2.36.46` is an exact build, resolved on Docker Hub at
+# implementation time with both amd64 and arm64 in its index (the nodes are arm64).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: irsa-evidence
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: irsa-evidence
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: irsa-evidence
+    spec:
+      serviceAccountName: backups
+      restartPolicy: Never
+      containers:
+        - name: irsa-evidence
+          image: amazon/aws-cli:2.36.46
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              aws sts get-caller-identity --query Arn --output text
+              date -u +%Y-%m-%dT%H:%M:%SZ > /tmp/irsa-evidence.txt
+              aws s3 cp /tmp/irsa-evidence.txt "s3://${BUCKET}/irsa-evidence.txt"
+              aws s3 ls "s3://${BUCKET}/irsa-evidence.txt"
+          envFrom:
+            - configMapRef:
+                name: irsa-evidence
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: 50m
+            limits:
+              memory: 256Mi

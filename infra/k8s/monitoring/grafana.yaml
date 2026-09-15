@@ -104,7 +104,7 @@ spec:
       storage: 1Gi
   # `storageClassName` deliberately absent, the same reason `prometheus.yaml`'s
   # claim and `platform`'s Postgres omit it: k3s defaults to `local-path` and
-  # EKS to `gp2`, and row 26 deploys this same build to both.
+  # EKS to `gp2`, and the manifest stays portable between the two.
   #
   # A claim rather than an `emptyDir` (decision C). Dashboards and the datasource
   # are provisioned and survive either way, but Grafana's sqlite also holds the

@@ -1,0 +1,78 @@
+# The AWS evidence deploy: what `scripts/aws_evidence.sh run` applies to the EKS
+# cluster `infra/terraform/aws` creates, for about an hour, before it destroys it.
+# Shaped like the kind overlay in `project-evals/ci/kind`: base plus a named subset
+# of files, never `../apps` or `../platform` whole.
+#
+# Left out, and why:
+# - the Traefik routers, their middlewares and the cert-manager issuers. EKS carries
+#   none of those CRDs, and `kubectl apply` of an object naming an absent CRD fails
+#   the whole apply. The smoke reaches the gateway through a port-forward instead.
+# - the in-cluster Postgres and Redis. The point of the run is the managed ones: the
+#   script points the gateway at RDS and ElastiCache after apply.
+# - the four Helpdesk workloads. Their images are not published anywhere.
+# - the backup CronJobs. They read a Secret this run does not supply; the IRSA Job
+#   in `irsa-job.yaml` is the evidence that the bucket role works.
+#
+# `irsa-job.yaml` is not a resource here: the script applies it only after it has
+# annotated the ServiceAccount with the role ARN, because the web identity token is
+# injected when a pod is created and a pod made before the annotation never gets it.
+#
+# Built with `--load-restrictor=LoadRestrictionsNone` (`make k8s-aws-check` and the
+# script both), since every resource but one lives outside this directory.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/part-of: ai-operations-console
+      app.kubernetes.io/managed-by: kustomize
+
+resources:
+  - ../base
+  - ../platform/qdrant.yaml
+  - ../apps/gateway.yaml
+  - ../apps/llama.yaml
+  - ../apps/llama-embed.yaml
+  - backups-sa.yaml
+
+patches:
+  # The kind overlay's model fetch, reused by path so a fix there reaches this run.
+  # Read against EKS: it downloads from Hugging Face over the NAT gateway, verifies
+  # the sha256, and writes into the `models` volume, which is an emptyDir here.
+  - path: ../../../project-evals/ci/kind/llama-model-init-patch.yaml
+    target:
+      kind: Deployment
+      name: llama
+  - path: emptydir-patch.yaml
+  # The llama claims the emptyDir swaps leave unmounted. One inline patch each: kustomize
+  # 5.5.0 panics on a patch file holding a delete followed by any other document.
+  - patch: |-
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: llama-models
+        namespace: apps
+      $patch: delete
+  - patch: |-
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: llama-embed-models
+        namespace: apps
+      $patch: delete
+
+# `gateway` carries the production name with the same placeholder tag as
+# `infra/k8s/apps/kustomization.yaml`; the script sets the tag to the commit SHA with
+# `kubectl set image` right after apply.
+#
+# `llama` is written out literally, the same values `infra/k8s/apps/kustomization.yaml`
+# pins, so a test can compare the two files and a drift shows as a diff (standing
+# rule 53) rather than hiding behind a shared variable.
+images:
+  - name: gateway
+    newName: ghcr.io/developermusa/ai-operations-console/gateway
+    newTag: 0.0.0-unbuilt
+  - name: llama
+    newName: ghcr.io/ggml-org/llama.cpp
+    newTag: server-b10902

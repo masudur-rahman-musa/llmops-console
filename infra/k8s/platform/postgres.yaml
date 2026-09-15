@@ -13,8 +13,8 @@
 # initdb refuses a data directory that is not empty.
 #
 # `storageClassName` is deliberately absent (decision B). k3s defaults to
-# `local-path` and EKS to `gp2`, so the one build row 26 deploys to both leaves
-# neither StatefulSet Pending on a class that does not exist there.
+# `local-path` and EKS to `gp2`, so the manifest leaves neither StatefulSet
+# Pending on a class that does not exist there.
 ---
 apiVersion: apps/v1
 kind: StatefulSet

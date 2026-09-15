@@ -1,6 +1,7 @@
-# The single root. There is exactly one cluster, and the
-# AWS evidence run deploys this same kustomization unchanged, so a
-# `base/` + `overlays/<env>/` pair would exist to hold one empty overlay.
+# The single root, for the one long-lived cluster, so a `base/` +
+# `overlays/<env>/` pair would exist to hold one empty overlay. The short-lived
+# AWS evidence run deploys a narrowed subset from `aws/` instead: EKS carries
+# none of the Traefik or cert-manager CRDs this build names.
 # `make k8s-check` and CI's `k8s` job both build THIS path, with no `-o`
 # selection to keep in step.
 #

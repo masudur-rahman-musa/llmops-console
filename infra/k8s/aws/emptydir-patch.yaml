@@ -1,0 +1,59 @@
+# Every claim in the evidence deploy becomes an emptyDir. The module installs no
+# EBS CSI driver, so a PersistentVolumeClaim on EKS stays Pending and its pod never
+# schedules. The cluster lives about an hour, so nothing here needs to survive a
+# pod restart: Qdrant starts with an empty cache and the chat model is fetched again
+# by its init container.
+#
+# `persistentVolumeClaim: null` matters: a strategic merge keys volumes by name and
+# would otherwise keep the claim beside the new emptyDir, which the API rejects as a
+# volume with two sources.
+#
+# `llama-embed` gets no model fetch, so it stays unready for the whole run. Nothing
+# the smoke reaches depends on it: `/readyz` probes Redis, Postgres, Qdrant and one
+# healthy provider, and the chat turn routes to `llama`.
+#
+# The two llama claims are deleted by inline patches in `kustomization.yaml`, not
+# here: kustomize 5.5.0 panics on a patch file where any document follows a delete.
+# No `---` before the first document, for a similar reason: a comment-only document
+# is read as a patch with no kind.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llama
+  namespace: apps
+spec:
+  template:
+    spec:
+      volumes:
+        - name: models
+          persistentVolumeClaim: null
+          emptyDir:
+            sizeLimit: 3Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llama-embed
+  namespace: apps
+spec:
+  template:
+    spec:
+      volumes:
+        - name: models
+          persistentVolumeClaim: null
+          emptyDir:
+            sizeLimit: 1Gi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: qdrant
+  namespace: platform
+spec:
+  volumeClaimTemplates: null
+  template:
+    spec:
+      volumes:
+        - name: storage
+          emptyDir:
+            sizeLimit: 2Gi
