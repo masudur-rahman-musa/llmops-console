@@ -1,0 +1,59 @@
+/** Pure formatters every page shares. Pinned by tests/format.test.ts. */
+
+export const NA = "n/a";
+
+const SHORT_SHA_LENGTH = 12;
+
+function missing(value: number | null | undefined): value is null | undefined {
+  return value === null || value === undefined || !Number.isFinite(value);
+}
+
+export function usd(value: number | null | undefined, decimals = 2): string {
+  if (missing(value)) {
+    return NA;
+  }
+  return `$${value.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
+}
+
+/** A rate from 0 to 1, shown as a percentage with two decimals. */
+export function percent(value: number | null | undefined): string {
+  return missing(value) ? NA : `${(value * 100).toFixed(2)}%`;
+}
+
+/** Seconds, shown as whole milliseconds. */
+export function ms(seconds: number | null | undefined): string {
+  return missing(seconds) ? NA : `${Math.round(seconds * 1000)} ms`;
+}
+
+/** `YYYY-MM-DD HH:MM UTC`, converted from whatever offset the value carries. */
+export function utcTime(iso: string | null | undefined): string {
+  if (!iso) {
+    return NA;
+  }
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) {
+    return NA;
+  }
+  return `${at.toISOString().slice(0, 10)} ${at.toISOString().slice(11, 16)} UTC`;
+}
+
+/**
+ * The value when it is an absolute http or https URL, otherwise null. Surrounding
+ * whitespace is refused because `new URL` would silently strip it. Pinned by the
+ * rejection table in tests/format.test.ts.
+ */
+export function safeHref(value: string | null | undefined): string | null {
+  if (!value || value.trim() !== value) {
+    return null;
+  }
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+export function shortSha(sha: string): string {
+  return sha.slice(0, SHORT_SHA_LENGTH);
+}

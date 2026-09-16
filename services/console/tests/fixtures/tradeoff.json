@@ -1,0 +1,63 @@
+{
+  "set_name": "helpdesk-decisions",
+  "accuracy_tolerance": "0.02",
+  "options": {
+    "local-8b": {
+      "id": "local-8b",
+      "label": "Local 8B on one GPU",
+      "kind": "self_hosted",
+      "report_id": "rep-local-8b",
+      "git_sha": "5e2d8c1b9a7f6e5d4c3b2a19f8e7d6c5b4a39281",
+      "hourly_usd": "0.80",
+      "turns": 400,
+      "turns_per_hour": "1200.00",
+      "usd_per_1000_turns": "0.67",
+      "metrics": {
+        "decision_accuracy": 0.86,
+        "refusal_recall": null,
+        "p50_latency_ms": 640,
+        "p95_latency_ms": 1850,
+        "cost_usd": 0
+      }
+    },
+    "hosted-large": {
+      "id": "hosted-large",
+      "label": "Hosted large model",
+      "kind": "hosted",
+      "report_id": "rep-hosted-large",
+      "git_sha": "5e2d8c1b9a7f6e5d4c3b2a19f8e7d6c5b4a39281",
+      "hourly_usd": null,
+      "turns": 400,
+      "turns_per_hour": null,
+      "usd_per_1000_turns": null,
+      "metrics": {
+        "decision_accuracy": 0.94,
+        "refusal_recall": 0.97,
+        "citation_accuracy": 0.92,
+        "p50_latency_ms": 910,
+        "p95_latency_ms": 2400
+      }
+    },
+    "hosted-small": {
+      "id": "hosted-small",
+      "label": "Hosted small model",
+      "kind": "hosted",
+      "report_id": "rep-hosted-small",
+      "git_sha": "5e2d8c1b9a7f6e5d4c3b2a19f8e7d6c5b4a39281",
+      "hourly_usd": null,
+      "turns": 400,
+      "turns_per_hour": null,
+      "usd_per_1000_turns": "1.90",
+      "metrics": {
+        "decision_accuracy": 0.93,
+        "refusal_recall": 0.95,
+        "citation_accuracy": 0.9,
+        "p50_latency_ms": 420,
+        "p95_latency_ms": 1100
+      }
+    }
+  },
+  "order": ["hosted-small", "hosted-large", "local-8b"],
+  "winner": "hosted-small",
+  "conclusion": "Hosted small model matches the large model within tolerance at a fraction of the cost."
+}

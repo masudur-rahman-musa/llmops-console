@@ -1,0 +1,23 @@
+{
+  "sources": { "postgres": "ok", "prometheus": "ok" },
+  "rollup_populated": true,
+  "days": [
+    { "day": "2026-09-15", "tenant": "acme-eu", "provider": "mistral", "requests": 412, "cached_requests": 37, "cost_usd": 18.25 },
+    { "day": "2026-09-14", "tenant": "globex-eu", "provider": "local", "requests": 268, "cached_requests": 54, "cost_usd": 0.0 }
+  ],
+  "savings": [
+    { "day": "2026-09-15", "tenant": "acme-eu", "saved_usd": 3.1 },
+    { "day": "2026-09-14", "tenant": "globex-eu", "saved_usd": 1.45 }
+  ],
+  "savings_usd_total": 4.55,
+  "estimated": true,
+  "budgets": [
+    { "tenant": "acme-eu", "cap_usd": 50.0, "spent_usd": 31.0, "ratio": 0.62 },
+    { "tenant": "globex-eu", "cap_usd": 100.0, "spent_usd": 25.0, "ratio": 0.25 },
+    { "tenant": "initech-eu", "cap_usd": 20.0, "spent_usd": 5.0, "ratio": null }
+  ],
+  "cost_per_request": [
+    { "alias": "support-fast", "cost_usd": 0.0042 },
+    { "alias": "support-smart", "cost_usd": 0.0187 }
+  ]
+}
