@@ -47,3 +47,4 @@ crash.log
 # Terraform variable files carry real CIDRs and keys; only the example is committed.
 *.tfvars
 !*.tfvars.example
+*.tsbuildinfo

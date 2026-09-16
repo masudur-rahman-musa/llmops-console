@@ -1,7 +1,7 @@
 .PHONY: help setup run test select-tests test-adjacent lint typecheck format verify eval infra-check k8s-check k8s-aws-check k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate purge-residency refresh-rollup secrets-encrypt secrets-decrypt secrets-check load
 
-# The console arrives in a later milestone. Until then its checks are skipped
-# rather than deleted, so the intended gate stays visible in this file. The
+# The console's checks run through pnpm, and are skipped only in a checkout that
+# has no services/console, so the intended gate stays visible in this file. The
 # `else` branch is what makes this a skip-when-absent and not a skip-on-failure:
 # once the directory exists, a failing pnpm step fails the target.
 define console
@@ -27,6 +27,7 @@ COV_DB = .coverage-baseline
 test:       ## Run tests with the coverage gate
 	COVERAGE_FILE=$(COV_DB) uv run pytest -q --cov --cov-context=test --cov-fail-under=80
 	COVERAGE_FILE=$(COV_DB) uv run coverage report --include='$(COVERED_100)' --fail-under=100
+	$(call console,test)
 select-tests: ## Print the tests whose recorded coverage touches this change
 	@uv run python scripts/select_tests.py --explain
 test-adjacent: ## Run only the tests whose coverage touches this change

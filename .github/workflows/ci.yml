@@ -40,6 +40,17 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --locked
+      # `make lint`, `typecheck` and `test` also run the console's scripts now
+      # that services/console exists, so this job needs pnpm and its install too.
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: services/console/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: services/console/pnpm-lock.yaml
+      - run: pnpm -C services/console install --frozen-lockfile
       # Same checks as the local pre-commit hooks, and unskippable here.
       - run: uv run pre-commit run --all-files
       # Mirrors the Makefile gate. `format` runs as a check with the locked ruff,
@@ -48,6 +59,30 @@ jobs:
       - run: make lint
       - run: make typecheck
       - run: make test
+
+  # The console on its own: a red here names the console, not the Python gate.
+  # `pnpm audit` lives only in this job, so a new advisory fails one clearly
+  # labelled check.
+  console:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/console
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: services/console/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: services/console/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm audit
 
   # Terraform's own checks on the Hetzner module. `fmt`, `init` and `validate`
   # are unconditional: they need no credential, and they are the only semantic
