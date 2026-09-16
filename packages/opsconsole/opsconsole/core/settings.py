@@ -146,6 +146,17 @@ class Settings(BaseSettings):
     which is what lets the suite and a bare local run take the semantic path with
     no Qdrant anywhere."""
 
+    prometheus_url: str | None = None
+    """Where the console read routes send their PromQL, or `None` for none at all.
+
+    Read only by `create_app`, which builds one `gateway.prometheus.PrometheusClient`
+    over it. Absent leaves `app.state.prometheus` as `None`, and every `/console/*`
+    route then answers its metric fields as null or empty with
+    `prometheus: unconfigured` rather than failing (a design note,
+    `test_with_nothing_configured_every_route_is_200_and_both_sources_unconfigured`).
+    No readiness probe reads it: `/readyz` names the stores a served request
+    needs, and Prometheus is not one of them."""
+
     otel_service_name: str = "opsconsole-gateway"
     """What this process is called in a trace viewer. One trace carries spans from
     the Helpdesk and from the gateway, so the two need different names to be

@@ -2899,6 +2899,41 @@ def test_no_public_router_matches_an_admin_path_or_the_scrape(built: list[dict[s
         assert matched == [], f"the build publishes {closed} through {matched}"
 
 
+CONSOLE_READ_PATHS = (
+    "/console/home",
+    "/console/cost",
+    "/console/quality",
+    "/console/residency",
+    "/console/reliability",
+    "/console/incidents",
+    "/console/releases",
+)
+"""The seven console read routes, written out rather than imported: importing the route
+module here would turn its absence into a collection error for every case in this file."""
+
+
+def test_no_public_router_matches_a_console_path(built: list[dict[str, Any]]) -> None:
+    """Catches a gateway-backed public router widened to cover `/console/` - a `/` router put
+    back, or a `/console` Prefix added for the console app's convenience - which publishes
+    every tenant's spend, residency and incident timeline behind nothing but the admin key.
+    The seven paths are first asserted MOUNTED on the app, so a route moved to another path
+    fails here instead of leaving this case green against strings nothing serves; and the
+    matcher's boundary rows run first, so a matcher answering False for everything is red
+    before the build is read."""
+    mounted = mounted_paths()
+    missing = [path for path in CONSOLE_READ_PATHS if path not in mounted]
+    assert missing == [], f"the app does not mount {missing}"
+
+    for route_path, path_type, request_path, expected in MATCHER_BOUNDARY_ROWS:
+        assert router_matches(route_path, path_type, request_path) is expected, (
+            f"`{route_path}` ({path_type}) against `{request_path}` is not {expected}"
+        )
+
+    for path in CONSOLE_READ_PATHS:
+        matched = routers_matching(built, path)
+        assert matched == [], f"the build publishes {path} through {matched}"
+
+
 def test_every_served_versioned_path_is_still_publicly_routable(
     built: list[dict[str, Any]],
 ) -> None:

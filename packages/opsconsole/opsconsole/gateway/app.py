@@ -41,13 +41,20 @@ from opsconsole.core.tracing import (
     start_root_span,
 )
 from opsconsole.gateway.auth import SettingsKeyStore
+from opsconsole.gateway.console_reads import (
+    ConsoleReader,
+    PostgresConsoleReader,
+    UnconfiguredConsoleReader,
+)
 from opsconsole.gateway.context import parsed_traceparent
 from opsconsole.gateway.errors import register_error_handlers
 from opsconsole.gateway.health import ProbeRegistry
 from opsconsole.gateway.health import router as health_router
 from opsconsole.gateway.probes import PROBE_TIMEOUT_SECONDS, build_redis_client, register_probes
+from opsconsole.gateway.prometheus import PrometheusClient, build_prometheus_http
 from opsconsole.gateway.routes.admin import router as admin_router
 from opsconsole.gateway.routes.chat import router as chat_router
+from opsconsole.gateway.routes.console import router as console_router
 from opsconsole.gateway.routes.directory import router as directory_router
 from opsconsole.gateway.routes.embeddings import router as embeddings_router
 from opsconsole.gateway.routes.metrics import router as metrics_router
@@ -105,7 +112,7 @@ def build_qdrant_data_client(base_url: str) -> httpx.Client:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Close the adapter set on shutdown.
+    """Close the adapter set, and the console's Prometheus client, on shutdown.
 
     Nothing is built here: the key store, the policy and the adapters are built
     in `create_app`, so a misconfiguration stops the process from starting rather
@@ -115,6 +122,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         close_adapters(app.state.adapters)
+        prometheus: PrometheusClient | None = app.state.prometheus
+        if prometheus is not None:
+            prometheus.close()
         flush_tracing()
 
 
@@ -322,6 +332,14 @@ def create_app(
     recorded there is lost at exit, which is what the writer's own docstring says
     it is (`test_the_routes_answer_with_no_database_url_configured`).
 
+    The console reader takes that same pool and the same switch: a
+    `PostgresConsoleReader` over it, or `UnconfiguredConsoleReader`, which the
+    `/console/*` routes read as `postgres: unconfigured` and never call. The
+    Prometheus client is built only from `OPSCONSOLE_PROMETHEUS_URL`; absent leaves
+    `app.state.prometheus` as `None` and every metric field unconfigured
+    (`test_with_nothing_configured_every_route_is_200_and_both_sources_unconfigured`).
+    Neither registers a readiness probe.
+
     `register_probes` runs last of the state-building steps, because the probes it
     registers close over the adapter mapping and the settings built above; what it
     registers is decided by which backing services are configured
@@ -382,6 +400,15 @@ def create_app(
         PostgresConsoleEventWriter(pool) if pool is not None else InMemoryConsoleEventWriter()
     )
     app.state.console_events = console_events
+    console_reader: ConsoleReader = (
+        PostgresConsoleReader(pool) if pool is not None else UnconfiguredConsoleReader()
+    )
+    app.state.console_reader = console_reader
+    app.state.prometheus = (
+        PrometheusClient(build_prometheus_http(resolved.prometheus_url))
+        if resolved.prometheus_url is not None
+        else None
+    )
     register_probes(app)
     register_error_handlers(app)
     install_exporter(resolved)
@@ -393,5 +420,6 @@ def create_app(
     app.include_router(embeddings_router)
     app.include_router(redact_router)
     app.include_router(admin_router)
+    app.include_router(console_router)
     app.include_router(directory_router)
     return app

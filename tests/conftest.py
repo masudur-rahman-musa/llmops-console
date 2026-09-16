@@ -27,6 +27,7 @@ BACKING_SERVICE_VARIABLES = (
     "OPSCONSOLE_REDIS_URL",
     "OPSCONSOLE_DATABASE_URL",
     "OPSCONSOLE_QDRANT_URL",
+    "OPSCONSOLE_PROMETHEUS_URL",
 )
 """The settings whose PRESENCE decides what `create_app` builds (an earlier change
 decisions B and C). Cleared for the whole session below. The Redis suite reads
