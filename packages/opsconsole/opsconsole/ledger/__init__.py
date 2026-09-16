@@ -4,12 +4,28 @@ the design gives this package the project's Postgres writes, and an earlier chan
 first of them, so the connection pool, the migration runner and the schema
 convention arrive here rather than in the one table that needed them first.
 
-Three modules: `db` is the seam and the runner, `residency` is the decision log,
-`cost_ledger` is the spend row and its daily rollup. `cli` is not re-exported -
-it is what `make migrate`, `make purge-residency` and `make refresh-rollup` call,
-and nothing in the gateway imports it.
+Four modules: `db` is the seam and the runner, `residency` is the decision log,
+`cost_ledger` is the spend row and its daily rollup, and `console_events` is the
+two records an operator and CI write by hand through `/admin/*`. `cli` is not
+re-exported - it is what `make migrate`, `make purge-residency` and
+`make refresh-rollup` call, and nothing in the gateway imports it.
 """
 
+from opsconsole.ledger.console_events import (
+    ConsoleEventWriter as ConsoleEventWriter,
+)
+from opsconsole.ledger.console_events import (
+    IncidentRow as IncidentRow,
+)
+from opsconsole.ledger.console_events import (
+    InMemoryConsoleEventWriter as InMemoryConsoleEventWriter,
+)
+from opsconsole.ledger.console_events import (
+    PostgresConsoleEventWriter as PostgresConsoleEventWriter,
+)
+from opsconsole.ledger.console_events import (
+    ReleaseRow as ReleaseRow,
+)
 from opsconsole.ledger.cost_ledger import (
     CostLedgerRow as CostLedgerRow,
 )

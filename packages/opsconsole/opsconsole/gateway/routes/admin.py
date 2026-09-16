@@ -1,10 +1,25 @@
-"""`/admin/routing` and `/admin/routing/reload`: the resolved view, and the swap.
+"""The operator surface: the resolved view, the policy swap, and the two hand-written records.
 
-Two routes for an operator, behind a key space of their own. `admin_key_sha256`
-is not `api_keys`: a working tenant key is 401 here, and an unset admin key
-authorises nobody rather than everybody, which is the failure direction that
-matters for a route that can rebuild the gateway's provider set
+Five routes, all behind a key space of their own:
+
+    GET   /admin/routing            the resolver's own answer, per tenant
+    POST  /admin/routing/reload     re-read routing.yaml and rebuild the adapters
+    POST  /admin/incidents          record an incident
+    PATCH /admin/incidents/{incident_id}   resolve one
+    POST  /admin/releases           record a deploy
+
+The last three are the two tables nothing else in the system produces: the
+console's timeline and its deploys page are written by a human and by CI rather
+than by a served request, which is why they arrive here rather than as a code
+path. What they store, and why each field is checked before any statement runs,
+is `opsconsole.ledger.console_events`.
+
+`admin_key_sha256` is not `api_keys`: a working tenant key is 401 on every one of
+them, and an unset admin key authorises nobody rather than everybody, which is
+the failure direction that matters for routes that can rebuild the gateway's
+provider set and write the records an operator reads
 (`test_admin_routes_reject_a_tenant_api_key`,
+`test_every_console_event_route_is_401_without_an_admin_key`,
 `test_admin_routes_reject_every_caller_when_no_admin_key_is_configured`).
 
 The view is the resolver's own answer rather than a re-reading of `routing.yaml`.
@@ -50,6 +65,8 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import uuid
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, Query, Request
@@ -58,6 +75,13 @@ from pydantic import BaseModel, ConfigDict
 from opsconsole.core.errors import Unauthorized
 from opsconsole.core.settings import Settings
 from opsconsole.gateway.auth import bearer_key
+from opsconsole.ledger.console_events import (
+    EVAL_RUN_ID_FIELD,
+    ConsoleEventWriter,
+    IncidentRow,
+    ReleaseRow,
+    checked_incident_id,
+)
 from opsconsole.providers.base import Adapter
 from opsconsole.providers.breaker import CircuitBreaker
 from opsconsole.providers.factory import build_adapters, close_adapters
@@ -76,6 +100,16 @@ ADMIN_ROUTING = "/admin/routing"
 
 ADMIN_ROUTING_RELOAD = "/admin/routing/reload"
 """The policy reload. Pinned by `test_the_admin_paths_and_statuses_are_pinned`."""
+
+ADMIN_INCIDENTS = "/admin/incidents"
+"""Where an incident is recorded. Pinned against the mounted route by
+`test_the_admin_console_event_paths_and_statuses_are_pinned`."""
+
+ADMIN_INCIDENT = "/admin/incidents/{incident_id}"
+"""Where one is resolved. Pinned by the same case."""
+
+ADMIN_RELEASES = "/admin/releases"
+"""Where a deploy is recorded. Pinned by the same case."""
 
 TENANT_PARAM = "tenant"
 """The query parameter the view filters on, and the `param` every rejection of it
@@ -265,3 +299,170 @@ def reload_routing(request: Request) -> ReloadResult:
     request.app.state.breaker = CircuitBreaker()
     close_adapters(previous)
     return ReloadResult(reloaded=True, providers=tuple(sorted(request.app.state.adapters)))
+
+
+class IncidentCreate(BaseModel):
+    """What `POST /admin/incidents` accepts, and what it deliberately does NOT.
+
+    There is no `resolved_at` field, and that absence is the criterion: an
+    incident is born OPEN, a NULL `resolved_at` is what "open" means on the
+    timeline, and a body offering one would let an operator file an outage that
+    was never open. A caller sending the key anyway has it ignored by Pydantic's
+    default extra handling rather than stored
+    (`test_the_incident_post_returns_a_thirty_two_hex_id_and_never_sets_resolved_at`).
+
+    `id` is absent for the other half of decision A: the server generates it, so
+    no client string shapes a primary key.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    started_at: datetime
+    severity: str
+    title: str
+    summary: str
+    postmortem_url: str | None = None
+
+
+class IncidentCreated(BaseModel):
+    """The 201 body: the id the caller needs in order to resolve this incident later.
+
+    The whole row is not echoed. The caller sent every other field, and the id is
+    the one thing it does not already know (decision A).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+
+
+class IncidentResolve(BaseModel):
+    """What `PATCH /admin/incidents/{incident_id}` accepts: the resolution time only.
+
+    Nothing else on an incident is editable here. A wrong severity or a missing
+    postmortem link is a correction rather than a state change, and this plan's
+    surface is the state change; widening it later is a plan of its own.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    resolved_at: datetime
+
+
+class ReleaseCreate(BaseModel):
+    """What `POST /admin/releases` accepts: one deploy of one sha.
+
+    `eval_run_id` and `pr_url` are optional because a sha can be deployed before
+    any eval ran and from a branch that never had a pull request; both are NULL on
+    the row rather than empty strings, which is the difference between "not
+    measured" and "a run id that does not exist".
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    git_sha: str
+    deployed_at: datetime
+    eval_run_id: str | None = None
+    pr_url: str | None = None
+    status: str
+
+
+def _console_events(request: Request) -> ConsoleEventWriter:
+    """The writer `create_app` built: Postgres when a `database_url` is configured,
+    in-memory otherwise."""
+    writer: ConsoleEventWriter = request.app.state.console_events
+    return writer
+
+
+@router.post(ADMIN_INCIDENTS, status_code=201)
+def record_incident(request: Request, body: IncidentCreate) -> IncidentCreated:
+    """Record one incident and answer the id it was filed under.
+
+    201 rather than 200: this creates a record the caller can address afterwards,
+    and the id in the body is that address. `uuid4().hex` rather than a slug the
+    caller supplies (decision A), so two incidents filed in the same minute cannot
+    collide on a name someone typed twice and no client string reaches a primary
+    key.
+
+    `resolved_at` is `None` and cannot be anything else - `IncidentCreate` has no
+    such field. Every value the body did carry is pre-checked inside
+    `write_incident` before any statement runs, and each refusal is an
+    `IdentifierInvalid` naming its own field, which the error handler renders as
+    422 `VALIDATION` with that field as `param`.
+
+    Declared `def` rather than `async def`, like the two routes above: the write
+    is blocking work over a pooled connection, so FastAPI running it in a worker
+    thread is what keeps it off the event loop.
+    """
+    row = IncidentRow(
+        id=uuid.uuid4().hex,
+        started_at=body.started_at,
+        resolved_at=None,
+        severity=body.severity,
+        title=body.title,
+        summary=body.summary,
+        postmortem_url=body.postmortem_url,
+    )
+    _console_events(request).write_incident(row)
+    return IncidentCreated(id=row.id)
+
+
+@router.patch(ADMIN_INCIDENT)
+def resolve_incident(request: Request, incident_id: str, body: IncidentResolve) -> IncidentCreated:
+    """Close one open incident, or refuse with the reason it could not be closed.
+
+    The path parameter is the one place a client string takes the shape of an
+    incident id, so it is pre-checked here as well as in the writer: a malformed
+    id is refused before a connection is borrowed, exactly as `?tenant=` is on the
+    view above.
+
+    Both failures are 422 `VALIDATION` naming `id` and are
+    told apart by their messages, which `ledger.console_events` owns:
+    `ErrorCode.VALIDATION` is fixed at 422, and a 404 or a 409 carrying that code
+    would break the one-status-per-code table
+    `tests/gateway/test_error_contract.py` holds. Resolving twice is a refusal
+    rather than a no-op (decision E), because the second call would otherwise
+    overwrite the timestamp a postmortem's duration is computed from.
+
+    Answers the id it resolved, so the response has the same shape as the create's
+    and a caller scripting both reads one field from both.
+    """
+    checked_incident_id(incident_id)
+    _console_events(request).resolve_incident(incident_id, body.resolved_at)
+    return IncidentCreated(id=incident_id)
+
+
+@router.post(ADMIN_RELEASES, status_code=201)
+def record_release(request: Request, body: ReleaseCreate) -> ReleaseCreate:
+    """Record one deploy of one sha.
+
+    A named `eval_run_id` is checked for EXISTENCE before the insert. The column is
+    a foreign key, so without this check a CI job posting a run whose rows never
+    stored would reach the constraint and the integrity error would leave the route
+    as a 500 - a deploy step failing with a stack trace instead of a typed message
+    naming the input at fault (`test_a_release_naming_an_unstored_run_is_422_
+    validation_naming_eval_run_id`). The check is the writer's, so the in-memory
+    writer answers True for every well-formed id and a local run keeps working.
+
+    Two deploys of one sha are two rows (decision B): nothing here looks for an
+    existing row, because a rollback re-deploys an earlier sha and an upsert would
+    erase the original deploy.
+
+    Echoes the body rather than an id: the key is `(git_sha, deployed_at)`, both of
+    which the caller sent, so there is nothing here it does not already know.
+    """
+    writer = _console_events(request)
+    if body.eval_run_id is not None and not writer.eval_run_exists(body.eval_run_id):
+        raise IdentifierInvalid(
+            f"{EVAL_RUN_ID_FIELD}: no eval run carries this id", param=EVAL_RUN_ID_FIELD
+        )
+    writer.write_release(
+        ReleaseRow(
+            git_sha=body.git_sha,
+            deployed_at=body.deployed_at,
+            eval_run_id=body.eval_run_id,
+            pr_url=body.pr_url,
+            status=body.status,
+        )
+    )
+    return body

@@ -54,9 +54,12 @@ from opsconsole.gateway.routes.metrics import router as metrics_router
 from opsconsole.gateway.routes.models import router as models_router
 from opsconsole.gateway.routes.redact import router as redact_router
 from opsconsole.ledger import (
+    ConsoleEventWriter,
     CostLedgerWriter,
+    InMemoryConsoleEventWriter,
     InMemoryCostLedgerWriter,
     InMemoryResidencyLogWriter,
+    PostgresConsoleEventWriter,
     PostgresCostLedgerWriter,
     PostgresResidencyLogWriter,
     ResidencyLogWriter,
@@ -313,6 +316,12 @@ def create_app(
     `test_the_app_builds_the_in_memory_cost_ledger_without_a_database_url`). The
     argument is the one that gives the three Redis readers one client above.
 
+    The console event writer is the third on that same pool and the same switch. It is what `/admin/incidents` and `/admin/releases`
+    write through, so the in-memory branch is the one that keeps those routes
+    answering on a laptop with no Postgres at all - at the cost that an incident
+    recorded there is lost at exit, which is what the writer's own docstring says
+    it is (`test_the_routes_answer_with_no_database_url_configured`).
+
     `register_probes` runs last of the state-building steps, because the probes it
     registers close over the adapter mapping and the settings built above; what it
     registers is decided by which backing services are configured
@@ -369,6 +378,10 @@ def create_app(
         PostgresCostLedgerWriter(pool) if pool is not None else InMemoryCostLedgerWriter()
     )
     app.state.cost_ledger = cost_ledger
+    console_events: ConsoleEventWriter = (
+        PostgresConsoleEventWriter(pool) if pool is not None else InMemoryConsoleEventWriter()
+    )
+    app.state.console_events = console_events
     register_probes(app)
     register_error_handlers(app)
     install_exporter(resolved)
