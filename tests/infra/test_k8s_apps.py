@@ -118,6 +118,18 @@ HEALTHZ_INGRESS = "gateway-healthz"
 HELPDESK_INGRESS = "helpdesk"
 HELPDESK_HEALTHZ_INGRESS = "helpdesk-healthz"
 
+#: An earlier change: the console workload, its ConfigMap, the Secret `infra/secrets/` contracts for it,
+#: its three public routers and the one middleware only the login router names. Here rather than
+#: in `test_k8s_console.py` because `APPS_OBJECTS` names them first; that module imports them.
+CONSOLE = "console"
+CONSOLE_CONFIG_MAP = "console-config"
+CONSOLE_SECRET = "console-secrets"
+CONSOLE_INGRESS = "console"
+CONSOLE_HEALTHZ_INGRESS = "console-healthz"
+CONSOLE_LOGIN_INGRESS = "console-login"
+CONSOLE_LOGIN_RATE_LIMIT = "console-login-rate-limit"
+CONSOLE_HOST = "console.example.com"
+
 #: An earlier change's router, which is in `monitoring` and not in `apps`. It is named in this file
 #: because one case here is BUILD-WIDE - `INGRESS_TLS_SECRETS` below says why - and for no other
 #: reason: nothing else here scopes over it, and `test_k8s_grafana.py` owns everything else
@@ -156,6 +168,10 @@ APPS_NETWORK_POLICIES = frozenset(
         "helpdesk-api-ingress",
         "helpdesk-egress",
         "llama-ingress",
+        # An earlier change: the console's pair, content owned by `test_k8s_netpol.py` and
+        # `test_k8s_console.py`.
+        "console-ingress",
+        "console-egress",
     }
 )
 
@@ -183,6 +199,14 @@ APPS_OBJECTS: frozenset[tuple[str, str, str]] = HELPDESK_OBJECTS | frozenset(
         ("PersistentVolumeClaim", LLAMA_EMBED_PVC, APPS),
         ("Deployment", LLAMA_EMBED, APPS),
         ("Service", LLAMA_EMBED, APPS),
+        # An earlier change: `apps/console.yaml`'s six objects and the login router's own middleware.
+        ("ConfigMap", CONSOLE_CONFIG_MAP, APPS),
+        ("Deployment", CONSOLE, APPS),
+        ("Service", CONSOLE, APPS),
+        ("Ingress", CONSOLE_INGRESS, APPS),
+        ("Ingress", CONSOLE_HEALTHZ_INGRESS, APPS),
+        ("Ingress", CONSOLE_LOGIN_INGRESS, APPS),
+        ("Middleware", CONSOLE_LOGIN_RATE_LIMIT, APPS),
     }
     | {("NetworkPolicy", name, APPS) for name in APPS_NETWORK_POLICIES}
 )
@@ -250,7 +274,10 @@ HELPDESK_RESERVE: dict[str, str | int] = {
     "limits.memory": "384Mi",
 }
 
-#: Row 27's console, one pod.
+#: Row 27's console, one pod. An earlier change builds it, so it left `RESERVES` the way the llama and
+#: Helpdesk reserves did, and stays here as the row
+#: `test_k8s_console.py::test_the_console_declares_the_quantities_the_reserve_held` holds the built
+#: manifest to.
 CONSOLE_RESERVE: dict[str, str | int] = {
     "pods": 1,
     "requests.memory": "256Mi",
@@ -258,15 +285,14 @@ CONSOLE_RESERVE: dict[str, str | int] = {
     "limits.memory": "512Mi",
 }
 
-#: The reserve still held as a constant - row 27's console, the one workload in `apps` that no
-#: plan has built yet. `LLAMA_RESERVE` and `HELPDESK_RESERVE` are NOT in it any more: rows 20d
-#: and 20f build those pods, so the subtotals case reads their quantities off the built
-#: templates the way it already reads the gateway's, and summing a reserve as well would price
-#: the same workload twice and overflow a quota that is correct. Both stay in this module as
-#: the rows their own cases hold the manifests to
-#: (`test_llama_declares_the_quantities_the_budget_prices`,
-#: `test_the_four_helpdesk_pods_fit_the_envelope_the_reserve_held`).
-RESERVES = (CONSOLE_RESERVE,)
+#: The reserves still held as constants: none. An earlier change builds the console, the last workload a
+#: reserve was held for, so every pod in `apps` is now read off the built templates and summing
+#: a reserve as well would price the same workload twice and overflow a quota that is correct.
+#: `LLAMA_RESERVE`, `HELPDESK_RESERVE` and `CONSOLE_RESERVE` stay in this module as the rows their
+#: own cases hold the manifests to (`test_llama_declares_the_quantities_the_budget_prices`,
+#: `test_the_four_helpdesk_pods_fit_the_envelope_the_reserve_held`, and
+#: `test_k8s_console.py::test_the_console_declares_the_quantities_the_reserve_held`).
+RESERVES: tuple[dict[str, str | int], ...] = ()
 
 #: Decision A: the `apps` envelope after the limits column is raised. The requests column does
 #: not move - it is the 6Gi cluster-wide total #55 and the design pin.
@@ -484,6 +510,9 @@ INGRESS_HOSTS: dict[str, str] = {
     HEALTHZ_INGRESS: "api.example.com",
     HELPDESK_INGRESS: HELPDESK_HOST,
     HELPDESK_HEALTHZ_INGRESS: HELPDESK_HOST,
+    CONSOLE_INGRESS: CONSOLE_HOST,
+    CONSOLE_HEALTHZ_INGRESS: CONSOLE_HOST,
+    CONSOLE_LOGIN_INGRESS: CONSOLE_HOST,
 }
 
 #: Row 20g criteria 4 and 5: the backend `Service` each router sends its path to. An earlier change
@@ -494,6 +523,9 @@ INGRESS_BACKENDS: dict[str, str] = {
     HEALTHZ_INGRESS: GATEWAY,
     HELPDESK_INGRESS: HELPDESK_WEB,
     HELPDESK_HEALTHZ_INGRESS: HELPDESK_WEB,
+    CONSOLE_INGRESS: CONSOLE,
+    CONSOLE_HEALTHZ_INGRESS: CONSOLE,
+    CONSOLE_LOGIN_INGRESS: CONSOLE,
 }
 
 #: Row 21b criterion 1: the one path the public `gateway` router serves. `/v1` is the whole
@@ -510,6 +542,9 @@ INGRESS_PATHS: dict[str, str] = {
     HEALTHZ_INGRESS: LIVENESS_PATH,
     HELPDESK_INGRESS: "/",
     HELPDESK_HEALTHZ_INGRESS: LIVENESS_PATH,
+    CONSOLE_INGRESS: "/",
+    CONSOLE_HEALTHZ_INGRESS: LIVENESS_PATH,
+    CONSOLE_LOGIN_INGRESS: "/api/login",
 }
 
 #: Row 21b criterion 2: the four paths the gateway serves that no public router may match,
@@ -548,12 +583,20 @@ INGRESS_TLS_SECRETS: dict[str, str] = {
     HELPDESK_INGRESS: "helpdesk-tls",
     HELPDESK_HEALTHZ_INGRESS: "helpdesk-healthz-tls",
     GRAFANA_INGRESS: "grafana-tls",
+    CONSOLE_INGRESS: "console-tls",
+    CONSOLE_HEALTHZ_INGRESS: "console-healthz-tls",
+    CONSOLE_LOGIN_INGRESS: "console-login-tls",
 }
 
 #: The two routers the design exempts from basic auth, one per host. Named rather than derived
 #: from a `-healthz` suffix: a router called `helpdesk-healthz-web` would pass a suffix test
 #: while being neither of these.
-HEALTHZ_INGRESSES = frozenset({HEALTHZ_INGRESS, HELPDESK_HEALTHZ_INGRESS})
+HEALTHZ_INGRESSES = frozenset({HEALTHZ_INGRESS, HELPDESK_HEALTHZ_INGRESS, CONSOLE_HEALTHZ_INGRESS})
+
+#: The routers whose one path is `Exact`: the three `/healthz` routers, and an earlier change's
+#: `console-login`, whose `/api/login` must not also match `/api/login/...` under its stricter
+#: limit. Every other router is `Prefix`.
+EXACT_PATH_INGRESSES = HEALTHZ_INGRESSES | frozenset({CONSOLE_LOGIN_INGRESS})
 
 #: Row 20g criterion 4's `pathType`s. `Exact` on the exempt router because Traefik orders
 #: routers by rule length: an exact `/healthz` wins over the other router's `PathPrefix(/)`,
@@ -595,6 +638,9 @@ INGRESS_MIDDLEWARES: dict[str, frozenset[str]] = {
     HEALTHZ_INGRESS: frozenset({"rate-limit", "security-headers"}),
     HELPDESK_INGRESS: frozenset({"basic-auth", "rate-limit", "security-headers"}),
     HELPDESK_HEALTHZ_INGRESS: frozenset({"rate-limit", "security-headers"}),
+    CONSOLE_INGRESS: frozenset({"basic-auth", "rate-limit", "security-headers"}),
+    CONSOLE_HEALTHZ_INGRESS: frozenset({"rate-limit", "security-headers"}),
+    CONSOLE_LOGIN_INGRESS: frozenset({"basic-auth", CONSOLE_LOGIN_RATE_LIMIT, "security-headers"}),
 }
 
 #: Decision B's three copies, by name. Their VALUES are never written here: the equality case
@@ -756,6 +802,8 @@ PINNED_SECRET_NAMES = frozenset(
         "alertmanager-secrets",
         "backup-secrets",
         "evals-secrets",
+        # An earlier change, read by the console Deployment's `envFrom`.
+        CONSOLE_SECRET,
     }
 )
 
@@ -1592,8 +1640,9 @@ def test_the_apps_subtotals_fit_inside_the_namespace_quota(built: list[dict[str,
     overflows a quota that is correct - row 20e's embedding server, the one workload no
     reserve was EVER held for (decision E), so unlike 20d's change the three sums genuinely
     move there and the README table moves with them, and row 20f's four Helpdesk workloads,
-    which `HELPDESK_RESERVE` left `RESERVES` for on the same terms. `CONSOLE_RESERVE` is the
-    only reserve left. All seven templates are asserted present
+    which `HELPDESK_RESERVE` left `RESERVES` for on the same terms, and an earlier change's console,
+    which `CONSOLE_RESERVE` left `RESERVES` for last, so no reserve is summed any more. All eight
+    templates are asserted present
     before the sums, so a workload left out of `apps/kustomization.yaml`'s `resources` is a
     loud red here and not a build that quietly sums less and fits. Catches the arithmetic
     failing even though every individual quantity is correct: the gateway raised to fit, a
@@ -1616,7 +1665,7 @@ def test_the_apps_subtotals_fit_inside_the_namespace_quota(built: list[dict[str,
     ceilings = scale_targets(built)
     owners = [owner for owner in pod_owners(built) if namespace_of(owner) == APPS]
     built_names = {name_of(owner) for owner in owners}
-    missing = {GATEWAY, LLAMA, LLAMA_EMBED, *HELPDESK_WORKLOADS} - built_names
+    missing = {GATEWAY, LLAMA, LLAMA_EMBED, CONSOLE, *HELPDESK_WORKLOADS} - built_names
     assert missing == set(), (
         f"the build emits no pod template in {APPS} for {sorted(missing)}: {sorted(built_names)}"
     )
@@ -1828,7 +1877,14 @@ def test_each_apps_middleware_matches_its_platform_original(built: list[dict[str
     equality rather than a per-key check. Both sides are asserted present first, so a copy
     deleted and a platform original deleted are separate, named failures rather than one
     vacuous pass over an empty intersection."""
-    copies = in_apps(built, "Middleware")
+    # An earlier change's login limit has no `platform` original to match: it exists only in `apps`, and
+    # `test_k8s_console.py::test_the_login_rate_limit_is_five_per_minute_with_a_burst_of_five`
+    # owns its value. Excluded by NAME, so any other `apps`-only middleware still reddens here.
+    copies = {
+        name: document
+        for name, document in in_apps(built, "Middleware").items()
+        if name != CONSOLE_LOGIN_RATE_LIMIT
+    }
     originals = {
         name_of(document): document
         for document in objects_of_kind(built, "Middleware")
@@ -1933,9 +1989,10 @@ def test_each_ingress_routes_its_own_path_to_its_own_backend_service(
     ingress = sole_object(built, "Ingress", ingress_name)
     services = {name_of(document) for document in objects_of_kind(built, "Service")}
     expected_backend = INGRESS_BACKENDS[ingress_name]
-    is_healthz = ingress_name in HEALTHZ_INGRESSES
     expected_path = INGRESS_PATHS[ingress_name]
-    expected_path_type = PATH_TYPE_EXACT if is_healthz else PATH_TYPE_PREFIX
+    expected_path_type = (
+        PATH_TYPE_EXACT if ingress_name in EXACT_PATH_INGRESSES else PATH_TYPE_PREFIX
+    )
     paths: set[str] = set()
     for rule in ingress["spec"]["rules"]:
         for path in rule["http"]["paths"]:

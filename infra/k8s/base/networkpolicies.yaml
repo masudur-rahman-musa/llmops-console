@@ -1,4 +1,4 @@
-# The fifteen NetworkPolicies: eight in `apps`, three in `platform`, four in
+# The twenty NetworkPolicies: ten in `apps`, three in `platform`, seven in
 # `monitoring`. They live in `base/` rather than beside the workloads
 # they constrain because the design puts them here: a policy is part of the
 # envelope a namespace admits work into, like its quota and its LimitRange, and
@@ -34,7 +34,7 @@
 # automatic one and would silently outlive it.
 
 # Every pod in `apps`, both directions, no exceptions. This is the only document
-# here that denies anything; the seven after it are what give the namespace back
+# here that denies anything; the nine after it are what give the namespace back
 # the traffic it actually needs.
 ---
 apiVersion: networking.k8s.io/v1
@@ -80,7 +80,7 @@ spec:
 
 # Three sources, one port. `kube-system` is Traefik, which is how both public
 # hosts reach anything; the empty `podSelector` is every pod in `apps`, which is
-# how the four Helpdesk workloads call the gateway rather than a provider; and
+# how the four Helpdesk workloads and the console call the gateway; and
 # `monitoring` is Prometheus scraping `/metrics`, which the gateway already
 # serves on this same port. The scrape needed no port, Service or probe change
 # on the gateway - only a source admitted here.
@@ -361,6 +361,54 @@ spec:
       ports:
         - protocol: TCP
           port: http
+
+# The console is reached from one place: Traefik in `kube-system`, for its three
+# routers on `console.`. Nothing in `apps` calls it and Prometheus scrapes
+# nothing on it, so neither is admitted.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: console-ingress
+  namespace: apps
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: console
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: TCP
+          port: http
+
+# And it reaches one thing: the gateway's console-api routes, never a database,
+# Prometheus or the internet, so no `ipBlock`. The admitting half
+# is `gateway-ingress`'s existing `podSelector: {}` peer, every pod in `apps`.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: console-egress
+  namespace: apps
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: console
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gateway
+      ports:
+        - protocol: TCP
+          port: 8080
 
 # `platform` is denied INBOUND only (decision A). cert-manager lives here and
 # needs the ACME endpoint and the API server; an egress deny would be a cluster

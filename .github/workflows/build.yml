@@ -1,10 +1,14 @@
 name: build
-# the design's image pipeline: the gateway image built for both architectures, pushed
-# to GHCR, scanned by Trivy, and published with its SBOM. Nothing here touches a
-# cluster - the deploy is `deploy.yml`, and it is gated on this workflow
+# The image pipeline: the gateway and console images built for both architectures,
+# pushed to GHCR, scanned by Trivy, and published with their SBOMs. Nothing here
+# touches a cluster - the deploy is `deploy.yml`, and it is gated on this workflow
 # being green.
 #
-# The gateway only. This repository has one `Dockerfile`; the four `helpdesk-*`
+# Two jobs in one workflow rather than a workflow per image: `deploy.yml` waits on
+# this workflow's conclusion, and a second workflow would race it, deploying a
+# gateway SHA whose console image was still building.
+#
+# The gateway and the console only. The four `helpdesk-*`
 # images belong to the companion workload repo and are published under its own
 # registry path, which is why `infra/k8s/apps/kustomization.yaml` names them from
 # a different owner path and this file never mentions them.
@@ -82,8 +86,10 @@ jobs:
           tags: ghcr.io/developermusa/ai-operations-console/gateway:${{ github.sha }}
           sbom: true
           provenance: mode=max
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Scoped per image: two jobs writing one unscoped cache overwrite each
+          # other's layers every run.
+          cache-from: type=gha,scope=gateway
+          cache-to: type=gha,scope=gateway,mode=max
 
       # The same attestation, read back out of the registry into a file. The
       # attestation is the record; this is so a reader can answer the question from
@@ -120,6 +126,71 @@ jobs:
         uses: aquasecurity/trivy-action@0.28.0
         with:
           image-ref: ghcr.io/developermusa/ai-operations-console/gateway:${{ github.sha }}
+          severity: CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+          format: table
+
+  # The console image, the `image` job's shape step for step. Only what differs is
+  # commented; the reasons above hold here unchanged.
+  console:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    env:
+      SBOM_FILE: sbom.spdx.json
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Its own context: the console's `.dockerignore` applies only when the
+      # context is `services/console`, and the root context would send the whole
+      # repository to the builder.
+      - name: Build and push the console image
+        uses: docker/build-push-action@v6
+        with:
+          context: services/console
+          file: services/console/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/developermusa/ai-operations-console/console:${{ github.sha }}
+          sbom: true
+          provenance: mode=max
+          cache-from: type=gha,scope=console
+          cache-to: type=gha,scope=console,mode=max
+
+      - name: Extract the SBOM from the pushed image
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect \
+            "ghcr.io/developermusa/ai-operations-console/console:${{ github.sha }}" \
+            --format '{{ json .SBOM }}' > "$SBOM_FILE"
+
+      # Named apart from the gateway's: `upload-artifact@v4` refuses a second
+      # artifact of the same name in one run.
+      - name: Publish the SBOM
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-console-${{ github.sha }}
+          path: ${{ env.SBOM_FILE }}
+          if-no-files-found: error
+
+      - name: Scan the pushed image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ghcr.io/developermusa/ai-operations-console/console:${{ github.sha }}
           severity: CRITICAL
           exit-code: "1"
           ignore-unfixed: true

@@ -19,10 +19,13 @@ and `document["on"]` would raise `KeyError` on a perfectly correct workflow.
 
 Two deliberate choices about selection:
 
-* The plan pins no job names (this workflow is not a required check by name), so steps are
-  gathered across EVERY job and each step is located by a substring of its `uses`. Actions
-  in this repo are pinned by major tag (`actions/checkout@v4`), so an exact ref would go
-  red on a legitimate bump; the substring is the action's `owner/name`.
+* An earlier change adds a second job, `console`, with the `image` job's shape, so a step located across
+  EVERY job would find two of each. The `build` fixture and every `step_using` caller of the
+  gateway cases therefore read the `image` job alone (`image_job`), and the console cases read
+  the `console` job alone (`only_job` inside each case, so a missing job is a failure of the
+  case rather than an error of a fixture). Within a job, each step is located by a substring of
+  its `uses`. Actions in this repo are pinned by major tag (`actions/checkout@v4`), so an
+  exact ref would go red on a legitimate bump; the substring is the action's `owner/name`.
 * Selection is by `uses` only, never by a fragment of a `run` script, because a step that
   merely ECHOES `--severity CRITICAL` or the image name would match a fragment search. For the same reason the "no floating tag" case reads the `tags` value
   of the build step and nothing else: the workflow's own trigger says `main`, and so will
@@ -48,6 +51,18 @@ UPLOAD_ACTION = "actions/upload-artifact"
 TRIVY_ACTION = "aquasecurity/trivy-action"
 
 EXPECTED_PLATFORMS = "linux/amd64,linux/arm64"
+
+#: The two jobs, by id: an earlier change's gateway image and an earlier change's console image (decision B).
+IMAGE_JOB = "image"
+CONSOLE_JOB = "console"
+
+#: An earlier change criterion: the console job's build inputs, and the single tag it publishes, written
+#: out literally so the comparison with the overlay is between two files that both SAY it.
+CONSOLE_CONTEXT = "services/console"
+CONSOLE_DOCKERFILE = "services/console/Dockerfile"
+CONSOLE_REPOSITORY = "ghcr.io/developermusa/ai-operations-console/console"
+CONSOLE_TAG_EXPRESSION = "${{ github.sha }}"
+
 EXPECTED_PERMISSIONS = {"contents": "read", "packages": "write", "id-token": "write"}
 
 
@@ -103,15 +118,26 @@ def with_of(step: dict[str, Any]) -> dict[str, Any]:
     return block
 
 
-def gateway_image_name() -> str:
-    """The `newName` of the `gateway` entry in the apps overlay's `images:` list."""
+def overlay_image_name(image: str) -> str:
+    """The `newName` of the `image` entry in the apps overlay's `images:` list."""
     images = load(KUSTOMIZATION)["images"]
     assert isinstance(images, list)
-    entries = [
-        entry for entry in images if isinstance(entry, dict) and entry.get("name") == "gateway"
-    ]
-    assert len(entries) == 1, "the apps overlay does not carry exactly one `gateway` image"
+    entries = [entry for entry in images if isinstance(entry, dict) and entry.get("name") == image]
+    assert len(entries) == 1, f"the apps overlay does not carry exactly one `{image}` image"
     return str(entries[0]["newName"])
+
+
+def gateway_image_name() -> str:
+    """The `newName` of the `gateway` entry in the apps overlay's `images:` list."""
+    return overlay_image_name("gateway")
+
+
+def only_job(jobs: dict[str, Any], job_id: str) -> dict[str, Any]:
+    """`jobs` narrowed to the one job `job_id`, in the shape `step_using` reads."""
+    assert job_id in jobs, f"the workflow declares no `{job_id}` job: {sorted(jobs)}"
+    job = jobs[job_id]
+    assert isinstance(job, dict), f"the `{job_id}` job is not a mapping"
+    return {job_id: job}
 
 
 def tag_lines(build: dict[str, Any]) -> list[str]:
@@ -156,9 +182,15 @@ def jobs(workflow: dict[str, Any]) -> dict[str, Any]:
 
 
 @pytest.fixture(scope="module")
-def build(jobs: dict[str, Any]) -> dict[str, Any]:
-    """The one `docker/build-push-action` step, wherever it sits."""
-    return step_using(jobs, BUILD_ACTION)
+def image_job(jobs: dict[str, Any]) -> dict[str, Any]:
+    """The `image` job alone, so the gateway cases never see the console job's steps."""
+    return only_job(jobs, IMAGE_JOB)
+
+
+@pytest.fixture(scope="module")
+def build(image_job: dict[str, Any]) -> dict[str, Any]:
+    """The one `docker/build-push-action` step of the `image` job."""
+    return step_using(image_job, BUILD_ACTION)
 
 
 def test_the_workflow_builds_on_a_push_to_main_and_on_tags(workflow: dict[str, Any]) -> None:
@@ -210,14 +242,14 @@ def test_the_permissions_are_exactly_the_three_the_push_needs(
 
 
 def test_the_login_step_authenticates_to_ghcr_with_the_workflow_token(
-    jobs: dict[str, Any],
+    image_job: dict[str, Any],
 ) -> None:
     """Criterion 4. Catches a login pointed at Docker Hub (the action's default registry when
     `registry` is omitted), which would push this image somewhere nobody deploys from, and
     catches a password taken from a long-lived personal access token in `secrets`: the
     `GITHUB_TOKEN` is scoped to this run and expires with it, which is the whole reason the
     plan names it."""
-    login = with_of(step_using(jobs, LOGIN_ACTION))
+    login = with_of(step_using(image_job, LOGIN_ACTION))
 
     assert login["registry"] == "ghcr.io"
     assert "secrets.GITHUB_TOKEN" in str(login["password"])
@@ -285,13 +317,13 @@ def test_the_build_produces_an_sbom(build: dict[str, Any]) -> None:
     assert with_of(build)["sbom"] is True
 
 
-def test_the_sbom_is_uploaded_as_an_artifact(jobs: dict[str, Any]) -> None:
+def test_the_sbom_is_uploaded_as_an_artifact(image_job: dict[str, Any]) -> None:
     """Criterion 5's second half. Catches an SBOM generated inside the runner and thrown away
     with it, which is criterion 5 held only in appearance, and catches an upload step
     retargeted at the Trivy report or the build log - the inputs must NAME the SBOM (`sbom`
     or `spdx`), or what is published is some other file. Located by `uses`, so a step that
     merely echoes the word cannot satisfy it."""
-    upload = with_of(step_using(jobs, UPLOAD_ACTION))
+    upload = with_of(step_using(image_job, UPLOAD_ACTION))
     described = " ".join(str(value) for value in upload.values()).lower()
 
     assert "sbom" in described or "spdx" in described
@@ -306,7 +338,7 @@ def test_the_sbom_is_uploaded_as_an_artifact(jobs: dict[str, Any]) -> None:
     ],
 )
 def test_the_trivy_step_fails_the_job_on_a_critical_finding(
-    jobs: dict[str, Any], input_name: str, expected: object
+    image_job: dict[str, Any], input_name: str, expected: object
 ) -> None:
     """Criterion 6, one row per input, each pinned exactly.
 
@@ -319,19 +351,93 @@ def test_the_trivy_step_fails_the_job_on_a_critical_finding(
     intended. `ignore-unfixed` catches the scan being left to fail on CVEs with no fixed
     version in the base image, where the pipeline is red for something no rebuild can
     clear and someone soon deletes the whole step."""
-    assert with_of(step_using(jobs, TRIVY_ACTION))[input_name] == expected
+    assert with_of(step_using(image_job, TRIVY_ACTION))[input_name] == expected
 
 
 def test_trivy_scans_the_image_the_build_just_pushed(
-    jobs: dict[str, Any], build: dict[str, Any]
+    image_job: dict[str, Any], build: dict[str, Any]
 ) -> None:
     """Criterion 6, the target rather than the thresholds. Catches an `image-ref` pointed at
     a floating tag or at the base image - a scan that passes while the artefact actually
     published was never looked at. The reference must name the overlay's repository and
     resolve from `github.sha`, the same two properties the tag cases pin, so the scanned
     image and the pushed image are one image."""
-    reference = str(with_of(step_using(jobs, TRIVY_ACTION))["image-ref"])
+    reference = str(with_of(step_using(image_job, TRIVY_ACTION))["image-ref"])
 
     assert repository_of(reference) == gateway_image_name()
     assert "github.sha" in tag_of(reference)
     assert repository_of(reference) in {repository_of(line) for line in tag_lines(build)}
+
+
+def test_the_console_job_builds_the_console_dockerfile_for_both_architectures(
+    jobs: dict[str, Any],
+) -> None:
+    """An earlier change decision B. Catches a console job built from the repository root context or
+    the root `Dockerfile` (which is the gateway image pushed under the console name), a job
+    built for one architecture only (the CAX21 nodes are arm64, so an amd64-only image fails
+    at the pull), a `push: false` build that scans nothing real, and a job with no GHCR login,
+    whose push 403s. The Dockerfile path is resolved against the repo root, so a typo reddens
+    here rather than inside the runner."""
+    console_job = only_job(jobs, CONSOLE_JOB)
+    build = with_of(step_using(console_job, BUILD_ACTION))
+
+    assert build["context"] == CONSOLE_CONTEXT, f"the console builds from {build['context']!r}"
+    assert build["file"] == CONSOLE_DOCKERFILE, f"the console builds {build['file']!r}"
+    assert (REPO_ROOT / CONSOLE_DOCKERFILE).is_file(), f"{CONSOLE_DOCKERFILE} does not exist"
+    assert build["platforms"] == EXPECTED_PLATFORMS
+    assert build["push"] is True
+
+    login = with_of(step_using(console_job, LOGIN_ACTION))
+    assert login["registry"] == "ghcr.io"
+    assert "secrets.GITHUB_TOKEN" in str(login["password"])
+
+
+def test_the_console_image_is_the_name_the_apps_overlay_deploys(
+    jobs: dict[str, Any],
+) -> None:
+    """An earlier change decision B, the reference half. Catches a console job pushing to the gateway's
+    repository (a copied `tags` line), which overwrites the gateway image at the same SHA with
+    the console; catches a second tag, including a floating `latest` or `main`; and catches the
+    workflow and `infra/k8s/apps/kustomization.yaml` naming different console repositories,
+    which is a green build and a cluster that cannot pull. The single tag is compared whole and
+    literally, and the overlay is read, never restated."""
+    console_job = only_job(jobs, CONSOLE_JOB)
+    build = step_using(console_job, BUILD_ACTION)
+
+    assert tag_lines(build) == [f"{CONSOLE_REPOSITORY}:{CONSOLE_TAG_EXPRESSION}"], (
+        f"the console job publishes {tag_lines(build)}"
+    )
+    assert overlay_image_name("console") == CONSOLE_REPOSITORY, (
+        f"the overlay deploys the console from {overlay_image_name('console')!r}"
+    )
+
+
+def test_the_console_job_scans_and_publishes_its_sbom(
+    jobs: dict[str, Any], image_job: dict[str, Any]
+) -> None:
+    """An earlier change decision B, the supply-chain half, in the console job itself. Catches a
+    console job with no SBOM (`sbom` dropped or written as a string), no artefact upload, or
+    an upload under the SAME artefact name as the gateway job's - `upload-artifact@v4` refuses
+    a second artefact of one name in one run, so one of the two SBOMs is lost. Catches a Trivy
+    step left out, pointed at the gateway image, or on the action's default `exit-code` of 0,
+    which prints a CRITICAL table under a green tick, and a severity band or an
+    `ignore-unfixed` differing from the gateway job's pinned values."""
+    console_job = only_job(jobs, CONSOLE_JOB)
+    build = step_using(console_job, BUILD_ACTION)
+    assert with_of(build)["sbom"] is True
+
+    upload = with_of(step_using(console_job, UPLOAD_ACTION))
+    described = " ".join(str(value) for value in upload.values()).lower()
+    assert "sbom" in described or "spdx" in described, f"the console uploads {upload}"
+    gateway_upload = with_of(step_using(image_job, UPLOAD_ACTION))
+    assert str(upload.get("name")) != str(gateway_upload.get("name")), (
+        f"both jobs upload an artefact named {upload.get('name')!r}"
+    )
+
+    trivy = with_of(step_using(console_job, TRIVY_ACTION))
+    assert trivy["severity"] == "CRITICAL"
+    assert trivy["exit-code"] == "1"
+    assert trivy["ignore-unfixed"] is True
+    assert str(trivy["image-ref"]) == f"{CONSOLE_REPOSITORY}:{CONSOLE_TAG_EXPRESSION}", (
+        f"the console job scans {trivy['image-ref']!r}"
+    )

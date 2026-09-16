@@ -1,9 +1,8 @@
-# The gateway: one of the two workloads in `apps` that serve public traffic.
+# The gateway: one of the three workloads in `apps` that serve public traffic.
 # llama.cpp sits beside it in `llama.yaml`, unrouted from outside, and the four
 # Helpdesk workloads in `helpdesk.yaml`, of which `helpdesk-web` has its own
-# Ingress pair in `ingress.yaml`. The console is still to land, and the budget
-# table in `../README.md` holds it as a named reserve, so this namespace's quota
-# already fits it.
+# Ingress pair in `ingress.yaml`. The console is in `console.yaml`, with its own
+# routers.
 #
 # Two replicas at rest with an HPA to three. The `apps` quota is
 # sized against the CEILING rather than the floor: a quota that only fits

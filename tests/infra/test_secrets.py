@@ -71,6 +71,7 @@ GRAFANA_ADMIN = "grafana-admin"
 ALERTMANAGER_SECRETS = "alertmanager-secrets"
 BACKUP_SECRETS = "backup-secrets"
 EVALS_SECRETS = "evals-secrets"
+CONSOLE_SECRETS = "console-secrets"
 
 PLATFORM = "platform"
 APPS = "apps"
@@ -88,6 +89,7 @@ EXPECTED_NAMESPACES: dict[str, frozenset[str]] = {
     ALERTMANAGER_SECRETS: frozenset({MONITORING}),
     BACKUP_SECRETS: frozenset({PLATFORM}),
     EVALS_SECRETS: frozenset({EVALS}),
+    CONSOLE_SECRETS: frozenset({APPS}),
 }
 
 #: One template per Secret (decision B), `traefik-basic-auth`'s being one file of two
@@ -102,6 +104,7 @@ EXAMPLE_FILENAMES: frozenset[str] = frozenset(
         f"{ALERTMANAGER_SECRETS}.example.yaml",
         f"{BACKUP_SECRETS}.example.yaml",
         f"{EVALS_SECRETS}.example.yaml",
+        f"{CONSOLE_SECRETS}.example.yaml",
     }
 )
 
@@ -165,7 +168,17 @@ PATH_WITHOUT_SOPS = "/usr/bin:/bin"
 #: 23b's, and its disjointness from `grafana-admin` is what keeps an issued certificate from
 #: overwriting the admin credential in one namespace.
 INGRESS_TLS_SECRETS: frozenset[str] = frozenset(
-    {"gateway-tls", "gateway-healthz-tls", "helpdesk-tls", "helpdesk-healthz-tls", "grafana-tls"}
+    {
+        "gateway-tls",
+        "gateway-healthz-tls",
+        "helpdesk-tls",
+        "helpdesk-healthz-tls",
+        "grafana-tls",
+        # An earlier change's three console routers.
+        "console-tls",
+        "console-healthz-tls",
+        "console-login-tls",
+    }
 )
 
 #: The header the secrets table in `infra/k8s/README.md` carries, cell for cell. The table is

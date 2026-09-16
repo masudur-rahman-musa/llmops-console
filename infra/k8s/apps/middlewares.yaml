@@ -49,3 +49,18 @@ spec:
     contentTypeNosniff: true
     frameDeny: true
     referrerPolicy: strict-origin-when-cross-origin
+---
+# The one middleware here with no `platform` original: the console login's own
+# limit, which is why the copy check above excludes it by name.
+# Five a minute per source address with a burst of five. `period` is
+# int-or-string in the Traefik CRD k3s pins, so `1m` is a duration.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: console-login-rate-limit
+  namespace: apps
+spec:
+  rateLimit:
+    average: 5
+    period: 1m
+    burst: 5

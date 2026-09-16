@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { SESSION_COOKIE, readSessionSecret, verifySession } from "@/lib/session";
 
-const EXEMPT = new Set(["/login", "/api/login", "/api/logout"]);
+const EXEMPT = new Set(["/login", "/api/login", "/api/logout", "/healthz", "/readyz"]);
 
 /** Every non-exempt path needs a valid session. Pinned by tests/middleware.test.ts. */
 export async function middleware(request: NextRequest): Promise<NextResponse> {

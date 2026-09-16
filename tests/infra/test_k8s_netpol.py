@@ -1,5 +1,5 @@
-r"""`infra/k8s/base/networkpolicies.yaml`: the eighteen NetworkPolicies an earlier change and
-23c agree, read off what kustomize actually emits rather than off the file, so a policy written
+r"""`infra/k8s/base/networkpolicies.yaml`: the twenty NetworkPolicies an earlier change
+and 31a agree, read off what kustomize actually emits rather than off the file, so a policy written
 and never listed in `base/kustomization.yaml`'s `resources` is the same failure as a policy never
 written.
 
@@ -98,7 +98,8 @@ HELPDESK_WORKLOADS = frozenset(
     {HELPDESK_AGENT_API, HELPDESK_MCP_SERVER, HELPDESK_SCHEDULER, HELPDESK_WEB}
 )
 
-#: Criterion 1, the `apps` half: eight policies, by name.
+#: Criterion 1, the `apps` half: ten policies, by name. An earlier change adds the console's pair;
+#: `test_k8s_console.py` owns their content.
 APPS_POLICIES = frozenset(
     {
         "default-deny",
@@ -109,6 +110,8 @@ APPS_POLICIES = frozenset(
         "helpdesk-api-ingress",
         "helpdesk-egress",
         "llama-ingress",
+        "console-ingress",
+        "console-egress",
     }
 )
 
@@ -527,7 +530,7 @@ def selector_scope(
 @pytest.mark.parametrize(
     ("namespace", "expected"),
     [
-        pytest.param(APPS, APPS_POLICIES, id="apps-eight"),
+        pytest.param(APPS, APPS_POLICIES, id="apps-ten"),
         pytest.param(PLATFORM, PLATFORM_POLICIES, id="platform-three"),
         pytest.param(MONITORING, MONITORING_POLICIES, id="monitoring-seven"),
     ],
@@ -550,10 +553,10 @@ def test_each_namespace_emits_exactly_the_policies_the_plan_names(
     )
 
 
-def test_the_whole_build_emits_exactly_the_eighteen_policies_and_nowhere_else(
+def test_the_whole_build_emits_exactly_the_twenty_policies_and_nowhere_else(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 1 over the WHOLE stream as `(namespace, name)`. Catches a nineteenth policy
+    """Criterion 1 over the WHOLE stream as `(namespace, name)`. Catches a twenty-first policy
     landing in a fourth namespace, which the three per-namespace rows above cannot see because each
     filters to its own namespace first; and catches a policy emitted with no
     `metadata.namespace` at all, which the API server would file into whatever namespace the

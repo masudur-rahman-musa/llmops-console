@@ -95,9 +95,7 @@ now the tight one.
 What `apps/` spends of the 3Gi / 1500m / 7Gi the envelope gives it. The gateway
 is priced at its HPA CEILING rather than at its two resting replicas: a quota
 sized to the floor admits the cluster happily and then rejects the first
-scale-up at admission, which is the one event an autoscaler exists to serve. The
-last row is a workload this directory does not write yet, held as a named
-reserve so the namespace is not re-planned when it lands.
+scale-up at admission, which is the one event an autoscaler exists to serve.
 
 | workload | requests.memory | requests.cpu | limits.memory |
 |---|---|---|---|
@@ -108,14 +106,14 @@ reserve so the namespace is not re-planned when it lands.
 | `helpdesk-mcp-server`, 1 pod | 128Mi | 75m | 256Mi |
 | `helpdesk-web`, 1 pod | 128Mi | 75m | 256Mi |
 | `helpdesk-scheduler`, 1 pod | 128Mi | 50m | 256Mi |
-| console reserve, 1 pod | 256Mi | 100m | 512Mi |
+| `console`, 1 pod | 256Mi | 100m | 512Mi |
 | **total** | **2880Mi** | **1250m** | **6784Mi** |
 
 `tests/infra/test_k8s_apps.py` derives those three totals the same way - the
 built pod templates, the gateway multiplied by the `maxReplicas` of the HPA in
-the same build, plus the one remaining reserve - and checks them against the
-`apps` quota. llama.cpp moved from the reserve list to the built side when its
-manifest landed, and the totals did not move: the manifest was written to the
+the same build - and checks them against the `apps` quota. llama.cpp and the
+console each moved from a reserve row to the built side when their manifests
+landed, and the totals did not move: the manifest was written to the
 reserve, not the reserve rewritten to the manifest.
 
 The embedding server is the one row that DID move them. No reserve was ever held
@@ -137,8 +135,8 @@ is this table and not a quiet edit - and the direction of the error is visible,
 because an out-of-memory kill on `helpdesk-web` is a CrashLoopBackOff rather
 than a silent degradation.
 
-What is left after all of it is thin on purpose: the console's 256Mi / 100m /
-512Mi reserve and no more, so row 27 is the last workload this envelope holds.
+With the console built there is no reserve left: it was the last workload this
+envelope holds, and a new one is a conversation about this table.
 
 The limits column is why that quota holds 7Gi rather than the 5Gi the envelope
 first gave it: llama.cpp is sized for 3 GiB on its own, and trimming its ceiling
@@ -196,6 +194,9 @@ Ingress — it is not behind basic auth at all, so there is nothing to carve out
 | `api.example.com` | `gateway-healthz` | `/healthz` (Exact) | `gateway` | rate-limit, security-headers | `gateway-healthz-tls` |
 | `helpdesk.example.com` | `helpdesk` | `/` (Prefix) | `helpdesk-web` | basic-auth, rate-limit, security-headers | `helpdesk-tls` |
 | `helpdesk.example.com` | `helpdesk-healthz` | `/healthz` (Exact) | `helpdesk-web` | rate-limit, security-headers | `helpdesk-healthz-tls` |
+| `console.example.com` | `console` | `/` (Prefix) | `console` | basic-auth, rate-limit, security-headers | `console-tls` |
+| `console.example.com` | `console-healthz` | `/healthz` (Exact) | `console` | rate-limit, security-headers | `console-healthz-tls` |
+| `console.example.com` | `console-login` | `/api/login` (Exact) | `console` | basic-auth, console-login-rate-limit, security-headers | `console-login-tls` |
 | `grafana.example.com` | `grafana` | `/` (Prefix) | `grafana` | rate-limit, security-headers | `grafana-tls` |
 
 `grafana.` is the one public host with no basic auth in front of it, and the
@@ -232,11 +233,12 @@ path the app mounts still answers on `Service/gateway` in-cluster, which is what
 `/metrics`: a scrape target in its config and a `monitoring` peer on
 `gateway-ingress`, neither of them a router.
 
-A future public surface that is not under `/v1` - the console's `console-api` -
+The console reads `console-api` in-cluster, through `Service/gateway`, so those
+routes need no router on `api.`. A future public surface that is not under `/v1`
 needs a router of its own on this table, or it is a 404 on a host that is up.
 
 Every middleware reference is namespace-qualified — `apps-<name>@kubernetescrd`
-on the four `apps` routers, `monitoring-<name>@kubernetescrd` on the Grafana one
+on the seven `apps` routers, `monitoring-<name>@kubernetescrd` on the Grafana one
 — and each resolves to that namespace's own copy of the middleware.
 Traefik treats a reference it cannot resolve as no middleware at all rather than
 as an error, so a `platform-` prefix here, or an `apps-` prefix copied onto the
@@ -260,8 +262,8 @@ nothing rather than one that answers too much.
 
 ## What may reach what
 
-Seventeen `NetworkPolicy` objects in `base/networkpolicies.yaml`: eight in
-`apps`, three in `platform` and six in `monitoring`. `apps` and `monitoring` are denied
+Twenty `NetworkPolicy` objects in `base/networkpolicies.yaml`: ten in
+`apps`, three in `platform` and seven in `monitoring`. `apps` and `monitoring` are denied
 in both directions and every row below is an additive allow on top of that;
 `platform` is denied inbound only, because
 cert-manager lives there and a cluster that cannot reach the ACME endpoint is a
@@ -279,6 +281,8 @@ provider keys is the one closed both ways.
 | `helpdesk-api-ingress` | `apps` | `helpdesk-agent-api`, `helpdesk-mcp-server` | ingress from the four Helpdesk pods, each on its own serving port |
 | `helpdesk-egress` | `apps` | the four Helpdesk pods | egress to `gateway:8080`, `helpdesk-agent-api:8000`, `helpdesk-mcp-server:8001`, `postgres:5432`, `redis:6379`, `qdrant:6333` - and no route off the cluster at all |
 | `llama-ingress` | `apps` | `llama`, `llama-embed` | ingress from `gateway`, each on its own serving port |
+| `console-ingress` | `apps` | `console` | ingress from `kube-system` (Traefik) on its serving port, and from nowhere else |
+| `console-egress` | `apps` | `console` | egress to `gateway:8080` - and no route off the cluster at all |
 | `default-deny-ingress` | `platform` | every pod | nothing inbound; egress is not constrained |
 | `data-ingress-from-apps` | `platform` | `postgres`, `redis`, `qdrant` | ingress from any pod in `apps` on 5432, 6379 and 6333 |
 | `metrics-ingress-from-monitoring` | `platform` | `qdrant` | ingress from any pod in `monitoring` on 6333 |
@@ -373,7 +377,7 @@ If the chart's real footprint is larger than that, the quota refuses the install
 with the namespace named, which is the intended direction: raising it means
 re-totalling the table above and the reserve constant in the test together.
 
-The eight Secrets nothing here writes, each supplied SOPS-encrypted before the
+The nine Secrets nothing here writes, each supplied SOPS-encrypted before the
 first apply. `../secrets/` holds one plaintext contract per Secret
 (`*.example.yaml`, every value `REPLACE_ME`), the workflow that encrypts a filled
 copy, and the key procedure; `../../.sops.yaml` is the policy that decides what
@@ -387,6 +391,7 @@ are asserted equal, and equal to the names the build references, by
 | `traefik-basic-auth` | `platform`, `apps` | `users` (htpasswd lines) | the `basic-auth` middleware in each namespace |
 | `gateway-secrets` | `apps` | `OPSCONSOLE_DATABASE_URL`, `OPSCONSOLE_API_KEYS`, `OPSCONSOLE_ADMIN_KEY_SHA256`, `OPSCONSOLE_BUDGET_OVERRIDE_SECRET`, `OPSCONSOLE_OTLP_ENDPOINT`, `OPSCONSOLE_OTLP_HEADERS`, `ANTHROPIC_API_KEY`, `ANTHROPIC_EU_API_KEY`, `OPENAI_API_KEY`, `AZURE_OPENAI_KEY`, `AZURE_OPENAI_ENDPOINT` | the gateway Deployment, by `envFrom` |
 | `helpdesk-secrets` | `apps` | `HELPDESK_GATEWAY_API_KEY`, `HELPDESK_DATABASE_URL`, `HELPDESK_LANGFUSE_PUBLIC_KEY`, `HELPDESK_LANGFUSE_SECRET_KEY`, `HELPDESK_LANGFUSE_HOST` | the four Helpdesk Deployments, by `envFrom` |
+| `console-secrets` | `apps` | `CONSOLE_PASSWORD_SHA256`, `CONSOLE_SESSION_SECRET`, `CONSOLE_ADMIN_KEY` | the console Deployment, by `envFrom`; `CONSOLE_ADMIN_KEY` must hash to `gateway-secrets`' `OPSCONSOLE_ADMIN_KEY_SHA256` |
 | `grafana-admin` | `monitoring` | `GF_SECURITY_ADMIN_USER`, `GF_SECURITY_ADMIN_PASSWORD` | the Grafana Deployment, by `envFrom` |
 | `alertmanager-secrets` | `monitoring` | `SMTP_SMARTHOST`, `SMTP_FROM`, `SMTP_AUTH_USERNAME`, `SMTP_AUTH_PASSWORD`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | the Alertmanager Deployment, by `envFrom` |
 | `backup-secrets` | `platform` | `RCLONE_CONFIG_HETZNER_ACCESS_KEY_ID`, `RCLONE_CONFIG_HETZNER_SECRET_ACCESS_KEY`, `RCLONE_CONFIG_HETZNER_ENDPOINT`, `BACKUP_BUCKET` | both backup CronJobs' `rclone-sync` container, by `envFrom` |
@@ -482,7 +487,6 @@ still a gap, not one this row closes.
 
 ## Still to land
 
-- The rest of `apps/` - the console with its `console.` Ingress.
 - The nightly eval CronJob in `evals/`.
 - `monitoring/` carries Grafana with all six dashboards and
   Alertmanager with the rules in `../../project-obs/alerts/` - the

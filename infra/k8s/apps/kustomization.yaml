@@ -1,8 +1,7 @@
 # The gateway, the two llama.cpp servers, the four Helpdesk workloads and the
 # four public routers - the `api.` pair and the `helpdesk.` pair, both in
-# `ingress.yaml`. The console lands here too, and does not change this
-# file beyond a line in `resources` and, where it runs an image, an entry in
-# `images:`.
+# `ingress.yaml` - and the console with its three `console.` routers, in
+# `console.yaml`.
 #
 # No `namespace:` transformer, for the same reason `../platform` has none: it
 # would stamp `metadata.namespace` onto anything kustomize does not know to be
@@ -15,6 +14,7 @@ resources:
   - llama.yaml
   - llama-embed.yaml
   - helpdesk.yaml
+  - console.yaml
   - middlewares.yaml
   - ingress.yaml
 
@@ -38,6 +38,11 @@ resources:
 images:
   - name: gateway
     newName: ghcr.io/developermusa/ai-operations-console/gateway
+    newTag: 0.0.0-unbuilt
+  # The console, built by `build.yml`'s `console` job and set by `deploy.yml`
+  # beside the gateway, on the same terms.
+  - name: console
+    newName: ghcr.io/developermusa/ai-operations-console/console
     newTag: 0.0.0-unbuilt
   - name: llama
     newName: ghcr.io/ggml-org/llama.cpp

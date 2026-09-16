@@ -1,0 +1,211 @@
+# The console: the dashboard over `console-api`. It reads everything through the
+# gateway's console-api routes and never gets a database or Prometheus address
+# of its own, so its whole configuration is one in-cluster URL
+# and three secrets.
+#
+# One replica, no HPA and no PDB. It is one operator's dashboard behind basic
+# auth and a password; a second replica buys nothing a restart does not, and its
+# 256Mi / 100m / 512Mi are exactly the reserve the `apps` budget held for it, so
+# the namespace quota already fits it. Without a PDB a drain evicts it freely,
+# which is the wanted behaviour for a pod nobody pages on.
+#
+# The image is set by `kustomization.yaml`'s `images:` transformer, for the same
+# reasons `gateway.yaml` gives: the bare `console` below fails at the pull if
+# that transformer is ever skipped, and `deploy.yml` sets the deployed SHA in
+# the runner and commits nothing back.
+#
+# `app.kubernetes.io/name` is written on the selector, pod template and Service
+# too, because the root kustomization's `labels:` carries
+# `includeSelectors: false` and reaches none of them.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: console-config
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: console
+data:
+  # Fully qualified, like the gateway's own addresses. No `CONSOLE_TRADEOFF_PATH`:
+  # the published tradeoff table does not exist yet, and unset the page says so.
+  CONSOLE_API_URL: http://gateway.apps.svc.cluster.local:8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: console
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: console
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: console
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: console
+    spec:
+      containers:
+        - name: console
+          image: console
+          ports:
+            - name: http
+              containerPort: 3001
+          # `console-secrets` carries the password digest, the session secret
+          # and the admin key; this file only names it.
+          envFrom:
+            - configMapRef:
+                name: console-config
+            - secretRef:
+                name: console-secrets
+          # `/readyz` is configuration present, never console-api
+          # reachable: the pages degrade to a notice when it is down, and an
+          # unready pod would swap that notice for Traefik's 503. `/healthz` is
+          # process up and reads nothing, so an unconfigured pod waits out of
+          # the Service rather than being restarted in a loop.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+          # No `limits.cpu`, as on the gateway: a CPU limit throttles a server
+          # render rather than protecting anything.
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 100m
+            limits:
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: console
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: console
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: console
+  ports:
+    - name: http
+      port: 3001
+      targetPort: http
+# The console's three public routers, on the pair shape `ingress.yaml` explains,
+# plus a third for the login POST:
+#
+#   `console`          Prefix `/`          basic auth, rate limit, headers
+#   `console-healthz`  Exact  `/healthz`   rate limit, headers
+#   `console-login`    Exact  `/api/login` basic auth, login rate limit, headers
+#
+# The login router exists for its middleware alone. A Traefik middleware is per
+# router, so the only way to give `/api/login` a stricter limit than the pages is
+# a router of its own; the exact path outranks the `/` prefix by rule length.
+# Five attempts a minute per source address, burst five, bounds a password guess
+# at the edge with no state in the app. Basic auth stays on it, so
+# the limit is a second wall and never the only one.
+#
+# `/readyz` is on no router: `/` matches it, but behind basic auth, and the
+# kubelet dials the pod directly.
+#
+# Each Ingress names its own TLS Secret, as `ingress.yaml` explains. Three orders
+# for one host: rehearse on `letsencrypt-staging` before the first real apply.
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: console
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: console
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.middlewares: >-
+      apps-basic-auth@kubernetescrd,apps-rate-limit@kubernetescrd,apps-security-headers@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - console.example.com
+      secretName: console-tls
+  rules:
+    - host: console.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: console
+                port:
+                  name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: console-healthz
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: console
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.middlewares: >-
+      apps-rate-limit@kubernetescrd,apps-security-headers@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - console.example.com
+      secretName: console-healthz-tls
+  rules:
+    - host: console.example.com
+      http:
+        paths:
+          - path: /healthz
+            pathType: Exact
+            backend:
+              service:
+                name: console
+                port:
+                  name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: console-login
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: console
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.middlewares: >-
+      apps-basic-auth@kubernetescrd,apps-console-login-rate-limit@kubernetescrd,apps-security-headers@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - console.example.com
+      secretName: console-login-tls
+  rules:
+    - host: console.example.com
+      http:
+        paths:
+          - path: /api/login
+            pathType: Exact
+            backend:
+              service:
+                name: console
+                port:
+                  name: http

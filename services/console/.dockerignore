@@ -1,0 +1,10 @@
+# Kept out of the build context. A host `node_modules` is the wrong
+# architecture for the image and a stale `.next` would shadow the build.
+# A real `.env` would be baked into a layer; the example is kept, and the
+# re-include comes after `.env.*` because the last matching line wins.
+node_modules
+.next
+tests
+.env
+.env.*
+!.env.example

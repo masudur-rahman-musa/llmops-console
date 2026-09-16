@@ -238,6 +238,8 @@ PINNED_SECRET_NAMES = frozenset(
         "alertmanager-secrets",
         "backup-secrets",
         "evals-secrets",
+        # An earlier change, read by the console Deployment's `envFrom`.
+        "console-secrets",
     }
 )
 
@@ -889,7 +891,14 @@ def test_the_middlewares_carry_the_agreed_values(built: list[dict[str, Any]]) ->
     there, so an additional key is reported rather than silently accepted - a sixth header can
     contradict one of these (`stsPreload` absent is fine; `customResponseHeaders` overwriting
     `X-Frame-Options` is not)."""
-    middlewares = {name_of(document): document for document in objects_of_kind(built, "Middleware")}
+    # An earlier change's `console-login-rate-limit` lives in `apps` only and has no platform original;
+    # `test_k8s_console.py::test_the_login_rate_limit_is_five_per_minute_with_a_burst_of_five`
+    # owns its value. Excluded by NAME, so any other new middleware still reddens here.
+    middlewares = {
+        name_of(document): document
+        for document in objects_of_kind(built, "Middleware")
+        if name_of(document) != "console-login-rate-limit"
+    }
     assert set(middlewares) == {"basic-auth", "rate-limit", "security-headers"}
     for name, document in middlewares.items():
         assert document.get("apiVersion") == MIDDLEWARE_API_VERSION, (

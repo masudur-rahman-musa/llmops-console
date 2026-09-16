@@ -92,7 +92,15 @@ describe("middleware", () => {
   it("the exempt paths pass without a cookie", async () => {
     // Catches a middleware that guards the login routes or Next assets (a redirect loop), or exempts by prefix so /login/x or /api/loginx slip through.
     vi.stubEnv("CONSOLE_SESSION_SECRET", undefined);
-    for (const path of ["/login", "/api/login", "/api/logout", "/_next/static/chunks/main.js", "/_next/image"]) {
+    for (const path of [
+      "/login",
+      "/api/login",
+      "/api/logout",
+      "/healthz",
+      "/readyz",
+      "/_next/static/chunks/main.js",
+      "/_next/image",
+    ]) {
       expectPassed(await middleware(request(path)), path);
     }
 
