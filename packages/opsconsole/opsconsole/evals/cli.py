@@ -137,6 +137,12 @@ from opsconsole.evals.report import (
 from opsconsole.evals.runner import RunResult, run_set
 from opsconsole.evals.store import PostgresEvalStore, rows_from_report
 from opsconsole.evals.target import TargetClient, TargetUnreachable
+from opsconsole.evals.tradeoff import (
+    TradeoffInputInvalid,
+    build_table,
+    load_manifest,
+    write_tradeoff,
+)
 from opsconsole.ledger.db import build_pool
 from opsconsole.routing.errors import IdentifierInvalid, PolicyInvalid
 from opsconsole.routing.policy import Policy, load_policy
@@ -608,7 +614,8 @@ def _judged_prompt_version(result: RunResult) -> str | None:
 
 
 def _parser() -> argparse.ArgumentParser:
-    """`ops-eval` and its four subcommands: `run`, `calibrate`, `gate`, `baseline-guard`."""
+    """`ops-eval` and its five subcommands: `run`, `calibrate`, `gate`, `baseline-guard`,
+    `tradeoff`."""
     parser = argparse.ArgumentParser(prog="ops-eval", description="Run a golden set.")
     subcommands = parser.add_subparsers(dest="command", required=True)
     run = subcommands.add_parser("run", help="run a golden set against a target")
@@ -682,6 +689,15 @@ def _parser() -> argparse.ArgumentParser:
         "--base", required=True, help="the ref the range starts after (exclusive)"
     )
     guard_command.add_argument("--head", required=True, help="the ref the range ends at")
+    tradeoff_command = subcommands.add_parser(
+        "tradeoff", help="build the tradeoff table from N published runs (SPEC 11)"
+    )
+    tradeoff_command.add_argument(
+        "--manifest", required=True, type=Path, help="the manifest naming the options and runs"
+    )
+    tradeoff_command.add_argument(
+        "--out", required=True, type=Path, help="where tradeoff.md and tradeoff.json are written"
+    )
     return parser
 
 
@@ -762,7 +778,37 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _gate(options)
     if options.command == "baseline-guard":
         return _baseline_guard(options)
+    if options.command == "tradeoff":
+        return _tradeoff(options)
     return _run(options)
+
+
+def _tradeoff(options: argparse.Namespace) -> int:
+    """Build the tradeoff table from a manifest of published runs (27b).
+
+    `_gate`'s shape with no verdict in it: every input is read and checked before
+    anything is written, so a refusal on the last option leaves `--out` empty
+    rather than a half-written table for the next reader to quote
+    (`test_every_refusal_exits_two_with_one_line_on_stderr_and_an_empty_out_directory`).
+    A relative `report` in the manifest resolves against the manifest's own
+    directory, which is what makes the committed evidence directory portable.
+    """
+    try:
+        manifest = load_manifest(options.manifest)
+        table = build_table(manifest, base_dir=options.manifest.parent)
+    except TradeoffInputInvalid as exc:
+        print(exc, file=sys.stderr)
+        return EXIT_USAGE
+
+    try:
+        write_tradeoff(options.out, table)
+    except OSError as exc:
+        print(f"--out: {options.out} could not be written: {exc.strerror}", file=sys.stderr)
+        return EXIT_USAGE
+
+    winner = "none" if table.winner_id is None else table.winner_id
+    print(f"options {len(table.rows)} · winner {winner}")
+    return EXIT_OK
 
 
 def _run(options: argparse.Namespace) -> int:

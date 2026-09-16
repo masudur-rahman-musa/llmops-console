@@ -815,3 +815,15 @@ with nobody". `alias_resolution` still ships NULL. It exists now because the
 shape is fixed and an applied migration is never edited, and it is commented in
 the SQL file with what fills it, so a NULL reads as "not measured yet" rather
 than as a bug.
+
+## The tradeoff table
+
+`ops-eval tradeoff --manifest <path> --out <dir>` is the other thing these
+reports feed. It reads a manifest naming N published runs of the SAME golden set
+and writes `tradeoff.md` and `tradeoff.json` into `<dir>`: one row per option
+with its decision accuracy, refusal recall, citation accuracy, p50 and p95
+latency and its cost per 1,000 turns, a methodology block naming the report and
+the commit behind every row, and one computed conclusion. An API's cost is the
+ledger's own `cost_usd_per_turn` times 1,000; a self-hosted option's is its
+hourly price over the throughput its run measured, so the number reflects what
+the box actually delivered. `make tradeoff` runs it.

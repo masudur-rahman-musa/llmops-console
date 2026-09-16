@@ -1,4 +1,4 @@
-.PHONY: help setup run test select-tests test-adjacent lint typecheck format verify eval infra-check k8s-check k8s-aws-check k8s-gpu-check aws-evidence aws-evidence-cost migrate purge-residency refresh-rollup secrets-encrypt secrets-decrypt secrets-check load
+.PHONY: help setup run test select-tests test-adjacent lint typecheck format verify eval infra-check k8s-check k8s-aws-check k8s-gpu-check aws-evidence aws-evidence-cost tradeoff migrate purge-residency refresh-rollup secrets-encrypt secrets-decrypt secrets-check load
 
 # The console arrives in a later milestone. Until then its checks are skipped
 # rather than deleted, so the intended gate stays visible in this file. The
@@ -53,6 +53,14 @@ refresh-rollup: ## Refresh the daily cost rollup the console reads
 	uv run ops-refresh-rollup
 eval:       ## Project evals: golden set vs project-evals/baseline.json
 	uv run ops-eval run --target http://localhost:8080 --set "$$GOLDEN_SET" --tenant evals --out project-evals/reports/local
+# The published comparison (the design). Pure: it reads a manifest and the
+# report.json each option names, so it needs no stack and no key. MANIFEST and
+# OUT are overridable because the measured run builds its table from its own
+# evidence directory.
+MANIFEST ?= project-evals/tradeoff.json
+OUT ?= docs
+tradeoff:   ## Build docs/tradeoff.md and docs/tradeoff.json from a manifest of runs
+	uv run ops-eval tradeoff --manifest $(MANIFEST) --out $(OUT)
 # The k6 load run: 50 RPS for ten minutes against the real gateway over the
 # fixed-delay mock provider (`docker-compose.load.yml`).
 #

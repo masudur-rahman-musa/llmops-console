@@ -1,0 +1,35 @@
+{
+  "set_name": "helpdesk-golden-v1.jsonl",
+  "options": [
+    {
+      "id": "cheap-api",
+      "label": "API cheap",
+      "kind": "api",
+      "report": "reports/cheap-api/report.json",
+      "notes": "PLACEHOLDER. Cost comes from the ledger, so this option carries no price here."
+    },
+    {
+      "id": "strong-api",
+      "label": "API strong",
+      "kind": "api",
+      "report": "reports/strong-api/report.json",
+      "notes": "PLACEHOLDER. Cost comes from the ledger, so this option carries no price here."
+    },
+    {
+      "id": "local-cpu",
+      "label": "Local CPU (llama.cpp)",
+      "kind": "self_hosted",
+      "report": "reports/local-cpu/report.json",
+      "hourly_usd": "0.0100",
+      "notes": "PLACEHOLDER price. The measured run replaces it with the instance's real hourly rate."
+    },
+    {
+      "id": "gpu-vllm",
+      "label": "GPU (vLLM)",
+      "kind": "self_hosted",
+      "report": "reports/gpu-vllm/report.json",
+      "hourly_usd": "0.0100",
+      "notes": "PLACEHOLDER price. The measured run replaces it with the instance's real hourly rate."
+    }
+  ]
+}
