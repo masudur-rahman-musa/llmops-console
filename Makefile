@@ -1,4 +1,4 @@
-.PHONY: help setup run test select-tests test-adjacent lint typecheck format verify eval infra-check k8s-check k8s-aws-check k8s-gpu-check aws-evidence aws-evidence-cost tradeoff migrate purge-residency refresh-rollup secrets-encrypt secrets-decrypt secrets-check load
+.PHONY: help setup run test select-tests test-adjacent lint typecheck format verify eval infra-check k8s-check k8s-aws-check k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate purge-residency refresh-rollup secrets-encrypt secrets-decrypt secrets-check load
 
 # The console arrives in a later milestone. Until then its checks are skipped
 # rather than deleted, so the intended gate stays visible in this file. The
@@ -61,6 +61,20 @@ MANIFEST ?= project-evals/tradeoff.json
 OUT ?= docs
 tradeoff:   ## Build docs/tradeoff.md and docs/tradeoff.json from a manifest of runs
 	uv run ops-eval tradeoff --manifest $(MANIFEST) --out $(OUT)
+# The three measurement steps behind that table, each a thin call into
+# `scripts/tradeoff_run.sh`. No `||` in any recipe: a measurement run that failed
+# must fail its target, or the table is built from whatever the last run left on
+# disk. No workflow names them either: the GPU half applies
+# real infrastructure, which a project rule keeps in the owner's own shell.
+#
+# OPTION, SHA, START and END have no defaults on purpose. A defaulted option id
+# would measure the wrong row; a defaulted sha would deploy the wrong image.
+tradeoff-option: ## Measure one option (OPTION=<id> TARGET=<eval target url>)
+	scripts/tradeoff_run.sh option $(OPTION) --target $(TARGET)
+tradeoff-gpu: ## Apply the GPU host, measure gpu-vllm, capture, destroy (SHA=<commit>)
+	scripts/tradeoff_run.sh gpu $(SHA)
+tradeoff-gpu-cost: ## Write docs/tradeoff-run/cost.json from Cost Explorer (START=, END=)
+	scripts/tradeoff_run.sh cost $(START) $(END)
 # The k6 load run: 50 RPS for ten minutes against the real gateway over the
 # fixed-delay mock provider (`docker-compose.load.yml`).
 #

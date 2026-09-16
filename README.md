@@ -123,3 +123,20 @@ at p95. Requests answered from the cache come back in about 25 ms.
 Companion project: [ai-help-desk-governed-access](https://github.com/developermusa/ai-help-desk-governed-access) — the agent workload this platform routes, measures, and evaluates.
 
 License: Apache-2.0
+
+## Self-hosted vs API tradeoff
+
+One alias, `agent-default`, resolved four ways over the same golden set: a cheap
+API tier, a strong API tier, the local CPU model on the box this project runs on,
+and vLLM on a GPU instance applied for the run and destroyed after it. Each option
+reports decision accuracy, refusal recall, citation accuracy, p50 and p95 latency
+per turn, and USD per 1,000 turns. API cost comes from the ledger; self-hosted
+cost comes from the instance's hourly price divided by the throughput it actually
+delivered.
+
+The table, the winner it computes and the methodology behind every row:
+[docs/tradeoff.md](docs/tradeoff.md). How the runs are made, and what ten cases on
+one sequential stream can and cannot tell you: [docs/tradeoff-run/README.md](docs/tradeoff-run/README.md).
+
+**Conclusion and the cost of the measurement run: PENDING** — written once the
+four runs have been made and the GPU instance's bill has landed.

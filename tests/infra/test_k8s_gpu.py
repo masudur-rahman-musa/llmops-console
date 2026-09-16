@@ -100,6 +100,18 @@ INIT_COMMAND = ["sh", "-c", f"until [ -f {MARKER} ]; do sleep 10; done"]
 
 VLLM_HOST = "vllm.gpu.svc.cluster.local"
 
+#: The node's own address range as `vllm-ingress` admits it: AWS's
+#: default VPC, which is where `infra/terraform/aws-gpu` puts the instance. Written out
+#: literally here and in the manifest, never derived.
+NODE_CIDR = "172.31.0.0/16"
+
+#: The NodePort the measurement harness dials from the host, and the Service publishing it.
+NODE_PORT = 30800
+NODE_SERVICE = "vllm-node"
+
+#: The port vLLM serves on, behind both Services.
+VLLM_PORT = 8000
+
 GPU_POLICY_NAMES = {
     "default-deny",
     "allow-dns",
@@ -473,6 +485,69 @@ def test_the_service_is_where_routing_yaml_dials(built_gpu: list[dict[str, Any]]
     assert ports == [url.port]
 
 
+def resolved_target_port(
+    service: dict[str, Any], entry: dict[str, Any], pod: dict[str, Any]
+) -> int:
+    """`entry`'s `targetPort` as a number, resolving a named port through the pod's containers.
+
+    Every container port is scanned and the name is required alongside the number (standing
+    rule 44): taking the first port named `http` would read a sidecar's.
+    """
+    target = entry.get("targetPort", entry.get("port"))
+    if isinstance(target, int) or str(target).isdigit():
+        return int(target)
+    numbers = {
+        int(port["containerPort"])
+        for container_spec in pod_spec(pod).get("containers", [])
+        for port in container_spec.get("ports", []) or []
+        if port.get("name") == target
+    }
+    assert len(numbers) == 1, f"{service['metadata']['name']}: {target} resolves to {numbers}"
+    return numbers.pop()
+
+
+def test_the_node_port_service_publishes_vllm_on_the_port_the_harness_dials(
+    built_gpu: list[dict[str, Any]],
+) -> None:
+    """An earlier change criterion 56 and decision C. The measurement harness runs in compose on the GPU
+    host and reaches the in-cluster model server through this Service, so its `nodePort` is the
+    port `project-evals/tradeoff/gpu-vllm.yaml`'s `base_url` names. Catches `type: NodePort`
+    with no `nodePort` (Kubernetes then allocates a random one in the 30000-32767 range and the
+    overlay's URL is wrong on every apply), a `nodePort` that is not 30800, a selector that does
+    not match the vLLM pod (the port then answers nothing), and a target port other than the
+    8000 the container serves on - a named `targetPort` is resolved through the pod, so `http`
+    and `8000` are both accepted and a name pointing elsewhere is not."""
+    service = the_one(built_gpu, "Service", NODE_SERVICE, GPU)
+    deployment = vllm(built_gpu)
+    ports = service["spec"].get("ports", [])
+
+    assert service["spec"].get("type") == "NodePort"
+    assert as_strings(service["spec"].get("selector", {})) == {NAME_LABEL: "vllm"}
+    assert as_strings(service["spec"]["selector"]).items() <= pod_labels(deployment).items()
+    assert len(ports) == 1, f"{NODE_SERVICE} publishes {len(ports)} ports: {ports}"
+    assert int(ports[0]["nodePort"]) == NODE_PORT
+    assert resolved_target_port(service, ports[0], deployment) == VLLM_PORT
+
+
+def test_the_cluster_internal_vllm_service_stays_the_only_one_without_a_node_port(
+    built_gpu: list[dict[str, Any]],
+) -> None:
+    """An earlier change criterion 56's other half. The gateway inside the cluster still dials the
+    ClusterIP Service `routing.yaml` names, and the host-facing one is an ADDITION. Catches the
+    existing `vllm` Service flipped to `NodePort` in place of adding a second (every node in a
+    future multi-node cluster would then answer on 30800 with no policy admitting it), and a
+    third NodePort left behind from a trial."""
+    internal = the_one(built_gpu, "Service", "vllm", GPU)
+    node_ports = sorted(
+        str(document["metadata"]["name"])
+        for document in objects(built_gpu, "Service")
+        if document["spec"].get("type") == "NodePort"
+    )
+
+    assert internal["spec"].get("type") == "ClusterIP"
+    assert node_ports == [NODE_SERVICE], node_ports
+
+
 def test_routing_keeps_the_vllm_provider_disabled() -> None:
     """Criterion 17. Catches `enabled: true` slipped in with the URL edit, which routes live
     traffic to a host that exists only during a one-off measurement run and 502s otherwise."""
@@ -674,42 +749,56 @@ def test_no_policy_selecting_vllm_grants_egress_beyond_dns(built_gpu: list[dict[
     assert findings == [], f"egress beyond DNS for the vllm pod: {findings}"
 
 
-def test_vllm_ingress_admits_the_gateway_and_prometheus_on_8000_only(
+def test_vllm_ingress_admits_the_gateway_prometheus_and_the_node_on_8000_only(
     built_gpu: list[dict[str, Any]],
 ) -> None:
-    """Criterion 25's `vllm-ingress`. Catches the gateway peer written without its
-    `namespaceSelector` (it then means a `gateway` pod in `gpu`, which does not exist), every
-    `apps` pod admitted, a third source, and a port other than TCP 8000. The policy must select
-    the vllm pod, or the grants protect nothing."""
+    """Criterion 25's `vllm-ingress` and an earlier change decision C. Catches the gateway peer written
+    without its `namespaceSelector` (it then means a `gateway` pod in `gpu`, which does not
+    exist), every `apps` pod admitted, a FOURTH source, and a port other than TCP 8000. The
+    third source is the node's own VPC range, which is the address the NodePort SNATs the
+    measurement harness's traffic to; without it k3s's controller drops every measured turn
+    against a pod-selector rule that cannot match a host-sourced packet. Written as an equality
+    on the whole grant set, so the node peer widened to `0.0.0.0/0` is red too. The policy must
+    select the vllm pod, or the grants protect nothing."""
     document = policy(built_gpu, GPU, "vllm-ingress")
 
     assert match_labels(document) == {NAME_LABEL: "vllm"}
     assert grants(document, "ingress") == {
         (pods(APPS, "gateway"), tcp(8000)),
         (pods(GPU, "prometheus"), tcp(8000)),
+        (("ipBlock", NODE_CIDR, ()), tcp(8000)),
     }
 
 
-def test_only_the_fetch_job_has_an_ip_block_and_only_on_443(
+def test_exactly_two_policies_carry_an_ip_block_each_on_its_own_port(
     built_gpu: list[dict[str, Any]],
 ) -> None:
-    """Criteria 25 and 28. Catches an `ipBlock` policy this build writes OUTSIDE `gpu` and `apps`
-    (a `kube-system` policy, which the name-set case never reads), the fetch policy selecting
-    the vllm pod rather than the Job's own label, and its egress on a port other than TCP 443.
-    The Job template's own label is checked too, so a typo that selects nothing is red."""
-    with_blocks = sorted(
-        f"{document['metadata'].get('namespace')}/{document['metadata']['name']}"
-        for document in objects(built_gpu, NETWORK_POLICY)
-        for direction, field in (("ingress", "from"), ("egress", "to"))
-        for rule in document["spec"].get(direction, []) or []
-        if any("ipBlock" in peer for peer in rule.get(field) or [])
-    )
+    """Criteria 25 and 28, and an earlier change decision C. Two rules in this build name a raw address
+    range and no more: the fetch Job reaching the model registry on 443, and the node reaching
+    vLLM on 8000. Catches an `ipBlock` policy written OUTSIDE `gpu` and `apps` (a `kube-system`
+    policy, which the name-set case never reads), a third one added later, the node block put
+    on the fetch policy or on 443, the fetch policy selecting the vllm pod rather than the Job's
+    own label, and either block granted every port - a rule with no `ports` normalises to
+    `ALL_PORTS`, so it cannot pass as `{tcp(443)}`. The Job template's own label is checked too,
+    so a typo that selects nothing is red."""
+    with_blocks: dict[str, set[Port]] = {}
+    for document in objects(built_gpu, NETWORK_POLICY):
+        name = f"{document['metadata'].get('namespace')}/{document['metadata']['name']}"
+        for direction, field in (("ingress", "from"), ("egress", "to")):
+            for rule in document["spec"].get(direction, []) or []:
+                if not any("ipBlock" in peer for peer in rule.get(field) or []):
+                    continue
+                ports = [port_key(port) for port in rule.get("ports") or []] or [ALL_PORTS]
+                with_blocks.setdefault(name, set()).update(ports)
     document = policy(built_gpu, GPU, "vllm-model-fetch-egress")
     fetch_labels = pod_labels(fetch_job(built_gpu))
     ports = {port for _peer, port in grants(document, "egress")}
     peers = {peer[:2] for peer, _port in grants(document, "egress")}
 
-    assert with_blocks == [f"{GPU}/vllm-model-fetch-egress"]
+    assert with_blocks == {
+        f"{GPU}/vllm-model-fetch-egress": {tcp(443)},
+        f"{GPU}/vllm-ingress": {tcp(VLLM_PORT)},
+    }
     assert fetch_labels.get(NAME_LABEL) == "vllm-model-fetch"
     assert match_labels(document) == {NAME_LABEL: "vllm-model-fetch"}
     assert ports == {tcp(443)}

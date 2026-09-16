@@ -209,6 +209,35 @@ spec:
       port: 8000
       targetPort: http
 ---
+# The same pod, reachable from the HOST the cluster runs on, for the measurement
+# run alone. The harness that measures every option is a
+# compose stack, so the gateway's container dials `host.docker.internal:30800`
+# and arrives here; `routing.yaml`'s in-cluster address does not resolve from
+# outside the cluster, and `kubectl port-forward` sources its traffic from the
+# node, which k3s's NetworkPolicy controller drops against a pod-selector rule.
+#
+# The port is written out in three places - here, the `vllm-ingress` policy's
+# ipBlock rule and `project-evals/tradeoff/gpu-vllm.yaml`'s `base_url` - and a
+# test compares them, because the drift is only visible if both files say the
+# value. The host lives about four hours and is destroyed
+# with the run; a design note records the widening.
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-node
+  namespace: gpu
+  labels:
+    app.kubernetes.io/name: vllm
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: vllm
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+      nodePort: 30800
+---
 # Scales on the queue, not on CPU: a GPU-bound server's CPU says nothing about
 # how many requests are waiting for a slot.
 #

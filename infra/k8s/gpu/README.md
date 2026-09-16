@@ -7,7 +7,7 @@ long-lived cluster has no GPU. The host comes from `infra/terraform/aws-gpu`.
 ```
 namespace.yaml         the `gpu` namespace, its quota and limit range
 device-plugin.yaml     RuntimeClass `nvidia` and the NVIDIA device plugin
-vllm.yaml              model claim, fetch Job, vLLM Deployment, Service, HPA
+vllm.yaml              model claim, fetch Job, vLLM Deployment, two Services, HPA
 metrics.yaml           a local Prometheus, prometheus-adapter, the APIService, RBAC
 networkpolicies.yaml   default deny, then what each pod needs
 ```
@@ -34,6 +34,24 @@ on TCP 443, with private ranges and the metadata endpoint excluded. It writes a
 marker file only when the download has finished, and the vLLM pod's
 initContainer waits for that marker. vLLM itself runs offline and has no egress
 but DNS. The Job never receives a prompt.
+
+## The NodePort and its one CIDR rule exist for the measurement run
+
+`vllm-node` publishes the model server on the node's port 30800, and
+`vllm-ingress` admits one extra source on TCP 8000: the `172.31.0.0/16` range,
+which is the default VPC the GPU instance runs in and therefore the node's own
+address.
+
+Both are there because the run that measures this deployment is a compose stack
+on the host itself. The gateway's container dials `host.docker.internal:30800`;
+that traffic is source-translated to the node, which no pod or namespace
+selector can name. `kubectl port-forward` is not an alternative: its traffic is
+sourced from the node too, and k3s drops it against a pod-selector rule.
+
+It is a widening, and a deliberate one. The host lives about four hours and is
+destroyed with the run, the rule names one port, and a design note records it. The
+long-lived cluster carries neither object: the root build does not include this
+directory.
 
 ## The HPA cannot add a replica here
 

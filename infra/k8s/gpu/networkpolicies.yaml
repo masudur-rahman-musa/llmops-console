@@ -42,8 +42,16 @@ spec:
         - protocol: TCP
           port: 53
 ---
-# The gateway in `apps`, and the local Prometheus scraping `/metrics`, both on
-# the one port vLLM listens on. Ingress only: this policy grants vLLM no egress.
+# The gateway in `apps`, the local Prometheus scraping `/metrics`, and the node
+# itself, all on the one port vLLM listens on. Ingress only: this policy grants
+# vLLM no egress.
+#
+# The third source is the measurement run's. Traffic that
+# arrives through the `vllm-node` NodePort is source-translated to the node's own
+# address, which no pod or namespace selector can name, so it is admitted by
+# CIDR. The range is AWS's default VPC, which is where `infra/terraform/aws-gpu`
+# puts the instance, and the rule is scoped to TCP 8000 on a host that lives
+# about four hours and is destroyed with the run. a design note records it.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -66,6 +74,8 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: prometheus
+        - ipBlock:
+            cidr: 172.31.0.0/16
       ports:
         - protocol: TCP
           port: 8000

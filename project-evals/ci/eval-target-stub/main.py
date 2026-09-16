@@ -21,17 +21,26 @@ being set, `anthropic_eu` ships disabled, and only `local` (region `self`) is le
 the kind cluster's one real provider is reached with no header, no key and no
 `routing.yaml` change (`test_the_alias_and_tenant_resolve_to_the_local_provider_only` in
 `tests/infra/test_k8s_ci_kind_overlay.py` pins the routing-policy half of this claim).
+
+The tradeoff measurement run reuses this stub against a DIFFERENT policy:
+`scripts/tradeoff_policy.py` merges one option's overlay over the shipped file, and the
+two API options widen `confidential` there precisely because this stub sends no header.
+That is a change to the policy the gateway loads and none to this module - which is why
+the turn publishes what the gateway measured (`GatewayReply`) rather than judging any of
+it here.
 """
 
 from __future__ import annotations
 
+import decimal
 import http.server
 import json
 import os
 import sys
+import time
 import urllib.request
 from collections.abc import Callable
-from typing import Any, Final
+from typing import Any, Final, NamedTuple
 
 RESET_PATH: Final[str] = "/admin/test/reset"
 TURN_PATH: Final[str] = "/v1/eval/turn"
@@ -47,6 +56,22 @@ strictness `EvalEnvelope`'s `extra=\"forbid\"` gives the answer, given to the re
 ALIAS: Final[str] = "agent-default"
 """The `routing.yaml` alias this stub asks the gateway to resolve, per the module
 docstring's routing argument."""
+
+COST_HEADER: Final[str] = "X-Gateway-Cost-USD"
+PROVIDER_HEADER: Final[str] = "X-Gateway-Provider"
+REGION_HEADER: Final[str] = "X-Gateway-Region"
+"""Three of the seven `X-Gateway-*` headers a served answer carries, named here so
+this stub reads what the gateway really writes rather than a header it invented
+(`test_call_gateway_measures_its_own_latency_in_whole_milliseconds`).
+
+There is no fourth: the gateway publishes no latency header, so `call_gateway`
+times itself."""
+
+NANOSECONDS_PER_MILLISECOND: Final[int] = 1_000_000
+"""`time.monotonic_ns` counts nanoseconds and `EvalEnvelope.latency_ms` is whole
+milliseconds. Both unit mistakes this divisor prevents - raw nanoseconds, and
+seconds floored to zero - would be published as a plausible-looking number rather
+than an error (`test_call_gateway_measures_its_own_latency_in_whole_milliseconds`)."""
 
 GATEWAY_TIMEOUT_SECONDS: Final[float] = 30.0
 """How long one forwarded chat completion may take. The 3B local model is the whole
@@ -120,15 +145,71 @@ def last_user_content(messages: object) -> str:
     return content
 
 
-def envelope_for_reply(reply: str) -> dict[str, Any]:
-    """Map one completion's TEXT onto the published `EvalEnvelope` shape (an earlier change
-    acceptance criterion 6).
+class GatewayReply(NamedTuple):
+    """One served answer: the text, and what the gateway said it cost to produce.
 
-    Every field but `reply`, `refused` and `clarified` is a stub constant: this target
-    answers no tool calls and no citations, and `decision`/`risk_class` are fixed rather
-    than classified, because a bare gateway forwarding to one local model has nothing to
-    classify intent or risk WITH - the module docstring on `target.py` is explicit that
-    an adopter's own target owns that judgement."""
+    A tuple rather than four return values because `turn_response` hands the whole
+    thing to `envelope_for_reply`, and a positional quartet is exactly where
+    `provider` and `region` get swapped
+    (`test_the_turn_endpoint_publishes_the_measurements_from_the_gateway_reply`).
+
+    `cost_usd` is the header's RAW STRING, parsed once when the envelope is built.
+    Carrying it as text this far means an unpriced turn and an unparseable header
+    are the same case with the same answer, and neither becomes a `0`
+    (`test_an_unusable_cost_still_answers_two_hundred_and_publishes_null`).
+    """
+
+    reply: str
+    latency_ms: int | None = None
+    cost_usd: str | None = None
+    provider: str | None = None
+    region: str | None = None
+
+
+def parsed_cost(value: str | None) -> str | None:
+    """The cost header as a published decimal STRING, or `None` when there is no
+    usable number.
+
+    `None` and never `0`. A turn the ledger did not price, and a header a proxy
+    mangled, are both "nothing measured": publishing `0` would make the option's
+    USD per 1,000 turns a real-looking number that no provider charged, and
+    `tradeoff.py` deliberately leaves a null metric out of the winner computation
+    instead of crowning it (criteria 39 and 40,
+    `test_an_unusable_cost_still_answers_two_hundred_and_publishes_null`).
+
+    A string out, not a `Decimal`: the envelope is `json.dumps`ed onto the wire, and
+    a float there loses the sixth place the ledger prices in."""
+    if value is None:
+        return None
+    try:
+        return str(decimal.Decimal(value))
+    except decimal.InvalidOperation:
+        return None
+
+
+def envelope_for_reply(
+    reply: str,
+    *,
+    latency_ms: int | None = None,
+    cost_usd: str | None = None,
+    provider: str | None = None,
+    region: str | None = None,
+) -> dict[str, Any]:
+    """Map one completion onto the published `EvalEnvelope` shape (an earlier change
+    acceptance criterion 6, an earlier change criteria 36 and 41).
+
+    `decision`, `risk_class`, `tool_calls` and `citations` are stub constants: this
+    target answers no tool calls and no citations, and the two judgements are fixed
+    rather than classified, because a bare gateway forwarding to one model has
+    nothing to classify intent or risk WITH - the module docstring on `target.py` is
+    explicit that an adopter's own target owns that judgement.
+
+    The four measurements are keyword-only and default to `None`, so every call site
+    written before the tradeoff run keeps its single positional argument (standing
+    rule 44), and an unmeasured turn publishes nothing rather than a zero
+    (`test_envelope_for_reply_publishes_no_measurements_when_none_are_given`).
+    `region` is published for the same reason as the other three: the residency
+    check reads it on every measured run."""
     folded = reply.casefold()
     return {
         "decision": "answered",
@@ -138,13 +219,23 @@ def envelope_for_reply(reply: str) -> dict[str, Any]:
         "reply": reply,
         "refused": any(keyword in folded for keyword in REFUSAL_KEYWORDS),
         "clarified": any(keyword in folded for keyword in CLARIFY_KEYWORDS),
+        "latency_ms": latency_ms,
+        "cost_usd": parsed_cost(cost_usd),
+        "provider": provider,
+        "region": region,
     }
 
 
-def call_gateway(content: str, *, base_url: str, api_key: str) -> str:
+def call_gateway(content: str, *, base_url: str, api_key: str) -> GatewayReply:
     """POST one chat completion to the deployed gateway and return the assistant's
-    reply text. The one seam a test replaces to keep the envelope-mapping cases off
-    the network (module docstring, "no HTTP, no gateway")."""
+    reply with what the answer cost. The one seam a test replaces to keep the
+    envelope-mapping cases off the network (module docstring, "no HTTP, no gateway").
+
+    The latency is measured HERE, around the whole exchange including reading the
+    body, because no response header carries it (criterion 38). `monotonic_ns` and
+    not `time.time`: a clock the host steps mid-run would otherwise publish a
+    negative turn (`test_call_gateway_measures_its_own_latency_in_whole_milliseconds`).
+    """
     body = json.dumps({"model": ALIAS, "messages": [{"role": "user", "content": content}]}).encode(
         "utf-8"
     )
@@ -154,9 +245,21 @@ def call_gateway(content: str, *, base_url: str, api_key: str) -> str:
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         method="POST",
     )
+    started = time.monotonic_ns()
     with urllib.request.urlopen(request, timeout=GATEWAY_TIMEOUT_SECONDS) as response:
-        document = json.loads(response.read())
-    return str(document["choices"][0]["message"]["content"])
+        raw = response.read()
+        cost = response.headers.get(COST_HEADER)
+        provider = response.headers.get(PROVIDER_HEADER)
+        region = response.headers.get(REGION_HEADER)
+    elapsed_ns = time.monotonic_ns() - started
+    document = json.loads(raw)
+    return GatewayReply(
+        reply=str(document["choices"][0]["message"]["content"]),
+        latency_ms=elapsed_ns // NANOSECONDS_PER_MILLISECOND,
+        cost_usd=cost,
+        provider=provider,
+        region=region,
+    )
 
 
 def turn_response(
@@ -164,19 +267,30 @@ def turn_response(
     *,
     base_url: str,
     api_key: str,
-    caller: Callable[..., str] = call_gateway,
+    caller: Callable[..., GatewayReply] = call_gateway,
 ) -> tuple[int, dict[str, Any]]:
     """Answer one `/v1/eval/turn` request: the status code and the JSON body to write.
 
     `caller` is `call_gateway` by default and replaced in a test that scores the
-    mapping without a socket; production code never passes it."""
+    mapping without a socket; production code never passes it.
+
+    Every field of the reply reaches the envelope. Reading the measurements in
+    `call_gateway` and then publishing the text alone is the failure no case on
+    either function by itself can see, so it has one here
+    (`test_the_turn_endpoint_publishes_the_measurements_from_the_gateway_reply`)."""
     try:
         payload = checked_turn_payload(json.loads(raw_body))
         content = last_user_content(payload["messages"])
     except (MalformedTurn, json.JSONDecodeError) as exc:
         return 400, {"error": str(exc)}
-    reply = caller(content, base_url=base_url, api_key=api_key)
-    return 200, envelope_for_reply(reply)
+    answer = caller(content, base_url=base_url, api_key=api_key)
+    return 200, envelope_for_reply(
+        answer.reply,
+        latency_ms=answer.latency_ms,
+        cost_usd=answer.cost_usd,
+        provider=answer.provider,
+        region=answer.region,
+    )
 
 
 def reset_response() -> tuple[int, bytes]:

@@ -17,6 +17,8 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+import time
+from decimal import Decimal
 from pathlib import Path
 from types import ModuleType
 
@@ -32,6 +34,17 @@ GOLDEN_SET = REPO_ROOT / "project-evals" / "golden" / "e2e-kind.jsonl"
 
 EXPECTED_CASE_COUNT = 10
 """Acceptance criterion 5: the set is exactly ten cases."""
+
+_TURN_BODY = json.dumps(
+    {
+        "case_id": "x",
+        "tenant": "evals",
+        "principal_user": "e2e-kind-runner",
+        "messages": [{"role": "user", "content": "the newest question"}],
+    }
+).encode("utf-8")
+"""One well-formed `/v1/eval/turn` body, shared by the measurement cases below: they differ
+only in what the replaced `caller` measured, never in the request."""
 
 
 def _load_stub() -> ModuleType:
@@ -196,13 +209,21 @@ def test_the_turn_endpoint_forwards_the_last_message_and_maps_the_reply(
     stub: ModuleType,
 ) -> None:
     """End to end through `turn_response`, with `caller` replacing the real gateway
-    call - the seam the module docstring names for exactly this reason."""
+    call - the seam the module docstring names for exactly this reason. The seam now
+    returns a `GatewayReply` rather than the bare text, because
+    the stub publishes the gateway's measurements alongside its answer."""
 
-    def fake_caller(content: str, *, base_url: str, api_key: str) -> str:
+    def fake_caller(content: str, *, base_url: str, api_key: str) -> object:
         assert content == "the newest question"
         assert base_url == "http://gateway.example"
         assert api_key == "test-key"
-        return "a plain, non-refusing answer"
+        return stub.GatewayReply(
+            reply="a plain, non-refusing answer",
+            latency_ms=12,
+            cost_usd="0.000500",
+            provider="local",
+            region="self",
+        )
 
     raw_body = json.dumps(
         {
@@ -224,6 +245,181 @@ def test_the_turn_endpoint_forwards_the_last_message_and_maps_the_reply(
     assert status == 200
     assert document["reply"] == "a plain, non-refusing answer"
     assert document["refused"] is False
+
+
+class _Headers:
+    """A response's headers, answered case-insensitively by either spelling a stdlib
+    caller uses: `response.headers.get(name)` and `response.getheader(name)`."""
+
+    def __init__(self, pairs: dict[str, str]) -> None:
+        self._pairs = {key.casefold(): value for key, value in pairs.items()}
+
+    def get(self, name: str, default: str | None = None) -> str | None:
+        return self._pairs.get(name.casefold(), default)
+
+
+class _FakeResponse:
+    """One gateway response: the body, the three measurement headers, and a delay.
+
+    The delay is what makes the latency case non-vacuous - a stub that reports `0`,
+    or that reports nanoseconds, is visible only when the call actually took time.
+    """
+
+    def __init__(self, body: bytes, headers: dict[str, str], delay_seconds: float) -> None:
+        self._body = body
+        self._delay = delay_seconds
+        self.headers = _Headers(headers)
+
+    def __enter__(self) -> _FakeResponse:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+    def getheader(self, name: str, default: str | None = None) -> str | None:
+        return self.headers.get(name, default)
+
+    def read(self) -> bytes:
+        time.sleep(self._delay)
+        return self._body
+
+
+def test_envelope_for_reply_publishes_no_measurements_when_none_are_given(
+    stub: ModuleType,
+) -> None:
+    """Criterion 36: the four new fields are keyword-only and default to `None`, so every
+    call site written before this plan keeps its single positional argument. Catches the
+    fields made required (the five other calls in this file stop working), and catches a
+    default of `0` for cost or latency, which would publish a free, instant turn."""
+    envelope = EvalEnvelope.model_validate(stub.envelope_for_reply("anything at all"))
+
+    assert envelope.latency_ms is None
+    assert envelope.cost_usd is None
+    assert envelope.provider is None
+    assert envelope.region is None
+
+
+def test_envelope_for_reply_publishes_every_measurement_it_is_given(stub: ModuleType) -> None:
+    """Criteria 36 and 41. Catches a mapping that accepts the keywords and drops them on the
+    floor (every column of the tradeoff table then renders `n/a`), two fields swapped, and a
+    cost published as a float - `EvalEnvelope.cost_usd` is a `Decimal` because a run of a
+    thousand turns at six decimal places is exactly where binary floating point loses money."""
+    document = stub.envelope_for_reply(
+        "an answer",
+        latency_ms=412,
+        cost_usd="0.001234",
+        provider="anthropic",
+        region="eu",
+    )
+    envelope = EvalEnvelope.model_validate(document)
+
+    assert envelope.latency_ms == 412
+    assert envelope.cost_usd == Decimal("0.001234")
+    assert envelope.provider == "anthropic"
+    assert envelope.region == "eu"
+    assert not isinstance(document["cost_usd"], float), "the cost is published as a float"
+
+
+def test_the_turn_endpoint_publishes_the_measurements_from_the_gateway_reply(
+    stub: ModuleType,
+) -> None:
+    """Criteria 37 and 41, at the seam the server actually calls. Catches a `turn_response`
+    that keeps calling `envelope_for_reply(reply)` with the text alone after `call_gateway`
+    started measuring - the headers would be read and then thrown away one line later, which
+    no case on `call_gateway` or on `envelope_for_reply` alone can see."""
+
+    def measured_caller(content: str, *, base_url: str, api_key: str) -> object:
+        return stub.GatewayReply(
+            reply="a plain, non-refusing answer",
+            latency_ms=931,
+            cost_usd="0.004500",
+            provider="anthropic",
+            region="eu",
+        )
+
+    status, document = stub.turn_response(
+        _TURN_BODY, base_url="http://gateway.example", api_key="test-key", caller=measured_caller
+    )
+    envelope = EvalEnvelope.model_validate(document)
+
+    assert status == 200
+    assert isinstance(envelope.latency_ms, int) and envelope.latency_ms >= 0
+    assert envelope.latency_ms == 931
+    assert envelope.cost_usd == Decimal("0.004500")
+    assert envelope.provider == "anthropic"
+    assert envelope.region == "eu"
+
+
+@pytest.mark.parametrize(
+    "header",
+    [pytest.param("not-a-number", id="not-a-decimal"), pytest.param(None, id="no-cost-header")],
+)
+def test_an_unusable_cost_still_answers_two_hundred_and_publishes_null(
+    stub: ModuleType, header: str | None
+) -> None:
+    """Criteria 39 and 40. A provider that prices nothing, or a header a proxy stripped, must
+    not turn one turn into a failed case: the row is measured and its cost column is empty.
+    Catches `Decimal(header)` unguarded (a `InvalidOperation` traceback and a 500, which the
+    runner scores as a failure), `Decimal(header or 0)` and `float(header or 0)`, both of which
+    publish a free turn and pull the option's USD per 1,000 turns down towards zero."""
+
+    def priceless_caller(content: str, *, base_url: str, api_key: str) -> object:
+        return stub.GatewayReply(
+            reply="a plain, non-refusing answer",
+            latency_ms=17,
+            cost_usd=header,
+            provider="local",
+            region="self",
+        )
+
+    status, document = stub.turn_response(
+        _TURN_BODY, base_url="http://gateway.example", api_key="test-key", caller=priceless_caller
+    )
+    envelope = EvalEnvelope.model_validate(document)
+
+    assert status == 200
+    assert document["cost_usd"] is None, f"cost_usd is {document['cost_usd']!r}, not null"
+    assert envelope.cost_usd is None
+    assert envelope.latency_ms == 17
+
+
+def test_call_gateway_measures_its_own_latency_in_whole_milliseconds(
+    stub: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Criteria 37 and 38, over the one function that talks to the gateway, with `urlopen`
+    replaced so no socket opens. The gateway publishes no latency header, so a stub that looks
+    for one reports `None` on every turn and the p50/p95 columns are empty - that is what the
+    `isinstance` check catches. The bounds catch the two unit mistakes that look plausible in
+    a report: raw `monotonic_ns()` nanoseconds (about 50,000,000 here) and whole seconds
+    floored to `0`. The three header names are read from the response, not invented."""
+    body = json.dumps({"choices": [{"message": {"content": "pong"}}]}).encode("utf-8")
+    headers = {
+        "X-Gateway-Cost-USD": "0.001234",
+        "X-Gateway-Provider": "anthropic",
+        "X-Gateway-Region": "eu",
+    }
+
+    def fake_urlopen(request: object, timeout: float | None = None) -> _FakeResponse:
+        return _FakeResponse(body, headers, delay_seconds=0.05)
+
+    monkeypatch.setattr(stub.urllib.request, "urlopen", fake_urlopen)
+
+    reply = stub.call_gateway("hello", base_url="http://gateway.example", api_key="test-key")
+
+    assert reply.reply == "pong"
+    assert isinstance(reply.latency_ms, int), f"latency_ms is {reply.latency_ms!r}"
+    assert 20 <= reply.latency_ms <= 5_000, f"latency_ms is {reply.latency_ms}, not milliseconds"
+    assert reply.provider == "anthropic"
+    assert reply.region == "eu"
+    assert EvalEnvelope.model_validate(
+        stub.envelope_for_reply(
+            reply.reply,
+            latency_ms=reply.latency_ms,
+            cost_usd=reply.cost_usd,
+            provider=reply.provider,
+            region=reply.region,
+        )
+    ).cost_usd == Decimal("0.001234")
 
 
 def test_module_has_no_third_party_import() -> None:
