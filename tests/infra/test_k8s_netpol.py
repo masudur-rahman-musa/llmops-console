@@ -1,7 +1,7 @@
-r"""`infra/k8s/base/networkpolicies.yaml`: the twenty NetworkPolicies an earlier change
-and 31a agree, read off what kustomize actually emits rather than off the file, so a policy written
-and never listed in `base/kustomization.yaml`'s `resources` is the same failure as a policy never
-written.
+r"""`infra/k8s/base/networkpolicies.yaml`: the twenty-one NetworkPolicies an earlier change,
+23c, 31a and 31b agree, read off what kustomize actually emits rather than off the file, so a
+policy written and never listed in `base/kustomization.yaml`'s `resources` is the same failure
+as a policy never written.
 
 The stream comes from the session-scoped `built` fixture in `tests/infra/conftest.py`: one
 `kubectl kustomize infra/k8s` for the whole session, shared with
@@ -123,14 +123,15 @@ PLATFORM_POLICIES = frozenset(
 )
 
 #: An earlier change criterion 6, an earlier change criterion 7 and an earlier change's own criterion, the `monitoring`
-#: half: SEVEN policies, by name. Its own catch-all in both directions, DNS, the named-port
+#: half: EIGHT policies, by name. Its own catch-all in both directions, DNS, the named-port
 #: scrape ingress every pod in the namespace carries, Prometheus's egress to what it scrapes plus
 #: Alertmanager, Grafana's own pair - 23b decision D leaves Grafana publishing `http` rather than
 #: `metrics`, so it is the first pod here that the namespace-wide named-port allow cannot cover
 #: and it gets an ingress and an egress policy of its own - and 23c's `alertmanager-egress`,
 #: scoped to the one pod that needs a route to the public internet (decision B). Alertmanager
 #: needs no ingress policy of its own: `metrics-ingress-from-monitoring` already covers it, since
-#: its container port is named `metrics` like the three scrape targets.
+#: its container port is named `metrics` like the three scrape targets. An earlier change adds
+#: `prometheus-ingress-from-gateway`; `test_k8s_gateway_prometheus.py` owns its content.
 MONITORING_POLICIES = frozenset(
     {
         "default-deny",
@@ -140,6 +141,7 @@ MONITORING_POLICIES = frozenset(
         "grafana-ingress",
         "grafana-egress",
         "alertmanager-egress",
+        "prometheus-ingress-from-gateway",
     }
 )
 
@@ -532,7 +534,7 @@ def selector_scope(
     [
         pytest.param(APPS, APPS_POLICIES, id="apps-ten"),
         pytest.param(PLATFORM, PLATFORM_POLICIES, id="platform-three"),
-        pytest.param(MONITORING, MONITORING_POLICIES, id="monitoring-seven"),
+        pytest.param(MONITORING, MONITORING_POLICIES, id="monitoring-eight"),
     ],
 )
 def test_each_namespace_emits_exactly_the_policies_the_plan_names(
@@ -553,10 +555,10 @@ def test_each_namespace_emits_exactly_the_policies_the_plan_names(
     )
 
 
-def test_the_whole_build_emits_exactly_the_twenty_policies_and_nowhere_else(
+def test_the_whole_build_emits_exactly_the_twenty_one_policies_and_nowhere_else(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 1 over the WHOLE stream as `(namespace, name)`. Catches a twenty-first policy
+    """Criterion 1 over the WHOLE stream as `(namespace, name)`. Catches a twenty-second policy
     landing in a fourth namespace, which the three per-namespace rows above cannot see because each
     filters to its own namespace first; and catches a policy emitted with no
     `metadata.namespace` at all, which the API server would file into whatever namespace the

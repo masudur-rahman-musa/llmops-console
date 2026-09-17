@@ -1,4 +1,4 @@
-# The twenty NetworkPolicies: ten in `apps`, three in `platform`, seven in
+# The twenty-one NetworkPolicies: ten in `apps`, three in `platform`, eight in
 # `monitoring`. They live in `base/` rather than beside the workloads
 # they constrain because the design puts them here: a policy is part of the
 # envelope a namespace admits work into, like its quota and its LimitRange, and
@@ -191,6 +191,18 @@ spec:
       ports:
         - protocol: TCP
           port: 6333
+    # The console-api's Prometheus reads. Its ingress partner is
+    # `prometheus-ingress-from-gateway` in `monitoring`; neither works alone.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
 
 # The public Helpdesk surface, and the only Helpdesk pod that takes traffic from
 # outside the namespace. Traefik only: nothing in `apps` calls the web tier.
@@ -703,6 +715,37 @@ spec:
       ports:
         - protocol: TCP
           port: http
+
+# The gateway reading Prometheus's query API for the console-api,
+# the ingress half of the rule at the end of `gateway-egress`. The only `apps`
+# peer anywhere in this namespace: `metrics-ingress-from-monitoring` stays
+# scoped to `monitoring`, so no other `apps` pod gains a path by this.
+#
+# The port is the NAME `metrics`, this namespace's ingress vocabulary, which
+# resolves to 9090 on the Prometheus container.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prometheus-ingress-from-gateway
+  namespace: monitoring
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: apps
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gateway
+      ports:
+        - protocol: TCP
+          port: metrics
 
 # What Grafana may open, and it is Prometheus and nothing else: every panel on
 # every dashboard is a query against the one provisioned datasource. No

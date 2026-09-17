@@ -45,6 +45,12 @@ data:
   # three data services are in `platform`, so a bare `redis` would not resolve.
   OPSCONSOLE_REDIS_URL: redis://redis.platform.svc.cluster.local:6379/0
   OPSCONSOLE_QDRANT_URL: http://qdrant.platform.svc.cluster.local:6333
+  # The Prometheus query API the console-api reads. Written out in
+  # full rather than shared: it must equal the Grafana datasource `url` in
+  # `monitoring/grafana.yaml`, and the test pinning the two
+  # (`test_k8s_gateway_prometheus.py`) only sees drift when both files say it.
+  # `gateway-egress` and `prometheus-ingress-from-gateway` open the path.
+  OPSCONSOLE_PROMETHEUS_URL: http://prometheus.monitoring.svc.cluster.local:9090
   OPSCONSOLE_ENV: production
   # What this process is called in a trace viewer. One trace carries spans from
   # the Helpdesk and from the gateway, so the two need different names.

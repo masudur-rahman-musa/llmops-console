@@ -262,8 +262,8 @@ nothing rather than one that answers too much.
 
 ## What may reach what
 
-Twenty `NetworkPolicy` objects in `base/networkpolicies.yaml`: ten in
-`apps`, three in `platform` and seven in `monitoring`. `apps` and `monitoring` are denied
+Twenty-one `NetworkPolicy` objects in `base/networkpolicies.yaml`: ten in
+`apps`, three in `platform` and eight in `monitoring`. `apps` and `monitoring` are denied
 in both directions and every row below is an additive allow on top of that;
 `platform` is denied inbound only, because
 cert-manager lives there and a cluster that cannot reach the ACME endpoint is a
@@ -276,7 +276,7 @@ provider keys is the one closed both ways.
 | `default-deny` | `apps` | every pod | nothing, in either direction |
 | `allow-dns` | `apps` | every pod | egress to `kube-system` on UDP 53 and TCP 53 |
 | `gateway-ingress` | `apps` | `gateway` | ingress from `kube-system` (Traefik), from any pod in `apps` and from any pod in `monitoring`, on its serving port |
-| `gateway-egress` | `apps` | `gateway` | egress to the public internet on TCP 443, to llama 8082, llama-embed 8083, and to Postgres, Redis and Qdrant in `platform` |
+| `gateway-egress` | `apps` | `gateway` | egress to the public internet on TCP 443, to llama 8082, llama-embed 8083, to Postgres, Redis and Qdrant in `platform`, and to `prometheus:9090` in `monitoring` |
 | `helpdesk-web-ingress` | `apps` | `helpdesk-web` | ingress from `kube-system` on its serving port |
 | `helpdesk-api-ingress` | `apps` | `helpdesk-agent-api`, `helpdesk-mcp-server` | ingress from the four Helpdesk pods, each on its own serving port |
 | `helpdesk-egress` | `apps` | the four Helpdesk pods | egress to `gateway:8080`, `helpdesk-agent-api:8000`, `helpdesk-mcp-server:8001`, `postgres:5432`, `redis:6379`, `qdrant:6333` - and no route off the cluster at all |
@@ -290,6 +290,7 @@ provider keys is the one closed both ways.
 | `allow-dns` | `monitoring` | every pod | egress to `kube-system` on UDP 53 and TCP 53 |
 | `metrics-ingress-from-monitoring` | `monitoring` | every pod with a `metrics` port | ingress from any pod in `monitoring`, each on its own `metrics` port |
 | `prometheus-egress` | `monitoring` | `prometheus` | egress to `gateway:8080`, `qdrant:6333`, the two exporters on their `metrics` ports, `alertmanager:9093` and cert-manager on 9402 - and no other route off the cluster |
+| `prometheus-ingress-from-gateway` | `monitoring` | `prometheus` | ingress from `gateway` in `apps` on its `metrics` port (9090), and from no other `apps` pod |
 | `grafana-ingress` | `monitoring` | `grafana` | ingress from `kube-system` (Traefik) on its serving port, and from nowhere else |
 | `grafana-egress` | `monitoring` | `grafana` | egress to `prometheus:9090` - and no route off the cluster at all |
 | `alertmanager-egress` | `monitoring` | `alertmanager` | egress to the public internet on TCP 443 only |
