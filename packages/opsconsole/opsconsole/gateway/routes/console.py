@@ -27,8 +27,8 @@ reads one source reports the other as `unconfigured`.
 runs (`test_the_days_boundary_is_inclusive`,
 `test_a_non_integer_days_is_422_naming_days`). `tenant` is pre-checked by admin's
 `_checked_tenant` before any query, because it is interpolated into a PromQL
-label matcher (`test_the_tenant_rejection_table`). SLO error budgets are not
-served here.
+label matcher (`test_the_tenant_rejection_table`). The reliability page's SLO error
+budgets read a fixed 30-day window and ignore `days` (`test_slos_ignore_days`).
 """
 
 from __future__ import annotations
@@ -61,9 +61,16 @@ from opsconsole.gateway.console_reads import (
     regressed_metrics,
 )
 from opsconsole.gateway.prometheus import (
+    AVAILABILITY_ALLOWED_BAD,
+    AVAILABILITY_BUDGET_QUERY,
+    AVAILABILITY_OBJECTIVE,
     CIRCUITS_QUERY,
     ERROR_RATE_QUERY,
+    LATENCY_ALLOWED_SLOW,
+    LATENCY_BUDGET_QUERY,
+    LATENCY_THRESHOLD_SECONDS,
     P95_QUERY,
+    RESIDENCY_VIOLATIONS_30D_QUERY,
     PrometheusClient,
     PrometheusError,
     fallbacks_query,
@@ -103,6 +110,10 @@ MAX_DAYS: Final[int] = 90
 DEFAULT_DAYS: Final[int] = 30
 
 SECONDS_PER_DAY: Final[int] = 86_400
+
+SLO_WINDOW: Final[str] = "30d"
+"""The window every SLO row reports, matching the `[30d]` in each budget query; it
+never follows `days` (`test_slos_rows_are_availability_latency_residency_in_order`)."""
 
 CIRCUIT_STATE_NAMES: Final[dict[int, str]] = {0: "closed", 1: "half_open", 2: "open"}
 """`gateway_circuit_state`'s values as the page shows them. Any other value is
@@ -195,8 +206,19 @@ class FallbackCount(_Body):
     count: float
 
 
+class Slo(_Body):
+    """One SLO's error budget. `budget_remaining` is negative when overspent, never clamped."""
+
+    name: str
+    objective: float
+    window: str
+    observed: float | None
+    budget_remaining: float | None
+
+
 class ReliabilityPage(_Body):
     sources: Sources
+    slos: tuple[Slo, ...]
     latency_p95: tuple[tuple[float, float], ...]
     error_rate: tuple[tuple[float, float], ...]
     circuits: tuple[Circuit, ...]
@@ -398,15 +420,55 @@ def residency(
     )
 
 
+def _slos(client: PrometheusClient) -> tuple[Slo, ...]:
+    """The three gateway-measured SLO budgets over the fixed `SLO_WINDOW`.
+
+    No traffic makes both ratios `0 / 0`, which Prometheus answers `NaN` and the
+    client drops, so an empty result is `null` rather than a full budget
+    (`test_nan_gives_null_observed_and_budget`). An overspent budget stays negative
+    (`test_an_overspent_budget_is_negative_and_unclamped`). A failure raises
+    `PrometheusError` into the page's one `_prometheus` read, which empties `slos`
+    with everything else
+    (`test_a_failing_budget_query_is_200_with_empty_slos_prometheus_error_and_an_error_log`).
+    """
+    bad = _first(client.instant_query(AVAILABILITY_BUDGET_QUERY))
+    under = _first(client.instant_query(LATENCY_BUDGET_QUERY))
+    violations = _first(client.instant_query(RESIDENCY_VIOLATIONS_30D_QUERY))
+    return (
+        Slo(
+            name="availability",
+            objective=AVAILABILITY_OBJECTIVE,
+            window=SLO_WINDOW,
+            observed=None if bad is None else 1 - bad,
+            budget_remaining=None if bad is None else 1 - bad / AVAILABILITY_ALLOWED_BAD,
+        ),
+        Slo(
+            name="latency",
+            objective=LATENCY_THRESHOLD_SECONDS,
+            window=SLO_WINDOW,
+            observed=under,
+            budget_remaining=None if under is None else 1 - (1 - under) / LATENCY_ALLOWED_SLOW,
+        ),
+        Slo(
+            name="residency",
+            objective=0.0,
+            window=SLO_WINDOW,
+            observed=violations,
+            budget_remaining=None,
+        ),
+    )
+
+
 @router.get(CONSOLE_RELIABILITY)
 def reliability(request: Request, days: Days = DEFAULT_DAYS) -> ReliabilityPage:
-    """Hourly latency and error-rate series over the window, breakers and fallbacks."""
+    """SLO budgets, hourly latency and error-rate series over the window, breakers and fallbacks."""
     end = time.time()
     start = end - days * SECONDS_PER_DAY
 
     def read(client: PrometheusClient) -> ReliabilityPage:
         return ReliabilityPage(
             sources=Sources(postgres=SourceState.UNCONFIGURED, prometheus=SourceState.OK),
+            slos=_slos(client),
             latency_p95=tuple(client.range_query(P95_QUERY, start=start, end=end)),
             error_rate=tuple(client.range_query(ERROR_RATE_QUERY, start=start, end=end)),
             circuits=tuple(
@@ -430,6 +492,7 @@ def reliability(request: Request, days: Days = DEFAULT_DAYS) -> ReliabilityPage:
         return page
     return ReliabilityPage(
         sources=Sources(postgres=SourceState.UNCONFIGURED, prometheus=prometheus),
+        slos=(),
         latency_p95=(),
         error_rate=(),
         circuits=(),

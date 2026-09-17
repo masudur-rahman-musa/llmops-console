@@ -50,8 +50,17 @@ export type ResidencyBody = {
   redactions: Array<{ tenant: string; kind: string; count: number }>;
 };
 
+export type Slo = {
+  name: string;
+  objective: number;
+  window: string;
+  observed: number | null;
+  budget_remaining: number | null;
+};
+
 export type ReliabilityBody = {
   sources: Sources;
+  slos: Array<Slo>;
   latency_p95: Array<[number, number]>;
   error_rate: Array<[number, number]>;
   circuits: Array<{ provider: string; state: string }>;
@@ -164,6 +173,9 @@ const CHECKS: { [N in PageName]: Check } = {
   }),
   reliability: shape({
     sources,
+    slos: listOf(
+      shape({ name: str, objective: num, window: str, observed: nullable(num), budget_remaining: nullable(num) }),
+    ),
     latency_p95: listOf(pair),
     error_rate: listOf(pair),
     circuits: listOf(shape({ provider: str, state: str })),

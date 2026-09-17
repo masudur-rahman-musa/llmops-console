@@ -50,7 +50,7 @@ data:
   # the seven services are not, so a bare `gateway` resolves to nothing.
   prometheus.yml: |
     global:
-      # 30s over seven targets for 15 days is what the 4Gi claim was sized for.
+      # 30s over seven targets for 30 days, capped at 3GB, fits the 4Gi claim.
       # Tightening it doubles every series' sample count against an unchanged
       # volume, and the disk fills silently.
       scrape_interval: 30s
@@ -265,9 +265,11 @@ spec:
           args:
             - --config.file=/etc/prometheus/prometheus.yml
             - --storage.tsdb.path=/prometheus
-            # Written out rather than left to the image's own default, which is
-            # also 15d today and is the image's to change on the next bump.
-            - --storage.tsdb.retention.time=15d
+            # 30 days because the SLO error budgets read a fixed [30d] window.
+            # The size cap keeps that inside the 4Gi claim: past 3GB the oldest
+            # blocks go first, before the disk fills.
+            - --storage.tsdb.retention.time=30d
+            - --storage.tsdb.retention.size=3GB
           ports:
             - name: metrics
               containerPort: 9090

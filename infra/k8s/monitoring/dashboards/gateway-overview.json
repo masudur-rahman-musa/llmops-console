@@ -147,6 +147,119 @@
           "expr": "max by (provider) (gateway_circuit_state)"
         }
       ]
+    },
+    {
+      "id": 6,
+      "type": "row",
+      "title": "SLO error budgets",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 16 },
+      "panels": []
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Availability: 5xx share over 30d",
+      "description": "Objective 99.5%: the budget is spent when this reaches 0.5%. Budget remaining = 1 - value / 0.005. The console's SLO table reads the same query (project-obs/slo.md).",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 17 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.0025 },
+              { "color": "red", "value": 0.005 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "background",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "instant": true,
+          "expr": "sum(increase(gateway_requests_total{status=~\"5..\"}[30d])) / sum(increase(gateway_requests_total[30d]))"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "Latency: API-tier share under 6s over 30d",
+      "description": "Objective p95 under 6s: the budget is spent when this falls to 95%. Budget remaining = 1 - (1 - value) / 0.05. Streamed requests are counted too (project-obs/slo.md).",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 17 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.95 },
+              { "color": "green", "value": 0.975 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "background",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "instant": true,
+          "expr": "sum(increase(gateway_request_latency_seconds_bucket{le=\"6.0\",provider!~\"local|local_embed|vllm\"}[30d])) / sum(increase(gateway_request_latency_seconds_count{provider!~\"local|local_embed|vllm\"}[30d]))"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "Residency violations over 30d",
+      "description": "Objective 0. There is no budget to spend: any value above zero is an incident.",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 17 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "background",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "instant": true,
+          "expr": "sum(increase(gateway_residency_violations_total[30d]))"
+        }
+      ]
     }
   ]
 }

@@ -15,5 +15,10 @@
   ],
   "fallbacks": [
     { "tenant": "acme-eu", "alias": "support-fast", "provider": "local", "count": 5.0 }
+  ],
+  "slos": [
+    { "name": "availability", "objective": 0.995, "window": "30d", "observed": 0.999, "budget_remaining": 0.8 },
+    { "name": "latency", "objective": 6.0, "window": "30d", "observed": 0.97, "budget_remaining": 0.4 },
+    { "name": "residency", "objective": 0.0, "window": "30d", "observed": 0.0, "budget_remaining": null }
   ]
 }

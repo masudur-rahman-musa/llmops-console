@@ -88,11 +88,13 @@ put a constant floor under every RPS panel and an unmovable denominator under
 every error ratio in the design's dashboard 1, so a real outage barely moves the
 line. Pinned by `test_the_probe_and_scrape_paths_are_not_counted`."""
 
-LATENCY_BUCKETS = (0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 60.0, 120.0)
+LATENCY_BUCKETS = (0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 6.0, 10.0, 20.0, 30.0, 60.0, 120.0)
 """The histogram bounds, in seconds (decision H). prometheus_client's default set
 tops out at 10s, which puts every ordinary streamed completion in `+Inf` and
-makes a p95 panel unreadable exactly where it matters. Pinned exactly, standing
-rule 2, by `test_latency_buckets_are_the_declared_eleven`."""
+makes a p95 panel unreadable exactly where it matters. `6.0` is the latency SLO's
+threshold, so its error budget counts requests under exactly 6 seconds
+(`prometheus.LATENCY_BUDGET_QUERY`). Pinned exactly, a project rule, by
+`test_latency_buckets_are_the_declared_eleven`."""
 
 DIRECTION_IN = "in"
 DIRECTION_OUT = "out"

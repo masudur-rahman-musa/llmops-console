@@ -2,8 +2,40 @@ import { LineChart } from "@/components/line-chart";
 import { SourceNotice } from "@/components/source-notice";
 import { Unavailable } from "@/components/unavailable";
 import { getConsolePage } from "@/lib/console-api";
+import { NA, percent } from "@/lib/format";
+import type { Slo } from "@/lib/guards";
 
 export const dynamic = "force-dynamic";
+
+/** The objective as project-obs/slo.md states it. */
+function objective(slo: Slo): string {
+  if (slo.name === "availability") {
+    return percent(slo.objective);
+  }
+  if (slo.name === "latency") {
+    return `p95 < ${slo.objective} s`;
+  }
+  return String(slo.objective);
+}
+
+/** Shares as percentages; the residency count as a plain number. */
+function observed(slo: Slo): string {
+  if (slo.observed === null) {
+    return NA;
+  }
+  return slo.name === "residency" ? String(slo.observed) : percent(slo.observed);
+}
+
+/** Null is no traffic, never a full or an empty budget; a negative budget is overspent and shown unclamped. */
+function budget(slo: Slo): string {
+  if (slo.budget_remaining === null) {
+    return "no traffic";
+  }
+  if (slo.budget_remaining < 0) {
+    return `overspent (${percent(slo.budget_remaining)})`;
+  }
+  return percent(slo.budget_remaining);
+}
 
 export default async function ReliabilityPage() {
   const result = await getConsolePage("reliability");
@@ -15,6 +47,30 @@ export default async function ReliabilityPage() {
     <>
       <h1>Reliability</h1>
       <SourceNotice sources={body.sources} />
+
+      <h2>Error budgets</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>SLO</th>
+            <th>Objective</th>
+            <th>Window</th>
+            <th>Observed</th>
+            <th>Budget remaining</th>
+          </tr>
+        </thead>
+        <tbody>
+          {body.slos.map((slo) => (
+            <tr key={slo.name}>
+              <td>{slo.name}</td>
+              <td>{objective(slo)}</td>
+              <td>{slo.window}</td>
+              <td>{observed(slo)}</td>
+              <td>{budget(slo)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
 
       <LineChart title="p95 latency" points={body.latency_p95} />
       <LineChart title="Error rate" points={body.error_rate} />

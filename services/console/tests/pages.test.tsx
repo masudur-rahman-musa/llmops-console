@@ -398,11 +398,10 @@ describe("console pages", () => {
     expect(has(html, "refusal_recall: 0.9 (was 0.95)")).toBe(true);
   });
 
-  it("reliability renders no slo section", async () => {
-    // Catches an SLO or error budget section shipped ahead of row 29.
+  it("reliability renders the slo table above the charts", async () => {
+    // Catches the SLO table left off the page, or placed below the latency and error-rate charts it summarises.
     const html = await render("reliability");
-    expect(html).not.toMatch(/\bSLOs?\b/i);
-    expect(html).not.toMatch(/error[\s-]*budget/i);
+    expectInOrder(html, ["availability", "residency", "p95 latency", "Error rate"]);
   });
 
   it("incidents render the open badge and a safe postmortem link only", async () => {

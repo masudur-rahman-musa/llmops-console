@@ -140,6 +140,12 @@ const RENDERED: Record<PageName, Path[]> = {
     ["fallbacks", -1, "alias"],
     ["fallbacks", -1, "provider"],
     ["fallbacks", -1, "count"],
+    ["slos"],
+    ["slos", -1, "name"],
+    ["slos", -1, "objective"],
+    ["slos", -1, "window"],
+    ["slos", -1, "observed"],
+    ["slos", -1, "budget_remaining"],
   ],
   incidents: [
     ["sources"],
@@ -187,6 +193,11 @@ describe("page body guards", () => {
     nullCost.savings_usd_total = null;
     expect(passes("cost", nullCost), "cost nulls").toBe(true);
     expect(passes("residency", withValue("residency", ["violations"], null)), "violations null").toBe(true);
+    // Catches a reliability guard that requires a number where a budget row answers null for no traffic.
+    const noTraffic = withValue("reliability", ["slos", 0, "observed"], null);
+    (noTraffic.slos as Array<Record<string, unknown>>)[0].budget_remaining = null;
+    expect(passes("reliability", noTraffic), "slo observed and budget null").toBe(true);
+    expect(passes("reliability", withValue("reliability", ["slos"], [])), "slos empty").toBe(true);
   });
 
   it("a missing rendered field fails the guard", () => {

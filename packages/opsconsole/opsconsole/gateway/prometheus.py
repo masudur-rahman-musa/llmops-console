@@ -63,6 +63,42 @@ CIRCUITS_QUERY: Final[str] = "max by (provider) (gateway_circuit_state)"
 """The worst breaker state per provider across replicas. The breaker is in-process, so two pods can disagree and the page shows the worse of them."""
 
 
+AVAILABILITY_OBJECTIVE: Final[float] = 0.995
+AVAILABILITY_ALLOWED_BAD: Final[float] = 0.005
+LATENCY_THRESHOLD_SECONDS: Final[float] = 6.0
+LATENCY_ALLOWED_SLOW: Final[float] = 0.05
+"""The SLO numbers `project-obs/slo.md` documents, pinned by
+`test_the_budget_queries_are_the_pinned_literals`. The allowed shares are what an
+error budget spends: a p95 under 6 s allows 5% of requests at 6 s or over."""
+
+AVAILABILITY_BUDGET_QUERY: Final[str] = (
+    'sum(increase(gateway_requests_total{status=~"5.."}[30d]))'
+    " / sum(increase(gateway_requests_total[30d]))"
+)
+"""The 5xx share over a fixed 30 days: the BAD ratio, which the route turns into
+`observed = 1 - bad` and `budget_remaining = 1 - bad / 0.005`.
+
+The three budget queries are literals rather than builders because Grafana's
+`gateway-overview.json` carries each one byte for byte, and
+`test_each_slo_panel_expr_equals_its_prometheus_constant` fails on drift. The window
+never follows a page's `days` (`test_slos_ignore_days`)."""
+
+LATENCY_BUDGET_QUERY: Final[str] = (
+    "sum(increase(gateway_request_latency_seconds_bucket"
+    '{le="6.0",provider!~"local|local_embed|vllm"}[30d]))'
+    " / sum(increase(gateway_request_latency_seconds_count"
+    '{provider!~"local|local_embed|vllm"}[30d]))'
+)
+"""The API tier's share of requests under 6 s over 30 days. Prometheus renders the
+bucket label `6.0`, never `6`. Streamed requests are counted too: the histogram has
+no streaming label, a gap `project-obs/slo.md` records."""
+
+RESIDENCY_VIOLATIONS_30D_QUERY: Final[str] = (
+    "sum(increase(gateway_residency_violations_total[30d]))"
+)
+"""Violations over 30 days. The target is zero, so there is no budget to spend."""
+
+
 def redactions_query(days: int, tenant: str | None) -> str:
     """Placeholders minted per tenant and kind over the window, optionally for one tenant."""
     matcher = "" if tenant is None else f'{{tenant="{tenant}"}}'

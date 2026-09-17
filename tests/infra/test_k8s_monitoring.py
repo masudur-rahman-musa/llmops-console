@@ -152,7 +152,10 @@ DISCOVERY_KEY_SUFFIX = "_sd_configs"
 #: Criterion 4, each by exact value, never a range.
 SCRAPE_INTERVAL = "30s"
 RETENTION_FLAG = "--storage.tsdb.retention.time"
-RETENTION_ARG = f"{RETENTION_FLAG}=15d"
+RETENTION_ARG = f"{RETENTION_FLAG}=30d"
+#: An earlier change decision B: the size cap that keeps a 30-day window inside the unchanged `4Gi` volume.
+RETENTION_SIZE_FLAG = "--storage.tsdb.retention.size"
+RETENTION_SIZE_ARG = f"{RETENTION_SIZE_FLAG}=3GB"
 PVC_STORAGE = "4Gi"
 
 #: Criterion 5, one row per workload, flattened the way the budget table and the quota both read.
@@ -775,15 +778,19 @@ def test_the_retention_window_the_scrape_interval_and_the_volume_are_the_agreed_
 ) -> None:
     """Criterion 4 and decision D, each as an EXACT equality and never a range:
     `global.scrape_interval` is `30s`, the Prometheus container carries exactly one
-    `--storage.tsdb.retention.time` argument and it reads `15d`, and the PVC requests `4Gi`.
+    `--storage.tsdb.retention.time` argument and it reads `30d`, exactly one
+    `--storage.tsdb.retention.size` argument and it reads `3GB`, and the PVC requests `4Gi`.
 
-    These three are one budget: 30s over five targets for 15 days is what 4Gi was sized for, so a
+    These are one budget: an earlier change widened the window from 15 to 30 days so a 30-day SLO error
+    budget is measurable, and capped the TSDB at 3GB so the unchanged 4Gi volume cannot fill, so a
     wrong value anywhere shows up as a disk that fills silently and a TSDB that starts dropping
     the oldest blocks - the series the "evals over time" panel and row 24's 7-day median read.
-    Catches `15d` written on a second `--storage.tsdb.retention.time` flag beside a first, where
-    Prometheus takes one of them and the manifest reads as if it takes the other. Catches the
-    retention flag dropped entirely, which leaves Prometheus's own 15d default in place today and
-    changes underneath the repo the day the image is bumped. Catches a scrape interval tightened
+    Catches the window left at `15d`, where every 30-day budget query silently reads half its
+    window. Catches the size cap missing, or given as `4GB`, which lets the TSDB grow past the
+    volume. Catches `30d` written on a second `--storage.tsdb.retention.time` flag beside a
+    first, where Prometheus takes one of them and the manifest reads as if it takes the other.
+    Catches the retention flag dropped entirely, which leaves Prometheus's own 15d default in
+    place, half the SLO window. Catches a scrape interval tightened
     to 15s, which doubles every series' sample count against an unchanged volume. Catches the PVC
     given `4G` where the plan says `4Gi` - 7% less disk, which the API server does not treat as
     equal either.
@@ -800,6 +807,8 @@ def test_the_retention_window_the_scrape_interval_and_the_volume_are_the_agreed_
     args = [str(argument) for argument in container.get("args", [])]
     retention = [argument for argument in args if argument.startswith(f"{RETENTION_FLAG}=")]
     assert retention == [RETENTION_ARG], f"retention arguments are {retention}; args are {args}"
+    size = [argument for argument in args if argument.startswith(f"{RETENTION_SIZE_FLAG}=")]
+    assert size == [RETENTION_SIZE_ARG], f"retention size arguments are {size}; args are {args}"
 
     claim = object_named(built, "PersistentVolumeClaim", "prometheus-data")
     requests = claim["spec"].get("resources", {}).get("requests", {})

@@ -69,11 +69,14 @@ from opsconsole.gateway.console_reads import (
     regressed_metrics,
 )
 from opsconsole.gateway.prometheus import (
+    AVAILABILITY_BUDGET_QUERY,
     CIRCUITS_QUERY,
     ERROR_RATE_QUERY,
+    LATENCY_BUDGET_QUERY,
     P95_QUERY,
     QUERY_PATH,
     QUERY_RANGE_PATH,
+    RESIDENCY_VIOLATIONS_30D_QUERY,
     PrometheusClient,
 )
 from opsconsole.gateway.routes import console
@@ -246,6 +249,12 @@ SAMPLE_TS = 1757980800
 REDACTIONS_PREFIX = "sum by (tenant, kind) (increase(gateway_redactions_total"
 FALLBACKS_PREFIX = "sum by (tenant, alias, provider) (increase(gateway_fallbacks_total"
 
+# An earlier change's three budget queries, answered by default so every reliability case sees a full
+# `slos`: a 5xx share of 0.001, a share under 6 seconds of 0.98, and no residency violation.
+BAD_RATIO_30D = "0.001"
+UNDER_THRESHOLD_SHARE_30D = "0.98"
+RESIDENCY_VIOLATIONS_30D = "0"
+
 
 def instant_result(query: str) -> list[dict[str, Any]]:
     """What the mock answers to one instant query."""
@@ -253,6 +262,12 @@ def instant_result(query: str) -> list[dict[str, Any]]:
         return [{"metric": {}, "value": [SAMPLE_TS, "0.734"]}]
     if query == ERROR_RATE_QUERY:
         return [{"metric": {}, "value": [SAMPLE_TS, "0.012"]}]
+    if query == AVAILABILITY_BUDGET_QUERY:
+        return [{"metric": {}, "value": [SAMPLE_TS, BAD_RATIO_30D]}]
+    if query == LATENCY_BUDGET_QUERY:
+        return [{"metric": {}, "value": [SAMPLE_TS, UNDER_THRESHOLD_SHARE_30D]}]
+    if query == RESIDENCY_VIOLATIONS_30D_QUERY:
+        return [{"metric": {}, "value": [SAMPLE_TS, RESIDENCY_VIOLATIONS_30D]}]
     if query == CIRCUITS_QUERY:
         return [
             {"metric": {"provider": "anthropic"}, "value": [SAMPLE_TS, "0"]},
@@ -413,7 +428,13 @@ PROMETHEUS_EMPTY: dict[str, dict[str, Any]] = {
     COST: {},
     QUALITY: {},
     RESIDENCY: {"redactions": []},
-    RELIABILITY: {"latency_p95": [], "error_rate": [], "circuits": [], "fallbacks": []},
+    RELIABILITY: {
+        "latency_p95": [],
+        "error_rate": [],
+        "circuits": [],
+        "fallbacks": [],
+        "slos": [],
+    },
     INCIDENTS: {},
     RELEASES: {},
 }
@@ -867,10 +888,19 @@ def test_the_reliability_body_reads_the_named_series(wired: Wired) -> None:
     assert body["fallbacks"] == [
         {"tenant": "evals", "alias": "agent-default", "provider": "local", "count": 4.0}
     ]
-    assert set(body) == {"sources", "latency_p95", "error_rate", "circuits", "fallbacks"}
+    assert set(body) == {"sources", "latency_p95", "error_rate", "circuits", "fallbacks", "slos"}
 
+    # An earlier change (a recorded deviation from its section 8): the three budget queries join the
+    # instant queries, so the exact list gains them; their values are pinned in
+    # tests/gateway/test_console_slo.py.
     assert sorted(wired.prom.queries(QUERY_PATH)) == sorted(
-        [CIRCUITS_QUERY, "sum by (tenant, alias, provider) (increase(gateway_fallbacks_total[7d]))"]
+        [
+            CIRCUITS_QUERY,
+            "sum by (tenant, alias, provider) (increase(gateway_fallbacks_total[7d]))",
+            AVAILABILITY_BUDGET_QUERY,
+            LATENCY_BUDGET_QUERY,
+            RESIDENCY_VIOLATIONS_30D_QUERY,
+        ]
     )
     ranged = [params for sent, params in wired.prom.calls if sent == QUERY_RANGE_PATH]
     assert sorted(params["query"] for params in ranged) == sorted([P95_QUERY, ERROR_RATE_QUERY])

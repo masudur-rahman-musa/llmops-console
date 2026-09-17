@@ -179,6 +179,7 @@ DECLARED_BUCKET_BOUNDS = (
     "1.0",
     "2.0",
     "5.0",
+    "6.0",
     "10.0",
     "20.0",
     "30.0",
@@ -609,14 +610,16 @@ def test_latency_buckets_are_the_declared_eleven(
 ) -> None:
     """Catches prometheus_client's DEFAULT buckets being taken (decision H): they top out
     at 10 seconds, so every ordinary streamed completion falls in `+Inf` and a p95 is
-    unreadable exactly where it matters. a project rule: the eleven bounds are asserted
-    as the exact ordered list, so a band of roughly-right values cannot pass."""
+    unreadable exactly where it matters. a project rule: the twelve bounds are asserted
+    as the exact ordered list, so a band of roughly-right values cannot pass. An earlier change adds
+    `6.0`, the latency SLO's threshold: without it the share under 6 seconds is not
+    measurable from the buckets and the latency error budget reads against `5.0` instead."""
     assert post_chat(chat_client, chat_body(model=ALIAS)).status_code == 200
 
     assert bucket_bounds(metrics, alias=ALIAS, provider=REMOTE_PROVIDER) == list(
         DECLARED_BUCKET_BOUNDS
     )
-    assert len(DECLARED_BUCKET_BOUNDS) == 12, "eleven declared bounds plus +Inf"
+    assert len(DECLARED_BUCKET_BOUNDS) == 13, "twelve declared bounds plus +Inf"
 
 
 # --------------------------------------------------------------------------

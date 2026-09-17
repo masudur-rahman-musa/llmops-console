@@ -118,6 +118,18 @@ One run, on an Apple M1 (8 cores, Docker Desktop with 10 GB), one gateway worker
 With 400 ms of mock delay, the gateway adds about 38 ms at the median and 97 ms
 at p95. Requests answered from the cache come back in about 25 ms.
 
+## Reliability
+
+Seven SLOs, each with its indicator, target, window, error budget formula and
+alert: [project-obs/slo.md](project-obs/slo.md). The three the gateway measures
+itself (availability, latency, residency) show their remaining error budget on
+the gateway overview dashboard in Grafana and on the console's Reliability page.
+
+Incidents are recorded on the console's timeline, each linking its postmortem.
+The first one, blameless, covers failing tests that went unseen for days because
+no run of the whole suite happened in that time:
+[project-obs/postmortems/2026-09-17-red-tests-went-unseen.md](project-obs/postmortems/2026-09-17-red-tests-went-unseen.md).
+
 **Status: under active development.** Architecture docs, dashboards, and measured self-hosted-vs-API tradeoffs land as milestones complete.
 
 Companion project: [ai-help-desk-governed-access](https://github.com/developermusa/ai-help-desk-governed-access) — the agent workload this platform routes, measures, and evaluates.
