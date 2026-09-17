@@ -262,3 +262,58 @@ jobs:
       # The GPU measurement build. Standalone, applied only from the owner's shell
       # to a short-lived GPU host, so this is its one automated check too.
       - run: make k8s-gpu-check
+
+  # The secret scan CI did not have. The gitleaks pre-commit hook scans a STAGING
+  # AREA, and the `check` job runs the hooks through `pre-commit run --all-files`
+  # where nothing is staged - so the hook's own gate is silently a no-op here.
+  # This job scans every commit instead, which is the half a staged scan can never
+  # do: a key removed in a later commit still sits in the history that gets cloned.
+  # The known findings are 14 fake literals in test files, allowed one exact
+  # fingerprint at a time in `.gitleaksignore`.
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The whole history. A default checkout gives the runner one commit, and
+          # a history scan over one commit is a green tick that proves nothing.
+          fetch-depth: 0
+      # 8.24.3 is written out four times on purpose, and NOT lifted into an `env:`
+      # var: `tests/ci/test_ci_workflow.py` compares this number against the
+      # `rev: v8.24.3` in `.pre-commit-config.yaml`, and that drift is only visible
+      # to a static reader if this file SAYS the number. The two
+      # scanners must agree on what counts as a secret.
+      - name: install gitleaks
+        run: |
+          curl -sSfLO "https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz"
+          curl -sSfLO "https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_checksums.txt"
+          sha256sum --check --ignore-missing "gitleaks_8.24.3_checksums.txt"
+          tar -xzf "gitleaks_8.24.3_linux_x64.tar.gz" gitleaks
+      # `--ignore-missing` above because the release publishes one checksums file
+      # covering all twelve platform archives and the runner downloaded one of them.
+      # The scan carries no staging-area flag: those are the local hook's, and they
+      # would narrow this to an index a runner never has.
+      - name: scan every commit
+        run: ./gitleaks git --redact --exit-code 1 .
+
+  # The Python dependency audit. `pnpm audit` already covers the console in its own
+  # job and Trivy covers the images in `build.yml`; the locked Python set had
+  # nothing reading it. pip-audit runs through `uvx` rather than joining the `dev`
+  # group: the tool is CI's, not the package's, so the lockfile stays untouched.
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      # `--locked` so this audits what the repository actually pins rather than a
+      # fresh resolve, `--all-groups` so the dev and test trees are audited too, and
+      # `--no-emit-project` to keep the unhashed editable entry out of a file that
+      # is about to be read under `--require-hashes`.
+      - name: export the locked dependency set
+        run: uv export --format requirements-txt --locked --no-emit-project --all-groups -o requirements-audit.txt
+      # `--strict` so an unresolvable dependency fails rather than warning, and
+      # `--disable-pip` so the audit resolves nothing of its own.
+      - name: audit the locked dependency set
+        run: uvx --from pip-audit==2.9.0 pip-audit --strict --require-hashes --disable-pip -r requirements-audit.txt

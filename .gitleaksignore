@@ -1,0 +1,29 @@
+# Findings the `secrets` CI job is allowed to pass over, one exact fingerprint
+# per line: commit, path, rule, line number. Every one of them is a fake literal
+# written into a TEST so the test has something of the right shape to assert on -
+# repeated-hex cache keys in the Python cache suite, and invented console session
+# values in the TypeScript suite. None is a credential to anything.
+#
+# Fingerprints rather than a path allowlist in `.gitleaks.toml` deliberately: a
+# path rule would also wave through a real key pasted into any test file later,
+# while a fingerprint pins one line of one blob in one commit. A new fake literal
+# in a test therefore fails the job until its fingerprint is reviewed and added
+# here, which is the cost this file is paying on purpose.
+
+# Console session and probe values (plans 28c, 31a).
+6b558248949651476ecb948577efed0efb0cef32:services/console/tests/probes.test.ts:generic-api-key:19
+6b558248949651476ecb948577efed0efb0cef32:services/console/tests/probes.test.ts:generic-api-key:20
+6b558248949651476ecb948577efed0efb0cef32:services/console/tests/probes.test.ts:generic-api-key:21
+6b558248949651476ecb948577efed0efb0cef32:services/console/tests/probes.test.ts:generic-api-key:33
+6b558248949651476ecb948577efed0efb0cef32:services/console/tests/probes.test.ts:generic-api-key:133
+c93d8e89a4233378f249c32cc65a9d4e10858471:services/console/tests/middleware.test.ts:generic-api-key:14
+c93d8e89a4233378f249c32cc65a9d4e10858471:services/console/tests/session.test.ts:generic-api-key:16
+c93d8e89a4233378f249c32cc65a9d4e10858471:services/console/tests/login-route.test.ts:generic-api-key:18
+c93d8e89a4233378f249c32cc65a9d4e10858471:services/console/tests/login-route.test.ts:generic-api-key:19
+
+# Cache key fixtures (plan 13a).
+7a9b255362c92c7f468f0da6cfcd2f008d8ef897:tests/cache/test_store.py:generic-api-key:36
+7a9b255362c92c7f468f0da6cfcd2f008d8ef897:tests/cache/test_store.py:generic-api-key:41
+7a9b255362c92c7f468f0da6cfcd2f008d8ef897:tests/cache/test_key.py:generic-api-key:93
+7a9b255362c92c7f468f0da6cfcd2f008d8ef897:tests/cache/test_redis_cache.py:generic-api-key:58
+7a9b255362c92c7f468f0da6cfcd2f008d8ef897:tests/cache/test_redis_cache.py:generic-api-key:61
