@@ -23,7 +23,7 @@ from typing import Any
 
 import pytest
 
-from tests.infra.test_hetzner_module import (
+from infra.test_hetzner_module import (
     ASSIGNMENT,
     SECRETISH_NAME,
     TOKEN_LITERAL,

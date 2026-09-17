@@ -27,7 +27,7 @@ from urllib.parse import urlparse
 import pytest
 import yaml
 
-from tests.infra.test_hetzner_module import (
+from infra.test_hetzner_module import (
     ASSIGNMENT,
     SECRETISH_NAME,
     TOKEN_LITERAL,
@@ -494,8 +494,10 @@ def resolved_target_port(
     rule 44): taking the first port named `http` would read a sidecar's.
     """
     target = entry.get("targetPort", entry.get("port"))
-    if isinstance(target, int) or str(target).isdigit():
-        return int(target)
+    if isinstance(target, int):
+        return target
+    if str(target).isdigit():
+        return int(str(target))
     numbers = {
         int(port["containerPort"])
         for container_spec in pod_spec(pod).get("containers", [])
@@ -792,7 +794,7 @@ def test_exactly_two_policies_carry_an_ip_block_each_on_its_own_port(
                 with_blocks.setdefault(name, set()).update(ports)
     document = policy(built_gpu, GPU, "vllm-model-fetch-egress")
     fetch_labels = pod_labels(fetch_job(built_gpu))
-    ports = {port for _peer, port in grants(document, "egress")}
+    fetch_ports = {port for _peer, port in grants(document, "egress")}
     peers = {peer[:2] for peer, _port in grants(document, "egress")}
 
     assert with_blocks == {
@@ -801,7 +803,7 @@ def test_exactly_two_policies_carry_an_ip_block_each_on_its_own_port(
     }
     assert fetch_labels.get(NAME_LABEL) == "vllm-model-fetch"
     assert match_labels(document) == {NAME_LABEL: "vllm-model-fetch"}
-    assert ports == {tcp(443)}
+    assert fetch_ports == {tcp(443)}
     assert peers == {("ipBlock", "0.0.0.0/0")}
 
 

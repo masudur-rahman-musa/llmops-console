@@ -42,8 +42,8 @@ from typing import Any
 import pytest
 import yaml
 
-from tests.infra.test_aws_module import is_printer
-from tests.infra.test_hetzner_module import load_yaml, read, recipe, steps
+from infra.test_aws_module import is_printer
+from infra.test_hetzner_module import load_yaml, read, recipe, steps
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "aws_evidence.sh"

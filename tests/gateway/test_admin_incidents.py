@@ -134,7 +134,10 @@ def incident_path(incident_id: str) -> str:
 
 def post_incident(client: TestClient, **overrides: Any) -> httpx.Response:  # noqa: ANN401
     """One authorised `POST /admin/incidents`."""
-    return client.post(ADMIN_INCIDENTS, json=an_incident_body(**overrides), headers=ADMIN_HEADERS)
+    response: httpx.Response = client.post(
+        ADMIN_INCIDENTS, json=an_incident_body(**overrides), headers=ADMIN_HEADERS
+    )
+    return response
 
 
 def created_incident_id(client: TestClient, **overrides: Any) -> str:  # noqa: ANN401
