@@ -212,9 +212,12 @@ wording."""
 NEAR_A: tuple[float, ...] = (1.0, 0.0)
 NEAR_B: tuple[float, ...] = (1.0, 0.2)
 UNKNOWN_PROBE_VECTOR: tuple[float, ...] = (0.0, 1.0)
-"""`NEAR_A` and `NEAR_B` are about 0.9806 apart, above the shipped threshold;
-anything the cases did not name embeds orthogonal to both, so an unnamed probe
-can never accidentally hit a stored entry."""
+"""`NEAR_A` and `NEAR_B` are about 0.9806 apart, above the shipped threshold, and
+everything the cases did not name embeds to one vector far enough from every
+named pair that an unnamed probe cannot hit a stored entry. Far, not orthogonal:
+it is orthogonal to `NEAR_A` only, and every crossing that matters is asserted
+against `SEMANTIC_THRESHOLD` by the two arrangement checks at the bottom of this
+file rather than stated here."""
 
 BASELINE_QUESTION = "Which warehouse shipped the order?"
 FAILING_QUESTION = "How long is the returns window?"
@@ -223,8 +226,9 @@ FAR_B: tuple[float, ...] = (-0.6, 0.8)
 """Two questions a case can send in succession without the second being served
 from the semantic tier. Two DIFFERENT unnamed texts would not do: both embed to
 `UNKNOWN_PROBE_VECTOR` and are therefore identical to the store. `FAR_A` and
-`FAR_B` are 0.28 apart, well under the shipped 0.97, and neither is near
-`NEAR_A` or `NEAR_B`."""
+`FAR_B` are far from each other and from the NEAR pair, which
+`test_the_far_pair_sits_where_the_failing_writer_case_assumes` reads off the
+stub and compares against `SEMANTIC_THRESHOLD`."""
 
 STREAM_ANSWER_CHARS = 33
 """`len("".join(STREAM_FRAGMENTS))`, asserted in
@@ -471,6 +475,13 @@ def post_embed(client: TestClient, body: Mapping[str, Any]) -> Response:
         ),
     )
     return response
+
+
+def cosine(first: Sequence[float], second: Sequence[float]) -> float:
+    """The similarity the semantic tier compares against `SEMANTIC_THRESHOLD`."""
+    dot = sum(a * b for a, b in zip(first, second, strict=True))
+    norms = sum(a * a for a in first) ** 0.5 * sum(b * b for b in second) ** 0.5
+    return float(dot / norms)
 
 
 def question_body(text: str) -> dict[str, Any]:
@@ -1220,7 +1231,28 @@ def test_the_stub_vectors_sit_where_the_semantic_hit_assumes(
     shipped threshold rather than a number spelled here."""
     first: Sequence[float] = embed_stub.vectors[QUESTION]
     second: Sequence[float] = embed_stub.vectors[SAME_QUESTION_REWORDED]
-    dot = sum(a * b for a, b in zip(first, second, strict=True))
-    norms = sum(a * a for a in first) ** 0.5 * sum(b * b for b in second) ** 0.5
 
-    assert dot / norms > SEMANTIC_THRESHOLD
+    assert cosine(first, second) > SEMANTIC_THRESHOLD
+
+
+def test_the_far_pair_sits_where_the_failing_writer_case_assumes(
+    embed_stub: CostEmbedStub,
+) -> None:
+    """The same check for the other pair, and the reason the failing-writer case can send
+    its path twice. Catches `FAR_A` or `FAR_B` edited towards each other - the second
+    request would then be served from the semantic tier and the header comparison would
+    fail on the arrangement - and either of them edited towards the NEAR pair, which would
+    serve a question nothing had stored. The unnamed-probe vector is crossed with both as
+    well, because a case that primes with one of these questions and then sends an
+    unnamed body would otherwise be the next contamination of this kind. Every crossing
+    is read off the stub and compared against the shipped threshold, never against a
+    number spelled here."""
+    far_a: Sequence[float] = embed_stub.vectors[BASELINE_QUESTION]
+    far_b: Sequence[float] = embed_stub.vectors[FAILING_QUESTION]
+    near_a: Sequence[float] = embed_stub.vectors[QUESTION]
+    near_b: Sequence[float] = embed_stub.vectors[SAME_QUESTION_REWORDED]
+
+    assert cosine(far_a, far_b) < SEMANTIC_THRESHOLD
+    for far in (far_a, far_b):
+        for other in (near_a, near_b, UNKNOWN_PROBE_VECTOR):
+            assert cosine(far, other) < SEMANTIC_THRESHOLD

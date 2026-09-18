@@ -121,6 +121,11 @@ MAKE_TARGETS = (
 #: The placeholder `tradeoff.example.json` ships, which neither self-hosted option may keep.
 PLACEHOLDER_HOURLY = "0.0100"
 
+#: The conclusion marker in README section 7, matched as a WORD and in any case. An earlier change
+#: publishes the section in sentence case, and a bare substring would also count the
+#: "depending" of an ordinary sentence as a second marker.
+PENDING_MARKER = re.compile(r"(?i)\bpending\b")
+
 #: A source date in a manifest note: criterion 59 wants the day the rate was read.
 NOTE_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
@@ -889,7 +894,7 @@ def test_the_manifest_names_the_four_options_in_order_against_the_stand_in_set()
     """Criteria 58 and 59, and a project rule's spirit about published numbers. Catches the
     example manifest copied across with its `helpdesk-golden-v1.jsonl` set name (decision E: the
     Helpdesk set does not exist yet), the options reordered so the table's rows do not match
-    SPEC section 11, an absolute or `..` report path that only resolves on the owner's machine,
+    SPEC section 11, an absolute report path or one resolving outside the repository,
     and above all either self-hosted option keeping the example's `0.0100` placeholder - a
     fabricated hourly rate produces a fabricated USD per 1,000 turns, which is the one number
     the whole table exists to publish.
@@ -971,7 +976,7 @@ def test_readme_section_seven_links_the_table_and_marks_the_conclusion_pending()
     case-insensitively: section 7 is published English, and an earlier change writes it in sentence
     case, so the count of one is the claim and the casing is not."""
     body = readme_section(read(README), "tradeoff")
-    pending = [line for line in body if "pending" in line.lower()]
+    pending = [line for line in body if PENDING_MARKER.search(line)]
 
     assert any("docs/tradeoff.md" in line for line in body), body
     assert len(pending) == 1, f"{len(pending)} pending lines in section 7: {pending}"

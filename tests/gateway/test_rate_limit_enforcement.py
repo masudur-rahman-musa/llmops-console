@@ -538,7 +538,8 @@ def test_the_bucket_refills_and_the_next_request_is_served(
 
     The half second is owed from the MIDDLE request and not from `FROZEN`: a take
     consumes whether or not it was allowed (`RateLimitStore`'s docstring), so the
-    refused probe at +0.25 spends the quarter token that had refilled by then. +0.75
+    refused probe at +0.25 spends the half token that had refilled by then (`REQUEST_RATE`
+    is 2 tokens a second). +0.75
     is the first moment a whole token stands against the bucket again."""
     drain_requests(limit_store)
     assert post(limit_client, chat_body(model=ALIAS)).status_code == 429

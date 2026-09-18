@@ -26,6 +26,8 @@ input still answers correctly.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from opsconsole.redaction import Kind
@@ -33,6 +35,10 @@ from opsconsole.redaction.detectors import Detection
 from opsconsole.redaction.directory import MAX_DIRECTORY_NAMES
 from opsconsole.redaction.names import NameDirectory
 from opsconsole.redaction.redactor import MAX_REDACTION_INPUT_CHARS
+
+#: The boundary `NameDirectory` compiles, as a guard a case can state: `(?<!\w)` refuses a
+#: name glued to a word character, and `_` is one although `str.isalnum` says otherwise.
+NON_WORD = re.compile(r"\W")
 
 FULL_NAME = "Anna Schmidt"
 FIRST_NAME = "Anna"
@@ -271,7 +277,7 @@ def test_the_largest_legal_directory_over_the_largest_legal_input_still_answers(
 
     assert len(names) == MAX_DIRECTORY_NAMES
     assert len(text) == MAX_REDACTION_INPUT_CHARS
-    assert not text[-len(planted) - 1].isalnum()
+    assert NON_WORD.match(text[-len(planted) - 1])
 
     directory = NameDirectory.compile(names)
 
