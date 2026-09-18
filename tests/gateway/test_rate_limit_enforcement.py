@@ -534,14 +534,19 @@ def test_the_bucket_refills_and_the_next_request_is_served(
     a fixed-window counter behind the route, which would refuse both of these and only
     serve on the minute boundary - the 2x burst decision A rejects, seen from the other
     side. The middle request is what stops this passing against a limiter that simply
-    forgets its state between requests."""
+    forgets its state between requests.
+
+    The half second is owed from the MIDDLE request and not from `FROZEN`: a take
+    consumes whether or not it was allowed (`RateLimitStore`'s docstring), so the
+    refused probe at +0.25 spends the quarter token that had refilled by then. +0.75
+    is the first moment a whole token stands against the bucket again."""
     drain_requests(limit_store)
     assert post(limit_client, chat_body(model=ALIAS)).status_code == 429
 
     limit_store.clock[0] = FROZEN + 0.25
     too_early = post(limit_client, chat_body(model=ALIAS))
 
-    limit_store.clock[0] = FROZEN + 0.5
+    limit_store.clock[0] = FROZEN + 0.75
     on_time = post(limit_client, chat_body(model=ALIAS))
 
     assert too_early.status_code == 429

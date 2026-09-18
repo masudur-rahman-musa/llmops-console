@@ -58,11 +58,11 @@ The contract these cases are written against, before it exists:
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, Protocol
 
 import pytest
 from fastapi.testclient import TestClient
@@ -76,7 +76,11 @@ from opsconsole.cache import (
 from opsconsole.core.errors import ProviderError
 from opsconsole.core.settings import Settings
 from opsconsole.gateway.app import close_adapters, create_app
-from opsconsole.gateway.routes.chat import CACHE_STATUS_HIT, CACHE_STATUS_SEMANTIC
+from opsconsole.gateway.routes.chat import (
+    CACHE_STATUS_HIT,
+    CACHE_STATUS_MISS,
+    CACHE_STATUS_SEMANTIC,
+)
 from opsconsole.ledger import (
     CostLedgerRow,
     CostLedgerWriter,
@@ -212,6 +216,16 @@ UNKNOWN_PROBE_VECTOR: tuple[float, ...] = (0.0, 1.0)
 anything the cases did not name embeds orthogonal to both, so an unnamed probe
 can never accidentally hit a stored entry."""
 
+BASELINE_QUESTION = "Which warehouse shipped the order?"
+FAILING_QUESTION = "How long is the returns window?"
+FAR_A: tuple[float, ...] = (0.6, 0.8)
+FAR_B: tuple[float, ...] = (-0.6, 0.8)
+"""Two questions a case can send in succession without the second being served
+from the semantic tier. Two DIFFERENT unnamed texts would not do: both embed to
+`UNKNOWN_PROBE_VECTOR` and are therefore identical to the store. `FAR_A` and
+`FAR_B` are 0.28 apart, well under the shipped 0.97, and neither is near
+`NEAR_A` or `NEAR_B`."""
+
 STREAM_ANSWER_CHARS = 33
 """`len("".join(STREAM_FRAGMENTS))`, asserted in
 `test_the_stream_fixtures_carry_the_character_counts_these_cases_estimate_from`
@@ -307,7 +321,12 @@ class CostEmbedStub:
     def reset(self) -> None:
         """Forget every recorded call and go back to the fixed vector table."""
         self.requests = []
-        self.vectors = {QUESTION: NEAR_A, SAME_QUESTION_REWORDED: NEAR_B}
+        self.vectors = {
+            QUESTION: NEAR_A,
+            SAME_QUESTION_REWORDED: NEAR_B,
+            BASELINE_QUESTION: FAR_A,
+            FAILING_QUESTION: FAR_B,
+        }
 
     @property
     def call_count(self) -> int:
@@ -464,29 +483,49 @@ def eligible_body() -> dict[str, Any]:
     return chat_body(model=ALIAS, temperature=0)
 
 
-Send = Callable[[TestClient, CostLedgerWriter], Response]
-"""One measured request, with the writer installed immediately before it.
+class Send(Protocol):
+    """One measured request, with the writer installed immediately before it.
 
-The writer is a parameter rather than a fixture so the same five senders drive
-both the row cases (an `InMemoryCostLedgerWriter`) and the failure case (a
-`RaisingCostWriter`), and so a priming request's row is never counted.
-"""
+    The writer is a parameter rather than a fixture so the same five senders drive
+    both the row cases (an `InMemoryCostLedgerWriter`) and the failure case (a
+    `RaisingCostWriter`), and so a priming request's row is never counted.
+
+    `question` is for a case that sends the SAME path twice and needs the second
+    request to miss both cache tiers. The two chat senders put it in the body; the
+    three whose arrangement is a repeated body ignore it, because varying it there
+    would stop the hit they exist to produce. `None` is the baseline body every
+    other case sends, so no case but the failing-writer one changes.
+    """
+
+    def __call__(
+        self, client: TestClient, writer: CostLedgerWriter, question: str | None = None
+    ) -> Response: ...
 
 
-def send_chat(client: TestClient, writer: CostLedgerWriter) -> Response:
-    """One non-streamed completion."""
+def send_chat(
+    client: TestClient, writer: CostLedgerWriter, question: str | None = None
+) -> Response:
+    """One non-streamed completion, on `question` when a case asks for its own."""
     install(client, writer)
-    return post(client, chat_body(model=ALIAS))
+    body = chat_body(model=ALIAS) if question is None else question_body(question)
+    return post(client, body)
 
 
-def send_stream(client: TestClient, writer: CostLedgerWriter) -> Response:
+def send_stream(
+    client: TestClient, writer: CostLedgerWriter, question: str | None = None
+) -> Response:
     """The same request, streamed, with the provider reporting usage."""
     install(client, writer)
-    return post(client, chat_body(model=ALIAS, stream=True))
+    body = chat_body(model=ALIAS) if question is None else question_body(question)
+    return post(client, {**body, "stream": True})
 
 
-def send_exact_hit(client: TestClient, writer: CostLedgerWriter) -> Response:
-    """A second identical eligible request, served from the exact cache."""
+def send_exact_hit(
+    client: TestClient, writer: CostLedgerWriter, question: str | None = None
+) -> Response:
+    """A second identical eligible request, served from the exact cache.
+
+    `question` is ignored: this arrangement IS a repeated body."""
     primed = post(client, eligible_body())
     assert primed.status_code == 200, primed.text
     install(client, writer)
@@ -495,8 +534,12 @@ def send_exact_hit(client: TestClient, writer: CostLedgerWriter) -> Response:
     return hit
 
 
-def send_semantic_hit(client: TestClient, writer: CostLedgerWriter) -> Response:
-    """The same question reworded, served from the semantic cache."""
+def send_semantic_hit(
+    client: TestClient, writer: CostLedgerWriter, question: str | None = None
+) -> Response:
+    """The same question reworded, served from the semantic cache.
+
+    `question` is ignored: the pair's cosine is the arrangement."""
     primed = post(client, question_body(QUESTION))
     assert primed.status_code == 200, primed.text
     install(client, writer)
@@ -505,8 +548,12 @@ def send_semantic_hit(client: TestClient, writer: CostLedgerWriter) -> Response:
     return hit
 
 
-def send_embeddings(client: TestClient, writer: CostLedgerWriter) -> Response:
-    """One embeddings request against the `embed` alias."""
+def send_embeddings(
+    client: TestClient, writer: CostLedgerWriter, question: str | None = None
+) -> Response:
+    """One embeddings request against the `embed` alias.
+
+    `question` is ignored: this path has no chat body to put it in."""
     install(client, writer)
     return post_embed(client, embeddings_body())
 
@@ -979,18 +1026,28 @@ def test_a_failing_writer_changes_no_status_body_or_header(
     must still read what the request cost when the database refused the row. The baseline
     request is what makes this a comparison rather than a restatement of the happy path,
     and the attempt count is what stops a route that silently stopped booking from
-    passing."""
-    good = send(cost_client, InMemoryCostLedgerWriter())
+    passing.
+
+    The two requests carry DIFFERENT questions, because the semantic tier landed after
+    this case was written and served the second one: `x-gateway-cache` then read
+    `semantic` against the baseline's `miss` and the comparison failed on an arrangement
+    rather than on the writer. Two unnamed questions would not have been enough - the
+    stub embeds every text it was not given to one vector - so the pair is the one the
+    stub answers `FAR_A` and `FAR_B` for."""
+    good = send(cost_client, InMemoryCostLedgerWriter(), BASELINE_QUESTION)
     assert good.status_code == 200, good.text
 
     failing = RaisingCostWriter()
-    bad = send(cost_client, failing)
+    bad = send(cost_client, failing, FAILING_QUESTION)
 
     assert failing.calls == 1
     assert bad.status_code == good.status_code
     assert set(bad.headers) == set(good.headers)
     for name in GATEWAY_HEADERS:
         assert bad.headers[name] == good.headers[name], name
+    if not expected.cached:
+        assert good.headers[CACHE_HEADER] == CACHE_STATUS_MISS
+        assert bad.headers[CACHE_HEADER] == CACHE_STATUS_MISS
     if COST_HEADER in {name.lower() for name in good.headers}:
         assert bad.headers[COST_HEADER] == good.headers[COST_HEADER]
         assert Decimal(bad.headers[COST_HEADER]) == expected.cost_usd
