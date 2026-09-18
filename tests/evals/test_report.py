@@ -702,7 +702,8 @@ def test_the_json_document_carries_every_identity_field_by_its_published_name() 
     document's own keys are the contract rather than the model's attributes. Fifteen keys:
     `judge_prompt_version` is 17c's and `calibration` is 17f's, and both are published in
     every document whatever the run held, so a reader never has to tell an absent key from
-    a null one."""
+    a null one. Twelve case keys: `judge` is 17c's verdict, published as `"judge": null`
+    in `docs/eval-report.md` whenever no judge ran, for the same reason."""
     document = json.loads(report_json(build(MIXED)))
 
     assert set(document) == {
@@ -734,6 +735,7 @@ def test_the_json_document_carries_every_identity_field_by_its_published_name() 
         "residency",
         "error",
         "tags",
+        "judge",
     }
 
 

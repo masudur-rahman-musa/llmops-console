@@ -399,8 +399,14 @@ def chunks(response: Response) -> list[dict[str, Any]]:
 
 
 def deltas(parsed: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The `delta` object of every chunk that carries one choice."""
-    return [chunk["choices"][0]["delta"] for chunk in parsed if chunk["choices"]]
+    """The `delta` object of every chunk that carries one choice.
+
+    An error frame carries no `choices` at all, so the key is
+    read with `get`: the frame is skipped rather than indexed, which is what
+    `test_held_text_is_flushed_before_an_error_frame` needs to reach its own
+    assertions about the flushed span and the single trailing frame.
+    """
+    return [chunk["choices"][0]["delta"] for chunk in parsed if chunk.get("choices")]
 
 
 def streamed_content(response: Response) -> str:

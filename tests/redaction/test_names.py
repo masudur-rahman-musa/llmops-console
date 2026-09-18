@@ -251,19 +251,27 @@ def test_punctuation_around_a_name_is_not_part_of_the_span(case: str, text: str)
 
 
 def test_the_largest_legal_directory_over_the_largest_legal_input_still_answers() -> None:
-    """Catches a matcher that compiles per name and scans the text once per entry, or one
+    r"""Catches a matcher that compiles per name and scans the text once per entry, or one
     whose alternation exceeds a regex engine limit at the cap decision G set: 2000 names
     is a legal directory and 16384 characters is a legal redaction input, so this pair is
-    reachable in production. Asserted as a bound and never timed (section 5)."""
+    reachable in production. Asserted as a bound and never timed (section 5).
+
+    The filler is cut to length and then given a trailing SPACE, because truncating it
+    at an arbitrary offset can end mid-word: the matcher's `(?<!\w)` boundary is right
+    to refuse a name glued to the end of `quic`, so a planted name preceded by a word
+    character would fail this case for the arrangement rather than for the bound.
+    """
     names = [f"Persona{index:04d} Nachname" for index in range(MAX_DIRECTORY_NAMES)]
     filler = "the quick brown fox jumps over the lazy dog. "
     planted = names[MAX_DIRECTORY_NAMES - 1]
-    text = (filler * (MAX_REDACTION_INPUT_CHARS // len(filler)))[
-        : MAX_REDACTION_INPUT_CHARS - len(planted)
-    ] + planted
+    before = (filler * (MAX_REDACTION_INPUT_CHARS // len(filler)))[
+        : MAX_REDACTION_INPUT_CHARS - len(planted) - 1
+    ] + " "
+    text = before + planted
 
     assert len(names) == MAX_DIRECTORY_NAMES
     assert len(text) == MAX_REDACTION_INPUT_CHARS
+    assert not text[-len(planted) - 1].isalnum()
 
     directory = NameDirectory.compile(names)
 

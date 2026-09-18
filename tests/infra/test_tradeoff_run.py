@@ -892,7 +892,12 @@ def test_the_manifest_names_the_four_options_in_order_against_the_stand_in_set()
     SPEC section 11, an absolute or `..` report path that only resolves on the owner's machine,
     and above all either self-hosted option keeping the example's `0.0100` placeholder - a
     fabricated hourly rate produces a fabricated USD per 1,000 turns, which is the one number
-    the whole table exists to publish."""
+    the whole table exists to publish.
+
+    The path claim is "resolves inside the repository", not "carries no `..`": the manifest
+    is read from `project-evals/`, so the shipped
+    `../docs/tradeoff-run/reports/<option>/report.json` is the correct spelling there and
+    lands inside the tree. An absolute path, or one climbing out of it, still reddens."""
     document = json.loads(read(MANIFEST))
     options = document["options"]
 
@@ -900,7 +905,9 @@ def test_the_manifest_names_the_four_options_in_order_against_the_stand_in_set()
     assert [option["id"] for option in options] == list(OPTION_IDS)
     for option in options:
         report = str(option["report"])
-        assert not report.startswith("/") and ".." not in report, report
+        assert not report.startswith("/"), report
+        resolved = (MANIFEST.parent / report).resolve()
+        assert resolved.is_relative_to(REPO_ROOT), report
         assert Path(report).name == "report.json", report
     self_hosted = [option for option in options if option["kind"] == "self_hosted"]
     assert len(self_hosted) == 2, [option["id"] for option in self_hosted]
@@ -959,10 +966,12 @@ def test_readme_section_seven_links_the_table_and_marks_the_conclusion_pending()
     """Criterion 63 and decision G. SPEC section 21 fixes this section's position, so the
     heading and the link land with the tooling and the run replaces ONE line. Catches the
     section added with a conclusion already written (a claim about numbers nobody has measured),
-    more than one PENDING line (the post-run edit then misses one and the README ships half
-    pending), and a heading with no link to the generated table."""
+    more than one pending line (the post-run edit then misses one and the README ships half
+    pending), and a heading with no link to the generated table. The marker is matched
+    case-insensitively: section 7 is published English, and an earlier change writes it in sentence
+    case, so the count of one is the claim and the casing is not."""
     body = readme_section(read(README), "tradeoff")
-    pending = [line for line in body if "PENDING" in line]
+    pending = [line for line in body if "pending" in line.lower()]
 
     assert any("docs/tradeoff.md" in line for line in body), body
-    assert len(pending) == 1, f"{len(pending)} PENDING lines in section 7: {pending}"
+    assert len(pending) == 1, f"{len(pending)} pending lines in section 7: {pending}"

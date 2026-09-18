@@ -28,6 +28,7 @@ from opsconsole.redaction import (
     MAX_REDACTION_INPUT_CHARS,
     Detection,
     Kind,
+    NameDirectory,
     RedactionInputTooLong,
     redact,
 )
@@ -296,7 +297,13 @@ class DetectRecorder:
 
     calls: list[str] = field(default_factory=list)
 
-    def __call__(self, text: str) -> list[Detection]:
+    def __call__(self, text: str, directory: NameDirectory | None = None) -> list[Detection]:
+        """The arity `detect_all` has carried since an earlier change.
+
+        `redactor` calls it as `detect_all(text, directory)`, so a stub taking `text`
+        alone raises `TypeError` at the seam instead of recording the one call this
+        case is here to see.
+        """
         self.calls.append(text)
         return []
 
