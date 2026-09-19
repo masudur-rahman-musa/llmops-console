@@ -453,7 +453,10 @@ def secret_references(value: object, found: set[str]) -> set[str]:
     """Every Secret NAME reachable anywhere in the built stream, collected by walking the
     parsed documents rather than by grepping text: `secretRef`, `secretKeyRef` and Traefik's
     `basicAuth.secret` are three different shapes for the same reference, and a fourth added
-    later under a mapping key nobody grepped would be invisible to a pattern."""
+    later under a mapping key nobody grepped would be invisible to a pattern.
+
+    `imagePullSecrets[*].name` is deliberately NOT walked; `test_secrets.referenced_secret_names`
+    covers that shape, so `ghcr-pull` is not in this file's `PINNED_SECRET_NAMES` copy."""
     if isinstance(value, dict):
         for key, child in value.items():
             if key in ("secretRef", "secretKeyRef") and isinstance(child, dict):

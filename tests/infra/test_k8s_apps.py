@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import functools
 import re
+import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -664,10 +665,11 @@ HELPDESK_SERVING = (HELPDESK_AGENT_API, HELPDESK_MCP_SERVER, HELPDESK_WEB)
 #: Criterion 1, by value: the port each serving workload's container publishes, which is also
 #: the port its Service publishes. Three different numbers on purpose - a Service copied from
 #: its neighbour and left on the neighbour's port is endpoints pointing at a closed socket,
-#: which nothing in a build reports.
+#: which nothing in a build reports. An earlier change decision A moved the MCP server to 8081, the port
+#: the companion repo's image binds.
 HELPDESK_CONTAINER_PORTS: dict[str, int] = {
     HELPDESK_AGENT_API: 8000,
-    HELPDESK_MCP_SERVER: 8001,
+    HELPDESK_MCP_SERVER: 8081,
     HELPDESK_WEB: 3000,
 }
 
@@ -716,34 +718,58 @@ HELPDESK_SCHEDULER_STRATEGY = "Recreate"
 #: nobody has written restarts the pod forever.
 PROBE_KEYS = ("readinessProbe", "livenessProbe", "startupProbe")
 
-#: Criterion 8, by value: the whole `helpdesk-config` mapping, asserted by equality so a fifth
-#: key nobody agreed to is as visible as a missing one. Every host is fully qualified because
-#: these pods are in `apps` and two of the three addresses are in `platform`, where a bare
-#: `redis` resolves to nothing. Redis database `1`, not the gateway's `0`: one Redis, two
-#: tenants of it, and a shared index is one `FLUSHDB` away from taking out the other repo.
+#: Criterion 8, by value: the whole `helpdesk-config` mapping, asserted by equality so a key
+#: nobody agreed to is as visible as a missing one. An earlier change criterion 6 replaced row 20f's four
+#: prefixed keys with the bare names the companion repo publishes, and added four. Every
+#: in-cluster host is fully qualified because these pods are in `apps` and two of the addresses
+#: are in `platform`, where a bare `redis` resolves to nothing. Redis database `1`, not the
+#: gateway's `0`: one Redis, two tenants of it, and a shared index is one `FLUSHDB` away from
+#: taking out the other repo. `WEB_ORIGIN` is the one public address, written out literally
+#:; `SESSION_COOKIE_SECURE` is the STRING `"true"`, because a ConfigMap
+#: value is never a YAML bool.
 HELPDESK_CONFIG: dict[str, str] = {
-    "HELPDESK_GATEWAY_URL": "http://gateway.apps.svc.cluster.local:8080/v1",
-    "HELPDESK_REDIS_URL": "redis://redis.platform.svc.cluster.local:6379/1",
-    "HELPDESK_QDRANT_URL": "http://qdrant.platform.svc.cluster.local:6333",
-    "HELPDESK_ENV": "production",
+    "GATEWAY_URL": "http://gateway.apps.svc.cluster.local:8080/v1",
+    "REDIS_URL": "redis://redis.platform.svc.cluster.local:6379/1",
+    "QDRANT_URL": "http://qdrant.platform.svc.cluster.local:6333",
+    "ENV": "production",
+    "MCP_URL": "http://helpdesk-mcp-server.apps.svc.cluster.local:8081/mcp",
+    "AGENT_API_URL": "http://helpdesk-agent-api.apps.svc.cluster.local:8000",
+    "WEB_ORIGIN": "https://helpdesk.example.com",
+    "SESSION_COOKIE_SECURE": "true",
 }
 
 #: Criterion 8's in-cluster claim, checked on every URL value of the ConfigMap rather than on
-#: the three keys named above, so a fourth address added later is covered by the same rule.
+#: the keys named above, so an address added later is covered by the same rule.
 IN_CLUSTER_SUFFIX = ".svc.cluster.local"
+
+#: An earlier change criterion 7: the one `helpdesk-config` key that is NOT in-cluster. It is the public
+#: origin the agent API checks a browser's requests against, so its host is the `helpdesk`
+#: Ingress's and it is exempt from the in-cluster rule above by name, never by shape.
+WEB_ORIGIN_KEY = "WEB_ORIGIN"
+
+#: An earlier change criterion 7's shape for that origin: scheme `https`, host only.
+WEB_ORIGIN_SCHEME = "https"
+
+#: An earlier change criterion 9: the two `helpdesk-config` URLs that name another Helpdesk workload, and
+#: the Service each must name. The port is read off that built Service, never restated here.
+HELPDESK_SERVICE_URL_KEYS: dict[str, str] = {
+    "MCP_URL": HELPDESK_MCP_SERVER,
+    "AGENT_API_URL": HELPDESK_AGENT_API,
+}
 
 #: Criterion 8: the Redis database index each side owns, as the path of its own URL. The
 #: gateway's is READ OFF THE BUILD from the key below rather than restated;
 #: the constant is the key's name, not its value.
-HELPDESK_REDIS_URL_KEY = "HELPDESK_REDIS_URL"
+HELPDESK_REDIS_URL_KEY = "REDIS_URL"
 HELPDESK_REDIS_DATABASE_PATH = "/1"
 GATEWAY_REDIS_URL_KEY = "OPSCONSOLE_REDIS_URL"
 
 #: Criterion 9: the per-container variable that names a process in a trace viewer, and the
 #: gateway's key for the same thing. The Helpdesk's is per-container `env` and NOT a key of
 #: `helpdesk-config`, because a shared ConfigMap would give all four pods one name and collapse
-#: them into one service in the viewer - the failure a trace test would not catch.
-HELPDESK_TRACE_NAME_KEY = "HELPDESK_OTEL_SERVICE_NAME"
+#: them into one service in the viewer - the failure a trace test would not catch. An earlier change
+#: renamed it to the bare OpenTelemetry name the companion repo reads.
+HELPDESK_TRACE_NAME_KEY = "OTEL_SERVICE_NAME"
 GATEWAY_TRACE_NAME_KEY = "OPSCONSOLE_OTEL_SERVICE_NAME"
 
 #: Criterion 9's four values, by value. They read the same as the workload
@@ -768,9 +794,83 @@ HELPDESK_ENV_FROM_SOURCES: dict[str, str] = {
 
 #: Criterion 11 and decision D: the companion repo's registry namespace and the same honest
 #: placeholder tag the gateway carries. Each workload's repository is that prefix plus its own
-#: name, so an `images:` entry pointing two workloads at one image is visible.
-HELPDESK_IMAGE_REPOSITORY_PREFIX = "ghcr.io/developermusa/ai-helpdesk-governed-access"
+#: name, so an `images:` entry pointing two workloads at one image is visible. An earlier change criterion
+#: 2 moved the prefix to the path the companion repo actually publishes under; the tag stays
+#: the placeholder.
+HELPDESK_IMAGE_REPOSITORY_PREFIX = "ghcr.io/masudur-rahman-musa/ai-help-desk-governed-access"
 HELPDESK_IMAGE_TAG = "0.0.0-unbuilt"
+
+#: An earlier change criterion 3 and decision C: the one pull secret, named on the four Helpdesk pod specs
+#: and nowhere else. The companion repo's packages are private, so a pod without it cannot pull.
+GHCR_PULL_SECRET = "ghcr-pull"
+
+#: An earlier change criterion 5: the console's own repository, beside `GATEWAY_IMAGE_REPOSITORY` above.
+#: `test_k8s_console.py` holds the same literal for its own cases; it is repeated here rather
+#: than imported, because that module imports this one.
+CONSOLE_IMAGE_REPOSITORY = "ghcr.io/developermusa/ai-operations-console/console"
+
+#: The file whose `images:` block an earlier change criterion 5 reads as written.
+APPS_KUSTOMIZATION = APPS_DIR / "kustomization.yaml"
+
+#: An earlier change criterion 5: the two `images:` entries that must survive the Helpdesk path change
+#: untouched, as whole entries.
+CONSOLE_REPO_IMAGES: dict[str, dict[str, str]] = {
+    GATEWAY: {"name": GATEWAY, "newName": GATEWAY_IMAGE_REPOSITORY, "newTag": GATEWAY_IMAGE_TAG},
+    CONSOLE: {"name": CONSOLE, "newName": CONSOLE_IMAGE_REPOSITORY, "newTag": GATEWAY_IMAGE_TAG},
+}
+
+#: An earlier change criteria 20 to 23, the absence scans. Every banned value is ASSEMBLED here from pieces
+#: and never written whole: the ten-name scan covers this very file,
+#: so a literal of any of them would make the scan red against the case that defines it.
+#:
+#: The prefix row 20f invented for the Helpdesk's variables, banned outright under `infra/`.
+OLD_ENV_PREFIX = "HELPDESK" + "_"
+
+#: The ten names that prefix produced, as their suffixes. Under `tests/infra/` only these are
+#: banned, and only as WHOLE names: this file's Python constants keep the same prefix (an earlier change
+#: decision E), and a substring ban would redden every one of them.
+OLD_ENV_SUFFIXES = (
+    "DATABASE_URL",
+    "REDIS_URL",
+    "QDRANT_URL",
+    "GATEWAY_URL",
+    "GATEWAY_API_KEY",
+    "LANGFUSE_PUBLIC_KEY",
+    "LANGFUSE_SECRET_KEY",
+    "LANGFUSE_HOST",
+    "ENV",
+    "OTEL_SERVICE_NAME",
+)
+
+#: One of those ten as a whole identifier: no word character on either side, so a constant name
+#: that merely STARTS with one of them (a `..._KEY` or `..._FROM_SOURCES` suffix) is not a hit.
+OLD_ENV_NAME = re.compile(
+    rf"(?<![A-Za-z0-9_]){OLD_ENV_PREFIX}(?:{'|'.join(OLD_ENV_SUFFIXES)})(?![A-Za-z0-9_])"
+)
+
+#: The registry path the Helpdesk images were pointed at before an earlier change, owner and repository.
+OLD_HELPDESK_IMAGE_PATH = "/".join(("developermusa", "ai-helpdesk-governed-access"))
+
+#: The MCP server's port before an earlier change decision A, as a whole number: digits on either side
+#: make a different number, which is not this one.
+OLD_MCP_PORT = re.compile(rf"(?<!\d){8000 + 1}(?!\d)")
+
+#: The two directories the scans walk, and the five files criterion 20 names.
+INFRA_DIR = REPO_ROOT / "infra"
+TESTS_INFRA_DIR = REPO_ROOT / "tests" / "infra"
+OLD_MCP_PORT_FILES: tuple[Path, ...] = (
+    APPS_DIR / "helpdesk.yaml",
+    K8S_ROOT / "base" / "networkpolicies.yaml",
+    K8S_README,
+    TESTS_INFRA_DIR / "test_k8s_apps.py",
+    TESTS_INFRA_DIR / "test_k8s_netpol.py",
+)
+
+
+#: An earlier change criterion 24: the two Helpdesk sources no workload but the four Helpdesk Deployments
+#: may take whole by `envFrom`. The names are bare and shared, so the gateway mounting either
+#: would read the Helpdesk's database and Redis addresses under names it may also read.
+HELPDESK_SOURCES = frozenset({HELPDESK_CONFIG_MAP, HELPDESK_SECRET})
 
 #: Criterion 12: the two labels the ROOT kustomization stamps on every object's
 #: `metadata.labels`. Its `labels:` block carries `includeSelectors: false`, so neither may
@@ -780,9 +880,9 @@ KUSTOMIZE_WIDE_LABELS = frozenset({"app.kubernetes.io/part-of", "app.kubernetes.
 
 #: Decision E and row 20f criterion 10: the only Secret names anything in the build may
 #: reference. Row 21c contracts each of them in `infra/secrets/*.example.yaml` -
-#: `helpdesk-secrets` is the gateway API key the Helpdesk calls with, its database URL and the
-#: Langfuse pair, supplied SOPS-encrypted and never here. The emitted-Secret half of the
-#: same case is build-wide and stays that way.
+#: `helpdesk-secrets` is the per-tenant gateway API keys the Helpdesk calls with, its database
+#: DSN, its JWT secret and the Langfuse pair, supplied SOPS-encrypted and never here. The
+#: emitted-Secret half of the same case is build-wide and stays that way.
 #:
 #: `grafana-admin` is an earlier change's, in `monitoring`. It is here because this constant is
 #: build-wide and so is the case that reads it: an `envFrom` anywhere in the build naming a
@@ -1002,7 +1102,11 @@ def secret_references(value: object, found: set[str]) -> set[str]:
     documents rather than by grepping text: `secretRef`, `secretKeyRef`, Traefik's
     `basicAuth.secret` and an Ingress's `tls[].secretName` are four shapes for the same
     reference, and a fifth added later under a key nobody grepped would be invisible to a
-    pattern."""
+    pattern.
+
+    `imagePullSecrets[*].name` is deliberately NOT walked, so `ghcr-pull` is not in
+    `PINNED_SECRET_NAMES`: `test_secrets.referenced_secret_names` covers that shape, and
+    `test_only_the_helpdesk_workloads_carry_an_image_pull_secret` pins who carries it."""
     if isinstance(value, dict):
         for key, child in value.items():
             if key in ("secretRef", "secretKeyRef") and isinstance(child, dict):
@@ -1372,6 +1476,71 @@ def helpdesk_pod_owner(documents: list[dict[str, Any]], workload_name: str) -> d
     owner = sole_object(documents, "Deployment", workload_name)
     assert owner in pod_owners(documents), f"{workload_name} carries no pod template"
     return owner
+
+
+def any_pod_spec(document: dict[str, Any]) -> dict[str, Any] | None:
+    """The pod spec of any object carrying one, CronJobs included, or None.
+
+    `pod_owners` looks for `spec.template.spec` only, and a CronJob's sits one level deeper at
+    `spec.jobTemplate.spec.template.spec`. The two build-wide an earlier change cases must see this
+    build's CronJobs, since a pull secret or a Helpdesk `envFrom` on one is the failure they
+    exist to report, so this unwraps that extra level when it is present.
+    """
+    spec = document.get("spec")
+    if not isinstance(spec, dict):
+        return None
+    job_template = spec.get("jobTemplate")
+    if isinstance(job_template, dict):
+        spec = job_template.get("spec")
+        if not isinstance(spec, dict):
+            return None
+    template = spec.get("template")
+    if not isinstance(template, dict):
+        return None
+    pod = template.get("spec")
+    return pod if isinstance(pod, dict) else None
+
+
+def env_from_names(pod: dict[str, Any]) -> set[str]:
+    """Every ConfigMap and Secret name a pod's containers take whole by `envFrom`,
+    `initContainers` included."""
+    names: set[str] = set()
+    for key in ("initContainers", "containers"):
+        containers = pod.get(key, [])
+        if not isinstance(containers, list):
+            continue
+        for container in containers:
+            if not isinstance(container, dict):
+                continue
+            for source in container.get("envFrom", []) or []:
+                if not isinstance(source, dict):
+                    continue
+                for reference_key in ("configMapRef", "secretRef"):
+                    reference = source.get(reference_key)
+                    if isinstance(reference, dict) and reference.get("name") is not None:
+                        names.add(str(reference["name"]))
+    return names
+
+
+def scanned_files(roots: tuple[Path, ...]) -> list[Path]:
+    """Every file git would commit under each root, or the root itself when it is a file:
+    tracked files plus untracked ones not gitignored. Gitignored files are never read, so a
+    `*.dec.yaml` or Terraform state never has a line printed into the pytest output, and
+    generated caches need no skip list. Each root is asserted to exist first: a scan of a
+    missing path finds nothing and would pass vacuously."""
+    for root in roots:
+        assert root.exists(), f"{root} does not exist, so this scan would read nothing"
+    listed = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--"]
+        + [str(root.relative_to(REPO_ROOT)) for root in roots],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    return sorted(
+        {REPO_ROOT / name for name in listed.split("\0") if name and (REPO_ROOT / name).is_file()}
+    )
 
 
 def envelope_totals(reserve: dict[str, str | int]) -> dict[str, int]:
@@ -2685,16 +2854,19 @@ def test_the_scheduler_runs_one_replica_recreate_with_no_ports_and_no_probes(
 def test_the_helpdesk_config_carries_only_fully_qualified_in_cluster_addresses(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 8. The whole `data` mapping by equality, so a key added without agreement is as
-    visible as one missing, and every URL value's HOST checked against `.svc.cluster.local` -
-    catches a bare `redis:6379` or a `localhost` carried over from a compose file, which these
-    pods cannot resolve at all: they run in `apps` and two of the three addresses live in
-    `platform`, so the failure is a connection error at startup rather than anything a build
-    reports. Catches the gateway address written without `/v1`, which is an OpenAI-compatible
-    client 404ing on every call. Catches the Redis database index left at the gateway's `0`,
-    which is one Redis shared by two repos with no partition: a `FLUSHDB` from either takes out
-    the other's state, and nothing about that looks wrong until it happens. The gateway's index
-    is read off ITS built ConfigMap rather than written down here, so the claim is that the two
+    """Criterion 8, and an earlier change criteria 6 and 7. The whole `data` mapping by equality, so a key
+    added without agreement is as visible as one missing - and a prefixed name left beside its
+    bare rename is exactly such a key, which is how "one name per value" is held. Every URL
+    value's HOST but `WEB_ORIGIN`'s is checked against `.svc.cluster.local` - catches a bare
+    `redis:6379` or a `localhost` carried over from a compose file, which these pods cannot
+    resolve at all: they run in `apps` and two of the addresses live in `platform`, so the
+    failure is a connection error at startup rather than anything a build reports. The
+    exemption is by KEY, so a second public address added under any other name is still red.
+    Catches the gateway address written without `/v1`, which is an OpenAI-compatible client
+    404ing on every call. Catches the Redis database index left at the gateway's `0`, which is
+    one Redis shared by two repos with no partition: a `FLUSHDB` from either takes out the
+    other's state, and nothing about that looks wrong until it happens. The gateway's index is
+    read off ITS built ConfigMap rather than written down here, so the claim is that the two
     differ rather than that either is a number this file remembers."""
     raw = sole_object(built, "ConfigMap", HELPDESK_CONFIG_MAP).get("data", {})
     assert isinstance(raw, dict), f"{HELPDESK_CONFIG_MAP} carries no data mapping"
@@ -2704,7 +2876,9 @@ def test_the_helpdesk_config_carries_only_fully_qualified_in_cluster_addresses(
     external = {
         key: value
         for key, value in data.items()
-        if "://" in value and not (urlsplit(value).hostname or "").endswith(IN_CLUSTER_SUFFIX)
+        if key != WEB_ORIGIN_KEY
+        and "://" in value
+        and not (urlsplit(value).hostname or "").endswith(IN_CLUSTER_SUFFIX)
     }
     assert external == {}, (
         f"{HELPDESK_CONFIG_MAP} names addresses no pod in {APPS} resolves: {external}"
@@ -2723,12 +2897,12 @@ def test_the_helpdesk_config_carries_only_fully_qualified_in_cluster_addresses(
 def test_each_helpdesk_workload_carries_its_own_trace_service_name(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 9. Catches the convenient version of this variable: one
-    `HELPDESK_OTEL_SERVICE_NAME` in the shared ConfigMap, which gives all four pods one name and
-    collapses them into a single service in the trace viewer - every span correctly recorded,
-    the trace correctly propagated, and no way to tell the scheduler's work from the web's. That
-    is the failure a tracing test cannot see, because the spans are all there. Catches two of
-    the four given the same value by a copy, and catches any of them given the gateway's
+    """Criterion 9, and an earlier change criterion 15 under the bare name. Catches the convenient version
+    of this variable: one `OTEL_SERVICE_NAME` in the shared ConfigMap, which gives all four pods
+    one name and collapses them into a single service in the trace viewer - every span
+    correctly recorded, the trace correctly propagated, and no way to tell the scheduler's work
+    from the web's. That is the failure a tracing test cannot see, because the spans are all
+    there. Catches two of the four given the same value by a copy, and any given the gateway's
     `opsconsole-gateway`, which #44 and #67 need distinguishable because one trace carries spans
     from both repos. The gateway's name is read off its built ConfigMap, so the five-way
     distinctness is a claim about the build and not about this file's memory."""
@@ -2823,6 +2997,171 @@ def test_no_image_in_the_build_carries_a_floating_tag(built: list[dict[str, Any]
             f"{workload_name} runs from `{repository}`"
         )
         assert tag == HELPDESK_IMAGE_TAG, f"{workload_name} is tagged `{tag}`"
+
+
+@pytest.mark.parametrize("workload_name", HELPDESK_WORKLOADS)
+def test_each_helpdesk_workload_pulls_the_published_image_with_the_ghcr_secret(
+    workload_name: str, built: list[dict[str, Any]]
+) -> None:
+    """An earlier change criteria 2 and 3, one workload per row, read off the BUILT pod rather than the
+    `images:` block, so an entry whose `name:` matches no container is red too. Catches an
+    `images:` entry left on the registry path nothing publishes under, which is a pull that fails
+    on every apply, and catches one of the four moved while a neighbour is not. Catches
+    `imagePullSecrets` missing from one pod spec, which on a private package is
+    `ImagePullBackOff` for that workload alone while the other three run. The list is compared
+    WHOLE, so a second pull secret or a misspelt `ghcr-pull` is red as well."""
+    owner = helpdesk_pod_owner(built, workload_name)
+    repository, tag = container_image_parts(sole_container(owner), workload_name)
+    assert repository == f"{HELPDESK_IMAGE_REPOSITORY_PREFIX}/{workload_name}", (
+        f"{workload_name} pulls from `{repository}`"
+    )
+    assert tag == HELPDESK_IMAGE_TAG, f"{workload_name} is tagged `{tag}`"
+
+    pull_secrets = pod_spec(owner).get("imagePullSecrets")
+    assert pull_secrets == [{"name": GHCR_PULL_SECRET}], (
+        f"{workload_name} pulls with {pull_secrets}, not exactly `{GHCR_PULL_SECRET}`"
+    )
+
+
+def test_only_the_helpdesk_workloads_carry_an_image_pull_secret(
+    built: list[dict[str, Any]],
+) -> None:
+    """An earlier change criterion 4 and decision C, by SET EQUALITY over every pod spec in the build,
+    CronJobs included and every namespace. Catches the pull secret pasted onto every Deployment
+    in `apps/`, which hands the gateway, the console and both llama.cpp pods a credential for a
+    registry they never pull from. Catches the rejected alternative too: `ghcr-pull` on the
+    `apps` default ServiceAccount leaves NO pod spec carrying it, so the four expected carriers
+    are missing and the set is red rather than vacuously clean."""
+    specs = [(document, any_pod_spec(document)) for document in built]
+    assert any(pod is not None for _, pod in specs), "the build emits no pod specs at all"
+    carriers = {
+        (str(document.get("kind")), name_of(document), namespace_of(document))
+        for document, pod in specs
+        if pod is not None and pod.get("imagePullSecrets")
+    }
+    expected = {("Deployment", name, APPS) for name in HELPDESK_WORKLOADS}
+    assert carriers == expected, (
+        f"unexpected: {sorted(carriers - expected, key=str)}; "
+        f"missing: {sorted(expected - carriers, key=str)}"
+    )
+
+
+def test_the_console_repo_images_keep_their_own_paths() -> None:
+    """An earlier change criterion 5, read off `apps/kustomization.yaml`'s `images:` block as WRITTEN, each
+    entry compared whole. Catches the Helpdesk path change done as a find-and-replace of the
+    owner segment, which moves `gateway` and `console` to an owner that publishes neither of
+    them - an apply that fails on the pull for the two workloads this repo actually builds.
+    Catches either tag moved off the placeholder in the same sweep, which `deploy.yml` then no
+    longer overwrites cleanly."""
+    document = yaml.safe_load(read(APPS_KUSTOMIZATION))
+    assert isinstance(document, dict), f"{APPS_KUSTOMIZATION} is not a YAML mapping"
+    images = document.get("images")
+    assert isinstance(images, list) and images, f"{APPS_KUSTOMIZATION} declares no images"
+    entries: dict[str, list[dict[str, str]]] = {}
+    for entry in images:
+        assert isinstance(entry, dict), f"{APPS_KUSTOMIZATION} has an image entry {entry!r}"
+        entries.setdefault(str(entry.get("name")), []).append(
+            {str(key): str(value) for key, value in entry.items()}
+        )
+    for name, expected in sorted(CONSOLE_REPO_IMAGES.items()):
+        assert entries.get(name) == [expected], (
+            f"{APPS_KUSTOMIZATION.name} sets `{name}` as {entries.get(name)}, not {expected}"
+        )
+
+
+def test_the_helpdesk_urls_name_the_real_service_ports_and_the_public_host(
+    built: list[dict[str, Any]],
+) -> None:
+    """An earlier change criteria 7, 8 and 9, both sides read off the same build. `MCP_URL` and
+    `AGENT_API_URL` must name their own Service's in-cluster host and the port that BUILT
+    Service publishes: catches a Service port moved in a later edit while the URL keeps the old
+    one, which the literal `HELPDESK_CONFIG` equality cannot see because it pins the URL side
+    only, and which is a connection refused on every tool call. `WEB_ORIGIN` must be exactly
+    `https://` plus the one host the built `helpdesk` Ingress serves: catches the Ingress host
+    renamed with `INGRESS_HOSTS` following it while the origin stays behind, which is every
+    browser request refused by the agent API's origin check. The origin's host is never written
+    here a second time. The same equality refuses a trailing slash, a path, a port and `http`,
+    since an origin carrying any of them never equals the one a browser sends."""
+    raw = sole_object(built, "ConfigMap", HELPDESK_CONFIG_MAP).get("data", {})
+    assert isinstance(raw, dict), f"{HELPDESK_CONFIG_MAP} carries no data mapping"
+    data = {str(key): str(value) for key, value in raw.items()}
+    missing = sorted(({WEB_ORIGIN_KEY} | set(HELPDESK_SERVICE_URL_KEYS)) - set(data))
+    assert missing == [], f"{HELPDESK_CONFIG_MAP} carries no {missing}: {sorted(data)}"
+
+    for key, service_name in sorted(HELPDESK_SERVICE_URL_KEYS.items()):
+        ports = sole_object(built, "Service", service_name)["spec"].get("ports", [])
+        assert isinstance(ports, list) and len(ports) == 1, f"{service_name} publishes {ports}"
+        address = urlsplit(data[key])
+        assert address.hostname == f"{service_name}.{APPS}{IN_CLUSTER_SUFFIX}", (
+            f"{key} dials {address.hostname}, not Service/{service_name}"
+        )
+        assert address.port == int(ports[0]["port"]), (
+            f"{key} dials port {address.port}; Service/{service_name} publishes {ports[0]['port']}"
+        )
+
+    rules = sole_object(built, "Ingress", HELPDESK_INGRESS)["spec"].get("rules", [])
+    hosts = {str(rule.get("host")) for rule in rules if isinstance(rule, dict)}
+    assert len(hosts) == 1, f"Ingress/{HELPDESK_INGRESS} serves {sorted(hosts)}, not one host"
+    (host,) = hosts
+    assert data[WEB_ORIGIN_KEY] == f"{WEB_ORIGIN_SCHEME}://{host}", (
+        f"{WEB_ORIGIN_KEY} is {data[WEB_ORIGIN_KEY]!r}; Ingress/{HELPDESK_INGRESS} serves "
+        f"{host!r} over {WEB_ORIGIN_SCHEME}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("roots", "pattern"),
+    [
+        pytest.param((INFRA_DIR,), re.compile(re.escape(OLD_ENV_PREFIX)), id="infra-old-prefix"),
+        pytest.param((TESTS_INFRA_DIR,), OLD_ENV_NAME, id="tests-infra-old-env-names"),
+        pytest.param(
+            (INFRA_DIR, TESTS_INFRA_DIR),
+            re.compile(re.escape(OLD_HELPDESK_IMAGE_PATH)),
+            id="old-image-path",
+        ),
+        pytest.param(OLD_MCP_PORT_FILES, OLD_MCP_PORT, id="old-mcp-port"),
+    ],
+)
+def test_no_old_helpdesk_env_name_or_image_path_survives(
+    roots: tuple[Path, ...], pattern: re.Pattern[str]
+) -> None:
+    """An earlier change criteria 20 to 23, a scan of file TEXT, comments and docstrings included, because
+    a name left in a comment is the one the next reader copies. Catches a prefixed name or the
+    old registry path left behind in any manifest, template, README or test, and the MCP port
+    left in one of the three places that state it. The request's own rule is one name per value,
+    so a leftover is never a harmless alias. The banned values are assembled from pieces above, and the ten-name row matches WHOLE identifiers, so this file's
+    Python constants sharing the prefix are not hits."""
+    files = scanned_files(roots)
+    assert files, f"{[str(root) for root in roots]} holds no files, so this scan read nothing"
+    hits = [
+        f"{path.relative_to(REPO_ROOT)}:{number}: {line.strip()[:120]}"
+        for path in files
+        for number, line in enumerate(
+            path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1
+        )
+        if pattern.search(line)
+    ]
+    assert hits == [], f"{len(hits)} lines still carry `{pattern.pattern}`:\n" + "\n".join(hits)
+
+
+def test_only_helpdesk_workloads_mount_the_helpdesk_sources(built: list[dict[str, Any]]) -> None:
+    """An earlier change criterion 24, the collision guard, by SET EQUALITY over every pod spec in the ROOT
+    build, CronJobs and every namespace included. The Helpdesk's keys are now bare names that
+    other programs also read. Catches `helpdesk-config` or `helpdesk-secrets` added to the
+    gateway's, the console's or a CronJob's `envFrom`, which silently hands that process the
+    Helpdesk's database and Redis addresses under names it may read as its own. The four
+    expected mounters are part of the set, so the case cannot pass over a build that mounts the
+    two sources nowhere."""
+    mounting = {
+        (str(document.get("kind")), name_of(document), namespace_of(document))
+        for document in built
+        if (pod := any_pod_spec(document)) is not None and env_from_names(pod) & HELPDESK_SOURCES
+    }
+    expected = {("Deployment", name, APPS) for name in HELPDESK_WORKLOADS}
+    assert mounting == expected, (
+        f"unexpected: {sorted(mounting - expected, key=str)}; "
+        f"missing: {sorted(expected - mounting, key=str)}"
+    )
 
 
 def test_no_helpdesk_selector_carries_a_kustomize_wide_label(built: list[dict[str, Any]]) -> None:

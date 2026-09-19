@@ -1,6 +1,6 @@
 # Secrets
 
-Six Secrets the cluster needs and this repository does not contain. What is
+Ten Secrets the cluster needs and this repository does not contain. What is
 here is the contract for each one, the policy that encrypts them, and the
 workflow. What is never here is a private key or a filled-in value.
 
@@ -24,7 +24,7 @@ apply fails on the missing Secret, which is the intended direction - a
 placeholder with a working password in git would come up running and never
 mention itself again.
 
-## The six contracts
+## The ten contracts
 
 | Secret | namespace | template |
 |---|---|---|
@@ -32,7 +32,11 @@ mention itself again.
 | `traefik-basic-auth` | `platform`, `apps` | `traefik-basic-auth.example.yaml` |
 | `gateway-secrets` | `apps` | `gateway-secrets.example.yaml` |
 | `helpdesk-secrets` | `apps` | `helpdesk-secrets.example.yaml` |
+| `ghcr-pull` | `apps` | `ghcr-pull.example.yaml` |
+| `console-secrets` | `apps` | `console-secrets.example.yaml` |
 | `grafana-admin` | `monitoring` | `grafana-admin.example.yaml` |
+| `backup-secrets` | `platform` | `backup-secrets.example.yaml` |
+| `evals-secrets` | `evals` | `evals-secrets.example.yaml` |
 | `alertmanager-secrets` | `monitoring` | `alertmanager-secrets.example.yaml` |
 
 The key names and who reads them are in `../k8s/README.md`'s secrets table; the
@@ -45,7 +49,7 @@ copy of the same credentials.
 
 Two key names in `gateway-secrets` and one in `helpdesk-secrets` are endpoints
 rather than credentials (`OPSCONSOLE_OTLP_ENDPOINT`, `AZURE_OPENAI_ENDPOINT`,
-`HELPDESK_LANGFUSE_HOST`). They sit here because a pod reads exactly two sources
+`LANGFUSE_HOST`). They sit here because a pod reads exactly two sources
 - its ConfigMap and its Secret - and each of these travels with a credential it
 would otherwise be separated from.
 
@@ -109,10 +113,11 @@ Two rotations are not one command. `postgres-credentials`' user and password are
 read by the `postgres` image on FIRST START only, so changing them there is a new
 database rather than a new password: rotate the role inside Postgres with
 `ALTER ROLE`, then update this Secret and `gateway-secrets`'
-`OPSCONSOLE_DATABASE_URL` to match. And the Helpdesk's gateway key is a pair -
-`HELPDESK_GATEWAY_API_KEY` holds the issued key, `gateway-secrets`'
-`OPSCONSOLE_API_KEYS` holds its sha256 digest - so both move together or every
-Helpdesk model call is a 401.
+`OPSCONSOLE_DATABASE_URL` to match. And the Helpdesk's gateway keys are pairs -
+`helpdesk-secrets`' `GATEWAY_API_KEYS` holds one issued key per tenant
+(`tenant:key,tenant:key`), `gateway-secrets`' `OPSCONSOLE_API_KEYS` holds each
+one's sha256 digest - so a tenant's two halves move together or every Helpdesk
+model call for that tenant is a 401.
 
 ## Rotating the age key
 

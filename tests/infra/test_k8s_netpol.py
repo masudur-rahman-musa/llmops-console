@@ -15,7 +15,7 @@ one, and only equality sees both. The guarantee #54 asks for is a property of wh
 Named ports are the reason this file resolves rather than compares. One NetworkPolicy has one
 `podSelector`, and its `ports` apply to every pod that selector matches - but `llama-ingress`
 protects two pods listening on different numbers (llama 8082, llama-embed 8083) and
-`helpdesk-api-ingress` protects two more (8000, 8001). The manifest resolves that by NAMING the
+`helpdesk-api-ingress` protects two more (8000, 8081). The manifest resolves that by NAMING the
 port (`port: http`), which Kubernetes resolves against each target pod's own container port. So
 `resolved_ports` looks the name up in the pod templates the same build emitted and the
 assertions read in numbers, while the manifest reads in names. A literal number asserted against
@@ -177,12 +177,13 @@ PUBLIC_PORTS: frozenset[tuple[str, int]] = frozenset({("TCP", 443)})
 
 #: Criterion 5: every destination the four Helpdesk workloads may reach, as
 #: `(workload, resolved port)`. The DNS allow is NOT here - it lives in `allow-dns`, which
-#: selects every pod in `apps` rather than the Helpdesk pods specifically.
+#: selects every pod in `apps` rather than the Helpdesk pods specifically. The MCP server's
+#: port is 8081 since an earlier change decision A, the port its image binds.
 HELPDESK_EGRESS_DESTINATIONS: frozenset[tuple[str, int]] = frozenset(
     {
         (GATEWAY, 8080),
         (HELPDESK_AGENT_API, 8000),
-        (HELPDESK_MCP_SERVER, 8001),
+        (HELPDESK_MCP_SERVER, 8081),
         (POSTGRES, 5432),
         (REDIS, 6379),
         (QDRANT, 6333),

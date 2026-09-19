@@ -73,6 +73,10 @@ BACKUP_SECRETS = "backup-secrets"
 EVALS_SECRETS = "evals-secrets"
 CONSOLE_SECRETS = "console-secrets"
 
+#: An earlier change criterion 16: the pull secret the four Helpdesk pod specs name, the one contract here
+#: a workload reads through `imagePullSecrets` rather than `envFrom`.
+GHCR_PULL = "ghcr-pull"
+
 PLATFORM = "platform"
 APPS = "apps"
 MONITORING = "monitoring"
@@ -90,6 +94,8 @@ EXPECTED_NAMESPACES: dict[str, frozenset[str]] = {
     BACKUP_SECRETS: frozenset({PLATFORM}),
     EVALS_SECRETS: frozenset({EVALS}),
     CONSOLE_SECRETS: frozenset({APPS}),
+    # An earlier change: the Helpdesk's registry credential.
+    GHCR_PULL: frozenset({APPS}),
 }
 
 #: One template per Secret (decision B), `traefik-basic-auth`'s being one file of two
@@ -105,6 +111,7 @@ EXAMPLE_FILENAMES: frozenset[str] = frozenset(
         f"{BACKUP_SECRETS}.example.yaml",
         f"{EVALS_SECRETS}.example.yaml",
         f"{CONSOLE_SECRETS}.example.yaml",
+        f"{GHCR_PULL}.example.yaml",
     }
 )
 
@@ -139,6 +146,41 @@ EXAMPLE_PROBE = "infra/secrets/gateway-secrets.example.yaml"
 #: Criterion 4, decision C: the literal placeholder, greppable and never read as a credential
 #: by gitleaks. `<value>` would be neither.
 PLACEHOLDER = "REPLACE_ME"
+
+#: An earlier change criterion 10: the six keys `helpdesk-secrets` carries, under the bare names the
+#: companion repo reads. Pinned here as well as compared against the README, because a rename
+#: made on both sides at once is the one edit the file-against-README equality cannot see.
+HELPDESK_SECRET_KEYS: frozenset[str] = frozenset(
+    {
+        "DATABASE_URL",
+        "GATEWAY_API_KEYS",
+        "LANGFUSE_PUBLIC_KEY",
+        "LANGFUSE_SECRET_KEY",
+        "LANGFUSE_HOST",
+        "JWT_SECRET",
+    }
+)
+
+#: An earlier change criteria 16 and 17: the type the kubelet reads a registry credential from, and the
+#: one key that type requires.
+DOCKERCONFIGJSON_TYPE = "kubernetes.io/dockerconfigjson"
+DOCKERCONFIGJSON_KEY = ".dockerconfigjson"
+
+#: An earlier change criterion 17: the GHCR token scope the template's comment must name, since a token
+#: without it cannot pull a private package.
+READ_PACKAGES_SCOPE = "read:packages"
+
+#: An earlier change criteria 11 to 13: what the `helpdesk-secrets` template's COMMENTS must state, as
+#: `(what, pattern)`. Loose on wording on purpose: each pattern is the fact
+#: the criterion names and nothing more.
+HELPDESK_COMMENT_FACTS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("the helpdesk_app role", re.compile(r"helpdesk_app")),
+    ("the asyncpg DSN scheme", re.compile(re.escape("postgresql+asyncpg://"))),
+    ("the tenant:key list shape", re.compile(re.escape("tenant:key,tenant:key"))),
+    ("the gateway digest list", re.compile(r"OPSCONSOLE_API_KEYS")),
+    ("the sha256 digest", re.compile(r"sha256")),
+    ("the 32-byte floor", re.compile(r"\b32[ -]bytes?\b")),
+)
 
 #: The htpasswd shape `traefik-basic-auth`'s one key carries: `<user>:<password>`, one per
 #: line. `fullmatch` and not `^...$`: `$` also matches before a trailing
@@ -395,14 +437,45 @@ def tls_secret_names(document: dict[str, Any]) -> set[str]:
     }
 
 
+def image_pull_secret_names(document: dict[str, Any]) -> set[str]:
+    """Every `imagePullSecrets[*].name` of one object's pod spec, the third shape a reference
+    takes. A CronJob's pod spec is unwrapped the same way
+    `envfrom_secret_names` unwraps it."""
+    spec = document.get("spec")
+    if not isinstance(spec, dict):
+        return set()
+    job_template = spec.get("jobTemplate")
+    if isinstance(job_template, dict):
+        spec = job_template.get("spec")
+        if not isinstance(spec, dict):
+            return set()
+    template = spec.get("template")
+    if not isinstance(template, dict):
+        return set()
+    pod = template.get("spec")
+    if not isinstance(pod, dict):
+        return set()
+    entries = pod.get("imagePullSecrets", [])
+    if not isinstance(entries, list):
+        return set()
+    return {
+        str(entry["name"])
+        for entry in entries
+        if isinstance(entry, dict) and entry.get("name") is not None
+    }
+
+
 def referenced_secret_names(documents: list[dict[str, Any]]) -> tuple[set[str], set[str]]:
     """`(supplied, issued)`: the Secret names the build expects someone to SUPPLY, and the
-    ones cert-manager ISSUES. Walked over the parsed stream, never grepped out of text."""
+    ones cert-manager ISSUES. Walked over the parsed stream, never grepped out of text. The
+    supplied set reads `envFrom`, a `Middleware`'s `basicAuth.secret` and, since an earlier change,
+    `imagePullSecrets`."""
     supplied: set[str] = set()
     issued: set[str] = set()
     for document in documents:
         supplied |= envfrom_secret_names(document)
         supplied |= middleware_secret_names(document)
+        supplied |= image_pull_secret_names(document)
         issued |= tls_secret_names(document)
     return supplied, issued
 
@@ -593,14 +666,80 @@ def test_the_example_templates_state_the_same_contracts_as_the_readme_table() ->
     ), f"the templates state namespaces {[(n, sorted(ns)) for n, (ns, _) in from_files.items()]}"
 
 
+#: `infra/secrets/README.md`, whose contracts table and its two counts are compared against
+#: the templates by `test_the_secrets_readme_lists_every_template_and_counts_them`.
+SECRETS_README = SECRETS_DIR / "README.md"
+
+#: The header of that README's contracts table, cell for cell.
+SECRETS_README_HEADER_CELLS = ["Secret", "namespace", "template"]
+
+#: Spelled-out counts the two READMEs use for the number of Secret contracts.
+NUMBER_WORDS = {"eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12}
+
+
+def test_the_secrets_readme_lists_every_template_and_counts_them() -> None:
+    """Criterion 18's `infra/secrets/README.md` half. The contracts table names exactly the
+    templates in the directory, each with its own filename, and the counts in its opening line,
+    its heading and `infra/k8s/README.md`'s "Secrets nothing here writes" line equal the number
+    of templates. Catches the next contract landing without a row. That table had already
+    fallen three rows behind before an earlier change, and nothing went red."""
+    lines = read(SECRETS_README).splitlines()
+    headers = [
+        index
+        for index, line in enumerate(lines)
+        if table_cells(line) == SECRETS_README_HEADER_CELLS
+    ]
+    assert len(headers) == 1, f"{len(headers)} contracts tables in {SECRETS_README}"
+    rows: dict[str, str] = {}
+    for line in lines[headers[0] + 1 :]:
+        cells = table_cells(line)
+        if not cells:
+            break
+        if all(cell and set(cell) <= {"-", ":"} for cell in cells):
+            continue
+        names = BACKTICKED.findall(cells[0])
+        templates = BACKTICKED.findall(cells[2])
+        assert len(names) == 1 and len(templates) == 1, f"a contracts row reads {cells!r}"
+        assert names[0] not in rows, f"{names[0]} has two rows in the contracts table"
+        rows[names[0]] = templates[0]
+    listed = frozenset(rows.values())
+    assert listed == EXAMPLE_FILENAMES, (
+        f"only in the table: {sorted(listed - EXAMPLE_FILENAMES)}; "
+        f"missing from it: {sorted(EXAMPLE_FILENAMES - listed)}"
+    )
+    assert frozenset(rows) == frozenset(EXPECTED_NAMESPACES), f"table names {sorted(rows)}"
+    assert rows == {name: f"{name}.example.yaml" for name in EXPECTED_NAMESPACES}, (
+        f"a row points at another Secret's template: {rows}"
+    )
+
+    expected = len(EXAMPLE_FILENAMES)
+    counts = {
+        "secrets README opening": re.search(
+            r"^(\w+) Secrets the cluster needs", read(SECRETS_README), re.M
+        ),
+        "secrets README heading": re.search(
+            r"^## The (\w+) contracts$", read(SECRETS_README), re.M
+        ),
+        "k8s README": re.search(r"^The (\w+) Secrets nothing here writes", read(K8S_README), re.M),
+    }
+    for where, match in counts.items():
+        assert match, f"the {where} count sentence is gone"
+        assert NUMBER_WORDS.get(match.group(1).lower()) == expected, (
+            f"the {where} says {match.group(1)!r}; there are {expected} templates"
+        )
+
+
 def test_every_secret_the_build_references_is_one_the_templates_supply(
     built: list[dict[str, Any]],
 ) -> None:
     """Criterion 3's build half, by EQUALITY between the templates' NAME set and the names the
-    built stream actually references (`envFrom[*].secretRef.name` plus each `Middleware`'s
-    `spec.basicAuth.secret`). Catches a template named for a Secret nothing reads - a file an
-    operator fills in for nothing - and catches a manifest naming a fifth Secret this plan
-    supplies no template for, which is an apply that fails on a Secret nobody wrote down.
+    built stream actually references (`envFrom[*].secretRef.name`, each `Middleware`'s
+    `spec.basicAuth.secret`, and since an earlier change criterion 26 each pod's
+    `imagePullSecrets[*].name`). Catches `ghcr-pull` contracted and named by no pod spec, and a
+    pod spec naming a pull secret nothing contracts. Catches a template named for a Secret
+    nothing reads - a file an operator fills in for nothing - and catches a manifest naming a
+    fifth Secret this plan supplies no template for, which is an apply that fails on a Secret
+    nobody wrote down.
     `test_k8s_apps.py` pins the same names against four LITERALS build-wide; that case cannot
     see a template renamed or never written, because no literal changes when a FILE does, and
     this one is read off the files. The four `tls[*].secretName` values are subtracted by name: cert-manager creates those, so including them would make a correct
@@ -689,6 +828,86 @@ def test_every_example_value_is_the_literal_placeholder(filename: str) -> None:
                         f"{filename}: `users` carries a real-looking password"
                     )
     assert checked, f"{filename} declares no values at all, so this scan asserted nothing"
+
+
+def comment_text(path: Path) -> str:
+    """Every comment line of a template, joined, `#` markers included. A key NAME or a value is
+    never a comment, so a fact stated only as a key does not count as stated."""
+    return "\n".join(line for line in read(path).splitlines() if line.lstrip().startswith("#"))
+
+
+def test_the_ghcr_pull_contract_is_a_dockerconfigjson_secret_in_apps() -> None:
+    """An earlier change criteria 16 and 17, read off the template itself rather than through
+    `example_contracts`, so a red here names this file and not whichever other template is
+    missing. Catches the template written as `type: Opaque`, which applies cleanly and which
+    the kubelet ignores for a pull, so every Helpdesk pod sits in `ImagePullBackOff`. Catches it
+    in `platform` or with no namespace, where a pod in `apps` cannot read it. Catches a key other
+    than `.dockerconfigjson`, or a second key beside it, which the API server rejects for that
+    type or which the operator fills in for nothing. Catches the comment that never says which
+    token scope to mint, which is the one step an operator gets wrong."""
+    path = SECRETS_DIR / f"{GHCR_PULL}.example.yaml"
+    documents = documents_in(path)
+    assert len(documents) == 1, f"{path.name} carries {len(documents)} documents, not 1"
+    document = documents[0]
+    assert document.get("kind") == SECRET_KIND, f"{path.name} declares a {document.get('kind')}"
+    assert name_of(document) == GHCR_PULL, f"{path.name} names {name_of(document)!r}"
+    assert namespace_of(document) == APPS, f"{path.name} is in {namespace_of(document)!r}"
+    assert document.get("type") == DOCKERCONFIGJSON_TYPE, (
+        f"{path.name} is of type {document.get('type')!r}, not {DOCKERCONFIGJSON_TYPE}"
+    )
+    assert "data" not in document, f"{path.name} carries a `data` mapping beside `stringData`"
+    assert document.get("stringData") == {DOCKERCONFIGJSON_KEY: PLACEHOLDER}, (
+        f"{path.name}'s stringData is {document.get('stringData')!r}"
+    )
+    assert READ_PACKAGES_SCOPE in comment_text(path), (
+        f"no comment in {path.name} names the `{READ_PACKAGES_SCOPE}` token the value is built from"
+    )
+
+
+def test_the_helpdesk_secret_template_carries_the_published_keys() -> None:
+    """An earlier change criterion 10, the exact key set, read off the template itself rather than through
+    `example_contracts`, so a missing neighbouring template cannot be what reddens it. Catches a
+    prefixed name left where the companion repo reads a bare one, which is a pod that starts on
+    its localhost default and never says so. Catches the singular gateway key name kept where
+    the companion repo reads the plural list, and `JWT_SECRET` left out, which is an agent API
+    signing sessions with whatever default it ships. Catches both spellings of one value kept
+    side by side, since equality refuses the extra key."""
+    path = SECRETS_DIR / f"{HELPDESK_SECRETS}.example.yaml"
+    documents = documents_in(path)
+    assert len(documents) == 1, f"{path.name} carries {len(documents)} documents, not 1"
+    keys: set[str] = set()
+    values: dict[str, str] = {}
+    for _, mapping in data_mappings(documents[0]):
+        keys.update(str(key) for key in mapping)
+        values.update({str(key): str(value) for key, value in mapping.items()})
+    assert keys == HELPDESK_SECRET_KEYS, (
+        f"unexpected: {sorted(keys - HELPDESK_SECRET_KEYS)}; "
+        f"missing: {sorted(HELPDESK_SECRET_KEYS - keys)}"
+    )
+    filled = sorted(key for key, value in values.items() if value != PLACEHOLDER)
+    assert filled == [], f"{path.name} carries values other than {PLACEHOLDER} for {filled}"
+
+
+@pytest.mark.parametrize(
+    ("fact", "pattern"),
+    HELPDESK_COMMENT_FACTS,
+    ids=[fact for fact, _ in HELPDESK_COMMENT_FACTS],
+)
+def test_the_helpdesk_secret_template_comments_state_the_published_formats(
+    fact: str, pattern: re.Pattern[str]
+) -> None:
+    """An earlier change criteria 11 to 13, one stated fact per row, over the template's COMMENT lines only.
+    Every value is `REPLACE_ME`, so the comment is the only place these formats can live.
+    Catches a template whose comments leave out one of the three things an operator cannot
+    guess from a key name: the role and driver scheme of the DSN (guessed wrong, the Helpdesk
+    runs as the owner role or fails to load its driver), the `tenant:key` list shape and where
+    the digests go (guessed wrong, every model call is a 401), and the 32-byte floor on the
+    signing secret. Each row is only the fact the criterion names, never wording (standing rule
+    64)."""
+    path = SECRETS_DIR / f"{HELPDESK_SECRETS}.example.yaml"
+    assert pattern.search(comment_text(path)), (
+        f"no comment in {path.name} states {fact} (`{pattern.pattern}`)"
+    )
 
 
 @pytest.mark.parametrize("target", SOPS_TARGETS, ids=list(SOPS_TARGETS))

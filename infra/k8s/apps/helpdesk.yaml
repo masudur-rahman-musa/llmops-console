@@ -2,7 +2,7 @@
 # server, its scheduler and its web front end. They are CLIENTS of the gateway
 # in `gateway.yaml`, not providers of it, so nothing here touches `routing.yaml`
 # or `prices.yaml` - the Helpdesk reaches this cluster's models the same way any
-# other caller does, over `HELPDESK_GATEWAY_URL`.
+# other caller does, over `GATEWAY_URL`.
 #
 # All four are written INTO the `Helpdesk reserve, 3 pods` envelope
 # `../README.md` has held since row 20a - 576Mi of requests, 300m of CPU, 1152Mi
@@ -21,12 +21,21 @@
 # directly is the shape a project rule rejects for the console, and the MCP server
 # is a tool endpoint that no host should resolve to.
 #
-# Decision E - the env contract. These `HELPDESK_*` names are THIS repo's
-# proposal; the companion repo does not exist here and its variable names cannot
-# be read from it. They are published in `../README.md`'s config table as the
-# one place that repo reads, and the risk is honest: if it reads different
-# names, these pods start and misbehave rather than failing loudly, because a
-# missing variable is usually a `None` default and not a crash.
+# Decision E - the env contract. The names below are the companion repo's
+# published ones: bare and unprefixed, one name per value, read from its
+# `.env.example`. `../README.md`'s "What the Helpdesk reads" table mirrors them.
+# The risk is unchanged: a name that drifts on either side leaves the pod
+# starting on its localhost default rather than failing loudly, because a
+# missing variable is usually a default and not a crash.
+#
+# Bare names share a namespace with every other `envFrom` in the pod, which is
+# why only these four Deployments mount `helpdesk-config` and `helpdesk-secrets`.
+# A gateway pod reading this `REDIS_URL` or `ENV` would silently change
+# behaviour; `test_only_helpdesk_workloads_mount_the_helpdesk_sources` pins it.
+#
+# All four share one ConfigMap and one Secret, so `helpdesk-web` also sees
+# `JWT_SECRET` and the database DSN it never uses. Per-workload `secretKeyRef`
+# would close that; it is a separate least-privilege change.
 #
 # Decision F - the scheduler has no ports and no probes. It serves nothing: it
 # holds a Redis leader lock and runs jobs, so `replicas: 1` with `Recreate` is
@@ -40,14 +49,19 @@
 # nothing here reads a liveness signal it does not have.
 #
 # `helpdesk-secrets` is NAMED here and supplied nowhere in this repo. It carries
-# the gateway API key the Helpdesk calls with, its own database URL and the
-# Langfuse pair, SOPS-encrypted before the first apply, and until it exists an
-# apply fails on the missing Secret - which is the intended direction.
+# the gateway API keys the Helpdesk calls with, its own database DSN, its JWT
+# signing secret and the Langfuse pair, SOPS-encrypted before the first apply,
+# and until it exists an apply fails on the missing Secret - which is the
+# intended direction.
 #
 # The images are set by `kustomization.yaml`'s `images:` transformer, not here.
-# `0.0.0-unbuilt` is honest: the companion repo has published nothing yet, and
-# `deploy.yml` rewrites the `gateway` tag only, so any apply fails on the pull
-# rather than running something nobody chose.
+# The companion repo publishes them as PRIVATE GHCR packages, so each of the four
+# pod specs names `ghcr-pull` (`../../secrets/ghcr-pull.example.yaml`), a
+# `read:packages` token. It sits on these pod specs rather than on the `apps`
+# default ServiceAccount, so the gateway and console pods never carry it.
+# `0.0.0-unbuilt` stays until the Helpdesk's deploy sets the commit SHA it built;
+# `deploy.yml` rewrites the `gateway` tag only, so any apply before that fails on
+# the pull rather than running something nobody chose.
 #
 # `app.kubernetes.io/name` is written three times per serving workload - on the
 # selector, on the pod template and on the Service - because the root
@@ -66,13 +80,25 @@ data:
   # In-cluster addresses, every host fully qualified: these pods are in `apps`
   # and two of the three services are in `platform`, so a bare `redis` resolves
   # to nothing.
-  HELPDESK_GATEWAY_URL: http://gateway.apps.svc.cluster.local:8080/v1
+  GATEWAY_URL: http://gateway.apps.svc.cluster.local:8080/v1
   # Redis database `1`, not the gateway's `0`. One Redis, two tenants of it, and
   # a shared index is one `FLUSHDB` away from taking out the other repo's state.
-  HELPDESK_REDIS_URL: redis://redis.platform.svc.cluster.local:6379/1
-  HELPDESK_QDRANT_URL: http://qdrant.platform.svc.cluster.local:6333
-  HELPDESK_ENV: production
-  # `HELPDESK_OTEL_SERVICE_NAME` is deliberately NOT here. It is per-container
+  REDIS_URL: redis://redis.platform.svc.cluster.local:6379/1
+  QDRANT_URL: http://qdrant.platform.svc.cluster.local:6333
+  ENV: production
+  # The two internal Helpdesk endpoints, each on its own Service's port below.
+  # The agent API calls the MCP server; the web pod calls the agent API from its
+  # server side only, never from the browser.
+  MCP_URL: http://helpdesk-mcp-server.apps.svc.cluster.local:8081/mcp
+  AGENT_API_URL: http://helpdesk-agent-api.apps.svc.cluster.local:8000
+  # The one public address here: the host of Ingress `helpdesk` in
+  # `ingress.yaml`, scheme and host only with no trailing slash, as the companion
+  # repo's contract states it. The agent API reads it; the test that pins it
+  # reads the host off the built Ingress, so the two cannot drift apart.
+  WEB_ORIGIN: https://helpdesk.example.com
+  # Quoted: a ConfigMap value is a string, and a bare `true` fails the apply.
+  SESSION_COOKIE_SECURE: "true"
+  # `OTEL_SERVICE_NAME` is deliberately NOT here. It is per-container
   # `env` below, because one trace carries spans from the Helpdesk and from the
   # gateway, and a shared name collapses four processes into one service in the
   # viewer - a failure no trace test would catch.
@@ -94,6 +120,8 @@ spec:
       labels:
         app.kubernetes.io/name: helpdesk-agent-api
     spec:
+      imagePullSecrets:
+        - name: ghcr-pull
       containers:
         - name: helpdesk-agent-api
           image: helpdesk-agent-api
@@ -106,7 +134,7 @@ spec:
             - secretRef:
                 name: helpdesk-secrets
           env:
-            - name: HELPDESK_OTEL_SERVICE_NAME
+            - name: OTEL_SERVICE_NAME
               value: helpdesk-agent-api
           # `/readyz` is dependencies reachable and `/healthz` is process up.
           # Swapped, `/readyz` as liveness restarts the pod every time Redis
@@ -168,19 +196,21 @@ spec:
       labels:
         app.kubernetes.io/name: helpdesk-mcp-server
     spec:
+      imagePullSecrets:
+        - name: ghcr-pull
       containers:
         - name: helpdesk-mcp-server
           image: helpdesk-mcp-server
           ports:
             - name: http
-              containerPort: 8001
+              containerPort: 8081
           envFrom:
             - configMapRef:
                 name: helpdesk-config
             - secretRef:
                 name: helpdesk-secrets
           env:
-            - name: HELPDESK_OTEL_SERVICE_NAME
+            - name: OTEL_SERVICE_NAME
               value: helpdesk-mcp-server
           readinessProbe:
             httpGet:
@@ -216,7 +246,7 @@ spec:
     app.kubernetes.io/name: helpdesk-mcp-server
   ports:
     - name: http
-      port: 8001
+      port: 8081
       targetPort: http
 ---
 apiVersion: apps/v1
@@ -236,6 +266,8 @@ spec:
       labels:
         app.kubernetes.io/name: helpdesk-web
     spec:
+      imagePullSecrets:
+        - name: ghcr-pull
       containers:
         - name: helpdesk-web
           image: helpdesk-web
@@ -248,7 +280,7 @@ spec:
             - secretRef:
                 name: helpdesk-secrets
           env:
-            - name: HELPDESK_OTEL_SERVICE_NAME
+            - name: OTEL_SERVICE_NAME
               value: helpdesk-web
           readinessProbe:
             httpGet:
@@ -310,6 +342,8 @@ spec:
       labels:
         app.kubernetes.io/name: helpdesk-scheduler
     spec:
+      imagePullSecrets:
+        - name: ghcr-pull
       containers:
         - name: helpdesk-scheduler
           image: helpdesk-scheduler
@@ -322,7 +356,7 @@ spec:
             - secretRef:
                 name: helpdesk-secrets
           env:
-            - name: HELPDESK_OTEL_SERVICE_NAME
+            - name: OTEL_SERVICE_NAME
               value: helpdesk-scheduler
           resources:
             requests:

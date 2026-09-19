@@ -279,7 +279,7 @@ provider keys is the one closed both ways.
 | `gateway-egress` | `apps` | `gateway` | egress to the public internet on TCP 443, to llama 8082, llama-embed 8083, to Postgres, Redis and Qdrant in `platform`, and to `prometheus:9090` in `monitoring` |
 | `helpdesk-web-ingress` | `apps` | `helpdesk-web` | ingress from `kube-system` on its serving port |
 | `helpdesk-api-ingress` | `apps` | `helpdesk-agent-api`, `helpdesk-mcp-server` | ingress from the four Helpdesk pods, each on its own serving port |
-| `helpdesk-egress` | `apps` | the four Helpdesk pods | egress to `gateway:8080`, `helpdesk-agent-api:8000`, `helpdesk-mcp-server:8001`, `postgres:5432`, `redis:6379`, `qdrant:6333` - and no route off the cluster at all |
+| `helpdesk-egress` | `apps` | the four Helpdesk pods | egress to `gateway:8080`, `helpdesk-agent-api:8000`, `helpdesk-mcp-server:8081`, `postgres:5432`, `redis:6379`, `qdrant:6333` - and no route off the cluster at all |
 | `llama-ingress` | `apps` | `llama`, `llama-embed` | ingress from `gateway`, each on its own serving port |
 | `console-ingress` | `apps` | `console` | ingress from `kube-system` (Traefik) on its serving port, and from nowhere else |
 | `console-egress` | `apps` | `console` | egress to `gateway:8080` - and no route off the cluster at all |
@@ -378,7 +378,7 @@ If the chart's real footprint is larger than that, the quota refuses the install
 with the namespace named, which is the intended direction: raising it means
 re-totalling the table above and the reserve constant in the test together.
 
-The nine Secrets nothing here writes, each supplied SOPS-encrypted before the
+The ten Secrets nothing here writes, each supplied SOPS-encrypted before the
 first apply. `../secrets/` holds one plaintext contract per Secret
 (`*.example.yaml`, every value `REPLACE_ME`), the workflow that encrypts a filled
 copy, and the key procedure; `../../.sops.yaml` is the policy that decides what
@@ -391,7 +391,8 @@ are asserted equal, and equal to the names the build references, by
 | `postgres-credentials` | `platform` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | the Postgres StatefulSet, by `envFrom` |
 | `traefik-basic-auth` | `platform`, `apps` | `users` (htpasswd lines) | the `basic-auth` middleware in each namespace |
 | `gateway-secrets` | `apps` | `OPSCONSOLE_DATABASE_URL`, `OPSCONSOLE_API_KEYS`, `OPSCONSOLE_ADMIN_KEY_SHA256`, `OPSCONSOLE_BUDGET_OVERRIDE_SECRET`, `OPSCONSOLE_OTLP_ENDPOINT`, `OPSCONSOLE_OTLP_HEADERS`, `ANTHROPIC_API_KEY`, `ANTHROPIC_EU_API_KEY`, `OPENAI_API_KEY`, `AZURE_OPENAI_KEY`, `AZURE_OPENAI_ENDPOINT` | the gateway Deployment, by `envFrom` |
-| `helpdesk-secrets` | `apps` | `HELPDESK_GATEWAY_API_KEY`, `HELPDESK_DATABASE_URL`, `HELPDESK_LANGFUSE_PUBLIC_KEY`, `HELPDESK_LANGFUSE_SECRET_KEY`, `HELPDESK_LANGFUSE_HOST` | the four Helpdesk Deployments, by `envFrom` |
+| `helpdesk-secrets` | `apps` | `DATABASE_URL`, `GATEWAY_API_KEYS`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`, `JWT_SECRET` | the four Helpdesk Deployments, by `envFrom` |
+| `ghcr-pull` | `apps` | `.dockerconfigjson` | the four Helpdesk Deployments, by `imagePullSecrets` |
 | `console-secrets` | `apps` | `CONSOLE_PASSWORD_SHA256`, `CONSOLE_SESSION_SECRET`, `CONSOLE_ADMIN_KEY` | the console Deployment, by `envFrom`; `CONSOLE_ADMIN_KEY` must hash to `gateway-secrets`' `OPSCONSOLE_ADMIN_KEY_SHA256` |
 | `grafana-admin` | `monitoring` | `GF_SECURITY_ADMIN_USER`, `GF_SECURITY_ADMIN_PASSWORD` | the Grafana Deployment, by `envFrom` |
 | `alertmanager-secrets` | `monitoring` | `SMTP_SMARTHOST`, `SMTP_FROM`, `SMTP_AUTH_USERNAME`, `SMTP_AUTH_PASSWORD`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | the Alertmanager Deployment, by `envFrom` |
@@ -402,13 +403,13 @@ are asserted equal, and equal to the names the build references, by
 cluster: a `Middleware` reads its Secret from its own namespace, and a design note is
 why each namespace carries its own copy of the middlewares it uses. The five TLS
 Secrets the five Ingresses name are not in this table - cert-manager writes
-those, and their names have to stay disjoint from the five above, or an issued
+those, and their names have to stay disjoint from the ten above, or an issued
 certificate overwrites a set of credentials. `grafana-tls` and `grafana-admin`
 are the pair where that is easiest to get wrong, because they sit in one
 namespace and share a prefix; the disjointness is asserted.
 
 Three of those key names are endpoints rather than credentials
-(`OPSCONSOLE_OTLP_ENDPOINT`, `AZURE_OPENAI_ENDPOINT`, `HELPDESK_LANGFUSE_HOST`).
+(`OPSCONSOLE_OTLP_ENDPOINT`, `AZURE_OPENAI_ENDPOINT`, `LANGFUSE_HOST`).
 A pod reads exactly two sources, its ConfigMap and its Secret, and each of these
 three travels with a credential it would be useless apart from, so they sit with
 the credential rather than in the ConfigMap.
@@ -454,25 +455,34 @@ startup ceiling is 120 seconds rather than 600: the file is ~130 MB.
 
 ## What the Helpdesk reads
 
-The companion repo is a separate repository and its variable names cannot be
-read from here, so this is the contract: `helpdesk-config` publishes these four
-keys and the four Deployments take the whole object by `envFrom`. If the
-Helpdesk reads different names it will start and misbehave rather than fail
-loudly - a missing variable is usually a `None` default, not a crash - so this
-table is the one place the two repositories agree, and a disagreement is a
-change here.
+These are the companion repo's published names: bare, unprefixed, one name per
+value. `helpdesk-config` carries these eight keys and the four Deployments take
+the whole object by `envFrom`. A name that drifts on either side leaves the pods
+starting on their localhost defaults rather than failing loudly, so a change to
+that repo's contract is a change here.
 
 | key | value | why |
 |---|---|---|
-| `HELPDESK_GATEWAY_URL` | `http://gateway.apps.svc.cluster.local:8080/v1` | every model call goes through this gateway, so the Helpdesk never holds a provider key |
-| `HELPDESK_REDIS_URL` | `redis://redis.platform.svc.cluster.local:6379/1` | database `1`, not the gateway's `0`: one Redis, two tenants of it, and a shared index is one `FLUSHDB` from taking out the other repo's state |
-| `HELPDESK_QDRANT_URL` | `http://qdrant.platform.svc.cluster.local:6333` | the same vector store the gateway's semantic cache uses, in its own collections |
-| `HELPDESK_ENV` | `production` | what the pods report about themselves |
+| `GATEWAY_URL` | `http://gateway.apps.svc.cluster.local:8080/v1` | every model call goes through this gateway, so the Helpdesk never holds a provider key |
+| `REDIS_URL` | `redis://redis.platform.svc.cluster.local:6379/1` | database `1`, not the gateway's `0`: one Redis, two tenants of it, and a shared index is one `FLUSHDB` from taking out the other repo's state |
+| `QDRANT_URL` | `http://qdrant.platform.svc.cluster.local:6333` | the same vector store the gateway's semantic cache uses, in its own collections |
+| `ENV` | `production` | what the pods report about themselves |
+| `MCP_URL` | `http://helpdesk-mcp-server.apps.svc.cluster.local:8081/mcp` | the agent API's tool server, on its Service's port |
+| `AGENT_API_URL` | `http://helpdesk-agent-api.apps.svc.cluster.local:8000` | the web pod calls the agent API from its server side only, never from the browser |
+| `WEB_ORIGIN` | `https://helpdesk.example.com` | the public origin, the host of Ingress `helpdesk`; scheme and host only, no trailing slash |
+| `SESSION_COOKIE_SECURE` | `"true"` | the web pod's session cookie is sent over HTTPS only |
 
-Every host is fully qualified because these pods are in `apps` and two of the
-three services are in `platform`, where a bare `redis` resolves to nothing.
+Every in-cluster host is fully qualified because these pods are in `apps` and
+two of the services are in `platform`, where a bare `redis` resolves to nothing.
+`WEB_ORIGIN` is the one public address.
 
-`HELPDESK_OTEL_SERVICE_NAME` is deliberately NOT in that ConfigMap. It is a
+Bare names share a namespace with every other `envFrom` in a pod, so only the
+four Helpdesk Deployments mount `helpdesk-config` and `helpdesk-secrets`; a
+gateway pod reading this `REDIS_URL` would silently change database. The
+Helpdesk images are private GHCR packages, pulled with `ghcr-pull`, which only
+those four pod specs name.
+
+`OTEL_SERVICE_NAME` is deliberately NOT in that ConfigMap. It is a
 per-container `env` entry on each of the four, set to that workload's own name,
 because one trace carries spans from the Helpdesk and from the gateway and a
 shared service name would collapse five processes into one in the trace viewer.

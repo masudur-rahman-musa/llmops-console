@@ -24,7 +24,7 @@
 # (8082) and llama-embed (8083) - cannot express "each on its own port" with a
 # literal. A named port resolves against each target pod's own container port,
 # and both pods call theirs `http`, so `port: http` is 8082 on one and 8083 on
-# the other. The same holds for `helpdesk-api-ingress` (8000 and 8001).
+# the other. The same holds for `helpdesk-api-ingress` (8000 and 8081).
 # `platform`'s policy is the exception and reads in numbers: its three targets
 # name their ports `postgres`, `redis` and `http`, so there is no shared name.
 #
@@ -230,7 +230,7 @@ spec:
 # The two internal Helpdesk endpoints, reachable from the Helpdesk's own pods
 # and from nowhere else - not from Traefik, which is what makes "the agent API
 # is not a public surface" a property of the network rather than of the absence
-# of an Ingress. `port: http` is 8000 on the agent API and 8001 on the MCP
+# of an Ingress. `port: http` is 8000 on the agent API and 8081 on the MCP
 # server; a literal here would be right for one and a silent deny for the other.
 ---
 apiVersion: networking.k8s.io/v1
@@ -313,7 +313,7 @@ spec:
               app.kubernetes.io/name: helpdesk-mcp-server
       ports:
         - protocol: TCP
-          port: 8001
+          port: 8081
     - to:
         - namespaceSelector:
             matchLabels:
