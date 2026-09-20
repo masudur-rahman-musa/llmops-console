@@ -59,9 +59,9 @@
 # pod specs names `ghcr-pull` (`../../secrets/ghcr-pull.example.yaml`), a
 # `read:packages` token. It sits on these pod specs rather than on the `apps`
 # default ServiceAccount, so the gateway and console pods never carry it.
-# `0.0.0-unbuilt` stays until the Helpdesk's deploy sets the commit SHA it built;
-# `deploy.yml` rewrites the `gateway` tag only, so any apply before that fails on
-# the pull rather than running something nobody chose.
+# The tag is the full commit SHA that repo's `build.yml` published, and it
+# publishes no `latest`: `deploy.yml` here rewrites the `gateway` tag only, so
+# the Helpdesk's own deploy is a bump of that SHA in `kustomization.yaml`.
 #
 # `app.kubernetes.io/name` is written three times per serving workload - on the
 # selector, on the pod template and on the Service - because the root
@@ -98,6 +98,13 @@ data:
   WEB_ORIGIN: https://helpdesk.example.com
   # Quoted: a ConfigMap value is a string, and a bare `true` fails the apply.
   SESSION_COOKIE_SECURE: "true"
+  # The corpus root the MCP server walks, as `{tenant}/{version}/{file}`. The
+  # companion repo's image carries NO corpus: it expects a read-only mount at
+  # this path, so a compromised tool process cannot edit what decides access.
+  # Nothing in this repo supplies that volume yet, so the MCP server finds an
+  # empty root and retrieves nothing until it does. The value is the path its
+  # own compose file mounts at, so the two agree when the volume lands.
+  POLICY_DIR: /srv/policies
   # `OTEL_SERVICE_NAME` is deliberately NOT here. It is per-container
   # `env` below, because one trace carries spans from the Helpdesk and from the
   # gateway, and a shared name collapses four processes into one service in the

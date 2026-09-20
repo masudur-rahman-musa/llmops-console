@@ -48,19 +48,23 @@ images:
     newName: ghcr.io/ggml-org/llama.cpp
     newTag: server-b10902
   # The four Helpdesk workloads, each its own image out of the companion repo's
-  # registry, private, pulled with `ghcr-pull` (`helpdesk.yaml`). That repo tags
-  # each image with the git SHA of the commit that built it. The placeholder tag
-  # stays until the Helpdesk's deploy sets that SHA: `deploy.yml` rewrites the
-  # `gateway` tag only, so any apply before then fails on the pull.
+  # registry, private, pulled with `ghcr-pull` (`helpdesk.yaml`). That repo's
+  # `build.yml` publishes on every push to `main`, tagging each image with the
+  # full commit SHA and nothing else - there is no `latest` to fall back to, so
+  # this tag is a SHA or the apply fails on the pull.
+  #
+  # The SHA below is that repo's `main` head. Bumping it is how the Helpdesk
+  # deploys: `deploy.yml` here rewrites the `gateway` tag only and never touches
+  # these four.
   - name: helpdesk-agent-api
     newName: ghcr.io/masudur-rahman-musa/ai-help-desk-governed-access/helpdesk-agent-api
-    newTag: 0.0.0-unbuilt
+    newTag: 29a61ef774e7ebf4fe8cc173de44c2352555a66e
   - name: helpdesk-mcp-server
     newName: ghcr.io/masudur-rahman-musa/ai-help-desk-governed-access/helpdesk-mcp-server
-    newTag: 0.0.0-unbuilt
+    newTag: 29a61ef774e7ebf4fe8cc173de44c2352555a66e
   - name: helpdesk-scheduler
     newName: ghcr.io/masudur-rahman-musa/ai-help-desk-governed-access/helpdesk-scheduler
-    newTag: 0.0.0-unbuilt
+    newTag: 29a61ef774e7ebf4fe8cc173de44c2352555a66e
   - name: helpdesk-web
     newName: ghcr.io/masudur-rahman-musa/ai-help-desk-governed-access/helpdesk-web
-    newTag: 0.0.0-unbuilt
+    newTag: 29a61ef774e7ebf4fe8cc173de44c2352555a66e

@@ -736,6 +736,7 @@ HELPDESK_CONFIG: dict[str, str] = {
     "AGENT_API_URL": "http://helpdesk-agent-api.apps.svc.cluster.local:8000",
     "WEB_ORIGIN": "https://helpdesk.example.com",
     "SESSION_COOKIE_SECURE": "true",
+    "POLICY_DIR": "/srv/policies",
 }
 
 #: Criterion 8's in-cluster claim, checked on every URL value of the ConfigMap rather than on
@@ -792,13 +793,17 @@ HELPDESK_ENV_FROM_SOURCES: dict[str, str] = {
     "secretRef": HELPDESK_SECRET,
 }
 
-#: Criterion 11 and decision D: the companion repo's registry namespace and the same honest
-#: placeholder tag the gateway carries. Each workload's repository is that prefix plus its own
-#: name, so an `images:` entry pointing two workloads at one image is visible. An earlier change criterion
-#: 2 moved the prefix to the path the companion repo actually publishes under; the tag stays
-#: the placeholder.
+#: Criterion 11: the companion repo's registry namespace, and the tag its `build.yml` publishes
+#: under. Each workload's repository is that prefix plus its own name, so an `images:` entry
+#: pointing two workloads at one image is visible. That repo tags every image with the full
+#: commit SHA and publishes no `latest`, so the tag is 40 hex characters or there is nothing to
+#: pull; `HELPDESK_IMAGE_TAG` is its `main` head, and a deploy bumps it.
 HELPDESK_IMAGE_REPOSITORY_PREFIX = "ghcr.io/masudur-rahman-musa/ai-help-desk-governed-access"
-HELPDESK_IMAGE_TAG = "0.0.0-unbuilt"
+HELPDESK_IMAGE_TAG = "29a61ef774e7ebf4fe8cc173de44c2352555a66e"
+
+#: The shape that tag must keep: a full commit SHA, never an abbreviation and never a name. An
+#: abbreviated SHA is a tag the registry does not hold, so the pull fails at the node.
+COMMIT_SHA_TAG = re.compile(r"[0-9a-f]{40}")
 
 #: An earlier change criterion 3 and decision C: the one pull secret, named on the four Helpdesk pod specs
 #: and nowhere else. The companion repo's packages are private, so a pod without it cannot pull.
@@ -3016,6 +3021,10 @@ def test_each_helpdesk_workload_pulls_the_published_image_with_the_ghcr_secret(
         f"{workload_name} pulls from `{repository}`"
     )
     assert tag == HELPDESK_IMAGE_TAG, f"{workload_name} is tagged `{tag}`"
+    assert COMMIT_SHA_TAG.fullmatch(tag), (
+        f"{workload_name} is tagged `{tag}`, which is not a full commit SHA; that repo "
+        "publishes no other tag, so there is nothing under this one to pull"
+    )
 
     pull_secrets = pod_spec(owner).get("imagePullSecrets")
     assert pull_secrets == [{"name": GHCR_PULL_SECRET}], (

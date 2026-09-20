@@ -147,7 +147,7 @@ EXAMPLE_PROBE = "infra/secrets/gateway-secrets.example.yaml"
 #: by gitleaks. `<value>` would be neither.
 PLACEHOLDER = "REPLACE_ME"
 
-#: An earlier change criterion 10: the six keys `helpdesk-secrets` carries, under the bare names the
+#: An earlier change criterion 10: the eight keys `helpdesk-secrets` carries, under the bare names the
 #: companion repo reads. Pinned here as well as compared against the README, because a rename
 #: made on both sides at once is the one edit the file-against-README equality cannot see.
 HELPDESK_SECRET_KEYS: frozenset[str] = frozenset(
@@ -158,6 +158,8 @@ HELPDESK_SECRET_KEYS: frozenset[str] = frozenset(
         "LANGFUSE_SECRET_KEY",
         "LANGFUSE_HOST",
         "JWT_SECRET",
+        "APP_DATABASE_URL",
+        "APP_DB_PASSWORD",
     }
 )
 

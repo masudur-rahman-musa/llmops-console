@@ -391,7 +391,7 @@ are asserted equal, and equal to the names the build references, by
 | `postgres-credentials` | `platform` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | the Postgres StatefulSet, by `envFrom` |
 | `traefik-basic-auth` | `platform`, `apps` | `users` (htpasswd lines) | the `basic-auth` middleware in each namespace |
 | `gateway-secrets` | `apps` | `OPSCONSOLE_DATABASE_URL`, `OPSCONSOLE_API_KEYS`, `OPSCONSOLE_ADMIN_KEY_SHA256`, `OPSCONSOLE_BUDGET_OVERRIDE_SECRET`, `OPSCONSOLE_OTLP_ENDPOINT`, `OPSCONSOLE_OTLP_HEADERS`, `ANTHROPIC_API_KEY`, `ANTHROPIC_EU_API_KEY`, `OPENAI_API_KEY`, `AZURE_OPENAI_KEY`, `AZURE_OPENAI_ENDPOINT` | the gateway Deployment, by `envFrom` |
-| `helpdesk-secrets` | `apps` | `DATABASE_URL`, `GATEWAY_API_KEYS`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`, `JWT_SECRET` | the four Helpdesk Deployments, by `envFrom` |
+| `helpdesk-secrets` | `apps` | `DATABASE_URL`, `APP_DATABASE_URL`, `APP_DB_PASSWORD`, `GATEWAY_API_KEYS`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`, `JWT_SECRET` | the four Helpdesk Deployments, by `envFrom` |
 | `ghcr-pull` | `apps` | `.dockerconfigjson` | the four Helpdesk Deployments, by `imagePullSecrets` |
 | `console-secrets` | `apps` | `CONSOLE_PASSWORD_SHA256`, `CONSOLE_SESSION_SECRET`, `CONSOLE_ADMIN_KEY` | the console Deployment, by `envFrom`; `CONSOLE_ADMIN_KEY` must hash to `gateway-secrets`' `OPSCONSOLE_ADMIN_KEY_SHA256` |
 | `grafana-admin` | `monitoring` | `GF_SECURITY_ADMIN_USER`, `GF_SECURITY_ADMIN_PASSWORD` | the Grafana Deployment, by `envFrom` |
@@ -456,7 +456,7 @@ startup ceiling is 120 seconds rather than 600: the file is ~130 MB.
 ## What the Helpdesk reads
 
 These are the companion repo's published names: bare, unprefixed, one name per
-value. `helpdesk-config` carries these eight keys and the four Deployments take
+value. `helpdesk-config` carries these nine keys and the four Deployments take
 the whole object by `envFrom`. A name that drifts on either side leaves the pods
 starting on their localhost defaults rather than failing loudly, so a change to
 that repo's contract is a change here.
@@ -471,6 +471,7 @@ that repo's contract is a change here.
 | `AGENT_API_URL` | `http://helpdesk-agent-api.apps.svc.cluster.local:8000` | the web pod calls the agent API from its server side only, never from the browser |
 | `WEB_ORIGIN` | `https://helpdesk.example.com` | the public origin, the host of Ingress `helpdesk`; scheme and host only, no trailing slash |
 | `SESSION_COOKIE_SECURE` | `"true"` | the web pod's session cookie is sent over HTTPS only |
+| `POLICY_DIR` | `/srv/policies` | the corpus root the MCP server walks; its image carries no corpus and expects a read-only mount here |
 
 Every in-cluster host is fully qualified because these pods are in `apps` and
 two of the services are in `platform`, where a bare `redis` resolves to nothing.
