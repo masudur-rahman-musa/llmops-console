@@ -110,6 +110,33 @@ data:
   # gateway, and a shared name collapses four processes into one service in the
   # viewer - a failure no trace test would catch.
 ---
+# The policy corpus the MCP server retrieves from, walked as
+# `{tenant}/{version}/{file}`. It is a CLAIM and not a ConfigMap for two reasons:
+# the corpus is the companion repo's data and belongs in neither this repo's git
+# history nor its manifests, and a ConfigMap caps at 1Mi, which a real corpus
+# outgrows without warning.
+#
+# Nothing here populates it. The owner loads the corpus once, then re-runs the
+# companion repo's ingest against the same mount, so the volume and the vector
+# store agree; `../README.md` carries the two commands. An empty claim is the
+# honest failure: retrieval returns nothing, rather than the MCP server answering
+# from a corpus nobody chose.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: helpdesk-policies
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: helpdesk
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 256Mi
+  # `storageClassName` is deliberately absent, the same reason `llama.yaml`'s
+  # claim omits it: k3s defaults to `local-path` and EKS to `gp2`, so one build
+  # deploys to both without leaving a Pending claim on a class that is not there.
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -219,6 +246,15 @@ spec:
           env:
             - name: OTEL_SERVICE_NAME
               value: helpdesk-mcp-server
+          # Read-only, and only here: `POLICY_DIR` is read by this workload and
+          # by the ingest, and a corpus a tool process can WRITE is a corpus that
+          # decides access and can be edited by whatever compromises that
+          # process. The path is `helpdesk-config`'s `POLICY_DIR` value; the test
+          # reads it off the built ConfigMap rather than repeating it.
+          volumeMounts:
+            - name: policies
+              mountPath: /srv/policies
+              readOnly: true
           readinessProbe:
             httpGet:
               path: /readyz
@@ -239,6 +275,10 @@ spec:
               cpu: 75m
             limits:
               memory: 256Mi
+      volumes:
+        - name: policies
+          persistentVolumeClaim:
+            claimName: helpdesk-policies
 ---
 apiVersion: v1
 kind: Service

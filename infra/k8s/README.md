@@ -488,6 +488,41 @@ per-container `env` entry on each of the four, set to that workload's own name,
 because one trace carries spans from the Helpdesk and from the gateway and a
 shared service name would collapse five processes into one in the trace viewer.
 
+### Loading the policy corpus
+
+`POLICY_DIR` is a read-only mount, not a path inside the image: the MCP server
+ships with no corpus, so a compromised tool process cannot edit what decides
+access and the corpus is not pinned to a build. The claim
+`helpdesk-policies` (256Mi) is what the build creates; filling it is a human
+step, because the corpus is the companion repository's data and belongs in
+neither this repository's history nor its manifests.
+
+The MCP server's own mount is read-only, so the corpus cannot be copied through
+that pod. It goes in through a throwaway pod that mounts the same claim
+read-write, once, after the first apply, with the corpus laid out as
+`{tenant}/{version}/{file}`:
+
+```sh
+kubectl -n apps run policy-loader --image=busybox:1.37 --restart=Never \
+  --overrides='{"spec":{"containers":[{"name":"policy-loader","image":"busybox:1.37",
+  "command":["sleep","600"],"volumeMounts":[{"name":"policies","mountPath":"/mnt/policies"}]}],
+  "volumes":[{"name":"policies","persistentVolumeClaim":{"claimName":"helpdesk-policies"}}]}}'
+kubectl -n apps cp ./policies/. policy-loader:/mnt/policies
+kubectl -n apps delete pod policy-loader
+```
+
+The claim is `ReadWriteOnce`, which permits two pods on ONE node: on this
+single-node cluster the loader and the MCP server share it, and on a multi-node
+cluster the loader has to land on the MCP server's node or it stays Pending.
+
+Then re-run the companion repository's ingest against the same root, or the
+volume holds files the vector store has never seen and retrieval still returns
+nothing.
+
+An empty claim is the honest failure mode: the MCP server starts, retrieves zero
+chunks, and answers with no policy behind it rather than with a corpus nobody
+chose.
+
 The scheduler has no liveness signal and that is a decision, not an omission: it
 serves no port, so a health probe would have to be a command no code in this
 repo defines, and a liveness probe against a command that does not exist

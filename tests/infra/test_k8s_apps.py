@@ -105,6 +105,18 @@ HELPDESK_MCP_SERVER = "helpdesk-mcp-server"
 HELPDESK_SCHEDULER = "helpdesk-scheduler"
 HELPDESK_WEB = "helpdesk-web"
 HELPDESK_CONFIG_MAP = "helpdesk-config"
+
+#: The claim that carries the policy corpus, and what it asks of the cluster. Read-only in the
+#: one pod that mounts it: a corpus the tool process can write is a corpus whatever compromises
+#: that process can edit, and it is the corpus that decides access.
+HELPDESK_POLICIES_PVC = "helpdesk-policies"
+HELPDESK_POLICIES_PVC_STORAGE = "256Mi"
+HELPDESK_POLICIES_PVC_ACCESS_MODES = ["ReadWriteOnce"]
+
+#: The `helpdesk-config` key whose value is where that corpus must be mounted. The path itself
+#: is never written here: the mount is compared against the ConfigMap the pods actually read,
+#: so the two cannot drift into a server reading an empty directory.
+POLICY_DIR_KEY = "POLICY_DIR"
 HELPDESK_SECRET = "helpdesk-secrets"
 
 GATEWAY = "gateway"
@@ -151,6 +163,7 @@ HELPDESK_OBJECTS: frozenset[tuple[str, str, str]] = frozenset(
         ("Service", HELPDESK_AGENT_API, APPS),
         ("Service", HELPDESK_MCP_SERVER, APPS),
         ("Service", HELPDESK_WEB, APPS),
+        ("PersistentVolumeClaim", HELPDESK_POLICIES_PVC, APPS),
     }
 )
 
@@ -3151,6 +3164,56 @@ def test_no_old_helpdesk_env_name_or_image_path_survives(
         if pattern.search(line)
     ]
     assert hits == [], f"{len(hits)} lines still carry `{pattern.pattern}`:\n" + "\n".join(hits)
+
+
+def test_the_mcp_server_alone_mounts_the_policy_corpus_read_only_where_policy_dir_points(
+    built: list[dict[str, Any]],
+) -> None:
+    """The corpus `POLICY_DIR` names is a real volume, mounted read-only, on the one workload
+    that retrieves from it. The mount path is read off the built `helpdesk-config` rather than
+    written here, so the failure this catches is the one that reports nothing: a `POLICY_DIR`
+    moved while the mount stayed, where the MCP server walks an empty directory, ingests zero
+    chunks and answers every question with no policy behind it. Catches the mount left writable,
+    which puts the corpus that decides access within reach of whatever compromises the tool
+    process, and catches the claim mounted into the agent-api, the scheduler or the web pod,
+    none of which reads it. The claim's own shape is asserted too: a `storageClassName` named
+    here is a Pending claim on any cluster whose default provisioner is called something
+    else."""
+    raw = sole_object(built, "ConfigMap", HELPDESK_CONFIG_MAP).get("data", {})
+    assert isinstance(raw, dict), f"{HELPDESK_CONFIG_MAP} carries no data mapping"
+    corpus_path = str(raw[POLICY_DIR_KEY])
+
+    claim = sole_object(built, "PersistentVolumeClaim", HELPDESK_POLICIES_PVC)
+    assert [str(mode) for mode in claim["spec"]["accessModes"]] == (
+        HELPDESK_POLICIES_PVC_ACCESS_MODES
+    ), f"{HELPDESK_POLICIES_PVC} declares {claim['spec']['accessModes']}"
+    assert str(claim["spec"]["resources"]["requests"]["storage"]) == (
+        HELPDESK_POLICIES_PVC_STORAGE
+    ), f"{HELPDESK_POLICIES_PVC} claims {claim['spec']['resources']['requests']['storage']}"
+    assert "storageClassName" not in claim["spec"], (
+        f"{HELPDESK_POLICIES_PVC} names storage class {claim['spec']['storageClassName']!r}; the "
+        "cluster's default provisioner is what binds it"
+    )
+
+    owner = helpdesk_pod_owner(built, HELPDESK_MCP_SERVER)
+    mount = mount_at(sole_container(owner), corpus_path)
+    assert mount.get("readOnly") is True, f"{corpus_path} is mounted {mount}"
+    volume = volume_named(owner, str(mount["name"]))
+    assert volume.get("persistentVolumeClaim", {}).get("claimName") == HELPDESK_POLICIES_PVC, (
+        f"{corpus_path} is backed by {volume}"
+    )
+
+    others = sorted(
+        workload_name
+        for workload_name in HELPDESK_WORKLOADS
+        if workload_name != HELPDESK_MCP_SERVER
+        and any(
+            volume.get("persistentVolumeClaim", {}).get("claimName") == HELPDESK_POLICIES_PVC
+            for volume in pod_spec(helpdesk_pod_owner(built, workload_name)).get("volumes", [])
+            if isinstance(volume, dict)
+        )
+    )
+    assert others == [], f"{others} also mount {HELPDESK_POLICIES_PVC}, which none of them reads"
 
 
 def test_only_helpdesk_workloads_mount_the_helpdesk_sources(built: list[dict[str, Any]]) -> None:
