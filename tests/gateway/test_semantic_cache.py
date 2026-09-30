@@ -189,6 +189,19 @@ TOOLS: tuple[dict[str, Any], ...] = (
     },
 )
 
+SCHEMA: dict[str, Any] = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "city",
+        # The wire key is `schema`; `WireResponseFormat`'s nested model field is
+        # `json_schema`, aliased to it, so a body must say `schema` here.
+        "schema": {"type": "object", "properties": {"city": {"type": "string"}}},
+    },
+}
+"""One named response schema in its wire shape, the value `response_format` takes.
+Sent with no `tool_choice`, which `ChatCompletionRequest._supported` refuses beside
+a `response_format` whatever its value."""
+
 EMBED_FAILURE_TEXT = "local: the embedder answered 503 for request req_zqx_13c"
 STORE_FAILURE_TEXT = "Error 111 connecting to qdrant:6333. Connection refused."
 """Markers, so a route that let either failure escape shows an internal host, a
@@ -695,6 +708,7 @@ ELIGIBILITY_ROWS: list[tuple[str, dict[str, Any], int]] = [
     ("a streamed request", {"stream": True}, 0),
     ("live tools", {"tools": list(TOOLS), "tool_choice": "auto"}, 0),
     ("tools offered with tool_choice none", {"tools": list(TOOLS), "tool_choice": "none"}, 1),
+    ("a named response schema", {"response_format": SCHEMA}, 0),
 ]
 
 
@@ -725,6 +739,27 @@ def test_only_an_eligible_request_embeds_anything(
     assert response.status_code == 200, response.text
     assert cache_header_of(response) != CACHE_STATUS_SEMANTIC
     assert embed_stub.call_count == embeddings
+
+
+def test_a_schema_request_is_never_stored_in_the_semantic_tier(
+    semantic_client: TestClient, chat_stub: ChatStub
+) -> None:
+    """Catches a schema refusal that gates the LOOKUP only and leaves the write, which the
+    two table rows above cannot see: they watch a schema request spend nothing and emit no
+    span, and both pass while its answer is still written to the tier. Here the schema
+    request goes first and the SAME question follows with no `response_format` at all, so
+    the second request is fully eligible and would be served the schema request's answer -
+    an answer shaped by a schema it never asked for. Two chat calls is the assertion that
+    says nothing was stored; `miss` on the second alone would also be true of a tier that
+    stored the entry under filters it cannot query back."""
+    schema_request = send(semantic_client, QUESTION, response_format=SCHEMA)
+    plain_request = send(semantic_client, QUESTION)
+
+    assert content_of(schema_request) == CHAT_ANSWER
+    assert content_of(plain_request) == CHAT_ANSWER
+    assert cache_header_of(schema_request) == CACHE_STATUS_MISS
+    assert cache_header_of(plain_request) == CACHE_STATUS_MISS
+    assert chat_stub.call_count == 2
 
 
 def test_an_exact_hit_returns_before_anything_is_embedded(
@@ -990,6 +1025,7 @@ INELIGIBLE_SPAN_ROWS: list[tuple[str, dict[str, Any]]] = [
     ("the alias flag off", {"model": OFF_ALIAS}),
     ("a streamed request", {"stream": True}),
     ("live tools", {"tools": list(TOOLS), "tool_choice": "auto"}),
+    ("a named response schema", {"response_format": SCHEMA}),
 ]
 
 

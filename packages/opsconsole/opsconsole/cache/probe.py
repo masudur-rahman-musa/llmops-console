@@ -25,11 +25,12 @@ answer (`test_a_system_prompt_changes_the_system_hash_and_not_the_probe_text`,
 for an absent field, because absent is what almost every request carries
 (`test_the_tools_hash_is_defined_for_every_shape_of_tools_field`).
 
-**Eligibility is three independent refusals.** The alias has to opt in (#23's
-"off by default per alias"), the request must not be streamed, and tools must not
-be live. It is deliberately NOT `is_cacheable`: this tier does not ask for
-`temperature == 0`, because approximate reuse is what the alias flag opts into
-(`test_the_semantic_eligibility_decision_table`, fourteen rows).
+**Eligibility is four independent refusals.** The alias has to opt in (#23's
+"off by default per alias"), the request must not name a response schema, it must
+not be streamed, and tools must not be live. It is deliberately NOT
+`is_cacheable`: this tier does not ask for `temperature == 0`, because approximate
+reuse is what the alias flag opts into
+(`test_the_semantic_eligibility_decision_table`, sixteen rows).
 """
 
 from __future__ import annotations
@@ -121,12 +122,20 @@ def semantic_eligible(body: ChatCompletionRequest, *, alias: Alias) -> bool:
     switch silently, and every request would go on being served correctly, so
     nothing but a header or a metric would ever notice.
 
-    Three refusals, each independent, and each row of
-    `test_the_semantic_eligibility_decision_table` leaves the other two satisfied
+    Four refusals, each independent, and each row of
+    `test_the_semantic_eligibility_decision_table` leaves the other three satisfied
     so that only its own control can decide it:
 
     * the resolved alias must carry `semantic_cache: true` (#23's "off by default
       per alias"; `Alias.semantic_cache` defaults to `False`);
+    * a request naming a `response_format` is never eligible, because cosine
+      distance over one user message cannot vouch that a 0.97 neighbour's answer
+      satisfies a schema the neighbour never saw (a design note; the refusal is here
+      rather than in the route so it gates the WRITE as well, which
+      `tests/gateway/test_semantic_cache.py`'s
+      `test_a_schema_request_is_never_stored_in_the_semantic_tier` is what pins,
+      and the isolating case is
+      `test_the_response_format_alone_decides_an_otherwise_eligible_request`);
     * a streamed request is never eligible, exactly as the exact tier refuses one
       (13a decision G) - a response cache stores an answer, not frames;
     * tools with anything but `tool_choice: none` are not eligible, ABSENT choice
@@ -138,6 +147,8 @@ def semantic_eligible(body: ChatCompletionRequest, *, alias: Alias) -> bool:
     than a promise about determinism (the table's two temperature rows).
     """
     if not alias.semantic_cache:
+        return False
+    if body.response_format is not None:
         return False
     if body.stream:
         return False

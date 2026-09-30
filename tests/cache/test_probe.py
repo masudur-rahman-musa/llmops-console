@@ -15,9 +15,13 @@ outcome:
   decision C). The pairing case is the one that separates them: two requests with
   the same final question and a different system prompt share a probe text and
   must NOT share a system hash.
-* ELIGIBILITY is three independent refusals. Each row leaves the other two
-  controls satisfied, so the row for the stream reddens only when the stream
-  check is gone and never because the tool check happened to catch it.
+* ELIGIBILITY is four independent refusals: the alias must opt in, the request
+  must not be streamed, tools must not be live, and the request must not name a
+  response schema. Each row leaves the other three controls satisfied, so the
+  row for the stream reddens only when the stream check is gone and never
+  because the tool check happened to catch it. The schema refusal is pinned by
+  the "a named response schema" row and by
+  `test_the_response_format_alone_decides_an_otherwise_eligible_request`.
 
 Contract this file assumes (the implementation follows it):
 
@@ -87,6 +91,17 @@ OTHER_TOOLS: list[dict[str, Any]] = [
 ]
 
 NAMED_TOOL_CHOICE: dict[str, Any] = {"type": "function", "function": {"name": "get_weather"}}
+
+SCHEMA: dict[str, Any] = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "city",
+        # The wire key is `schema`; `WireResponseFormat`'s nested model field is
+        # `json_schema`, aliased to it, so a body must say `schema` here.
+        "schema": {"type": "object", "properties": {"city": {"type": "string"}}},
+    },
+}
+"""One named response schema in its wire shape, the value `response_format` takes."""
 
 
 def wire_body(**overrides: object) -> ChatCompletionRequest:
@@ -303,7 +318,7 @@ def test_two_different_tool_lists_hash_differently() -> None:
 
 
 # --------------------------------------------------------------------------
-# eligibility: three independent refusals
+# eligibility: four independent refusals
 # --------------------------------------------------------------------------
 
 ELIGIBILITY_ROWS: list[tuple[str, bool, dict[str, Any], bool]] = [
@@ -351,6 +366,18 @@ ELIGIBILITY_ROWS: list[tuple[str, bool, dict[str, Any], bool]] = [
     ("the alias flag on, an empty tools list", True, {"tools": []}, True),
     ("the alias flag on, a non-zero temperature", True, {"temperature": 1.0}, True),
     ("the alias flag on, no temperature at all", True, {}, True),
+    (
+        "the alias flag on, a named response schema",
+        True,
+        {"response_format": SCHEMA},
+        False,
+    ),
+    (
+        "the alias flag on, tools with no tool_choice and a named response schema",
+        True,
+        {"tools": TOOLS, "response_format": SCHEMA},
+        False,
+    ),
 ]
 
 
@@ -362,7 +389,7 @@ ELIGIBILITY_ROWS: list[tuple[str, bool, dict[str, Any], bool]] = [
 def test_the_semantic_eligibility_decision_table(
     case: str, semantic_cache: bool, overrides: dict[str, Any], expected: bool
 ) -> None:
-    """Catches each of the four wrong predicates this rule invites, one row group each.
+    """Catches each of the five wrong predicates this rule invites, one row group each.
 
     A predicate that never reads the alias takes the two `flag off` rows, and #23's "off by
     default per alias" would be a comment. One that forgot `stream` takes the streamed row,
@@ -371,7 +398,12 @@ def test_the_semantic_eligibility_decision_table(
     `tool_choice` alone takes the row with tools and no choice at all (the design's design
     note, the same rule 13a decision H applied to the exact tier). And one that reused
     `is_cacheable` wholesale takes the two temperature rows: this tier is not the exact
-    tier, so a hot request whose alias opts in is a semantic candidate."""
+    tier, so a hot request whose alias opts in is a semantic candidate. And one that never
+    reads `response_format` takes the bare schema row, where no tool and no stream is in
+    the way, so a caller owed JSON of its own shape would be handed a neighbour's prose;
+    the row that also offers tools is here because that body is LEGAL on the wire -
+    `_supported` forbids only `tool_choice` beside a `response_format` - and it carries two
+    refusals at once, which is why it is not the isolating case."""
     body = wire_body(**overrides)
 
     assert semantic_eligible(body, alias=alias_with(semantic_cache=semantic_cache)) is expected
@@ -387,3 +419,18 @@ def test_the_alias_flag_alone_decides_an_otherwise_eligible_request() -> None:
 
     assert semantic_eligible(body, alias=alias_with(semantic_cache=True)) is True
     assert semantic_eligible(body, alias=alias_with(semantic_cache=False)) is False
+
+
+def test_the_response_format_alone_decides_an_otherwise_eligible_request() -> None:
+    """Catches the absence of the statement this case protects: `if body.response_format is
+    not None: return False` in `semantic_eligible`, and any version of it folded into
+    another control - a schema refused only alongside tools, or only on a streamed body.
+    Two bodies, one alias flag, ON both times: nothing but `response_format` differs, so
+    removing that clause is the only thing that flips the second answer. The table's other
+    schema row cannot say this, because it offers tools as well and the tools refusal
+    decides it either way."""
+    without = wire_body()
+    with_schema = wire_body(response_format=SCHEMA)
+
+    assert semantic_eligible(without, alias=alias_with(semantic_cache=True)) is True
+    assert semantic_eligible(with_schema, alias=alias_with(semantic_cache=True)) is False

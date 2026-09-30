@@ -1861,9 +1861,13 @@ def create_chat_completion(
     stored entry are in one vocabulary
     (`test_the_embedded_probe_is_the_redacted_text_and_not_the_raw_one`). It is
     eligible only when the resolved alias carries `semantic_cache: true` and the
-    request is neither streamed nor carrying live tools, so an exact hit returns
-    before anything is embedded and an ineligible request embeds nothing at all
+    request names no response schema, is not streamed and carries no live tools -
+    FOUR refusals, all of them `semantic_eligible`'s, so the lookup and the write
+    read one rule. An exact hit therefore returns before anything is
+    embedded, an ineligible request embeds nothing at all, and a schema request is
+    not stored either
     (`test_only_an_eligible_request_embeds_anything`,
+    `test_a_schema_request_is_never_stored_in_the_semantic_tier`,
     `test_an_exact_hit_returns_before_anything_is_embedded`). ONE embedding per
     request, reused for the lookup and the write (decision H), and every failure
     in it is a miss served by an ordinary provider call (decision B).
