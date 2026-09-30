@@ -5,6 +5,18 @@
 # credentials are the LOCAL Postgres account, which exists only inside this
 # compose network and is created by the same variables that connect to it.
 #
+# The backing services publish SHIFTED host ports - Postgres on 15432, Redis on
+# 16379, Qdrant on 16333, llama.cpp on 18082 - while the container side keeps the
+# stock number every client in here dials by service name. The companion Helpdesk
+# repository's own stack publishes 5432, 6379, 6333 and 8082, and the two are meant
+# to run side by side: this stack is the gateway the Helpdesk calls, so a clash at
+# `up` would mean only ever having one of them. The gateway stays on 8080 because
+# that is the address the Helpdesk's `GATEWAY_URL` names.
+#
+# Anything on the host that dials these directly - `psql`, `redis-cli`, a gateway
+# run outside compose - uses the shifted port, which is what `.env.example`'s
+# `localhost` URLs carry.
+#
 # Every backing service declares a healthcheck, so `docker compose up -d --wait`
 # and the gateway's `depends_on` block until the service can actually answer -
 # a container that is running is not a service that is ready, which is the same
@@ -35,7 +47,7 @@ services:
   redis:
     image: redis:7
     command: ["redis-server", "--save", "", "--appendonly", "no"]
-    ports: ["6379:6379"]
+    ports: ["16379:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -51,7 +63,7 @@ services:
       POSTGRES_USER: opsconsole
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-opsconsole}
       POSTGRES_DB: opsconsole
-    ports: ["5432:5432"]
+    ports: ["15432:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U opsconsole -d opsconsole"]
@@ -71,7 +83,7 @@ services:
 
   qdrant:
     image: qdrant/qdrant:v1.12.4
-    ports: ["6333:6333"]
+    ports: ["16333:6333"]
     volumes: ["qdrantdata:/qdrant/storage"]
     healthcheck:
       # Qdrant's image carries no curl and no wget, so the check is its own
@@ -90,7 +102,7 @@ services:
     # developer and the cluster run the same server. `server` floats.
     image: ghcr.io/ggml-org/llama.cpp:server-b10902
     command: ["-m", "/models/${LLAMA_MODEL_FILE:-qwen2.5-3b-instruct-q4_k_m.gguf}", "--host", "0.0.0.0", "--port", "8082", "--ctx-size", "8192"]
-    ports: ["8082:8082"]
+    ports: ["18082:8082"]
     volumes: ["${MODELS_DIR:-./models}:/models:ro"]
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8082/health"]

@@ -17,8 +17,10 @@ by `make tradeoff`.
   `ai-operations-console-aws-gpu` in local execution mode, an AWS G-instance vCPU
   quota of at least 4 in `eu-central-1`, and `infra/terraform/aws-gpu/terraform.tfvars`
   filled in. The instance bills by the hour from the moment apply finishes.
-- Nothing else on the machine holding ports 8080, 6379, 5432, 9091, 6333, 8082,
-  8083 or 8090. The companion Helpdesk stack publishes four of them.
+- Nothing else on the machine holding ports 8080, 16379, 15432, 9091, 16333,
+  18082, 8083 or 8090. The four shifted ones are shifted precisely so the
+  companion Helpdesk stack, which publishes 6379, 5432, 6333 and 8082, can run at
+  the same time.
 
 ## The four runs, in order
 

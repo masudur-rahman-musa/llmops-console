@@ -99,8 +99,15 @@ CAPTURES = (
 )
 
 #: The host ports `docker-compose.yml` publishes today (criterion 34, a project rule and 59).
-#: Asserted against the file as well, so this list cannot silently go stale.
-BASE_HOST_PORTS = frozenset({8080, 6379, 5432, 9091, 6333, 8082, 8083})
+#: Asserted against the file as well, so this list cannot silently go stale. The backing
+#: services sit on shifted numbers - 15432, 16379, 16333, 18082 - so this stack and the
+#: companion Helpdesk stack can be up together; only the gateway's 8080 is stock, because that
+#: is the address the Helpdesk dials.
+BASE_HOST_PORTS = frozenset({8080, 16379, 15432, 9091, 16333, 18082, 8083})
+
+#: What the companion Helpdesk repository's own compose publishes. This stack may not hold any
+#: of them: one of the two would then fail at `up`, which is the whole reason for the shift.
+HELPDESK_STACK_HOST_PORTS = frozenset({5432, 6379, 6333, 8082, 8000, 8081, 3000})
 
 #: The stub's own port, its `PORT` default, and the only host port the overlay may add.
 STUB_PORT = 8090
@@ -877,13 +884,21 @@ def test_the_overlay_publishes_no_port_the_base_stack_already_publishes() -> Non
     """Criterion 34 and a project rule. Catches the stub published on 8080, which the gateway
     already holds - compose then refuses to start the whole harness and the run is lost at `up`.
     The base file's own port set is asserted against the literal list too, so this case cannot go
-    stale by reading a file that changed underneath it."""
+    stale by reading a file that changed underneath it. It also refuses any port the companion
+    Helpdesk stack publishes: the two stacks are meant to run at once, this one being the
+    gateway the other calls, so a shared host port means only ever having one of them."""
     base = host_ports(BASE_COMPOSE)
     overlay = host_ports(COMPOSE_OVERLAY)
 
     assert base == set(BASE_HOST_PORTS), f"docker-compose.yml now publishes {sorted(base)}"
     assert overlay & base == set(), f"the overlay reuses {sorted(overlay & base)}"
     assert overlay <= {STUB_PORT}, f"the overlay publishes {sorted(overlay)}"
+
+    clashing = sorted((base | overlay) & set(HELPDESK_STACK_HOST_PORTS))
+    assert clashing == [], (
+        f"this stack publishes {clashing}, which the companion Helpdesk stack also publishes; "
+        "whichever comes up second fails at `up`"
+    )
 
 
 # ---------------------------------------------------------------------------------------------
