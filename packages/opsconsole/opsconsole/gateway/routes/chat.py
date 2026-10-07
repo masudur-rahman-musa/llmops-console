@@ -152,7 +152,7 @@ from opsconsole.redaction import (
     rehydrate,
 )
 from opsconsole.routing.errors import AllProvidersUnavailable, IdentifierInvalid
-from opsconsole.routing.policy import DataClass, Policy, PolicyStore
+from opsconsole.routing.policy import DataClass, Policy, PolicyStore, ResidencyMode
 from opsconsole.routing.resolver import Resolved, resolve
 
 COMPLETION_ID_PREFIX = "chatcmpl-"
@@ -1616,6 +1616,7 @@ def embedded_probe(
     breaker: CircuitBreaker,
     tenant: str,
     data_class: DataClass,
+    mode: ResidencyMode,
 ) -> tuple[float, ...] | None:
     """The probe text as a vector, or `None` - for any reason at all (#23).
 
@@ -1670,6 +1671,7 @@ def embedded_probe(
                 breaker,
                 lambda provider: isinstance(adapters.get(provider), EmbeddingAdapter),
             ),
+            mode=mode,
         )
     except Exception:
         return None
@@ -1891,6 +1893,7 @@ def create_chat_completion(
 
     cache: ResponseCache = request.app.state.response_cache
     semantic_cache: SemanticCache = request.app.state.semantic_cache
+    mode: ResidencyMode = request.app.state.settings.residency_mode
 
     allowed = allowed_by_header(request.headers.get(CACHE_HEADER))
     mapping = requested_mapping(
@@ -1906,6 +1909,7 @@ def create_chat_completion(
             body.model,
             context.data_class.value,
             is_healthy=health_seam(breaker, lambda provider: provider in adapters),
+            mode=mode,
         )
     label_candidate(scope, body.model, candidates[0])
 
@@ -1943,6 +1947,7 @@ def create_chat_completion(
                 breaker=breaker,
                 tenant=context.tenant,
                 data_class=context.data_class,
+                mode=mode,
             )
             near = semantic_answer(
                 semantic_cache,

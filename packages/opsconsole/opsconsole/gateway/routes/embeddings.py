@@ -90,7 +90,7 @@ from opsconsole.limits.budget import BUDGET_OVERRIDE_HEADER
 from opsconsole.providers.base import Adapter, EmbeddingAdapter, EmbeddingRequest, Usage
 from opsconsole.providers.breaker import CircuitBreaker
 from opsconsole.routing.errors import AllProvidersUnavailable
-from opsconsole.routing.policy import PolicyStore
+from opsconsole.routing.policy import PolicyStore, ResidencyMode
 from opsconsole.routing.resolver import resolve
 
 EMBEDDINGS = "/v1/embeddings"
@@ -313,6 +313,7 @@ def create_embeddings(
     store: PolicyStore = request.app.state.policy
     adapters: Mapping[str, Adapter] = request.app.state.adapters
     breaker: CircuitBreaker = request.app.state.breaker
+    mode: ResidencyMode = request.app.state.settings.residency_mode
     scope = request.scope
 
     with stage_span(scope, ROUTE_SPAN):
@@ -325,6 +326,7 @@ def create_embeddings(
                 breaker,
                 lambda provider: isinstance(adapters.get(provider), EmbeddingAdapter),
             ),
+            mode=mode,
         )
     label_candidate(scope, body.model, candidates[0])
 

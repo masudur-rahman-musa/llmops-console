@@ -6,6 +6,8 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from opsconsole.routing.policy import ResidencyMode
+
 DEFAULT_ROUTING_POLICY_PATH = Path(__file__).resolve().parents[4] / "routing.yaml"
 """The shipped `routing.yaml`, found from this file rather than from the working
 directory. A deployment that does not carry the repository layout - the container
@@ -38,6 +40,25 @@ class Settings(BaseSettings):
     running gateway that authorises nobody."""
 
     routing_policy_path: Path = DEFAULT_ROUTING_POLICY_PATH
+
+    residency_mode: ResidencyMode = ResidencyMode.STRICT
+    """How strictly this process enforces residency: `strict` or `relaxed`.
+
+    `strict` is the default, so a deployment that sets nothing enforces residency
+    exactly as the product always has
+    (`test_the_residency_mode_defaults_to_strict`). `relaxed` is an opt-in local
+    demo mode that lets `resolve()` reach `resolver.RELAXED_REGIONS` for a data
+    class that has a rule and is not `pii`.
+
+    A closed enum rather than a string, so an unknown value is refused by
+    `Settings()` itself and the process never serves one request under a mode
+    nobody meant (`test_an_unknown_residency_mode_is_refused_at_construction`,
+    `test_create_app_refuses_an_unknown_residency_mode`). `create_app` logs one
+    WARNING when it is relaxed and `/readyz` reports it, because a relaxed
+    process that looks strict from outside is the real hazard here
+    (`test_create_app_warns_once_under_relaxed_residency`,
+    `test_readyz_reports_a_relaxed_residency_mode`). Nothing under `infra/` sets
+    it, so the cluster is strict by omission."""
 
     prices_path: Path = DEFAULT_PRICES_PATH
     """Where the price table is read from.

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from opsconsole.core.settings import Settings
+from opsconsole.routing.policy import ResidencyMode
 
 ENV_CASES: list[tuple[str, str | None, str]] = [
     ("unset falls back to the default", None, "local"),
@@ -66,3 +68,56 @@ def test_a_backing_service_url_is_absent_until_the_environment_sets_it(
     monkeypatch.setenv(variable, value)
 
     assert getattr(Settings(), field) == value
+
+
+# The residency mode. A closed enum, so an unknown value stops the
+# process at construction rather than turning into a routing decision nobody
+# chose. Stated here rather than in a routing test because the refusal belongs to
+# `Settings`, before any app exists.
+
+RESIDENCY_MODE_VARIABLE = "OPSCONSOLE_RESIDENCY_MODE"
+
+
+def test_the_residency_mode_defaults_to_strict(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Catches a field defaulting to relaxed, and one with no default at all: every
+    deployment that sets nothing - the cluster, CI, a bare `uvicorn` - must enforce
+    residency exactly as it did before this field existed."""
+    monkeypatch.delenv(RESIDENCY_MODE_VARIABLE, raising=False)
+
+    assert Settings().residency_mode is ResidencyMode.STRICT
+
+
+def test_the_residency_mode_accepts_relaxed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Catches a field typed `str`, which would carry `"relaxed"` through to a resolver
+    comparing it against an enum member and silently never matching - a relaxed run that
+    behaves strictly, with the startup warning and the `/readyz` field saying otherwise."""
+    monkeypatch.setenv(RESIDENCY_MODE_VARIABLE, "relaxed")
+
+    mode = Settings().residency_mode
+
+    assert mode is ResidencyMode.RELAXED
+    assert mode == "relaxed"
+
+
+# `loose` is a plausible typo for the real value; the empty string is the row the
+# other settings' "presence decides an override, not truthiness" rule produces,
+# and a field that fell back to the default for it would make
+# `OPSCONSOLE_RESIDENCY_MODE=` look like a deliberate strict run.
+UNKNOWN_MODES: list[tuple[str, str]] = [
+    ("a plausible typo", "loose"),
+    ("the empty string", ""),
+]
+
+
+@pytest.mark.parametrize(("case", "value"), UNKNOWN_MODES, ids=[c[0] for c in UNKNOWN_MODES])
+def test_an_unknown_residency_mode_is_refused_at_construction(
+    case: str, value: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Catches a field that coerces an unknown value to a default: the two values differ by
+    whether personal data may leave the box, so the only safe answer to a value nobody
+    recognises is to refuse to start. The message must name the field, or an operator reads
+    a stack trace with no clue which variable they mistyped."""
+    monkeypatch.setenv(RESIDENCY_MODE_VARIABLE, value)
+
+    with pytest.raises(ValidationError, match="residency_mode"):
+        Settings()

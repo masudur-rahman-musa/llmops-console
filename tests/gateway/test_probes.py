@@ -597,7 +597,12 @@ def test_a_refused_redis_makes_readyz_503_naming_every_probe(
     response = refused_redis_client.get("/readyz")
 
     assert response.status_code == 503
-    assert response.json() == {"checks": {REDIS_PROBE: False, PROVIDER_PROBE: True}}
+    assert response.json() == {
+        "checks": {REDIS_PROBE: False, PROVIDER_PROBE: True},
+        # An earlier change: readiness now reports the residency mode beside the probes, and
+        # this assertion compares the body WHOLE, so the key belongs here too.
+        "residency_mode": "strict",
+    }
 
 
 def test_a_refused_redis_leaves_liveness_and_completions_alone(

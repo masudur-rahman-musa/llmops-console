@@ -17,6 +17,13 @@ The body names every probe that RAN, which is the half of the contract an empty
 registry makes visible: `{"checks": {}}` is a readiness that checked nothing, and
 an operator can see that rather than having to infer it from a green 200
 (`test_a_refused_redis_makes_readyz_503_naming_every_probe`).
+
+Beside `checks` it carries `residency_mode`, so a process running the opt-in
+relaxed mode cannot be mistaken for a strict one by anything that reads the
+endpoint. A top-level key rather than another entry in
+`checks`, because `checks` means "a probe ran and this is its verdict" and
+readiness is `all(checks.values())` - a string filed in there would read as a
+passing probe (`test_readyz_reports_the_residency_mode`).
 """
 
 from __future__ import annotations
@@ -26,6 +33,8 @@ from collections.abc import Callable, Iterator
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
+
+from opsconsole.routing.policy import ResidencyMode
 
 logger = logging.getLogger(__name__)
 
@@ -79,12 +88,17 @@ def readyz(request: Request) -> Response:
     """Readiness: 200 when every registered probe passes, 503 naming the failures.
 
     An empty registry is ready. Pinned by `test_readyz_ok_when_all_probes_pass`
-    and `test_readyz_503_when_a_probe_fails`.
+    and `test_readyz_503_when_a_probe_fails`. The body also states this process's
+    `residency_mode`, which is settings and not a probe, so it never affects the
+    status (`test_readyz_reports_the_residency_mode`).
     """
     registry: ProbeRegistry = request.app.state.probes
+    mode: ResidencyMode = request.app.state.settings.residency_mode
     checks = {name: _run(probe) for name, probe in registry}
     ready = all(checks.values())
     return JSONResponse(
         status_code=READY_STATUS if ready else NOT_READY_STATUS,
-        content={"checks": checks},
+        # The mode is reported at both statuses: a relaxed process that is also
+        # unready is exactly the one nobody should mistake for strict.
+        content={"checks": checks, "residency_mode": mode.value},
     )

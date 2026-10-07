@@ -27,7 +27,7 @@ from pydantic import BaseModel, ConfigDict
 
 from opsconsole.gateway.context import Context
 from opsconsole.routing.errors import AliasUnknown, ResidencyUnavailable
-from opsconsole.routing.policy import PolicyStore
+from opsconsole.routing.policy import PolicyStore, ResidencyMode
 from opsconsole.routing.resolver import resolve
 
 OWNER = "opsconsole"
@@ -62,10 +62,11 @@ def list_models(request: Request, context: Context) -> ModelList:
     """List the aliases that resolve for this tenant and data class, in policy order."""
     store: PolicyStore = request.app.state.policy
     policy = store.policy
+    mode: ResidencyMode = request.app.state.settings.residency_mode
     listed: list[Model] = []
     for alias in policy.aliases:
         try:
-            resolve(policy, context.tenant, alias, context.data_class.value)
+            resolve(policy, context.tenant, alias, context.data_class.value, mode=mode)
         except (ResidencyUnavailable, AliasUnknown):
             continue
         listed.append(Model(id=alias))

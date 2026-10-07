@@ -45,6 +45,7 @@ from .conftest import (
     EU_TENANT,
     FALLBACK_ALIAS,
     FALLBACK_CANDIDATES,
+    FALLBACK_RESOLUTION,
     FALLBACK_CLASS,
     FALLBACK_TENANT,
     FIRST_PROVIDER,
@@ -128,12 +129,17 @@ def completion_text(response: Response) -> str:
 # --------------------------------------------------------------------------
 
 
-def test_the_fallback_alias_resolves_to_the_two_expected_candidates() -> None:
+def test_the_fallback_alias_resolves_to_the_expected_candidates() -> None:
     """Catches a policy edit that leaves this file testing one provider twice, or testing
     them in the other order: every case here reads "the FIRST candidate failed and the
     SECOND served", and if `routing.yaml` no longer answers that pair in that order the
     cases would keep passing while asserting something else. Read from `resolve()` rather
-    than from the file, because the tuple the route walks is the resolver's answer."""
+    than from the file, because the tuple the route walks is the resolver's answer.
+
+    The resolver answers THREE candidates since an earlier change appended `openai` to
+    `agent-default`, and only the first two carry a stub, so the prefix relation is
+    asserted here too: a policy edit that put the unstubbed third candidate anywhere but
+    last would leave the cases below falling back to a provider that cannot answer."""
     candidates = resolve(
         load_policy(SHIPPED_POLICY_PATH),
         FALLBACK_TENANT,
@@ -141,7 +147,8 @@ def test_the_fallback_alias_resolves_to_the_two_expected_candidates() -> None:
         DataClass(FALLBACK_CLASS).value,
     )
 
-    assert tuple(item.provider for item in candidates) == FALLBACK_CANDIDATES
+    assert tuple(item.provider for item in candidates) == FALLBACK_RESOLUTION
+    assert FALLBACK_RESOLUTION[: len(FALLBACK_CANDIDATES)] == FALLBACK_CANDIDATES
 
 
 # --------------------------------------------------------------------------

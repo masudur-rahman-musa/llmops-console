@@ -11,6 +11,7 @@ route module, so that would be a cycle).
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from collections.abc import AsyncIterator, Mapping
@@ -90,7 +91,8 @@ from opsconsole.redaction import (
     RedisDirectoryStore,
     RedisRedactionMapStore,
 )
-from opsconsole.routing.policy import PolicyStore
+from opsconsole.routing.policy import PolicyStore, ResidencyMode
+from opsconsole.routing.resolver import RELAXED_REGIONS
 
 
 def build_qdrant_data_client(base_url: str) -> httpx.Client:
@@ -108,6 +110,22 @@ def build_qdrant_data_client(base_url: str) -> httpx.Client:
     (`test_the_semantic_cache_client_bounds_every_phase_of_the_call`).
     """
     return httpx.Client(base_url=base_url, timeout=httpx.Timeout(PROBE_TIMEOUT_SECONDS))
+
+
+logger = logging.getLogger(__name__)
+
+RELAXED_RESIDENCY_WARNING = (
+    "residency_mode is relaxed: this process allows %s for every data class "
+    "except pii. Never run a tenant's real traffic through it."
+)
+"""The one line that stops a relaxed process passing for a strict one.
+
+Logged exactly once, by `create_app`, and never per request: the mode is read at
+startup and cannot change, so a per-resolution warning would be five records per
+request and would bury itself (`test_create_app_warns_once_under_relaxed_residency`).
+`/readyz` carries the same fact for anything that reads machines rather than logs
+(`test_readyz_reports_a_relaxed_residency_mode`).
+"""
 
 
 @asynccontextmanager
@@ -344,8 +362,19 @@ def create_app(
     registers close over the adapter mapping and the settings built above; what it
     registers is decided by which backing services are configured
     (`test_create_app_registers_the_probes_its_settings_configure`).
+
+    `OPSCONSOLE_RESIDENCY_MODE=relaxed` logs `RELAXED_RESIDENCY_WARNING` here, once
+    and before any state is built. An unknown value never gets
+    this far: `Settings()` above refuses it, so the process exits instead of
+    serving one request under a mode nobody chose
+    (`test_create_app_warns_once_under_relaxed_residency`,
+    `test_create_app_logs_no_residency_warning_under_strict`,
+    `test_create_app_refuses_an_unknown_residency_mode`).
     """
     resolved = settings or Settings()
+    if resolved.residency_mode is ResidencyMode.RELAXED:
+        # Before anything is built, so the line precedes any startup noise.
+        logger.warning(RELAXED_RESIDENCY_WARNING, ", ".join(RELAXED_REGIONS))
     app = FastAPI(title="AI Operations Console gateway", lifespan=lifespan)
     app.state.settings = resolved
     app.state.probes = ProbeRegistry()

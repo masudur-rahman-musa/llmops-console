@@ -6,7 +6,7 @@ fixtures, and the one that exists (the session-scoped Redis client in
 `tests/redaction/test_redis_store.py`) lives beside the cases that need it.
 
 The autouse fixture below is the suite's one piece of environment isolation, and
-it exists because three settings now read the environment and change what an app
+it exists because several settings read the environment and change what an app
 IS: with `OPSCONSOLE_REDIS_URL` exported, every `create_app` in the suite would
 file its redaction maps in Redis and register a `redis` readiness probe, so a
 developer with a local stack up would run a different suite from one without.
@@ -23,20 +23,28 @@ from fastapi.testclient import TestClient
 from opsconsole.gateway.app import create_app
 from opsconsole.gateway.health import ProbeRegistry
 
-BACKING_SERVICE_VARIABLES = (
+CLEARED_VARIABLES = (
     "OPSCONSOLE_REDIS_URL",
     "OPSCONSOLE_DATABASE_URL",
     "OPSCONSOLE_QDRANT_URL",
     "OPSCONSOLE_PROMETHEUS_URL",
+    "OPSCONSOLE_RESIDENCY_MODE",
 )
-"""The settings whose PRESENCE decides what `create_app` builds (an earlier change
-decisions B and C). Cleared for the whole session below. The Redis suite reads
+"""Every setting whose value in the developer's shell would change what the suite
+IS, cleared for the whole session below.
+
+The four URLs are the ones whose PRESENCE decides what `create_app` builds (plan
+09a decisions B and C). `OPSCONSOLE_RESIDENCY_MODE` joined them in an earlier change for the
+same reason and a sharper one: exported as `relaxed` it would widen the region set
+for every `resolve()` in the suite, so the residency cases would pass against a
+gateway enforcing something else. A case that wants a value states it with
+`monkeypatch.setenv` or passes it to `Settings` directly. The Redis suite reads
 `OPSCONSOLE_TEST_REDIS_URL` instead, which nothing in `Settings` looks at."""
 
 
 @pytest.fixture(scope="session", autouse=True)
 def _no_backing_service_environment() -> Iterator[None]:
-    """Run the whole suite as if no backing service were configured.
+    """Run the whole suite as if no backing service and no mode were configured.
 
     Session-scoped and autouse, so it covers apps built at module import and in
     other directories' fixtures too. A test that wants one of these set says so
@@ -45,7 +53,7 @@ def _no_backing_service_environment() -> Iterator[None]:
     those cases assert their own arrangement rather than the developer's shell.
     """
     with pytest.MonkeyPatch.context() as patched:
-        for variable in BACKING_SERVICE_VARIABLES:
+        for variable in CLEARED_VARIABLES:
             patched.delenv(variable, raising=False)
         yield
 

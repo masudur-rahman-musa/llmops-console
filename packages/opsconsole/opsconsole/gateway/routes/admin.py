@@ -91,7 +91,7 @@ from opsconsole.routing.errors import (
     PolicyInvalid,
     ResidencyUnavailable,
 )
-from opsconsole.routing.policy import DataClass, Policy, PolicyStore
+from opsconsole.routing.policy import DataClass, Policy, PolicyStore, ResidencyMode
 from opsconsole.routing.resolver import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH, resolve
 
 ADMIN_ROUTING = "/admin/routing"
@@ -214,13 +214,19 @@ class ReloadResult(BaseModel):
     providers: tuple[str, ...]
 
 
-def _tenant_view(policy: Policy, tenant: str) -> TenantView:
-    """Resolve every alias and data class for one tenant, in policy and enum order."""
+def _tenant_view(policy: Policy, tenant: str, mode: ResidencyMode) -> TenantView:
+    """Resolve every alias and data class for one tenant, in policy and enum order.
+
+    `mode` is the process's own `residency_mode`, so this view shows what the
+    gateway WOULD answer rather than what strict would: an operator reading it on
+    a relaxed process has to see the relaxed resolution, or the one surface that
+    explains routing disagrees with every route.
+    """
     entries: list[AliasView] = []
     for alias in policy.aliases:
         for data_class in DataClass:
             try:
-                resolved = resolve(policy, tenant, alias, data_class.value)
+                resolved = resolve(policy, tenant, alias, data_class.value, mode=mode)
             except (ResidencyUnavailable, AliasUnknown):
                 continue
             entries.append(
@@ -254,9 +260,10 @@ def routing_view(request: Request, tenant: Annotated[str | None, Query()] = None
 
     store: PolicyStore = request.app.state.policy
     policy = store.policy
+    mode: ResidencyMode = request.app.state.settings.residency_mode
     names = [tenant] if tenant is not None else list(policy.tenants)
     return RoutingView(
-        tenants=tuple(_tenant_view(policy, name) for name in names if name in policy.tenants)
+        tenants=tuple(_tenant_view(policy, name, mode) for name in names if name in policy.tenants)
     )
 
 

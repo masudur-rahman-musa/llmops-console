@@ -43,6 +43,26 @@ class Residency(StrEnum):
     ANY = "any"
 
 
+class ResidencyMode(StrEnum):
+    """How strictly the PROCESS enforces residency, as opposed to a tenant's regime.
+
+    `STRICT` is the shipped behaviour and the default everywhere: the resolver only
+    ever narrows, which is what makes the residency property a proof. `RELAXED` is
+    an opt-in local-demo mode that widens `resolve()`'s allowed region set by
+    `resolver.RELAXED_REGIONS` for a data class that has a rule and is not `PII`. It is a policy concept rather than a settings one, which is why it
+    lives beside `Residency` and `core.settings` imports it from here.
+
+    Read from `OPSCONSOLE_RESIDENCY_MODE` by `Settings.residency_mode`, where an
+    unknown value refuses construction
+    (`test_an_unknown_residency_mode_is_refused_at_construction`). The two members
+    are pinned by `test_the_residency_mode_defaults_to_strict` and
+    `test_the_residency_mode_accepts_relaxed`.
+    """
+
+    STRICT = "strict"
+    RELAXED = "relaxed"
+
+
 class ProviderKind(StrEnum):
     """Which adapter drives a provider. The adapters themselves arrive later."""
 

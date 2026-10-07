@@ -71,6 +71,12 @@ aliases:
       - { provider: anthropic, model: claude-haiku-4-5 }
       - { provider: anthropic_eu, model: claude-haiku-4-5 }
       - { provider: local, model: qwen2.5-3b-instruct }
+      # LAST on purpose. `openai` is region `us`, so an `eu` tenant's clamp
+      # removes it under the default strict mode and nothing about today's
+      # resolution changes; appending rather than inserting also leaves the first
+      # choice for `cuan` and `evals` exactly where it was. It is reachable only
+      # under `OPSCONSOLE_RESIDENCY_MODE=relaxed`.
+      - { provider: openai, model: gpt-4o }
   # Both strong aliases are US-only until `anthropic_eu` is enabled, so a tenant
   # with `residency: eu` gets a 451 for them rather than a weaker model under a
   # strong name. Widen this by enabling the EU provider, never by adding a
@@ -97,9 +103,15 @@ tenants:
       pii: { allow_regions: [self], redact: true }
     budget_usd_month: "15.00"
     rate_limit: { rpm: 60, tpm: 60000 }
-    # Everything this tenant sends stays on the box we run.
+    # Everything this tenant sends stays on the box we run - under the default
+    # strict mode, which is the only mode a deployment runs. The US candidate
+    # below is first so that a relaxed LOCAL DEMO reaches a model that extracts
+    # entities correctly; strict drops it in the clamp, leaves `local` as the one
+    # permitted candidate, and this tenant's traffic still never leaves the box
+    # (`test_nordlicht_confidential_stays_local_under_strict`, a design note).
     overrides:
       agent-default:
+        - { provider: openai, model: gpt-4o }
         - { provider: local, model: qwen2.5-3b-instruct }
   cuan:
     residency: eu

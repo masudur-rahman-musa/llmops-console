@@ -44,7 +44,9 @@ class ResidencyUnavailable(RoutingError):
     """No candidate is allowed to serve this request.
 
     Deny by default: this is what an empty candidate list becomes. The resolver
-    never widens the region set to avoid raising it.
+    never widens the region set to avoid raising it - `ResidencyMode.RELAXED`
+    widens by the configured mode alone, before any result exists to react to,
+    and never for `pii`.
     """
 
     code: ClassVar[ErrorCode] = ErrorCode.RESIDENCY_UNAVAILABLE

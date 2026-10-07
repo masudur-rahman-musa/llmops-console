@@ -861,11 +861,26 @@ SECOND_PROVIDER = "local"
 FIRST_REGION = "us"
 SECOND_REGION = "self"
 
+THIRD_PROVIDER = "openai"
+THIRD_REGION = "us"
+
+FALLBACK_RESOLUTION = (FIRST_PROVIDER, SECOND_PROVIDER, THIRD_PROVIDER)
+"""What `resolve()` answers for the triple above with no health seam, best first.
+
+Three since an earlier change appended an `openai` candidate to `agent-default`: `evals` is
+`residency: any` and its `internal` rule allows `us`, so the new candidate is
+permitted for THIS triple even under strict. Asserted against the resolver itself
+by `test_the_fallback_alias_resolves_to_the_expected_candidates`, so a policy edit
+that reorders it fails there."""
+
 FALLBACK_CANDIDATES = (FIRST_PROVIDER, SECOND_PROVIDER)
-"""What `resolve()` answers for the triple above, best first. Asserted against the
-resolver itself by `test_the_fallback_alias_resolves_to_the_two_expected_candidates`,
-so a policy edit that changed the order fails there rather than silently making
-every case in tests/gateway/test_fallback.py test one provider twice."""
+"""The prefix of `FALLBACK_RESOLUTION` that tests/gateway/test_fallback.py scripts.
+
+One stub adapter per member and no more, which is what keeps that file's cases at
+"the FIRST candidate failed and the SECOND served": the route's health seam is
+"an adapter exists for this provider", so `THIRD_PROVIDER` carries no stub, is
+never healthy and is never reached. The pinning test asserts both tuples and the
+prefix relation between them, so neither half can drift alone."""
 
 PROVIDER_MESSAGE_SENTINEL = "upstream req_zqx_10a quota exhausted"
 """The provider's own words on every scripted failure here. A client never sees
