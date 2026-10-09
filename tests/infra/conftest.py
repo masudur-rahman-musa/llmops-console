@@ -86,3 +86,36 @@ def built_gpu() -> list[dict[str, Any]]:
     ]
     assert documents, f"`kubectl kustomize {K8S_GPU}` emitted no objects"
     return documents
+
+
+#: the node overlay. It reaches into `base/`, `platform/` and `apps/` file by file, so
+#: its build needs `--load-restrictor=LoadRestrictionsNone`, and the root build never sees it.
+K8S_SERVER = K8S_ROOT / "server"
+
+
+@pytest.fixture(scope="session")
+def server_built() -> list[dict[str, Any]]:
+    """`kubectl kustomize --load-restrictor=LoadRestrictionsNone infra/k8s/server`, run ONCE.
+
+    The same body shape as `built`: skips only when `kubectl` is absent from `PATH`, and a
+    non-zero exit fails with kubectl's stderr, because a the server build that cannot run is the
+    failure `test_k8s_server.py` exists to report (a project rule: built once per session).
+    """
+    if shutil.which("kubectl") is None:
+        pytest.skip("kubectl is not on PATH; CI's `k8s` job is the copy that cannot skip")
+    completed = subprocess.run(
+        ["kubectl", "kustomize", "--load-restrictor=LoadRestrictionsNone", str(K8S_SERVER)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, (
+        f"`kubectl kustomize {K8S_SERVER}` exited {completed.returncode}:\n{completed.stderr}"
+    )
+    documents = [
+        document
+        for document in yaml.safe_load_all(completed.stdout)
+        if isinstance(document, dict) and document
+    ]
+    assert documents, f"`kubectl kustomize {K8S_SERVER}` emitted no objects"
+    return documents

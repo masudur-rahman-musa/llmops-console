@@ -1,4 +1,4 @@
-.PHONY: help setup run test select-tests test-adjacent lint typecheck format verify eval infra-check k8s-check k8s-aws-check k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate purge-residency refresh-rollup secrets-encrypt secrets-decrypt secrets-check load
+.PHONY: help setup run test select-tests test-adjacent lint typecheck format verify eval infra-check k8s-check k8s-aws-check k8s-server-check k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate purge-residency refresh-rollup secrets-encrypt secrets-decrypt secrets-check load
 
 # The console's checks run through pnpm, and are skipped only in a checkout that
 # has no services/console, so the intended gate stays visible in this file. The
@@ -135,6 +135,10 @@ k8s-check:  ## Build the kustomization and validate it against the schemas (no a
 # own directory, the kind llama patch among them.
 k8s-aws-check: ## Build the AWS evidence overlay and validate it (no apply)
 	kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/aws | kubeconform -strict -summary -schema-location default -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
+# the node's build, with the same kubeconform flags as
+# `k8s-aws-check`. Applied only from the owner's shell, so CI is its one check.
+k8s-server-check: ## Build the node overlay and validate it (no apply)
+	kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/server | kubeconform -strict -summary -schema-location default -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
 # The GPU measurement build, with the same kubeconform flags as `k8s-check`. It
 # is standalone (the root build does not include it), so nothing else checks it.
 k8s-gpu-check: ## Build the GPU measurement kustomization and validate it (no apply)

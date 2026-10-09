@@ -532,6 +532,76 @@ container that keeps RESTARTING; a scheduler that hangs without crashing trips
 no alert at all, since nothing here reads a liveness signal it does not have -
 still a gap, not one this row closes.
 
+## the node
+
+`server/` is a second build for the live node: one x86_64 k3s box with 4 GB
+that already runs Traefik, a shared cert-manager in its own namespace, and a
+live `letsencrypt-prod` issuer owned by another project. The root build above
+stays the Hetzner one. Build and validate it:
+
+```
+make k8s-server-check
+```
+
+It carries `base`, the platform data stores, the staging issuer, the
+middlewares, the backups and the gateway. Left out: llama, llama-embed, the
+console, `monitoring` and `evals`, which do not fit, and our own
+`letsencrypt-prod`, so the live one is never overwritten. The gateway runs one
+replica with no HPA and `OPSCONSOLE_RESIDENCY_MODE=relaxed`, and both API
+Ingresses answer on `api.example.com`.
+
+Limits are not oversubscribed here. `test_k8s_server.py` sums them from the
+built objects and compares them with these quotas.
+
+| namespace | requests.memory | requests.cpu | limits.memory | holds |
+|---|---|---|---|---|
+| `platform` | 640Mi | 800m | 1Gi | Postgres 384Mi, Qdrant 320Mi, Redis 128Mi, one backup job at 192Mi |
+| `apps` | 832Mi | 450m | 1536Mi | the gateway 384Mi, the Helpdesk's four workloads 1152Mi |
+| `evals` | 0 | 0 | 0 | nothing on this node |
+| `monitoring` | 0 | 0 | 0 | nothing on this node |
+| **total** | **1472Mi** | **1250m** | **2560Mi** | |
+
+The two backup jobs run at 03:00 and 04:00, so the quota pays for one at a
+time. Redis is capped at 96mb and evicts only keys with a TTL, so the budget
+and rate-limit counters stay.
+
+The Helpdesk repo deploys onto the same node and depends on what this build
+ships: Postgres, Redis and Qdrant in `platform`, the gateway,
+`traefik-basic-auth`, and the `server` overlay itself. Renaming any of those
+means checking that repo first. Its deploy, row 30cb, waits until this build is
+live; that row adds the Helpdesk workloads here and removes the two Helpdesk
+Ingress deletes.
+
+The owner's commands, in order. Nothing here is run by CI.
+
+```
+# Open a tunnel to the node's API server; leave it running.
+ssh -N -L 6443:127.0.0.1:6443 server
+# Point kubectl at the node.
+export KUBECONFIG=~/.kube/server.yaml
+# Check the live prod issuer exists; this build relies on it and does not ship one.
+kubectl get clusterissuer letsencrypt-prod
+# Create the four namespaces, so the secrets have somewhere to land.
+kubectl apply -f infra/k8s/base/namespaces.yaml
+# Encrypt each filled-in *.dec.yaml to its *.enc.yaml (none is committed yet).
+make secrets-encrypt
+# Load the four secrets this build reads, one at a time.
+sops --decrypt infra/secrets/postgres-credentials.enc.yaml | kubectl apply -f -
+sops --decrypt infra/secrets/traefik-basic-auth.enc.yaml | kubectl apply -f -
+sops --decrypt infra/secrets/gateway-secrets.enc.yaml | kubectl apply -f -
+sops --decrypt infra/secrets/backup-secrets.enc.yaml | kubectl apply -f -
+# Build and apply; `apply -k` has no load-restrictor flag, so the build is piped.
+kubectl kustomize --load-restrictor=LoadRestrictionsNone infra/k8s/server | kubectl apply -f -
+# Swap the placeholder tag for a real image.
+kubectl -n apps set image deployment/gateway gateway=ghcr.io/developermusa/ai-operations-console/gateway:<sha>
+# Apply the ledger migrations.
+kubectl -n apps exec deploy/gateway -- ops-migrate
+# Wait for the TLS certificates to show ready.
+kubectl -n apps get certificate
+# Check the gateway from outside.
+curl -s https://api.example.com/healthz
+```
+
 ## Still to land
 
 - The nightly eval CronJob in `evals/`.
