@@ -48,3 +48,6 @@ crash.log
 *.tfvars
 !*.tfvars.example
 *.tsbuildinfo
+
+# local model weights
+models/
