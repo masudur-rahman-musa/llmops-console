@@ -321,8 +321,12 @@ Requires Docker, [uv](https://docs.astral.sh/uv/) and pnpm.
     git clone https://github.com/developermusa/ai-operations-console
     cd ai-operations-console
     cp .env.example .env        # fill in the provider keys you have
-    docker compose up -d        # gateway, Redis, Postgres, Qdrant, local model
+    docker compose up -d        # gateway, Redis, Postgres, Qdrant
     uv sync
+
+The local llama.cpp model servers are off by default. To start them too:
+
+    docker compose --profile local-model up -d
 
 Then send it an OpenAI-shaped request, naming an alias rather than a model:
 

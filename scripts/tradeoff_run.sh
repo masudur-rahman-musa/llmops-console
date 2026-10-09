@@ -51,7 +51,7 @@ GPU_OVERLAY="$REPO_ROOT/infra/k8s/gpu"
 POLICY_BUILDER="$REPO_ROOT/scripts/tradeoff_policy.py"
 EVIDENCE_ROOT="${TRADEOFF_TEST_ROOT:-$REPO_ROOT}/docs/tradeoff-run"
 
-COMPOSE=(docker compose -f "$REPO_ROOT/docker-compose.yml" -f "$REPO_ROOT/docker-compose.tradeoff.yml" --profile tradeoff)
+COMPOSE=(docker compose -f "$REPO_ROOT/docker-compose.yml" -f "$REPO_ROOT/docker-compose.tradeoff.yml" --profile tradeoff --profile local-model)
 
 # The stand-in golden set: the Helpdesk set lives in the companion
 # repository and does not exist yet, so waiting for it means no table at all.
