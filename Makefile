@@ -1,4 +1,4 @@
-.PHONY: help setup run test select-tests test-adjacent lint typecheck format verify eval infra-check k8s-check k8s-aws-check k8s-server-check server-deploy server-secrets k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate purge-residency refresh-rollup secrets-encrypt secrets-decrypt secrets-check load
+.PHONY: help setup run test select-tests test-adjacent lint typecheck format verify eval infra-check k8s-check k8s-aws-check k8s-server-check server-deploy server-secrets server-helpdesk-data k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate purge-residency refresh-rollup secrets-encrypt secrets-decrypt secrets-check load
 
 # The console's checks run through pnpm, and are skipped only in a checkout that
 # has no services/console, so the intended gate stays visible in this file. The
@@ -145,6 +145,8 @@ server-deploy: ## Build, load and apply the gateway and console on the node
 	bash scripts/server_deploy.sh
 server-secrets: ## Load the node's secrets, generating the node-only ones once
 	bash scripts/server_secrets.sh
+server-helpdesk-data: ## Load the Helpdesk's corpus, demo tenants and vectors onto the node (once)
+	bash scripts/server_helpdesk_data.sh
 # The GPU measurement build, with the same kubeconform flags as `k8s-check`. It
 # is standalone (the root build does not include it), so nothing else checks it.
 k8s-gpu-check: ## Build the GPU measurement kustomization and validate it (no apply)

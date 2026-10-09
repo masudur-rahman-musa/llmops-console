@@ -544,16 +544,20 @@ make k8s-server-check
 ```
 
 It carries `base`, the platform data stores, the staging issuer, the
-middlewares, the backups (suspended until the node has a bucket), the gateway
-and the console. Left out: llama, llama-embed, `monitoring` and `evals`, which
+middlewares, the backups (suspended until the node has a bucket), the gateway,
+the console and the Helpdesk's four workloads. Left out: llama, llama-embed, `monitoring` and `evals`, which
 do not fit, and our own `letsencrypt-prod`, so the live one is never
 overwritten. The gateway runs one replica with no HPA and
 `OPSCONSOLE_RESIDENCY_MODE=relaxed`. Its two Ingresses answer on
-`gateway.example.com`; the console's three on `llmops.example.com`.
+`gateway.example.com`, the console's three on `llmops.example.com`,
+the Helpdesk's two on `helpdesk.example.com`. The Helpdesk mcp-server's
+image gains a layer holding its embedding models, since `apps` cannot reach the
+internet to download them.
 
-The images come from no registry: `make server-deploy` builds them on the
-owner's machine for linux/amd64, loads them into the node's k3s and applies the
-overlay with the commit hash as the tag.
+The images come from no registry: `make server-deploy` builds all six on the
+owner's machine for linux/amd64 (the Helpdesk's from its sibling checkout), loads
+them into the node's k3s and applies the overlay with each repo's commit hash as
+its tag.
 
 Limits are not oversubscribed here. `test_k8s_server.py` sums them from the
 built objects and compares them with these quotas.
@@ -561,21 +565,19 @@ built objects and compares them with these quotas.
 | namespace | requests.memory | requests.cpu | limits.memory | holds |
 |---|---|---|---|---|
 | `platform` | 640Mi | 800m | 1Gi | Postgres 384Mi, Qdrant 320Mi, Redis 128Mi, one backup job at 192Mi |
-| `apps` | 960Mi | 550m | 1792Mi | the gateway 384Mi, the console 256Mi, the Helpdesk's four workloads 1152Mi |
+| `apps` | 1088Mi | 550m | 2048Mi | the gateway 384Mi, the console 256Mi, the Helpdesk's four 1408Mi (mcp-server 512Mi) |
 | `evals` | 0 | 0 | 0 | nothing on this node |
 | `monitoring` | 0 | 0 | 0 | nothing on this node |
-| **total** | **1600Mi** | **1350m** | **2816Mi** | |
+| **total** | **1728Mi** | **1350m** | **3072Mi** | |
 
 The two backup jobs run at 03:00 and 04:00, so the quota pays for one at a
 time. Redis is capped at 96mb and evicts only keys with a TTL, so the budget
 and rate-limit counters stay.
 
-The Helpdesk repo deploys onto the same node and depends on what this build
-ships: Postgres, Redis and Qdrant in `platform`, the gateway at
-`gateway.example.com`, `traefik-basic-auth`, and the `server` overlay
-itself. Renaming any of those means checking that repo first. Its deploy, row
-30cb, waits until this build is live; that row adds the Helpdesk workloads here
-and removes the two Helpdesk Ingress deletes.
+The Helpdesk runs on this build and depends on what it ships: Postgres, Redis
+and Qdrant in `platform`, the gateway, `traefik-basic-auth`, and the `server`
+overlay itself. Its own database is `helpdesk` on the shared Postgres. Renaming
+any of those means checking that repo first.
 
 The owner's steps, from first deploy to every later one, are in
 `dev-process/deploy.md`. Nothing here is run by CI.
