@@ -35,7 +35,7 @@ MODULE_DIR="$REPO_ROOT/infra/terraform/aws"
 OVERLAY_DIR="$REPO_ROOT/infra/k8s/aws"
 EVIDENCE_ROOT="${AWS_EVIDENCE_TEST_ROOT:-$REPO_ROOT}/docs/aws-evidence"
 
-GATEWAY_IMAGE="ghcr.io/developermusa/ai-operations-console/gateway"
+GATEWAY_IMAGE="ghcr.io/masudur-rahman-musa/ai-operations-console/gateway"
 # Bash `=~` is POSIX ERE over the whole string: `$` does not match before a
 # trailing newline, so `sha\n` is refused.
 SHA_PATTERN='^[0-9a-f]{40}$'

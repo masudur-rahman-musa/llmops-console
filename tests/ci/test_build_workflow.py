@@ -1,6 +1,6 @@
 """`.github/workflows/build.yml`: the image pipeline nothing else in this repo can run.
 
-No image has ever been pushed to `ghcr.io/developermusa/ai-operations-console/gateway`, and
+No image has ever been pushed to `ghcr.io/masudur-rahman-musa/ai-operations-console/gateway`, and
 nothing in this repository can push one - `docker buildx`, GHCR and Trivy all live inside
 the runner. So this file holds WIRING and not behaviour: the trigger set, the platform
 pair, the single SHA tag, the GHCR login, the SBOM, the Trivy thresholds and the
@@ -60,7 +60,7 @@ CONSOLE_JOB = "console"
 #: out literally so the comparison with the overlay is between two files that both SAY it.
 CONSOLE_CONTEXT = "services/console"
 CONSOLE_DOCKERFILE = "services/console/Dockerfile"
-CONSOLE_REPOSITORY = "ghcr.io/developermusa/ai-operations-console/console"
+CONSOLE_REPOSITORY = "ghcr.io/masudur-rahman-musa/ai-operations-console/console"
 CONSOLE_TAG_EXPRESSION = "${{ github.sha }}"
 
 EXPECTED_PERMISSIONS = {"contents": "read", "packages": "write", "id-token": "write"}

@@ -593,7 +593,7 @@ sops --decrypt infra/secrets/backup-secrets.enc.yaml | kubectl apply -f -
 # Build and apply; `apply -k` has no load-restrictor flag, so the build is piped.
 kubectl kustomize --load-restrictor=LoadRestrictionsNone infra/k8s/server | kubectl apply -f -
 # Swap the placeholder tag for a real image.
-kubectl -n apps set image deployment/gateway gateway=ghcr.io/developermusa/ai-operations-console/gateway:<sha>
+kubectl -n apps set image deployment/gateway gateway=ghcr.io/masudur-rahman-musa/ai-operations-console/gateway:<sha>
 # Apply the ledger migrations.
 kubectl -n apps exec deploy/gateway -- ops-migrate
 # Wait for the TLS certificates to show ready.

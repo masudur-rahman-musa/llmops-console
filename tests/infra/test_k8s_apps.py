@@ -247,7 +247,7 @@ CLUSTER_SCOPED_OBJECTS: frozenset[tuple[str, str]] = frozenset(
 #: `deploy.yml` rewrites the tag to the deployed SHA in the runner and commits nothing back,
 #: so this value is permanent here and an apply from a checkout fails on the pull, which is the
 #: intended direction.
-GATEWAY_IMAGE_REPOSITORY = "ghcr.io/developermusa/ai-operations-console/gateway"
+GATEWAY_IMAGE_REPOSITORY = "ghcr.io/masudur-rahman-musa/ai-operations-console/gateway"
 GATEWAY_IMAGE_TAG = "0.0.0-unbuilt"
 
 #: Decision D's refusal list. A floating tag in git is a cluster whose running code no commit
@@ -825,7 +825,7 @@ GHCR_PULL_SECRET = "ghcr-pull"
 #: An earlier change criterion 5: the console's own repository, beside `GATEWAY_IMAGE_REPOSITORY` above.
 #: `test_k8s_console.py` holds the same literal for its own cases; it is repeated here rather
 #: than imported, because that module imports this one.
-CONSOLE_IMAGE_REPOSITORY = "ghcr.io/developermusa/ai-operations-console/console"
+CONSOLE_IMAGE_REPOSITORY = "ghcr.io/masudur-rahman-musa/ai-operations-console/console"
 
 #: The file whose `images:` block an earlier change criterion 5 reads as written.
 APPS_KUSTOMIZATION = APPS_DIR / "kustomization.yaml"

@@ -3,7 +3,7 @@
 # the schedule runs at 02:00 UTC rather than at the Berlin wall-clock time the spec names;
 # correcting that is a k3s-wide TZ decision, not this row's to make.
 #
-# `image: ghcr.io/developermusa/ai-operations-console/gateway:0.0.0-unbuilt` is written OUT
+# `image: ghcr.io/masudur-rahman-musa/ai-operations-console/gateway:0.0.0-unbuilt` is written OUT
 # IN FULL rather than as the bare name `apps/kustomization.yaml`'s `images:` transformer
 # rewrites - that transformer only reaches the resources listed in `apps/kustomization.yaml`
 # itself, and this CronJob lives in a sibling kustomization (`evals/`) it never sees. A
@@ -42,7 +42,7 @@ spec:
           restartPolicy: OnFailure
           containers:
             - name: nightly-eval
-              image: ghcr.io/developermusa/ai-operations-console/gateway:0.0.0-unbuilt
+              image: ghcr.io/masudur-rahman-musa/ai-operations-console/gateway:0.0.0-unbuilt
               envFrom:
                 - secretRef:
                     name: evals-secrets

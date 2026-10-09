@@ -37,12 +37,12 @@ resources:
 # the CAX21 needs.
 images:
   - name: gateway
-    newName: ghcr.io/developermusa/ai-operations-console/gateway
+    newName: ghcr.io/masudur-rahman-musa/ai-operations-console/gateway
     newTag: 0.0.0-unbuilt
   # The console, built by `build.yml`'s `console` job and set by `deploy.yml`
   # beside the gateway, on the same terms.
   - name: console
-    newName: ghcr.io/developermusa/ai-operations-console/console
+    newName: ghcr.io/masudur-rahman-musa/ai-operations-console/console
     newTag: 0.0.0-unbuilt
   - name: llama
     newName: ghcr.io/ggml-org/llama.cpp

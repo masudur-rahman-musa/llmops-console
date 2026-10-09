@@ -7,7 +7,7 @@ Underneath: an OpenAI-compatible LLM gateway with per-tenant routing and EU data
 **Status: under active development.** Measured self-hosted-vs-API numbers and the
 walkthrough recording land as the remaining measurement runs complete.
 
-Companion project: [ai-help-desk-governed-access](https://github.com/developermusa/ai-help-desk-governed-access), the agent workload this platform routes, measures and evaluates.
+Companion project: [ai-help-desk-governed-access](https://github.com/masudur-rahman-musa/ai-help-desk-governed-access), the agent workload this platform routes, measures and evaluates.
 
 License: Apache-2.0
 
@@ -318,7 +318,7 @@ adds throughput without changing any of those.
 
 Requires Docker, [uv](https://docs.astral.sh/uv/) and pnpm.
 
-    git clone https://github.com/developermusa/ai-operations-console
+    git clone https://github.com/masudur-rahman-musa/ai-operations-console
     cd ai-operations-console
     cp .env.example .env        # fill in the provider keys you have
     docker compose up -d        # gateway, Redis, Postgres, Qdrant
