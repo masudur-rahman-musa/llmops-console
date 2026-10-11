@@ -562,7 +562,7 @@ their tag to the deployed commit SHA, then applies the overlay with
 and runs the gateway's migrations.
 
 Limits are not oversubscribed here. `test_k8s_server.py` sums them from the
-built objects, adds the Helpdesk's share (`HELPDESK_SHARE`: 704Mi, 300m,
+built objects, adds the Helpdesk's share (704Mi, 300m,
 1408Mi limits) and compares them with these quotas.
 
 | namespace | requests.memory | requests.cpu | limits.memory | holds |
