@@ -117,7 +117,7 @@ jobs:
       # The reference that was just pushed, not an image loaded into the runner:
       # what reached the registry is what gets scanned.
       - name: Scan the pushed image
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ghcr.io/masudur-rahman-musa/ai-operations-console/gateway:${{ github.sha }}
           severity: CRITICAL
@@ -181,7 +181,7 @@ jobs:
           if-no-files-found: error
 
       - name: Scan the pushed image
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ghcr.io/masudur-rahman-musa/ai-operations-console/console:${{ github.sha }}
           severity: CRITICAL

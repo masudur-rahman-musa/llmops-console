@@ -96,7 +96,9 @@ def test_the_residency_mode_accepts_relaxed(monkeypatch: pytest.MonkeyPatch) -> 
     mode = Settings().residency_mode
 
     assert mode is ResidencyMode.RELAXED
-    assert mode == "relaxed"
+    # A StrEnum member equals its string; mypy's narrowing to the member Literal
+    # cannot see that, and this line exists to prove it at run time.
+    assert mode == "relaxed"  # type: ignore[comparison-overlap]
 
 
 # `loose` is a plausible typo for the real value; the empty string is the row the
