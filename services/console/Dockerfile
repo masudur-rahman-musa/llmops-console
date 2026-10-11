@@ -33,6 +33,18 @@ ENV NODE_ENV=production \
     HOSTNAME=0.0.0.0 \
     NEXT_TELEMETRY_DISABLED=1
 
+# The pinned node image still ships perl-base 5.36.0-7+deb12u3, which carries
+# three CRITICAL CVEs fixed in deb12u4. Upgrading that one package here clears
+# them without waiting for a new node image; drop this once the base has it.
+RUN apt-get update \
+    && apt-get install -y --only-upgrade --no-install-recommends perl-base \
+    && rm -rf /var/lib/apt/lists/*
+
+# npm is deleted, not ignored: this stage runs `node server.js` and never a
+# package manager, and the bundled npm carries its own vulnerable `tar`. The two
+# entry points go too, or `npm` stays on PATH pointing at nothing.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+
 # The standalone output is `server.js` plus only the `node_modules` it traces as
 # reached; `.next/static` is not part of it and is copied beside it. There is no
 # `public/` directory today; the day one exists, it is copied here the same way.

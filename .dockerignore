@@ -36,17 +36,22 @@ README.md
 LICENSE
 
 # Language artifacts: the image builds its own, and a host .venv is the wrong
-# platform's.
-__pycache__/
+# platform's. `**/` because a bare `node_modules/` matches the context root
+# only, which let a local build copy services/console/node_modules in.
+**/__pycache__/
 .venv/
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/
-node_modules/
-.next/
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+**/node_modules/
+**/.next/
 dist/
 build/
 coverage/
+
+# The console is its own image, built from its own context with its own
+# .dockerignore. The gateway image needs none of it.
+services/console
 
 # scripts: keep only if a script must run on the server (migrations, seed)
 # scripts
