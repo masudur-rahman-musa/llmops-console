@@ -208,9 +208,7 @@ def residency_settings(mode: ResidencyMode) -> Settings:
     Stated for the strict row too: the root conftest clears the variable for the
     suite, and a case that relied on that would assert the developer's shell.
     """
-    return Settings(
-        api_keys=API_KEYS, routing_policy_path=SHIPPED_POLICY_PATH, residency_mode=mode
-    )
+    return Settings(api_keys=API_KEYS, routing_policy_path=SHIPPED_POLICY_PATH, residency_mode=mode)
 
 
 def residency_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:

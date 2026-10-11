@@ -5,9 +5,15 @@ repos:
       - id: check-added-large-files
       - id: check-merge-conflict
       - id: check-yaml
+        # Kubernetes manifests hold several documents per file, split by `---`.
+        args: [--allow-multiple-documents]
       - id: check-toml
+      # Recorded fixtures are byte-exact: an SSE stream's last event ends in a
+      # blank line, and a JSONL set may carry one on purpose.
       - id: end-of-file-fixer
+        exclude: ^tests/.*/fixtures/
       - id: trailing-whitespace
+        exclude: ^tests/.*/fixtures/
       - id: detect-private-key
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.24.3

@@ -12,9 +12,9 @@ resource "hcloud_firewall" "edge" {
   name = "ai-operations-console-edge"
 
   rule {
-    direction  = "in"
-    protocol   = "tcp"
-    port       = "22"
+    direction = "in"
+    protocol  = "tcp"
+    port      = "22"
     # The admin CIDRs plus the CD runner's, concatenated rather than split into a
     # fourth rule: the rule COUNT is what pins this firewall's default-deny, so one
     # port-22 rule with two sources says the same thing without loosening the guard.
