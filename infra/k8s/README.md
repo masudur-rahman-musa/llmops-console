@@ -544,28 +544,29 @@ make k8s-server-check
 ```
 
 It carries `base`, the platform data stores, the staging issuer, the
-middlewares, the backups (suspended until the node has a bucket), the gateway,
-the console and the Helpdesk's four workloads. Left out: llama, llama-embed, `monitoring` and `evals`, which
-do not fit, and our own `letsencrypt-prod`, so the live one is never
-overwritten. The gateway runs one replica with no HPA and
+middlewares, the backups (suspended until the node has a bucket), the gateway
+and the console. Left out: llama, llama-embed, `monitoring` and `evals`, which
+do not fit; our own `letsencrypt-prod`, so the live one is never overwritten;
+and the Helpdesk's workloads, config and images, which its own repo deploys. The gateway runs one replica with no HPA and
 `OPSCONSOLE_RESIDENCY_MODE=relaxed`. Its two Ingresses answer on
 `gateway.example.com`, the console's three on `llmops.example.com`,
-the Helpdesk's two on `helpdesk.example.com`. The Helpdesk mcp-server's
-image gains a layer holding its embedding models, since `apps` cannot reach the
-internet to download them.
+the Helpdesk's two on `helpdesk.example.com`. The Helpdesk's Ingresses and
+NetworkPolicies stay in this build, so one repo owns the hosts and policies on
+the node. Applying it never touches the running Helpdesk: without `--prune`,
+`kubectl apply` leaves objects outside the build alone.
 
-The images come from no registry: `make server-deploy` builds all six on the
-owner's machine for linux/amd64 (the Helpdesk's from its sibling checkout), loads
-them into the node's k3s and applies the overlay with each repo's commit hash as
-its tag.
+The images come from no registry: `make server-deploy` builds the gateway and
+the console on the owner's machine for linux/amd64, loads them into the node's
+k3s and applies the overlay with the commit hash as their tag.
 
 Limits are not oversubscribed here. `test_k8s_server.py` sums them from the
-built objects and compares them with these quotas.
+built objects, adds the Helpdesk's share (`HELPDESK_SHARE`: 704Mi, 300m,
+1408Mi limits) and compares them with these quotas.
 
 | namespace | requests.memory | requests.cpu | limits.memory | holds |
 |---|---|---|---|---|
 | `platform` | 640Mi | 800m | 1Gi | Postgres 384Mi, Qdrant 320Mi, Redis 128Mi, one backup job at 192Mi |
-| `apps` | 1088Mi | 550m | 2048Mi | the gateway 384Mi, the console 256Mi, the Helpdesk's four 1408Mi (mcp-server 512Mi) |
+| `apps` | 1088Mi | 550m | 2048Mi | the gateway 384Mi, the console 256Mi, a share for the Helpdesk's four, 1408Mi |
 | `evals` | 0 | 0 | 0 | nothing on this node |
 | `monitoring` | 0 | 0 | 0 | nothing on this node |
 | **total** | **1728Mi** | **1350m** | **3072Mi** | |
@@ -574,7 +575,7 @@ The two backup jobs run at 03:00 and 04:00, so the quota pays for one at a
 time. Redis is capped at 96mb and evicts only keys with a TTL, so the budget
 and rate-limit counters stay.
 
-The Helpdesk runs on this build and depends on what it ships: Postgres, Redis
+The Helpdesk runs beside this build and depends on what it ships: Postgres, Redis
 and Qdrant in `platform`, the gateway, `traefik-basic-auth`, and the `server`
 overlay itself. Its own database is `helpdesk` on the shared Postgres. Renaming
 any of those means checking that repo first.
