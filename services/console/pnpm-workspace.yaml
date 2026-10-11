@@ -1,6 +1,14 @@
 # GHSA-vfj7-8cjw-p6xm (braces <=3.0.3) has no patched version at all, so
-# `pnpm audit` would fail on it forever. Skipped on 2026-10-12; drop this line
+# `pnpm audit` would fail on it forever. Skipped on 2026-10-12; drop it
 # once a fixed braces ships.
 auditConfig:
   ignoreGhsas:
     - GHSA-vfj7-8cjw-p6xm
+
+overrides:
+  postcss@<8.5.10: '>=8.5.10'
+  postcss@<=8.5.11: '>=8.5.12'
+  postcss@<=8.5.17: '>=8.5.18'
+  postcss@<=8.5.22: '>=8.5.23'
+  sharp@<0.35.5: '>=0.35.5'
+  source-map-js@>=1.0.0 <1.2.2: '>=1.2.2'
