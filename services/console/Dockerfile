@@ -16,7 +16,7 @@ WORKDIR /app
 RUN corepack enable
 
 # The dependency layer, cached until the lockfile changes.
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 
