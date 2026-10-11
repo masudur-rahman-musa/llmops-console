@@ -555,9 +555,11 @@ NetworkPolicies stay in this build, so one repo owns the hosts and policies on
 the node. Applying it never touches the running Helpdesk: without `--prune`,
 `kubectl apply` leaves objects outside the build alone.
 
-The images come from no registry: `make server-deploy` builds the gateway and
-the console on the owner's machine for linux/amd64, loads them into the node's
-k3s and applies the overlay with the commit hash as their tag.
+The gateway and console images come from GHCR, where both packages are public,
+so the pods carry no pull secret. `.github/workflows/deploy.yml` sets
+their tag to the deployed commit SHA, then applies the overlay with
+`kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/server | kubectl apply -f -`
+and runs the gateway's migrations.
 
 Limits are not oversubscribed here. `test_k8s_server.py` sums them from the
 built objects, adds the Helpdesk's share (`HELPDESK_SHARE`: 704Mi, 300m,
@@ -580,8 +582,7 @@ and Qdrant in `platform`, the gateway, `traefik-basic-auth`, and the `server`
 overlay itself. Its own database is `helpdesk` on the shared Postgres. Renaming
 any of those means checking that repo first.
 
-The owner's steps, from first deploy to every later one, are in
-`dev-process/deploy.md`. Nothing here is run by CI.
+The owner's one-time setup and every later deploy are in `dev-process/deploy.md`.
 
 ## Still to land
 

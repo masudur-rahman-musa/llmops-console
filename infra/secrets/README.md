@@ -94,6 +94,18 @@ Deleting the `.dec.yaml` afterwards is the habit worth keeping. It is gitignored
 so leaving it is not a leak into history, but it is a plaintext credential on
 disk with no expiry.
 
+## the node
+
+The live node does not fill templates by hand. `make server-secrets` writes six
+`*.dec.yaml` straight from the owner's state file outside the repo, so the live
+passwords and keys never change: `postgres-credentials`, `gateway-secrets`,
+`console-secrets`, `helpdesk-secrets`, and `traefik-basic-auth` as two files
+(`traefik-basic-auth-platform` and `traefik-basic-auth-apps`), because each
+`*.enc.yaml` is read as one document. Then `make secrets-encrypt`, delete the
+`*.dec.yaml`, and merge the six `*.enc.yaml` through a pull request. The deploy
+workflow applies them. `dev-process/deploy.md` has the whole procedure, and
+`tests/infra/test_server_secrets.py` pins the script.
+
 ## Rotating one value
 
 Decrypt, edit, re-encrypt, apply, then restart the workloads that read it -
