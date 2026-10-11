@@ -1,5 +1,5 @@
 name: build
-# The image pipeline: the gateway and console images built for both architectures,
+# The image pipeline: the gateway and console images built for linux/amd64,
 # pushed to GHCR, scanned by Trivy, and published with their SBOMs. Nothing here
 # touches a cluster - the deploy is `deploy.yml`, and it is gated on this workflow
 # being green.
@@ -51,11 +51,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # arm64 is emulated here: the Hetzner CAX21 nodes are arm64 and a developer's
-      # machine is either, so an image that runs on one only fails at the pull with
-      # `exec format error`. The emulated half is slow, which is what the GitHub
-      # Actions layer cache below is for.
-      - uses: docker/setup-qemu-action@v3
+      # amd64 only: the live node is x86_64, and the emulated arm64 half
+      # was most of every run. The Hetzner CAX21 path is arm64 and has to add it back.
       - uses: docker/setup-buildx-action@v3
 
       # The `GITHUB_TOKEN`, not a personal access token: it is scoped to this run
@@ -81,7 +78,7 @@ jobs:
         with:
           context: .
           file: Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
           tags: ghcr.io/masudur-rahman-musa/ai-operations-console/gateway:${{ github.sha }}
           sbom: true
@@ -93,8 +90,7 @@ jobs:
 
       # The same attestation, read back out of the registry into a file. The
       # attestation is the record; this is so a reader can answer the question from
-      # the run page without pulling a multi-arch image first. Multi-platform, so
-      # the document is keyed by platform.
+      # the run page without pulling the image first.
       - name: Extract the SBOM from the pushed image
         run: |
           set -euo pipefail
@@ -119,9 +115,7 @@ jobs:
       # clear - a threshold nobody switches off in week two.
       #
       # The reference that was just pushed, not an image loaded into the runner:
-      # what reached the registry is what gets scanned. On a multi-arch tag Trivy resolves the
-      # runner's own platform (amd64); the arm64 half shares this base image and
-      # this lockfile, so the CVE set it would report is the same one.
+      # what reached the registry is what gets scanned.
       - name: Scan the pushed image
         uses: aquasecurity/trivy-action@v0.28.0
         with:
@@ -144,7 +138,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
@@ -162,7 +155,7 @@ jobs:
         with:
           context: services/console
           file: services/console/Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
           tags: ghcr.io/masudur-rahman-musa/ai-operations-console/console:${{ github.sha }}
           sbom: true

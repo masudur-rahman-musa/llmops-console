@@ -50,7 +50,8 @@ LOGIN_ACTION = "docker/login-action"
 UPLOAD_ACTION = "actions/upload-artifact"
 TRIVY_ACTION = "aquasecurity/trivy-action"
 
-EXPECTED_PLATFORMS = "linux/amd64,linux/arm64"
+#: a design note: the live node is x86_64. The Hetzner CAX21 path is arm64 and adds it back.
+EXPECTED_PLATFORMS = "linux/amd64"
 
 #: The two jobs, by id: an earlier change's gateway image and an earlier change's console image (decision B).
 IMAGE_JOB = "image"
@@ -265,12 +266,11 @@ def test_the_build_pushes_the_repositorys_one_dockerfile(build: dict[str, Any]) 
     assert (REPO_ROOT / str(with_of(build)["file"])).is_file()
 
 
-def test_the_build_targets_both_architectures(build: dict[str, Any]) -> None:
-    """Criterion 2, pinned exactly. Catches a single-platform build: the
-    cluster's CAX21 nodes are arm64, so an amd64-only image fails at the pull with
-    `exec format error`, and an arm64-only one cannot run on a developer's amd64 machine.
-    The string is compared whole because the action takes `platforms` as one
-    comma-separated value - a list with the same two members is a different input."""
+def test_the_build_targets_the_live_nodes_architecture(build: dict[str, Any]) -> None:
+    """a design note, pinned exactly. Catches an arm64-only build, which fails
+    at the pull on the x86_64 node with `exec format error`, and an emulated arm64 half
+    creeping back, which was most of every run's time. The string is compared whole
+    because the action takes `platforms` as one comma-separated value."""
     assert with_of(build)["platforms"] == EXPECTED_PLATFORMS
 
 
@@ -369,13 +369,13 @@ def test_trivy_scans_the_image_the_build_just_pushed(
     assert repository_of(reference) in {repository_of(line) for line in tag_lines(build)}
 
 
-def test_the_console_job_builds_the_console_dockerfile_for_both_architectures(
+def test_the_console_job_builds_the_console_dockerfile_for_the_live_nodes_architecture(
     jobs: dict[str, Any],
 ) -> None:
     """An earlier change decision B. Catches a console job built from the repository root context or
     the root `Dockerfile` (which is the gateway image pushed under the console name), a job
-    built for one architecture only (the CAX21 nodes are arm64, so an amd64-only image fails
-    at the pull), a `push: false` build that scans nothing real, and a job with no GHCR login,
+    built for any platform set but the x86_64 node's, a `push: false` build that
+    scans nothing real, and a job with no GHCR login,
     whose push 403s. The Dockerfile path is resolved against the repo root, so a typo reddens
     here rather than inside the runner."""
     console_job = only_job(jobs, CONSOLE_JOB)
