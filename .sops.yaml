@@ -22,7 +22,6 @@ creation_rules:
     # lives in the operator's password manager and in the `SOPS_AGE_KEY` GitHub
     # secret that CD decrypts with. `infra/secrets/README.md` is the procedure.
     #
-    # REPLACE_ME until the key exists: `sops` refuses outright on this value,
-    # which is the intended direction. A placeholder that happened to parse as a
-    # recipient would encrypt four files to a key nobody holds.
-    age: REPLACE_ME
+    # The owner's key, made 2026-10-12 with `age-keygen`. Its private half is in
+    # ~/.config/sops/age/keys.txt on the owner's Mac and in the password manager.
+    age: age1replacewithyourownagepublickey
