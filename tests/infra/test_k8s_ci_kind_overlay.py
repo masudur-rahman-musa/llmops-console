@@ -35,12 +35,6 @@ REQUIRED_OBJECTS: frozenset[tuple[str, str, str]] = frozenset(
     {
         ("Deployment", "gateway", "apps"),
         ("Service", "gateway", "apps"),
-        ("Deployment", "llama", "apps"),
-        ("Service", "llama", "apps"),
-        ("PersistentVolumeClaim", "llama-models", "apps"),
-        ("Deployment", "llama-embed", "apps"),
-        ("Service", "llama-embed", "apps"),
-        ("PersistentVolumeClaim", "llama-embed-models", "apps"),
         ("Deployment", "eval-target-stub", "apps"),
         ("Service", "eval-target-stub", "apps"),
         ("Secret", "gateway-secrets", "apps"),
@@ -176,51 +170,26 @@ def test_the_stub_image_is_the_locally_built_ci_tag(built: list[dict[str, Any]])
     assert container["image"] == f"eval-target-stub:{STUB_IMAGE_TAG}"
 
 
-def test_llama_keeps_the_production_upstream_image(built: list[dict[str, Any]]) -> None:
-    """Only the gateway and the stub are built locally (decision D); llama.cpp
-    itself is pulled from the same public, pinned upstream tag production runs,
-    read out of `infra/k8s/apps/kustomization.yaml`'s own `images:` transformer
-    rather than restated as a bare guess."""
-    apps_kustomization = yaml.safe_load(
-        (REPO_ROOT / "infra" / "k8s" / "apps" / "kustomization.yaml").read_text(encoding="utf-8")
-    )
-    production_llama = next(
-        entry for entry in apps_kustomization["images"] if entry["name"] == "llama"
-    )
-    assert production_llama["newName"] == LLAMA_IMAGE_REPOSITORY
-    assert production_llama["newTag"] == LLAMA_IMAGE_TAG
-
-    container = _deployment(built, "llama")["spec"]["template"]["spec"]["containers"][0]
-    assert container["image"] == f"{LLAMA_IMAGE_REPOSITORY}:{LLAMA_IMAGE_TAG}"
-
-
-def test_llama_carries_a_model_fetch_init_container_verifying_a_checksum(
+def test_no_llama_server_is_deployed_while_the_local_model_is_out_of_use(
     built: list[dict[str, Any]],
 ) -> None:
-    """`infra/k8s/README.md`'s deliberate no-download rule is honoured by
-    VERIFYING a pinned checksum rather than bypassed: the init container must
-    name both the exact upstream URL and its sha256, and must actually compare
-    them (`hashlib` and `!=` both present in the inline script) rather than
-    downloading and trusting it unread."""
-    init_containers = _deployment(built, "llama")["spec"]["template"]["spec"]["initContainers"]
-    assert len(init_containers) == 1
-    script = "".join(init_containers[0]["args"])
-    assert MODEL_URL in script
-    assert MODEL_SHA256 in script
-    assert "hashlib" in script
-    assert "!=" in script
+    """2026-10-12: the local model is out of use, and on a 2-CPU runner its weight
+    never finished downloading before the run needed it. Catches either llama.cpp
+    server creeping back into this build without the golden set that needs it."""
+    names = {document["metadata"]["name"] for document in built}
+    assert names.isdisjoint({"llama", "llama-embed", "llama-models", "llama-embed-models"})
 
 
-def test_the_llama_embed_deployment_carries_no_fetch_init_container(
-    built: list[dict[str, Any]],
-) -> None:
-    """The patch targets `llama` by name; `llama-embed` is included in the overlay
-    (criterion 2) but the workflow never waits on its rollout, so it is left
-    exactly as `infra/k8s/apps/llama-embed.yaml` ships it."""
-    init_containers = _deployment(built, "llama-embed")["spec"]["template"]["spec"].get(
-        "initContainers", []
-    )
-    assert init_containers == []
+def test_the_kept_model_fetch_patch_still_verifies_a_checksum() -> None:
+    """`llama-model-init-patch.yaml` stays in this directory for the day the local
+    model returns. Read directly, since nothing builds it now: it must still name
+    the exact upstream URL and its sha256 and actually compare them (`hashlib` and
+    `!=`), honouring `infra/k8s/README.md`'s no-unverified-download rule."""
+    patch = (CI_KIND_ROOT / "llama-model-init-patch.yaml").read_text(encoding="utf-8")
+    assert MODEL_URL in patch.replace("\n", "")
+    assert MODEL_SHA256 in patch
+    assert "hashlib" in patch
+    assert "!=" in patch
 
 
 def test_the_ci_secret_carries_no_provider_key(built: list[dict[str, Any]]) -> None:

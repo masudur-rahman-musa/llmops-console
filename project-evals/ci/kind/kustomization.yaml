@@ -25,27 +25,22 @@ resources:
   - ../../../infra/k8s/platform/redis.yaml
   - ../../../infra/k8s/platform/qdrant.yaml
   - ../../../infra/k8s/apps/gateway.yaml
-  - ../../../infra/k8s/apps/llama.yaml
-  - ../../../infra/k8s/apps/llama-embed.yaml
   - gateway-secrets.yaml
   - eval-target-stub-secrets.yaml
   - postgres-credentials.yaml
   - stub.yaml
 
-# `llama.yaml` ships with no `initContainers`, so this ADDS the one that fetches
-# and verifies the real model weight the pod's own startup probe needs - see that
-# file's own comment for why this is here rather than a change to
-# `infra/k8s/apps/llama.yaml` itself, which stays exactly as production leaves it.
+# `llama.yaml` and `llama-embed.yaml` are out while the local model is out of use
+# (2026-10-12): on a 2-CPU runner the chat weight never finished downloading and
+# the embedding weight was never fetched, so the run checks `smoke.sh`'s
+# model-free paths instead. To bring them back, re-add both files and
+# `llama-model-init-patch.yaml` (kept in this directory) as a patch on `llama`.
 #
-# The rest fit the build onto one kind node on a 2-CPU runner, where qdrant-0 sat
-# Pending on "Insufficient cpu": one gateway and no HPA (the server build's own
-# shape), and the CPU REQUESTS of Postgres and Qdrant cut to 50m. A request only
-# reserves scheduling room; the limits, and production, are untouched.
+# These patches fit the build onto one kind node on a 2-CPU runner, where
+# qdrant-0 sat Pending on "Insufficient cpu": one gateway and no HPA (the server
+# build's own shape), and the CPU REQUESTS of Postgres and Qdrant cut to 50m. A
+# request only reserves scheduling room; the limits, and production, are untouched.
 patches:
-  - path: llama-model-init-patch.yaml
-    target:
-      kind: Deployment
-      name: llama
   - patch: |-
       apiVersion: autoscaling/v2
       kind: HorizontalPodAutoscaler
@@ -68,17 +63,12 @@ patches:
       kind: StatefulSet
       name: postgres|qdrant
 
-# `gateway` and `llama`/`llama-embed` read the SAME values `infra/k8s/apps/
-# kustomization.yaml` sets for them (a project rule: written out literally, not
-# templated, so the two cannot drift silently) - except `gateway`'s tag, which
-# names what THIS workflow builds and `kind load docker-image`s rather than
-# `build.yml`'s published SHA (plan decision D: no dependency on GHCR from a PR
-# run). `eval-target-stub` has no production counterpart to copy a tag from at all.
+# `gateway`'s tag names what THIS workflow builds and `kind load docker-image`s
+# rather than `build.yml`'s published SHA (plan decision D: no dependency on GHCR
+# from a PR run). `eval-target-stub` has no production counterpart to copy a tag
+# from at all.
 images:
   - name: gateway
     newTag: e2e-kind
-  - name: llama
-    newName: ghcr.io/ggml-org/llama.cpp
-    newTag: server-b10902
   - name: eval-target-stub
     newTag: e2e-kind

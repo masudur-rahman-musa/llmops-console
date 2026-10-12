@@ -11,13 +11,15 @@ name: e2e-kind
 # that directory's own comments for why the four Helpdesk workloads, the
 # console, every Ingress and two of `platform`'s files are absent.
 #
-# Paused to manual runs only, 2026-10-12. Every case goes through the local
-# llama.cpp model, which the project is not using for now: on a 2-CPU runner
-# the 2 GB model never finished downloading before the cases ran, and the
-# embedding model is never fetched at all. Put `pull_request` and `push` (both
-# `branches: [main]`) back when the local model returns.
+# While the local model is out of use (2026-10-12) the run deploys without the
+# two llama.cpp servers and checks the gateway's model-free paths with
+# `project-evals/ci/kind/smoke.sh`, in place of the ten golden cases, which all
+# need that model.
 on:
-  workflow_dispatch:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
 
 concurrency:
   group: e2e-kind-${{ github.ref }}
@@ -60,29 +62,19 @@ jobs:
           kubectl -n apps rollout status deployment/gateway --timeout=5m
           kubectl -n apps rollout status deployment/eval-target-stub --timeout=5m
 
-      # The stub, never the gateway directly: `ops-eval run --target` is the
-      # eval harness's own contract (`/admin/test/reset` + `/v1/eval/turn`),
-      # which the stub answers and the gateway does not. Never a NodePort or a
-      # public address - a `port-forward` is the one path out of this cluster
-      # the workflow opens.
-      - name: Port-forward the eval-target-stub
+      # While the local model is out of use, the golden set (`ops-eval run`
+      # through the stub on 8090) cannot run: every case needs that model. The
+      # run checks the gateway's model-free paths instead, through a port-forward
+      # to the gateway itself - still never a NodePort or a public address.
+      # When the local model returns, restore the stub port-forward, `uv sync`
+      # and the `ops-eval run --set project-evals/golden/e2e-kind.jsonl` step.
+      - name: Port-forward the gateway
         run: |
-          kubectl -n apps port-forward svc/eval-target-stub 8090:8090 &
+          kubectl -n apps port-forward svc/gateway 18080:8080 &
           sleep 3
 
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-      - run: uv sync --locked
-
-      - name: Run the golden set against the deployed stack
-        run: |
-          uv run ops-eval run \
-            --target http://127.0.0.1:8090 \
-            --set project-evals/golden/e2e-kind.jsonl \
-            --tenant evals \
-            --run-kind ci \
-            --out reports
+      - name: Check the deployed gateway without a model
+        run: project-evals/ci/kind/smoke.sh http://127.0.0.1:18080
 
       # `always()`, the same reason `eval-gate.yml`'s upload is: a FAILED run -
       # a cluster-up failure, a rollout timeout, or a failed case - is exactly
