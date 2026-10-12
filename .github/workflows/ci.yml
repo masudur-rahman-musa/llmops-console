@@ -2,7 +2,9 @@ name: ci
 on:
   pull_request:
   push:
-    branches: [main]
+    # `dev` is where daily work lands; only `ci` runs there. `build`, `e2e-kind`
+    # and the deploy wait for the pull request from `dev` into `main`.
+    branches: [main, dev]
 
 concurrency:
   group: ci-${{ github.ref }}
