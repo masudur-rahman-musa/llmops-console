@@ -10,11 +10,14 @@ name: e2e-kind
 # production kustomization to what a bare kind cluster can actually run; see
 # that directory's own comments for why the four Helpdesk workloads, the
 # console, every Ingress and two of `platform`'s files are absent.
+#
+# Paused to manual runs only, 2026-10-12. Every case goes through the local
+# llama.cpp model, which the project is not using for now: on a 2-CPU runner
+# the 2 GB model never finished downloading before the cases ran, and the
+# embedding model is never fetched at all. Put `pull_request` and `push` (both
+# `branches: [main]`) back when the local model returns.
 on:
-  pull_request:
-    branches: [main]
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: e2e-kind-${{ github.ref }}

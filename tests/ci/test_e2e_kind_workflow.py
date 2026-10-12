@@ -74,15 +74,15 @@ def job(jobs: dict[str, Any]) -> dict[str, Any]:
     return the_job
 
 
-def test_the_workflow_triggers_on_pull_requests_and_pushes_into_main(
+def test_the_workflow_runs_only_when_started_by_hand(
     workflow: dict[str, Any],
 ) -> None:
-    """Acceptance criterion 1. `branches: [main]` on both, the same way
-    `eval-gate.yml`'s own trigger is asserted as the whole list - a second branch
-    added to either is a scope nobody agreed to run this on."""
+    """Paused 2026-10-12 while the local model is out of use: every case needs it,
+    and it cannot come up on a 2-CPU runner in time. Catches the push or
+    pull-request trigger coming back before the local model does, which turns
+    every commit red for a reason no commit can fix."""
     block = trigger(workflow)
-    assert block["pull_request"]["branches"] == ["main"]
-    assert block["push"]["branches"] == ["main"]
+    assert set(block) == {"workflow_dispatch"}
 
 
 def test_the_kind_action_and_binary_versions_are_both_pinned(job: dict[str, Any]) -> None:
