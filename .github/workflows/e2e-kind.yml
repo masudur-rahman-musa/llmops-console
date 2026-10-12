@@ -57,24 +57,6 @@ jobs:
           kubectl -n apps rollout status deployment/gateway --timeout=5m
           kubectl -n apps rollout status deployment/eval-target-stub --timeout=5m
 
-      # A timed-out rollout says only "0 of 2 available". This prints why: pod
-      # state, the events (quota refusals, failed probes, image pulls) and the
-      # last logs of every pod in the two namespaces the build applies to.
-      - name: Show why the rollout failed
-        if: failure()
-        run: |
-          echo "runner CPUs: $(nproc)"
-          kubectl describe nodes | sed -n '/Allocatable/,/System Info/p;/Allocated resources/,/Events/p' || true
-          for ns in apps platform; do
-            kubectl -n "$ns" get pods -o wide || true
-            kubectl -n "$ns" get events --sort-by=.lastTimestamp | tail -40 || true
-            kubectl -n "$ns" describe pods | tail -120 || true
-            for pod in $(kubectl -n "$ns" get pods -o name); do
-              echo "--- logs $ns/$pod"
-              kubectl -n "$ns" logs "$pod" --all-containers --tail=40 || true
-            done
-          done
-
       # The stub, never the gateway directly: `ops-eval run --target` is the
       # eval harness's own contract (`/admin/test/reset` + `/v1/eval/turn`),
       # which the stub answers and the gateway does not. Never a NodePort or a
@@ -109,3 +91,24 @@ jobs:
         with:
           name: e2e-kind-report-${{ github.run_id }}
           path: reports/
+
+      # Last, so it runs after ANY failed step (a timed-out rollout or a failed
+      # case alike) while the cluster still exists. A rollout says only "0 of 1
+      # available" and a case only "server disconnected"; this prints why: node
+      # CPU, pod state, events, and each pod's logs, including the run before a
+      # restart.
+      - name: Show the cluster state on failure
+        if: failure()
+        run: |
+          echo "runner CPUs: $(nproc)"
+          kubectl describe nodes | sed -n '/Allocatable/,/System Info/p;/Allocated resources/,/Events/p' || true
+          for ns in apps platform; do
+            kubectl -n "$ns" get pods -o wide || true
+            kubectl -n "$ns" get events --sort-by=.lastTimestamp | tail -40 || true
+            kubectl -n "$ns" describe pods | tail -120 || true
+            for pod in $(kubectl -n "$ns" get pods -o name); do
+              echo "--- logs $ns/$pod"
+              kubectl -n "$ns" logs "$pod" --all-containers --tail=60 || true
+              kubectl -n "$ns" logs "$pod" --all-containers --previous --tail=60 2>/dev/null || true
+            done
+          done
