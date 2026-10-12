@@ -182,7 +182,8 @@ secrets-encrypt: ## Encrypt every infra/secrets/*.dec.yaml to its *.enc.yaml
 	for plain in $(SECRETS_DIR)/*.dec.yaml; do \
 	  [ -e "$$plain" ] || continue; \
 	  found=1; \
-	  sops --encrypt --output "$${plain%.dec.yaml}.enc.yaml" "$$plain" || exit 1; \
+	  sops --encrypt --filename-override "$${plain%.dec.yaml}.enc.yaml" \
+	    --output "$${plain%.dec.yaml}.enc.yaml" "$$plain" || exit 1; \
 	  echo "encrypted $$plain"; \
 	done; \
 	if [ "$$found" = 0 ]; then \

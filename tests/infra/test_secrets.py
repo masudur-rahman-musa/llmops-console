@@ -964,8 +964,12 @@ def test_the_sops_targets_refuse_to_report_success_over_an_empty_glob(
     stub = tmp_path / "sops"
     stub.write_text("#!/bin/sh\nexit 0\n")
     stub.chmod(0o755)
+    # An empty folder of its own, not `infra/secrets`: since 2026-10-12 the real one
+    # holds the six committed `*.enc.yaml`, so the glob there is no longer empty.
+    empty = tmp_path / "secrets"
+    empty.mkdir()
     completed = subprocess.run(
-        ["make", target],
+        ["make", target, f"SECRETS_DIR={empty}"],
         cwd=REPO_ROOT,
         env={
             "PATH": f"{tmp_path}{os.pathsep}{PATH_WITHOUT_SOPS}",
