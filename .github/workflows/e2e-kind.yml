@@ -63,6 +63,8 @@ jobs:
       - name: Show why the rollout failed
         if: failure()
         run: |
+          echo "runner CPUs: $(nproc)"
+          kubectl describe nodes | sed -n '/Allocatable/,/System Info/p;/Allocated resources/,/Events/p' || true
           for ns in apps platform; do
             kubectl -n "$ns" get pods -o wide || true
             kubectl -n "$ns" get events --sort-by=.lastTimestamp | tail -40 || true

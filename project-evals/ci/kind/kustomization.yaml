@@ -29,17 +29,44 @@ resources:
   - ../../../infra/k8s/apps/llama-embed.yaml
   - gateway-secrets.yaml
   - eval-target-stub-secrets.yaml
+  - postgres-credentials.yaml
   - stub.yaml
 
 # `llama.yaml` ships with no `initContainers`, so this ADDS the one that fetches
 # and verifies the real model weight the pod's own startup probe needs - see that
 # file's own comment for why this is here rather than a change to
 # `infra/k8s/apps/llama.yaml` itself, which stays exactly as production leaves it.
+#
+# The rest fit the build onto one kind node on a 2-CPU runner, where qdrant-0 sat
+# Pending on "Insufficient cpu": one gateway and no HPA (the server build's own
+# shape), and the CPU REQUESTS of Postgres and Qdrant cut to 50m. A request only
+# reserves scheduling room; the limits, and production, are untouched.
 patches:
   - path: llama-model-init-patch.yaml
     target:
       kind: Deployment
       name: llama
+  - patch: |-
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: gateway
+        namespace: apps
+      $patch: delete
+  - patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+    target:
+      kind: Deployment
+      name: gateway
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 50m
+    target:
+      kind: StatefulSet
+      name: postgres|qdrant
 
 # `gateway` and `llama`/`llama-embed` read the SAME values `infra/k8s/apps/
 # kustomization.yaml` sets for them (a project rule: written out literally, not
