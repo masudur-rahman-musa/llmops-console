@@ -35,6 +35,7 @@ from httpx import Response
 from providers.conftest import (
     PROVIDER_DETAIL_MARKER,
     fail,
+    load_fixture,
     local_ok,
     make_adapter,
     make_local_adapter,
@@ -518,25 +519,37 @@ def test_tool_result_turn_reaches_the_provider_in_order(settings: Settings) -> N
 
 
 def test_a_response_format_answer_from_anthropic_is_json_content(settings: Settings) -> None:
-    """The whole path, through the real adapter: catches an adapter that hands the forced
-    schema tool back as a tool call, which the route serves as `content: null` with
-    `finish_reason: "tool_calls"` - an OpenAI-compatible caller reading the JSON from
-    `message.content` gets nothing."""
-    adapter, scripted = make_adapter([ok("json_schema_tool")], name="anthropic")
+    """The whole path, through the real adapter: catches an adapter that still sends the
+    schema as a forced tool (Anthropic does not hold a forced tool to the schema, and newer
+    models refuse it), and a route that serves the native JSON text as anything but
+    `message.content` with `finish_reason: "stop"`. Expected values come off the live
+    recording `json_output_opus5.json`."""
+    recorded = load_fixture("json_output_opus5")
+    texts = [block["text"] for block in recorded["content"] if block["type"] == "text"]
+    assert len(texts) == 1, "the recording must hold exactly one text block"
+    recorded_input = recorded["usage"]["input_tokens"]
+    recorded_output = recorded["usage"]["output_tokens"]
+    adapter, scripted = make_adapter([ok("json_output_opus5")], name="anthropic")
 
     with build_chat_client(settings, {"anthropic": adapter}) as client:
         body = ok_body(post_chat(client, chat_body(response_format=RESPONSE_FORMAT_WIRE)))
 
     assert scripted.request_count == 1
-    assert scripted.body()["tool_choice"] == {"type": "tool", "name": "ticket_summary"}
+    sent = scripted.body()
+    assert sent["output_config"] == {"format": {"type": "json_schema", "schema": TICKET_SCHEMA}}
+    assert "tools" not in sent
+    assert "tool_choice" not in sent
     choice = body["choices"][0]
     message = choice["message"]
-    expected = {"title": "Card declined", "severity": 3, "tags": ["billing", "eu"]}
-    assert message["content"] == json.dumps(expected, sort_keys=True)
-    assert json.loads(message["content"]) == expected
+    assert message["content"] == texts[0]
+    assert set(json.loads(message["content"])) == {"calls", "reason"}
     assert message.get("tool_calls") is None
     assert choice["finish_reason"] == "stop"
-    assert body["usage"] == {"prompt_tokens": 210, "completion_tokens": 64, "total_tokens": 274}
+    assert body["usage"] == {
+        "prompt_tokens": recorded_input,
+        "completion_tokens": recorded_output,
+        "total_tokens": recorded_input + recorded_output,
+    }
 
 
 # --- refusals: the request body ----------------------------------------------
@@ -561,9 +574,9 @@ def test_unknown_body_field_is_422(chat_client: TestClient) -> None:
 
 
 def test_tool_choice_with_response_format_is_422(chat_client: TestClient) -> None:
-    """Catches a route accepting both: each demands a different forced tool call, so
-    whichever is applied last silently wins and the caller gets an answer shaped by the
-    field it did not think was in charge."""
+    """Catches a route accepting both: each tells the model how to shape its answer, so
+    one silently wins and the caller gets an answer shaped by the field it did not think
+    was in charge."""
     response = post_chat(
         chat_client,
         chat_body(

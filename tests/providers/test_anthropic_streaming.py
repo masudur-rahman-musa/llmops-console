@@ -41,13 +41,10 @@ from opsconsole.providers.base import (
     ChatMessage,
     ChatRequest,
     FinishReason,
-    ResponseFormat,
     StreamEvent,
     StreamStart,
     TextDelta,
     ToolCallDelta,
-    ToolChoice,
-    ToolSpec,
     UsageTotal,
 )
 
@@ -366,191 +363,76 @@ def test_a_data_line_that_is_not_an_object_is_a_provider_error() -> None:
     assert "TypeError" in (raised.value.provider_message or "")
 
 
-# --- a response_format answer streamed as content ------------------
+# --- a response_format answer streamed as native JSON text ---------
 #
-# `stream_json_schema_tool.sse` is Anthropic answering a schema request: one forced
-# `tool_use` block, its input split over three `input_json_delta` fragments. With
-# `forced_tool` naming that block, the fragments are the answer TEXT (decision A).
+# `stream_json_output.sse` is a live recording of Anthropic answering a request
+# that carried `output_config.format`: the JSON arrives as ordinary `text_delta`
+# fragments, with `end_turn`. The expected values are read off the recording, so
+# the test pins what the reader does with it, whatever split Anthropic chose.
 
-FORCED_NAME = "ticket_summary"
-FORCED_FRAGMENTS = (
-    '{"title": "Card dec',
-    'lined", "severity": 3, ',
-    '"tags": ["billing", "eu"]}',
-)
-FORCED_INPUT: dict[str, Any] = {"title": "Card declined", "severity": 3, "tags": ["billing", "eu"]}
-FORCED_PROMPT_TOKENS = 210
-FORCED_COMPLETION_TOKENS = 64
-FORCED_TOTAL_TOKENS = 274
+NATIVE_STREAM = "stream_json_output"
+NATIVE_JSON_FIXTURES = ("json_output_opus5", "json_output_haiku45")
 
-FORCED_EVENT_TYPES: list[type[object]] = [
-    StreamStart,
-    TextDelta,
-    TextDelta,
-    TextDelta,
-    FinishReason,
-    UsageTotal,
-]
-
-JSON_FRAGMENT_MARKER = '"type":"input_json_delta"'
-EMPTY_FRAGMENT_LINE = (
-    'data: {"type":"content_block_delta","index":0,"delta":'
-    '{"type":"input_json_delta","partial_json":""}}'
-)
+# The keys of the schema the three live fixtures were recorded with.
+RECORDED_JSON_KEYS = {"calls", "reason"}
 
 
-def forced_lines_with_an_empty_fragment_inserted() -> list[str]:
-    """The recorded forced stream with one empty `partial_json` after the first fragment."""
-    lines = sse_lines("stream_json_schema_tool")
-    first = next(i for i, line in enumerate(lines) if JSON_FRAGMENT_MARKER in line)
-    return [*lines[: first + 1], EMPTY_FRAGMENT_LINE, *lines[first + 1 :]]
+def sse_payloads(lines: Sequence[str]) -> list[dict[str, Any]]:
+    """Every `data:` line of a recorded stream, decoded."""
+    payloads: list[dict[str, Any]] = []
+    for line in lines:
+        if line.startswith("data:"):
+            payload: Any = json.loads(line[len("data:") :])
+            assert isinstance(payload, dict), "every recorded data line is an object"
+            payloads.append(payload)
+    return payloads
 
 
-FORCED_STREAM_CASES: list[tuple[str, list[str]]] = [
-    ("the recorded stream", sse_lines("stream_json_schema_tool")),
-    ("an empty fragment among the three", forced_lines_with_an_empty_fragment_inserted()),
-]
-
-
-@pytest.mark.parametrize(
-    ("case", "lines"), FORCED_STREAM_CASES, ids=[case for case, _ in FORCED_STREAM_CASES]
-)
-def test_the_reader_streams_forced_tool_fragments_as_text(case: str, lines: list[str]) -> None:
-    """Catches a reader that keeps the forced block as a `ToolCallDelta`, one that buffers
-    it into a single `TextDelta` at block stop (decision A promises them live), one that
-    forwards an empty fragment as an empty delta, and one that leaves `tool_use` as the
-    finish reason, which the route maps to `tool_calls`."""
-    events = list(from_anthropic_events(lines, forced_tool=FORCED_NAME))
-
-    assert [type(event) for event in events] == FORCED_EVENT_TYPES, case
-    assert not [event for event in events if isinstance(event, ToolCallDelta)], case
-    texts = [event.text for event in events if isinstance(event, TextDelta)]
-    assert tuple(texts) == FORCED_FRAGMENTS, case
-    assert json.loads("".join(texts)) == FORCED_INPUT, case
-    assert isinstance(events[-2], FinishReason)
-    assert events[-2].reason == "end_turn", case
-    assert isinstance(events[-1], UsageTotal)
-    assert events[-1].usage.prompt_tokens == FORCED_PROMPT_TOKENS, case
-    assert events[-1].usage.completion_tokens == FORCED_COMPLETION_TOKENS, case
-    assert events[-1].usage.total_tokens == FORCED_TOTAL_TOKENS, case
-
-
-EMPTY_FORCED_CASES: list[tuple[str, list[str]]] = [
-    (
-        "no fragment at all",
-        [line for line in sse_lines("stream_json_schema_tool") if JSON_FRAGMENT_MARKER not in line],
-    ),
-    (
-        "one empty fragment",
-        [
-            EMPTY_FRAGMENT_LINE if JSON_FRAGMENT_MARKER in line else line
-            for line in sse_lines("stream_json_schema_tool")
-        ],
-    ),
-]
-
-
-@pytest.mark.parametrize(
-    ("case", "lines"), EMPTY_FORCED_CASES, ids=[case for case, _ in EMPTY_FORCED_CASES]
-)
-def test_a_forced_block_with_no_fragments_yields_an_empty_object(
-    case: str, lines: list[str]
-) -> None:
-    """Catches a reader that emits nothing for an empty forced input: the stream would
-    either raise as unreadable or finish with empty content, where the non-streaming path
-    gives `"{}"` for the same answer."""
-    events = list(from_anthropic_events(lines, forced_tool=FORCED_NAME))
-
-    assert [event.text for event in events if isinstance(event, TextDelta)] == ["{}"], case
-    assert not [event for event in events if isinstance(event, ToolCallDelta)], case
-    assert isinstance(events[-2], FinishReason)
-    assert events[-2].reason == "end_turn", case
-    assert isinstance(events[-1], UsageTotal)
-
-
-def test_held_text_is_emitted_when_no_forced_block_opens() -> None:
-    """Catches a reader that holds text while `forced_tool` is set and never lets it go
-    when no forced block arrives: a plain-text refusal would be lost, and the stream would
-    raise as unreadable or finish empty."""
-    events = list(from_anthropic_events(sse_lines("stream_text"), forced_tool=FORCED_NAME))
-
-    texts = [event.text for event in events if isinstance(event, TextDelta)]
-    assert "".join(texts) == TEXT_ANSWER
-    finish_at = next(i for i, event in enumerate(events) if isinstance(event, FinishReason))
-    assert all(i < finish_at for i, event in enumerate(events) if isinstance(event, TextDelta)), (
-        "held text must come out before the finish"
+def recorded_text(lines: Sequence[str]) -> str:
+    """The whole answer text the recording carries, joined from its `text_delta`s."""
+    return "".join(
+        str(payload["delta"]["text"])
+        for payload in sse_payloads(lines)
+        if payload["type"] == "content_block_delta" and payload["delta"]["type"] == "text_delta"
     )
+
+
+def recorded_usage(lines: Sequence[str]) -> tuple[int, int]:
+    """`input_tokens` from `message_start` and `output_tokens` from `message_delta`."""
+    payloads = sse_payloads(lines)
+    starts = [payload for payload in payloads if payload["type"] == "message_start"]
+    deltas = [payload for payload in payloads if payload["type"] == "message_delta"]
+    assert len(starts) == 1 and len(deltas) == 1, "one message_start and one message_delta"
+    return (
+        int(starts[0]["message"]["usage"]["input_tokens"]),
+        int(deltas[0]["usage"]["output_tokens"]),
+    )
+
+
+def test_the_reader_streams_a_native_json_answer_as_text() -> None:
+    """Catches a reader that turns a native JSON answer into anything but text deltas (a
+    `ToolCallDelta`, or nothing), one that rewrites `end_turn`, and one that takes the
+    completion count from `message_start` rather than `message_delta`: the expected
+    numbers come off the recording, and the ledger prices from them."""
+    lines = sse_lines(NATIVE_STREAM)
+    expected_text = recorded_text(lines)
+    expected_input, expected_output = recorded_usage(lines)
+
+    events = list(from_anthropic_events(lines))
+
     assert isinstance(events[0], StreamStart)
-    assert isinstance(events[-2], FinishReason)
-    assert events[-2].reason == "end_turn"
-    assert isinstance(events[-1], UsageTotal)
-    assert events[-1].usage.total_tokens == TEXT_TOTAL_TOKENS
-
-
-def text_then_forced_block_lines() -> list[str]:
-    """A text block at index 0, then the recorded forced block moved to index 1."""
-    recorded = sse_lines("stream_json_schema_tool")
-    start = next(i for i, line in enumerate(recorded) if '"type":"message_start"' in line)
-    text_block = [
-        'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
-        'data: {"type":"content_block_delta","index":0,"delta":'
-        '{"type":"text_delta","text":"Here it is."}}',
-        'data: {"type":"content_block_stop","index":0}',
-    ]
-    rest = [line.replace('"index":0', '"index":1') for line in recorded[start + 1 :]]
-    return [*recorded[: start + 1], *text_block, *rest]
-
-
-def test_text_before_a_forced_block_is_dropped_on_the_stream() -> None:
-    """Catches a reader that forwards text live while `forced_tool` is set: the preamble
-    reaches the client before the JSON, and the joined content no longer parses."""
-    events = list(from_anthropic_events(text_then_forced_block_lines(), forced_tool=FORCED_NAME))
-
     texts = [event.text for event in events if isinstance(event, TextDelta)]
-    assert tuple(texts) == FORCED_FRAGMENTS
-    assert json.loads("".join(texts)) == FORCED_INPUT
+    assert texts, "the answer must arrive as text deltas"
+    assert "".join(texts) == expected_text
+    assert set(json.loads("".join(texts))) == RECORDED_JSON_KEYS
+    assert json.loads("".join(texts)) == json.loads(expected_text)
     assert not [event for event in events if isinstance(event, ToolCallDelta)]
     assert isinstance(events[-2], FinishReason)
     assert events[-2].reason == "end_turn"
-
-
-UNFORCED_TOOL_CASES: list[tuple[str, str | None]] = [
-    ("no forced_tool", None),
-    ("a forced_tool naming no block", FORCED_NAME),
-]
-
-
-@pytest.mark.parametrize(
-    ("case", "forced_tool"), UNFORCED_TOOL_CASES, ids=[case for case, _ in UNFORCED_TOOL_CASES]
-)
-def test_a_stream_tool_call_is_unchanged_without_forced_tool(
-    case: str, forced_tool: str | None
-) -> None:
-    """Catches a reader that turns a caller's own `tool_use` block into text: with no
-    `forced_tool`, or one naming a different block, `get_weather` must stay a whole call,
-    its preamble text must survive, and the finish must stay `tool_use`."""
-    events = list(from_anthropic_events(sse_lines("stream_tool_use"), forced_tool=forced_tool))
-
-    calls = [event for event in events if isinstance(event, ToolCallDelta)]
-    assert len(calls) == 1, case
-    assert calls[0].index == TOOL_BLOCK_INDEX, case
-    assert calls[0].call.id == TOOL_CALL_ID, case
-    assert calls[0].call.name == TOOL_CALL_NAME, case
-    assert calls[0].call.arguments == TOOL_CALL_ARGUMENTS, case
-    assert "".join(event.text for event in events if isinstance(event, TextDelta)) == TOOL_TEXT
-    assert isinstance(events[-2], FinishReason)
-    assert events[-2].reason == "tool_use", case
     assert isinstance(events[-1], UsageTotal)
-    assert events[-1].usage.total_tokens == TOOL_TOTAL_TOKENS, case
-    if forced_tool is None:
-        # Today's order exactly; the held-text rule may only move text when a name is set.
-        assert [type(event) for event in events] == [
-            StreamStart,
-            TextDelta,
-            ToolCallDelta,
-            FinishReason,
-            UsageTotal,
-        ]
+    assert events[-1].usage.prompt_tokens == expected_input
+    assert events[-1].usage.completion_tokens == expected_output
+    assert events[-1].usage.total_tokens == expected_input + expected_output
 
 
 # --- the stream open ---------------------------------------------------------
@@ -709,7 +591,8 @@ def test_the_recorded_fixtures_are_the_shape_this_module_claims() -> None:
     """Catches a fixture edited into agreement with a wrong reader: the token counts and
     the truncation are asserted against the recorded text itself, so a stream_truncated
     that grew a `message_delta` fails here rather than quietly making the zero-fill test
-    vacuous."""
+    vacuous. Also catches a live recording that kept a request header or a key,
+    or that holds no text block for the native JSON cases to read."""
     truncated = sse_body("stream_truncated")
     assert "message_delta" not in truncated
     assert "message_stop" not in truncated
@@ -735,72 +618,21 @@ def test_the_recorded_fixtures_are_the_shape_this_module_claims() -> None:
     assert f'"output_tokens":{TOOL_COMPLETION_TOKENS}' in tool
     assert TOOL_CALL_ARGUMENTS not in tool, "the arguments must arrive as fragments"
 
-    forced = sse_body("stream_json_schema_tool")
-    assert f'"input_tokens":{FORCED_PROMPT_TOKENS}' in forced
-    assert f'"output_tokens":{FORCED_COMPLETION_TOKENS}' in forced
-    assert '"stop_reason":"tool_use"' in forced, "the rewrite to end_turn must have work to do"
-    assert forced.count(JSON_FRAGMENT_MARKER) == len(FORCED_FRAGMENTS)
-    whole = json.dumps(FORCED_INPUT)
-    assert whole not in forced, "the input must arrive as fragments"
-    assert json.dumps(whole)[1:-1] not in forced, "not even escaped inside one fragment"
+    native_payloads = sse_payloads(sse_lines(NATIVE_STREAM))
+    assert any(
+        payload["type"] == "content_block_start" and payload["content_block"]["type"] == "text"
+        for payload in native_payloads
+    ), "the native JSON stream must open a text block"
 
+    for name in NATIVE_JSON_FIXTURES:
+        recorded: Any = json.loads((FIXTURE_DIR / f"{name}.json").read_text(encoding="utf-8"))
+        assert isinstance(recorded, dict), name
+        assert [block for block in recorded["content"] if block["type"] == "text"], (
+            f"{name}: the native JSON answer must be a text block"
+        )
 
-TICKET_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {"title": {"type": "string"}, "severity": {"type": "integer"}},
-    "required": ["title", "severity"],
-}
-
-# Both rows send the SAME forced `tool_choice` to Anthropic: `to_anthropic` renders
-# a `response_format` and a caller's named `tool_choice` identically on the wire.
-# So only `request.response_format` can tell them apart.
-STREAM_CHAT_FORCED_CASES: list[tuple[str, ChatRequest, bool]] = [
-    (
-        "a response_format request",
-        REQUEST.model_copy(
-            update={"response_format": ResponseFormat(name=FORCED_NAME, json_schema=TICKET_SCHEMA)}
-        ),
-        True,
-    ),
-    (
-        "a caller's own forced tool, no response_format",
-        REQUEST.model_copy(
-            update={
-                "tools": (ToolSpec(name=FORCED_NAME, parameters=TICKET_SCHEMA),),
-                "tool_choice": ToolChoice(mode="tool", name=FORCED_NAME),
-            }
-        ),
-        False,
-    ),
-]
-
-
-@pytest.mark.parametrize(
-    ("case", "request_", "as_content"),
-    STREAM_CHAT_FORCED_CASES,
-    ids=[case for case, *_ in STREAM_CHAT_FORCED_CASES],
-)
-def test_stream_chat_passes_the_response_format_name_as_forced_tool(
-    case: str, request_: ChatRequest, as_content: bool
-) -> None:
-    """Catches a `stream_chat` that never passes `forced_tool` (the first row stays a tool
-    call), and one that reads it from the outbound `tool_choice` instead of
-    `response_format`: a caller who forced its own tool would get the call back as text."""
-    adapter, scripted = make_sse_adapter([sse_body("stream_json_schema_tool")])
-
-    events = list(adapter.stream_chat(request_))
-
-    assert scripted.request_count == 1
-    sent = json.loads(scripted.requests[0].content.decode("utf-8"))
-    assert sent["tool_choice"] == {"type": "tool", "name": FORCED_NAME}, case
-    texts = [event.text for event in events if isinstance(event, TextDelta)]
-    calls = [event for event in events if isinstance(event, ToolCallDelta)]
-    assert isinstance(events[-2], FinishReason)
-    if as_content:
-        assert tuple(texts) == FORCED_FRAGMENTS, case
-        assert calls == [], case
-        assert events[-2].reason == "end_turn", case
-    else:
-        assert texts == [], case
-        assert [call.call.name for call in calls] == [FORCED_NAME], case
-        assert events[-2].reason == "tool_use", case
+    live = [f"{NATIVE_STREAM}.sse", *(f"{name}.json" for name in NATIVE_JSON_FIXTURES)]
+    for file_name in live:
+        raw = (FIXTURE_DIR / file_name).read_text(encoding="utf-8")
+        assert "x-api-key" not in raw.lower(), f"{file_name}: a request header was recorded"
+        assert "sk-ant-" not in raw, f"{file_name}: a provider key was recorded"

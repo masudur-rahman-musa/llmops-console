@@ -8,9 +8,10 @@ so every direction is tested against recorded payloads without a transport;
 them, with `sleep` and `jitter` injected so the retry table costs microseconds to
 test and produces exact delays rather than a range. No provider SDK is imported:
 the mapping is the thing we own, and it stops here, so no Anthropic field name
-and no SSE event name reaches the rest of the gateway. That includes the forced
-tool a `response_format` becomes: both readers hand its input back as JSON
-content, so the route sees the OpenAI shape (`forced_tool` on each reader).
+and no SSE event name reaches the rest of the gateway. A `response_format`
+becomes Anthropic's native `output_config.format`, whose answer is a plain text
+block of JSON, so both readers hand it back as content with no special case
+(`test_a_native_json_answer_becomes_content`).
 
 Every PROVIDER failure that leaves this module is a `ProviderError` carrying
 `retryable`, including a timeout and a 200 whose body we cannot read, so plan
@@ -227,23 +228,21 @@ def to_anthropic(request: ChatRequest) -> dict[str, Any]:
             body["tool_choice"] = {"type": ANTHROPIC_TOOL_CHOICE_BY_MODE[choice.mode]}
 
     if request.response_format is not None:
-        # A JSON schema becomes one forced tool. Anthropic has no response_format,
-        # and a tool the model is required to call is the mechanism that makes the
-        # schema binding rather than a suggestion the prose can ignore.
-        # Applied after `tool_choice` on purpose, so the schema demand wins if
-        # both are somehow set: the forced call is what makes a schema binding,
-        # and a plain `auto` overriding it would leave the model free to answer
-        # in prose (`test_response_format_wins_over_tool_choice`). The API
-        # boundary refuses the pair outright, so this is only the tie-break.
-        forced = checked_tool_name(request.response_format.name, "response_format.name")
-        tools.append(
-            {
-                "name": forced,
-                "description": "Return the answer as this schema.",
-                "input_schema": dict(request.response_format.json_schema),
+        # Native structured outputs, not a forced tool: Anthropic holds the model
+        # to this schema, where a forced tool's input can be wrapped or reshaped,
+        # and newer models refuse a forced `tool_choice` outright. The caller's
+        # schema passes through unchanged and the caller's own `tool_choice`
+        # stays theirs (`test_response_format_renders_output_config`,
+        # `test_a_callers_tool_choice_passes_through_beside_response_format`).
+        # The name is still checked, so a bad one is the caller's 422 before
+        # any call (`test_a_bad_response_format_name_is_refused_before_any_call`).
+        checked_tool_name(request.response_format.name, "response_format.name")
+        body["output_config"] = {
+            "format": {
+                "type": "json_schema",
+                "schema": dict(request.response_format.json_schema),
             }
-        )
-        body["tool_choice"] = {"type": "tool", "name": forced}
+        }
 
     if tools:
         # Omitted entirely rather than sent empty: an empty `tools` is a field
@@ -253,38 +252,14 @@ def to_anthropic(request: ChatRequest) -> dict[str, Any]:
     return body
 
 
-def _forced_stop_reason(stop_reason: str, *, converted: bool, calls_left: bool) -> str:
-    """The stop reason once a forced block has become content.
-
-    `tool_use` becomes `end_turn` only when the forced block was converted and no
-    caller tool call remains, because then nothing in the answer is a tool call
-    any more (`test_a_forced_tool_answer_becomes_json_content`). A caller's own
-    call keeps `tool_use` (`test_a_caller_tool_beside_the_forced_block_stays_a_tool_call`),
-    and every other reason, `max_tokens` included, passes through
-    (`test_a_forced_answer_cut_at_max_tokens_keeps_its_stop_reason`).
-    """
-    if stop_reason == "tool_use" and converted and not calls_left:
-        return "end_turn"
-    return stop_reason
-
-
-def from_anthropic(payload: Mapping[str, Any], *, forced_tool: str | None = None) -> ChatResponse:
+def from_anthropic(payload: Mapping[str, Any]) -> ChatResponse:
     """Read an Anthropic Messages response into the normalised response.
 
     Text blocks concatenate into `content` and `tool_use` blocks become
     `tool_calls` whose `arguments` is a JSON *string*, which is the shape the
-    published OpenAI-compatible API promises its clients.
-
-    `forced_tool` is the name `to_anthropic` gave a `response_format` schema.
-    The `tool_use` block with that name is the answer, not a call: its input
-    becomes `content` as a JSON string, the shape an OpenAI-compatible caller
-    reads a `response_format` answer from
-    (`test_a_forced_tool_answer_becomes_json_content`). Text beside it is dropped,
-    because the caller parses `content` as JSON
-    (`test_text_beside_a_forced_block_is_dropped`). With no block of that name the
-    answer maps as if `forced_tool` were unset, so a plain-text refusal is not
-    lost (`test_a_forced_tool_without_its_block_keeps_the_text`,
-    `test_a_forced_name_matching_no_block_changes_nothing`). A block of any other
+    published OpenAI-compatible API promises its clients. A `response_format`
+    answer is one text block of JSON, so it lands in `content` on this same path
+    (`test_a_native_json_answer_becomes_content`). A block of any other
     type is passed over rather than guessed at, and an answer that leaves nothing
     behind - no text and no tool call - is a `ProviderError` rather than an empty
     string a tenant is billed for (`test_an_unknown_block_type_is_ignored` and
@@ -299,16 +274,9 @@ def from_anthropic(payload: Mapping[str, Any], *, forced_tool: str | None = None
     try:
         text: list[str] = []
         calls: list[ToolCall] = []
-        forced: str | None = None
         for block in payload["content"]:
             if block["type"] == "text":
                 text.append(block["text"])
-            elif (
-                block["type"] == "tool_use"
-                and forced_tool is not None
-                and block["name"] == forced_tool
-            ):
-                forced = json.dumps(block["input"], sort_keys=True)
             elif block["type"] == "tool_use":
                 calls.append(
                     ToolCall(
@@ -327,7 +295,7 @@ def from_anthropic(payload: Mapping[str, Any], *, forced_tool: str | None = None
         prompt_tokens = usage["input_tokens"]
         completion_tokens = usage["output_tokens"]
 
-        content = "".join(text) if forced is None else forced
+        content = "".join(text)
         if not content and not calls:
             # Not `transport.unreadable`: the body parsed fine, it simply carried nothing
             # this adapter can render. Saying so is what stops an operator
@@ -345,9 +313,7 @@ def from_anthropic(payload: Mapping[str, Any], *, forced_tool: str | None = None
             model=payload["model"],
             content=content,
             tool_calls=tuple(calls),
-            finish_reason=_forced_stop_reason(
-                payload["stop_reason"], converted=forced is not None, calls_left=bool(calls)
-            ),
+            finish_reason=payload["stop_reason"],
             usage=Usage(
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
@@ -393,9 +359,7 @@ def _sse_payload(line: str) -> dict[str, Any] | None:
     return payload
 
 
-def from_anthropic_events(
-    lines: Iterable[str], *, forced_tool: str | None = None
-) -> Iterator[StreamEvent]:
+def from_anthropic_events(lines: Iterable[str]) -> Iterator[StreamEvent]:
     """Read Anthropic's Messages SSE lines into the neutral stream events.
 
     Pure, and pure on purpose: it takes the decoded lines `iter_lines()` yields
@@ -412,15 +376,8 @@ def from_anthropic_events(
     The fragments are concatenated rather than parsed and re-serialised, so what
     the model wrote is what the client is handed.
 
-    `forced_tool` is the streaming twin of the same keyword on `from_anthropic`.
-    The block with that name streams its non-empty fragments live as `TextDelta`s,
-    the shape OpenAI streams a `response_format` answer in, and a block that
-    streams none yields one `"{}"`
-    (`test_the_reader_streams_forced_tool_fragments_as_text`,
-    `test_a_forced_block_with_no_fragments_yields_an_empty_object`). While it is
-    set, text is held: dropped once the forced block opens
-    (`test_text_before_a_forced_block_is_dropped_on_the_stream`), emitted before
-    the finish when none did (`test_held_text_is_emitted_when_no_forced_block_opens`).
+    A `response_format` answer is a text block of JSON, so it streams as plain
+    `TextDelta`s on this same path (`test_the_reader_streams_a_native_json_answer_as_text`).
 
     Usage is split across two events - `input_tokens` on `message_start`,
     `output_tokens` on `message_delta` - and both are required, as is the stop
@@ -434,11 +391,6 @@ def from_anthropic_events(
     stop_reason: str | None = None
     open_tools: dict[int, _OpenToolBlock] = {}
     rendered = False
-    held: list[str] = []
-    forced_index: int | None = None
-    forced_seen = False
-    forced_streamed = False
-    caller_calls = False
     seen_blocks: set[str] = set()
 
     try:
@@ -454,48 +406,23 @@ def from_anthropic_events(
             elif kind == "content_block_start":
                 block = payload["content_block"]
                 seen_blocks.add(block["type"])
-                if (
-                    block["type"] == "tool_use"
-                    and forced_tool is not None
-                    and block["name"] == forced_tool
-                ):
-                    forced_index = payload["index"]
-                    forced_seen = True
-                    forced_streamed = False
-                    held.clear()
-                elif block["type"] == "tool_use":
+                if block["type"] == "tool_use":
                     open_tools[payload["index"]] = _OpenToolBlock(
                         id=block["id"], name=block["name"], fragments=[]
                     )
             elif kind == "content_block_delta":
                 delta = payload["delta"]
                 if delta["type"] == "text_delta":
-                    if forced_tool is None:
-                        rendered = True
-                        yield TextDelta(text=delta["text"])
-                    elif not forced_seen:
-                        held.append(delta["text"])
-                elif delta["type"] == "input_json_delta" and payload["index"] == forced_index:
-                    if delta["partial_json"]:
-                        rendered = True
-                        forced_streamed = True
-                        yield TextDelta(text=delta["partial_json"])
+                    rendered = True
+                    yield TextDelta(text=delta["text"])
                 elif delta["type"] == "input_json_delta":
                     fragment_of = open_tools.get(payload["index"])
                     if fragment_of is not None:
                         fragment_of.fragments.append(delta["partial_json"])
-            elif kind == "content_block_stop" and payload["index"] == forced_index:
-                forced_index = None
-                if not forced_streamed:
-                    # The streamed twin of `from_anthropic` rendering an empty
-                    # input as `{}`: an empty answer is not JSON a caller can parse.
-                    rendered = True
-                    yield TextDelta(text="{}")
             elif kind == "content_block_stop":
                 closed = open_tools.pop(payload["index"], None)
                 if closed is not None:
                     rendered = True
-                    caller_calls = True
                     yield ToolCallDelta(
                         index=payload["index"],
                         call=ToolCall(
@@ -524,9 +451,6 @@ def from_anthropic_events(
             ),
         )
 
-    if held and not forced_seen:
-        rendered = True
-
     if not rendered:
         # The streaming twin of `from_anthropic`'s no-readable-block guard, and
         # it exists for the same reason: a `thinking`-only answer renders nothing
@@ -545,15 +469,7 @@ def from_anthropic_events(
             provider_message=f"stop_reason={stop_reason!r}, block types={sorted(seen_blocks)}",
         )
 
-    if not forced_seen:
-        # No forced block opened, so the held text is the answer (a plain-text
-        # refusal, say) and is emitted whole before the finish.
-        for text in held:
-            yield TextDelta(text=text)
-
-    yield FinishReason(
-        reason=_forced_stop_reason(stop_reason, converted=forced_seen, calls_left=caller_calls)
-    )
+    yield FinishReason(reason=stop_reason)
     yield UsageTotal(
         usage=Usage(
             prompt_tokens=prompt_tokens,
@@ -561,16 +477,6 @@ def from_anthropic_events(
             total_tokens=prompt_tokens + completion_tokens,
         )
     )
-
-
-def _forced_tool(request: ChatRequest) -> str | None:
-    """The forced tool name `to_anthropic` gave a `response_format`, or `None`.
-
-    Read from `response_format`, never from `tool_choice`: a caller forcing its
-    own tool by name sends the same `tool_choice`, and that call must stay a call
-    (`test_chat_passes_the_response_format_name_as_forced_tool`).
-    """
-    return request.response_format.name if request.response_format is not None else None
 
 
 class AnthropicAdapter:
@@ -626,7 +532,7 @@ class AnthropicAdapter:
             # A 200 that is not JSON at all - a proxy's HTML error page, a
             # truncated body. Pinned by `test_a_non_json_success_body_is_a_provider_error`.
             raise unreadable(exc) from exc
-        return from_anthropic(payload, forced_tool=_forced_tool(request))
+        return from_anthropic(payload)
 
     def stream_chat(self, request: ChatRequest) -> Iterator[StreamEvent]:
         """Run one streamed completion, yielding neutral events as they arrive.
@@ -649,9 +555,7 @@ class AnthropicAdapter:
         streamed = {**body, "stream": True}
         with self.http.open_stream(MESSAGES_PATH, streamed) as response:
             try:
-                yield from from_anthropic_events(
-                    response.iter_lines(), forced_tool=_forced_tool(request)
-                )
+                yield from from_anthropic_events(response.iter_lines())
             except httpx.RequestError as exc:
                 raise self.http.transport_error(exc) from exc
 
