@@ -28,7 +28,7 @@ import re
 from collections.abc import Iterator, Mapping
 from typing import Any, Literal, Protocol, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, StrictBool
 
 from opsconsole.routing.errors import IdentifierInvalid
 
@@ -134,10 +134,17 @@ class ResponseFormat(_Contract):
 
     `name` is caller-supplied and becomes an identifier on the outbound call, so
     adapters run it through `checked_tool_name` like any other tool name.
+
+    `strict` is the caller's own flag, `None` when they left it out. A wire with
+    a strict mode forwards it as given and never adds it
+    (`test_response_format_without_strict_sends_no_strict_key`). `StrictBool`,
+    so `"yes"` is refused rather than read as true
+    (`test_a_non_bool_strict_is_422_before_any_outbound_call`).
     """
 
     name: str
     json_schema: Mapping[str, Any]
+    strict: StrictBool | None = None
 
 
 class ToolChoice(_Contract):

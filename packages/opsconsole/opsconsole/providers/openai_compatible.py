@@ -253,15 +253,18 @@ def to_openai(request: ChatRequest) -> dict[str, Any]:
         # touches `tool_choice` - both of which the Anthropic mapping has to do,
         # and both of which would take the caller's own tools away here
         # (`test_response_format_leaves_the_callers_tools_alone`). `strict` is
-        # what makes the schema binding rather than a suggestion.
-        body["response_format"] = {
-            "type": "json_schema",
-            "json_schema": {
-                "name": checked_tool_name(request.response_format.name, "response_format.name"),
-                "schema": dict(request.response_format.json_schema),
-                "strict": True,
-            },
+        # the caller's to set: forwarded as given, and absent when they left it
+        # out, because a strict schema must close every object and require every
+        # field, and most callers' schemas do neither
+        # (`test_response_format_without_strict_sends_no_strict_key`,
+        # `test_a_non_strict_schema_goes_through_to_openai`).
+        json_schema: dict[str, Any] = {
+            "name": checked_tool_name(request.response_format.name, "response_format.name"),
+            "schema": dict(request.response_format.json_schema),
         }
+        if request.response_format.strict is not None:
+            json_schema["strict"] = request.response_format.strict
+        body["response_format"] = {"type": "json_schema", "json_schema": json_schema}
 
     return body
 

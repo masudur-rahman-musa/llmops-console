@@ -1,0 +1,15 @@
+{
+  "_comment": "HAND-WRITTEN to the published OpenAI chat-completions shape, like plain.json. The answer to a non-strict json_schema request: the content is the JSON string the schema asked for.",
+  "id": "chatcmpl-local-json-schema-0001",
+  "object": "chat.completion",
+  "created": 1757000002,
+  "model": "qwen2.5-7b-instruct",
+  "choices": [
+    {
+      "index": 0,
+      "message": {"role": "assistant", "content": "{\"title\": \"Printer on fire\", \"severity\": 3}"},
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {"prompt_tokens": 63, "completion_tokens": 14, "total_tokens": 77}
+}

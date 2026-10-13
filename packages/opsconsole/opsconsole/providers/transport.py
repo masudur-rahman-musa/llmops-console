@@ -14,12 +14,15 @@ microseconds to test and produces exact delays rather than a range.
 
 This module knows no vendor. The path, the headers and the base URL are the
 adapter's to pass; nothing here reads a provider's body beyond truncating it for
-the log.
+the log, and pulling `error.message` out of a 400 so the reason a request was
+refused is in the gateway log rather than behind a bare 502.
 """
 
 from __future__ import annotations
 
 import contextlib
+import json
+import logging
 import random
 import time
 from collections.abc import Callable, Iterator, Mapping
@@ -28,6 +31,8 @@ from typing import Any
 import httpx
 
 from opsconsole.core.errors import ProviderError
+
+logger = logging.getLogger(__name__)
 
 CONNECT_TIMEOUT = 5.0
 READ_TIMEOUT = 60.0
@@ -86,7 +91,8 @@ class ProviderTransport:
     message says, so two accounts on one vendor stay distinguishable in a log
     exactly as they are in the ledger and the resolver.
 
-    Nothing here is logged. What reaches a log on a failure is
+    One thing is logged here: a 400's parsed `error.message` (see
+    `status_error`). Otherwise what reaches a log on a failure is
     `ProviderError.provider_message`, which holds the provider's answer or the
     transport's own exception text, never the request body or its headers
     (`test_provider_message_never_reaches_the_client_message`).
@@ -183,13 +189,49 @@ class ProviderTransport:
         `message` is client-facing and carries the provider name and the status
         only; the body goes to `provider_message` for the log
         (`test_provider_message_never_reaches_the_client_message`).
+
+        A 400 also logs one WARNING with the provider's parsed `error.message`,
+        cut to `PROVIDER_MESSAGE_LIMIT`: a 400 is a request the provider refused
+        as malformed, and without the reason it reads as a bare 502
+        (`test_a_400_logs_the_providers_message`, `test_the_400_log_is_cut_at_500`).
+        Only the parsed message, never the raw body, which is free-form and may
+        echo request text; a body with no readable message logs its length only
+        (`test_a_400_with_no_readable_message_logs_status_and_length_only`). Other
+        statuses log nothing, since a 401 body can quote part of the key
+        (`test_a_500_logs_nothing_new`).
         """
         status = response.status_code
+        if status == httpx.codes.BAD_REQUEST:
+            self._log_bad_request(response)
         return ProviderError(
             f"{self.name}: the provider answered {status}",
             retryable=status == httpx.codes.TOO_MANY_REQUESTS or status >= 500,
             provider_message=response.text[:PROVIDER_MESSAGE_LIMIT],
         )
+
+    def _log_bad_request(self, response: httpx.Response) -> None:
+        """Log a 400's `error.message`, or only the body's length when there is none."""
+        message: object = None
+        try:
+            payload = json.loads(response.content)
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict):
+            error = payload.get("error")
+            if isinstance(error, dict):
+                message = error.get("message")
+        if isinstance(message, str):
+            logger.warning(
+                "%s: the provider answered 400: %s",
+                self.name,
+                message[:PROVIDER_MESSAGE_LIMIT],
+            )
+        else:
+            logger.warning(
+                "%s: the provider answered 400 with no readable error message (%d bytes)",
+                self.name,
+                len(response.content),
+            )
 
     def transport_error(self, exc: httpx.RequestError) -> ProviderError:
         """Turn a request that never completed into the typed error.

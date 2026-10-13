@@ -59,7 +59,7 @@ from typing import Any, Literal, assert_never, cast
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 from starlette.datastructures import State
 from starlette.types import Scope
 
@@ -406,6 +406,7 @@ class JsonSchemaSpec(_Wire):
 
     name: str
     json_schema: Mapping[str, Any] = Field(alias="schema")
+    strict: StrictBool | None = None
 
 
 class WireResponseFormat(_Wire):
@@ -1163,6 +1164,7 @@ def to_neutral(body: ChatCompletionRequest, model: str) -> ChatRequest:
             ResponseFormat(
                 name=body.response_format.json_schema.name,
                 json_schema=body.response_format.json_schema.json_schema,
+                strict=body.response_format.json_schema.strict,
             )
             if body.response_format is not None
             else None

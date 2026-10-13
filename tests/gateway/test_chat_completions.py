@@ -393,6 +393,46 @@ def test_response_format_reaches_the_adapter(
     assert dict(sent.response_format.json_schema) == TICKET_SCHEMA
 
 
+def response_format_wire_with(strict: object) -> dict[str, Any]:
+    """`RESPONSE_FORMAT_WIRE` with the caller's own `json_schema.strict` set."""
+    return {
+        "type": "json_schema",
+        "json_schema": {"name": "ticket_summary", "schema": TICKET_SCHEMA, "strict": strict},
+    }
+
+
+def test_response_format_strict_is_accepted_on_the_wire(
+    chat_client: TestClient, chat_stub: StubAdapter
+) -> None:
+    """Catches a wire model that still refuses `strict` as an unknown field (every OpenAI
+    SDK caller setting it gets a 422), and a route mapping that accepts the flag and drops
+    it before the adapter, so `false` never reaches the provider."""
+    ok_body(post_chat(chat_client, chat_body(response_format=response_format_wire_with(False))))
+
+    sent = last_request(chat_stub)
+    assert sent.response_format is not None
+    assert sent.response_format.model_dump().get("strict", "absent") is False
+
+
+NON_BOOL_STRICT: list[object] = ["yes", 1, "true"]
+
+
+@pytest.mark.parametrize("strict", NON_BOOL_STRICT, ids=[repr(s) for s in NON_BOOL_STRICT])
+def test_a_non_bool_strict_is_422_before_any_outbound_call(
+    strict: object, chat_client: TestClient, chat_stub: StubAdapter
+) -> None:
+    """Catches a lax `bool` field, which coerces `"yes"`, `1` and `"true"` into true and
+    silently makes the caller's schema strict. The first post proves `strict` is a known
+    field, so the 422 below can only come from its type, not from unknown-field refusal."""
+    ok_body(post_chat(chat_client, chat_body(response_format=response_format_wire_with(True))))
+    before = len(chat_stub.requests)
+
+    response = post_chat(chat_client, chat_body(response_format=response_format_wire_with(strict)))
+
+    assert_error_body(response, status=422, code="VALIDATION")
+    assert len(chat_stub.requests) == before, "the provider was called for a refused request"
+
+
 ToolChoiceWire = str | dict[str, Any] | None
 
 TOOL_CHOICE_CASES: list[tuple[str, ToolChoiceWire, ToolChoice | None]] = [

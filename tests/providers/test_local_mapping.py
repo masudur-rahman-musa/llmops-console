@@ -223,19 +223,60 @@ def test_no_tools_omits_the_field_entirely() -> None:
     assert "tools" not in body
 
 
-def test_response_format_renders_as_a_strict_json_schema() -> None:
+def response_format_with(strict: object) -> ResponseFormat:
+    """`RESPONSE_FORMAT` with the caller's own `strict` flag set.
+
+    Built through `model_validate` so the case reads the same whether or not the
+    type checker has seen the field yet; a contract without `strict` rejects it
+    here, since `_Contract` forbids unknown fields.
+    """
+    return ResponseFormat.model_validate(
+        {"name": "ticket_summary", "json_schema": TICKET_SCHEMA, "strict": strict}
+    )
+
+
+def test_response_format_without_strict_renders_a_plain_json_schema() -> None:
     """Catches a mapper that turns the schema into a forced tool the way the Anthropic
     adapter has to (the answer would come back as a tool call the caller never declared),
-    and catches a `strict` left off, which makes the schema a suggestion the model may
-    ignore while the caller believes it is binding."""
+    and catches a mapper that adds `strict: true` on the caller's behalf, which OpenAI
+    answers with a 400 for any schema with an optional field."""
     body = to_openai(request_with({"response_format": RESPONSE_FORMAT}))
 
     assert body["response_format"] == {
         "type": "json_schema",
-        "json_schema": {"name": "ticket_summary", "schema": TICKET_SCHEMA, "strict": True},
+        "json_schema": {"name": "ticket_summary", "schema": TICKET_SCHEMA},
     }
     assert "tools" not in body, "a response format is not a tool on this wire"
     assert "tool_choice" not in body
+
+
+def test_response_format_forwards_strict_true() -> None:
+    """Catches a mapper that drops the caller's `strict: true`, which turns a schema the
+    caller made binding into a suggestion the model may ignore."""
+    body = to_openai(request_with({"response_format": response_format_with(True)}))
+
+    assert body["response_format"]["json_schema"] == {
+        "name": "ticket_summary",
+        "schema": TICKET_SCHEMA,
+        "strict": True,
+    }
+
+
+def test_response_format_forwards_strict_false() -> None:
+    """Catches a mapper that writes `strict` only when it is truthy (`if strict:`), so a
+    caller's explicit `false` is dropped instead of sent as given."""
+    body = to_openai(request_with({"response_format": response_format_with(False)}))
+
+    assert "strict" in body["response_format"]["json_schema"]
+    assert body["response_format"]["json_schema"]["strict"] is False
+
+
+def test_response_format_without_strict_sends_no_strict_key() -> None:
+    """Catches a mapper that sends `strict: null` or a default value when the caller left
+    the flag out, instead of leaving the key off and letting OpenAI apply its own default."""
+    body = to_openai(request_with({"response_format": RESPONSE_FORMAT}))
+
+    assert "strict" not in body["response_format"]["json_schema"]
 
 
 def test_response_format_leaves_the_callers_tools_alone() -> None:

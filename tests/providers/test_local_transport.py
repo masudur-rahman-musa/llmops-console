@@ -13,11 +13,15 @@ exact numbers rather than a range.
 
 from __future__ import annotations
 
+import json
+import logging
+from typing import Any
+
 import httpx
 import pytest
 
 from opsconsole.core.errors import ProviderError
-from opsconsole.providers.base import ChatMessage, ChatRequest
+from opsconsole.providers.base import ChatMessage, ChatRequest, ResponseFormat
 from opsconsole.providers.openai_compatible import (
     CHAT_COMPLETIONS_PATH,
     OpenAICompatibleAdapter,
@@ -342,3 +346,205 @@ def test_close_releases_the_client() -> None:
     adapter.close()
 
     assert adapter.client.is_closed
+
+
+# --- a non-strict schema, and the 400 log ----------------------------
+
+# The logger `ProviderTransport.status_error` writes the 400 line to.
+TRANSPORT_LOGGER = "opsconsole.providers.transport"
+
+# A schema OpenAI's strict mode refuses on two counts: `tags` is optional, and there
+# is no `additionalProperties: false`. With `strict: true` added for the caller it is
+# the 400 that broke the Helpdesk on every turn.
+NON_STRICT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "severity": {"type": "integer"},
+        "tags": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["title", "severity"],
+}
+
+# Planted in the prompt and the key of the no-leak case, and nowhere else.
+SENTINEL_PROMPT = "prompt-sentinel-9b41e7 tell nobody about the Kestrel account"
+SENTINEL_KEY = "sk-key-sentinel-5d03aa-not-a-real-key"
+
+
+def transport_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    """Every captured record from the transport's own logger."""
+    return [record for record in caplog.records if record.name == TRANSPORT_LOGGER]
+
+
+def raw_adapter(status: int, raw: bytes, sleeps: SleepRecorder) -> OpenAICompatibleAdapter:
+    """A local adapter answering every request with exactly these bytes and this status."""
+    transport = httpx.MockTransport(lambda request: httpx.Response(status, content=raw))
+    return OpenAICompatibleAdapter(
+        name=LOCAL_PROVIDER_NAME,
+        base_url=LOCAL_BASE_URL,
+        transport=transport,
+        sleep=sleeps,
+    )
+
+
+def test_a_non_strict_schema_goes_through_to_openai() -> None:
+    """Catches the bug this plan fixes: a mapper adding `strict: true` (or tightening the
+    schema with `additionalProperties: false`) on the caller's behalf, which OpenAI answers
+    with a 400 for this schema; and catches an answer whose JSON content is lost."""
+    adapter, scripted = make_local_adapter([local_ok("json_schema_answer")])
+    request = ChatRequest(
+        model="qwen2.5-7b-instruct",
+        messages=(ChatMessage(role="user", content="Summarise the ticket."),),
+        response_format=ResponseFormat(name="ticket_summary", json_schema=NON_STRICT_SCHEMA),
+    )
+
+    response = adapter.chat(request)
+
+    assert scripted.body()["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {"name": "ticket_summary", "schema": NON_STRICT_SCHEMA},
+    }
+    assert json.loads(response.content) == {"title": "Printer on fire", "severity": 3}
+
+
+def test_a_400_logs_the_providers_message(
+    caplog: pytest.LogCaptureFixture, sleeps: SleepRecorder
+) -> None:
+    """Catches a 400 that reaches the gateway log as a bare 502 with no reason, which is
+    how the strict-mode failure stayed invisible, and catches a line logged once per
+    caller rather than once per failure."""
+    provider_message = load_local_fixture("error_400")["error"]["message"]
+    adapter, _ = make_local_adapter([local_fail(400, "error_400")], sleep=sleeps)
+
+    with caplog.at_level(logging.WARNING, logger=TRANSPORT_LOGGER), pytest.raises(ProviderError):
+        adapter.chat(REQUEST)
+
+    records = transport_records(caplog)
+    assert len(records) == 1, [record.getMessage() for record in records]
+    assert records[0].levelno == logging.WARNING
+    logged = records[0].getMessage()
+    assert LOCAL_PROVIDER_NAME in logged
+    assert "400" in logged
+    assert provider_message in logged
+    assert PROVIDER_DETAIL_MARKER in logged
+
+
+def test_the_400_log_carries_no_prompt_and_no_key(
+    caplog: pytest.LogCaptureFixture, sleeps: SleepRecorder
+) -> None:
+    """Catches a 400 log that writes the outbound request (its body or its headers) next
+    to the provider's answer, which would put a tenant's prompt and the provider key in
+    the gateway log."""
+    adapter, _ = make_local_adapter(
+        [local_fail(400, "error_400")], api_key=SENTINEL_KEY, sleep=sleeps
+    )
+    request = ChatRequest(
+        model="qwen2.5-7b-instruct",
+        messages=(ChatMessage(role="user", content=SENTINEL_PROMPT),),
+    )
+
+    with caplog.at_level(logging.DEBUG), pytest.raises(ProviderError):
+        adapter.chat(request)
+
+    assert len(transport_records(caplog)) == 1, (
+        "the 400 must be logged for this case to mean anything"
+    )
+    for record in caplog.records:
+        logged = record.getMessage()
+        assert SENTINEL_PROMPT not in logged, record.name
+        assert SENTINEL_KEY not in logged, record.name
+
+
+def test_the_400_log_is_cut_at_500(caplog: pytest.LogCaptureFixture, sleeps: SleepRecorder) -> None:
+    """Catches a log line with no cut (a provider echoing a large request writes all of it
+    on every failure), a cut one character off, and a raw body slice logged in place of
+    the parsed `error.message`, whose first 500 characters would then never appear."""
+    message = ("upstream-cut-" + "a" * PROVIDER_MESSAGE_LIMIT)[:PROVIDER_MESSAGE_LIMIT] + "Z" * 100
+    assert len(message) == 600
+    assert message[PROVIDER_MESSAGE_LIMIT] != message[PROVIDER_MESSAGE_LIMIT - 1]
+    adapter, _ = make_local_adapter([(400, {"error": {"message": message}})], sleep=sleeps)
+
+    with caplog.at_level(logging.WARNING, logger=TRANSPORT_LOGGER), pytest.raises(ProviderError):
+        adapter.chat(REQUEST)
+
+    records = transport_records(caplog)
+    assert len(records) == 1
+    logged = records[0].getMessage()
+    assert message[:PROVIDER_MESSAGE_LIMIT] in logged
+    assert message[: PROVIDER_MESSAGE_LIMIT + 1] not in logged
+    assert PROVIDER_MESSAGE_LIMIT == 500
+
+
+BODY_SENTINEL = "body-sentinel-71c0de"
+
+
+def padded(prefix: str, suffix: str, length: int) -> bytes:
+    """`prefix + filler + suffix` as exactly `length` bytes, so the logged length is a
+    number no other part of the line can supply by accident."""
+    filler = "x" * (length - len(prefix) - len(suffix))
+    raw = (prefix + filler + suffix).encode("utf-8")
+    assert len(raw) == length
+    return raw
+
+
+UNREADABLE_400_BODIES: list[tuple[str, bytes]] = [
+    ("a plain-text body", padded(f"<html>{BODY_SENTINEL} ", "</html>", 1234)),
+    ("JSON with no error key", padded(f'{{"detail": "{BODY_SENTINEL} ', '"}', 1357)),
+    (
+        "JSON whose error.message is not a string",
+        padded(f'{{"error": {{"message": 42, "note": "{BODY_SENTINEL} ', '"}}', 1468),
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "raw"), UNREADABLE_400_BODIES, ids=[case for case, _ in UNREADABLE_400_BODIES]
+)
+def test_a_400_with_no_readable_message_logs_status_and_length_only(
+    case: str, raw: bytes, caplog: pytest.LogCaptureFixture, sleeps: SleepRecorder
+) -> None:
+    """Catches a fallback that logs the raw body when no `error.message` can be read: a
+    free-form body may echo the request, so only its length is safe to write."""
+    adapter = raw_adapter(400, raw, sleeps)
+
+    with caplog.at_level(logging.WARNING, logger=TRANSPORT_LOGGER), pytest.raises(ProviderError):
+        adapter.chat(REQUEST)
+
+    records = transport_records(caplog)
+    assert len(records) == 1, case
+    logged = records[0].getMessage()
+    assert LOCAL_PROVIDER_NAME in logged, case
+    assert "400" in logged, case
+    assert str(len(raw)) in logged, case
+    assert BODY_SENTINEL not in logged, case
+
+
+NON_400_STATUSES = [401, 429, 500]
+
+
+@pytest.mark.parametrize("status", NON_400_STATUSES, ids=[str(s) for s in NON_400_STATUSES])
+def test_a_500_logs_nothing_new(
+    status: int, caplog: pytest.LogCaptureFixture, sleeps: SleepRecorder
+) -> None:
+    """Catches a log on every failure status rather than on 400 alone: a 401 body can
+    quote part of the API key, and a retried 429 or 500 would write one line per attempt."""
+    body = {"error": {"message": f"{PROVIDER_DETAIL_MARKER}: status {status}"}}
+    adapter, _ = make_local_adapter([(status, body)], sleep=sleeps)
+
+    with caplog.at_level(logging.DEBUG, logger=TRANSPORT_LOGGER), pytest.raises(ProviderError):
+        adapter.chat(REQUEST)
+
+    assert transport_records(caplog) == []
+
+
+def test_a_400_still_raises_the_same_client_message(sleeps: SleepRecorder) -> None:
+    """Catches a 400 log that also changes what the caller is told: the provider's words
+    moving into `message`, or the 400 turning retryable and being billed three times."""
+    adapter, scripted = make_local_adapter([local_fail(400, "error_400")], sleep=sleeps)
+
+    with pytest.raises(ProviderError) as raised:
+        adapter.chat(REQUEST)
+
+    assert raised.value.message == f"{LOCAL_PROVIDER_NAME}: the provider answered 400"
+    assert raised.value.retryable is False
+    assert scripted.request_count == 1

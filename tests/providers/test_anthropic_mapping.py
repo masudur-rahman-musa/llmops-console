@@ -254,6 +254,34 @@ def test_response_format_renders_one_forced_tool() -> None:
     assert "response_format" not in body, "our own field name must not travel to Anthropic"
 
 
+def test_strict_never_changes_the_anthropic_body() -> None:
+    """Catches an Anthropic mapper that starts carrying the caller's `strict` flag into the
+    forced tool (Anthropic has no such field and would 400), or that branches on it: the
+    outbound body must be byte-identical for true, false and absent."""
+    bodies = {
+        strict: json.dumps(
+            to_anthropic(
+                request_with(
+                    {
+                        "response_format": ResponseFormat.model_validate(
+                            {
+                                "name": "ticket_summary",
+                                "json_schema": TICKET_SCHEMA,
+                                "strict": strict,
+                            }
+                        )
+                    }
+                )
+            )
+        )
+        for strict in (True, False, None)
+    }
+
+    assert bodies[True] == bodies[None]
+    assert bodies[False] == bodies[None]
+    assert "strict" not in bodies[None]
+
+
 def test_response_format_is_added_alongside_caller_tools() -> None:
     """Catches a mapper that overwrites `tools` with the forced tool, which would drop the
     caller's own tools from a request that used both."""
