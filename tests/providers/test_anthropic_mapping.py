@@ -294,14 +294,171 @@ def test_response_format_is_added_alongside_caller_tools() -> None:
 
 
 def test_forced_tool_answer_maps_back_to_a_tool_call() -> None:
-    """Catches a mapper that special-cases the forced tool into `content` as text: the
-    recorded answer must come back as a tool call whose arguments parse to the object."""
+    """With no `forced_tool`, the block stays a tool call. Catches a mapper that turns a
+    `tool_use` block into `content` by its shape alone: a caller that asked for no schema
+    must get its call back, with arguments that parse to the recorded object."""
     payload = load_fixture("json_schema_tool")
 
     response = from_anthropic(payload)
 
     assert [call.name for call in response.tool_calls] == ["ticket_summary"]
     assert json.loads(response.tool_calls[0].arguments) == payload["content"][0]["input"]
+
+
+# --- a response_format answer read back as content -----------------
+#
+# `to_anthropic` turns `response_format` into one forced tool, so Anthropic answers
+# a schema request with a `tool_use` block. An OpenAI-compatible caller reads that
+# answer from `message.content`; `forced_tool` names the block that is the answer.
+
+FORCED_NAME = "ticket_summary"
+
+# The recorded `json_schema_tool.json` input, written out so a fixture edited
+# into agreement with a wrong mapper is visible here.
+FORCED_INPUT: dict[str, Any] = {"title": "Card declined", "severity": 3, "tags": ["billing", "eu"]}
+FORCED_CONTENT = json.dumps(FORCED_INPUT, sort_keys=True)
+
+
+def test_a_forced_tool_answer_becomes_json_content() -> None:
+    """Catches a mapper that ignores `forced_tool` and hands back the forced block as a
+    tool call with empty content and `tool_use`, which an OpenAI-compatible caller reads
+    as no answer at all."""
+    payload = load_fixture("json_schema_tool")
+    assert payload["content"][0]["input"] == FORCED_INPUT
+
+    response = from_anthropic(payload, forced_tool=FORCED_NAME)
+
+    assert response.content == FORCED_CONTENT
+    assert json.loads(response.content) == FORCED_INPUT
+    assert response.tool_calls == ()
+    assert response.finish_reason == "end_turn"
+
+
+def test_text_beside_a_forced_block_is_dropped() -> None:
+    """Catches a mapper that joins the model's preamble text onto the JSON (decision B):
+    content `"Here it is.{...}"` does not parse, and the caller asked for JSON."""
+    payload = load_fixture("json_schema_tool")
+    payload["content"].insert(0, {"type": "text", "text": "Here it is."})
+
+    response = from_anthropic(payload, forced_tool=FORCED_NAME)
+
+    assert response.content == FORCED_CONTENT
+    assert response.tool_calls == ()
+    assert response.finish_reason == "end_turn"
+
+
+def test_a_forced_tool_without_its_block_keeps_the_text() -> None:
+    """Catches a mapper that drops text whenever `forced_tool` is set rather than only when
+    the forced block is present: a plain-text refusal would vanish, and the empty answer
+    would then raise as unreadable."""
+    response = from_anthropic(load_fixture("plain"), forced_tool=FORCED_NAME)
+
+    assert response.content == "Ship it."
+    assert response.tool_calls == ()
+    assert response.finish_reason == "end_turn"
+
+
+def test_a_caller_tool_beside_the_forced_block_stays_a_tool_call() -> None:
+    """Catches a mapper that turns EVERY `tool_use` block into content once `forced_tool`
+    is set, or that rewrites `tool_use` to `end_turn` while a real call remains: the
+    caller would never run the tool the model asked for."""
+    payload = load_fixture("json_schema_tool")
+    weather = load_fixture("tool_use")["content"][1]
+    payload["content"].append(weather)
+
+    response = from_anthropic(payload, forced_tool=FORCED_NAME)
+
+    assert response.content == FORCED_CONTENT
+    assert response.tool_calls == (
+        ToolCall(
+            id="toolu_01WeatherCall00000000",
+            name="get_weather",
+            arguments=json.dumps({"city": "Berlin", "units": "metric"}, sort_keys=True),
+        ),
+    )
+    assert response.finish_reason == "tool_use"
+
+
+def test_a_forced_name_matching_no_block_changes_nothing() -> None:
+    """Catches a mapper that converts whichever `tool_use` block it finds (by position, not
+    by name) once `forced_tool` is set: the caller's `get_weather` call would come back as
+    content and its preamble text would be dropped."""
+    payload = load_fixture("tool_use")
+
+    response = from_anthropic(payload, forced_tool=FORCED_NAME)
+
+    assert response == from_anthropic(load_fixture("tool_use"))
+    assert response.content == "Checking the weather."
+    assert [call.name for call in response.tool_calls] == ["get_weather"]
+    assert response.finish_reason == "tool_use"
+
+
+def test_a_forced_answer_cut_at_max_tokens_keeps_its_stop_reason() -> None:
+    """Catches a mapper that sets `end_turn` on every converted answer instead of rewriting
+    only `tool_use`: a truncated JSON answer would reach the caller as `stop` rather than
+    `length`, and it would never learn to raise its ceiling."""
+    payload = load_fixture("json_schema_tool")
+    payload["stop_reason"] = "max_tokens"
+
+    response = from_anthropic(payload, forced_tool=FORCED_NAME)
+
+    assert response.content == FORCED_CONTENT
+    assert response.tool_calls == ()
+    assert response.finish_reason == "max_tokens"
+
+
+def test_forced_usage_is_unchanged() -> None:
+    """Catches a forced path that builds its response on a side road and loses or swaps
+    the usage numbers: the ledger prices from them, so a schema answer would bill wrong."""
+    usage = from_anthropic(load_fixture("json_schema_tool"), forced_tool=FORCED_NAME).usage
+
+    assert usage.prompt_tokens == 210
+    assert usage.completion_tokens == 64
+    assert usage.total_tokens == 274
+
+
+TICKET_TOOL = ToolSpec(
+    name=FORCED_NAME, description="File a ticket summary.", parameters=TICKET_SCHEMA
+)
+
+# Both rows send the SAME forced `tool_choice` to Anthropic: `to_anthropic` renders
+# a `response_format` and a caller's named `tool_choice` identically on the wire.
+# So only `request.response_format` can tell them apart.
+CHAT_FORCED_CASES: list[tuple[str, dict[str, Any], bool]] = [
+    ("a response_format request", {"response_format": RESPONSE_FORMAT}, True),
+    (
+        "a caller's own forced tool, no response_format",
+        {"tools": (TICKET_TOOL,), "tool_choice": ToolChoice(mode="tool", name=FORCED_NAME)},
+        False,
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "overrides", "as_content"),
+    CHAT_FORCED_CASES,
+    ids=[case for case, *_ in CHAT_FORCED_CASES],
+)
+def test_chat_passes_the_response_format_name_as_forced_tool(
+    case: str, overrides: dict[str, Any], as_content: bool
+) -> None:
+    """Catches a `chat` that never passes `forced_tool` (the first row stays a tool call),
+    and one that reads it from the outbound `tool_choice` instead of `response_format`:
+    a caller who forced its own tool would get the call back as content."""
+    adapter, scripted = make_adapter([ok("json_schema_tool")])
+
+    response = adapter.chat(request_with(overrides))
+
+    assert scripted.request_count == 1
+    assert scripted.body()["tool_choice"] == {"type": "tool", "name": FORCED_NAME}, case
+    if as_content:
+        assert response.content == FORCED_CONTENT, case
+        assert response.tool_calls == (), case
+        assert response.finish_reason == "end_turn", case
+    else:
+        assert response.content == "", case
+        assert [call.name for call in response.tool_calls] == [FORCED_NAME], case
+        assert response.finish_reason == "tool_use", case
 
 
 USAGE_CASES: list[tuple[str, str, int, int]] = [

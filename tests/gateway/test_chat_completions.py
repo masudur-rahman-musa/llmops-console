@@ -517,6 +517,28 @@ def test_tool_result_turn_reaches_the_provider_in_order(settings: Settings) -> N
     }
 
 
+def test_a_response_format_answer_from_anthropic_is_json_content(settings: Settings) -> None:
+    """The whole path, through the real adapter: catches an adapter that hands the forced
+    schema tool back as a tool call, which the route serves as `content: null` with
+    `finish_reason: "tool_calls"` - an OpenAI-compatible caller reading the JSON from
+    `message.content` gets nothing."""
+    adapter, scripted = make_adapter([ok("json_schema_tool")], name="anthropic")
+
+    with build_chat_client(settings, {"anthropic": adapter}) as client:
+        body = ok_body(post_chat(client, chat_body(response_format=RESPONSE_FORMAT_WIRE)))
+
+    assert scripted.request_count == 1
+    assert scripted.body()["tool_choice"] == {"type": "tool", "name": "ticket_summary"}
+    choice = body["choices"][0]
+    message = choice["message"]
+    expected = {"title": "Card declined", "severity": 3, "tags": ["billing", "eu"]}
+    assert message["content"] == json.dumps(expected, sort_keys=True)
+    assert json.loads(message["content"]) == expected
+    assert message.get("tool_calls") is None
+    assert choice["finish_reason"] == "stop"
+    assert body["usage"] == {"prompt_tokens": 210, "completion_tokens": 64, "total_tokens": 274}
+
+
 # --- refusals: the request body ----------------------------------------------
 
 
