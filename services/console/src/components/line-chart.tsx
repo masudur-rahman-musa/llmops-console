@@ -29,7 +29,7 @@ export function LineChart({
     return (
       <figure>
         <figcaption>{title}</figcaption>
-        <p>No data.</p>
+        <p className="note">No data.</p>
       </figure>
     );
   }
@@ -46,10 +46,10 @@ export function LineChart({
   return (
     <figure>
       <figcaption>{title}</figcaption>
-      <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} width={WIDTH} height={HEIGHT} role="img" aria-label={title}>
+      <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} width={WIDTH} height={HEIGHT} className="chart" role="img" aria-label={title}>
         {shown.map((marker, index) => {
           const x = scale(marker, minX, maxX, PAD, WIDTH - PAD);
-          return <line key={`m${index}`} x1={x} x2={x} y1={0} y2={HEIGHT} stroke="gray" strokeDasharray="4 4" />;
+          return <line key={`m${index}`} x1={x} x2={x} y1={0} y2={HEIGHT} className="chart-marker" strokeDasharray="4 4" />;
         })}
         {coords.length > 1 && (
           <polyline points={coords.map(([x, y]) => `${x},${y}`).join(" ")} fill="none" stroke="currentColor" />

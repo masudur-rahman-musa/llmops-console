@@ -34,30 +34,34 @@ export default async function QualityPage() {
       />
 
       <h2>Categories</h2>
-      <table>
-        <tbody>
-          {body.categories.map((category) => (
-            <tr key={category.category}>
-              <td>{category.category}</td>
-              <td>
-                {category.passed} of {category.total}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div className="table-wrap">
+        <table>
+          <tbody>
+            {body.categories.map((category) => (
+              <tr key={category.category}>
+                <td>{category.category}</td>
+                <td>
+                  {category.passed} of {category.total}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
       <h2>Taxonomy</h2>
-      <table>
-        <tbody>
-          {body.taxonomy.map((tag) => (
-            <tr key={tag.tag}>
-              <td>{tag.tag}</td>
-              <td>{tag.count}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div className="table-wrap">
+        <table>
+          <tbody>
+            {body.taxonomy.map((tag) => (
+              <tr key={tag.tag}>
+                <td>{tag.tag}</td>
+                <td>{tag.count}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
       <h2>Blocked releases</h2>
       <ul>

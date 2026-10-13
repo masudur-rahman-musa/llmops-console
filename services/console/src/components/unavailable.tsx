@@ -5,7 +5,7 @@ export function Unavailable({ title, reason }: { title: string; reason: Reason }
   return (
     <>
       <h1>{title}</h1>
-      <p role="alert">Console data unavailable ({reason}).</p>
+      <p role="alert" className="alert">Console data unavailable ({reason}).</p>
     </>
   );
 }

@@ -477,9 +477,11 @@ describe("console pages", () => {
 
   it("no use client directive under the console pages or components", () => {
     // Catches a page or component shipped as client JavaScript; this file sits outside src, so it cannot match itself.
+    // The one allowed client part is the nav's current-page mark, which needs usePathname.
+    const allowed = join(ROOT, "src", "components", "nav-links.tsx");
     const files = [...filesUnder(join(ROOT, "src", "app", "(console)")), ...filesUnder(join(ROOT, "src", "components"))];
     expect(files.length).toBeGreaterThan(0);
-    const offenders = files.filter((file) => /["']use client["']/.test(readFileSync(file, "utf8")));
+    const offenders = files.filter((file) => file !== allowed && /["']use client["']/.test(readFileSync(file, "utf8")));
     expect(offenders).toEqual([]);
   });
 });

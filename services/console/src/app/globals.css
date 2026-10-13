@@ -1,0 +1,242 @@
+/*
+ * The console's one global stylesheet, imported only by src/app/layout.tsx.
+ * Every color, space, type size, radius and border is a variable here; CSS
+ * modules use the variables and never a raw color. Pinned by tests/styles.test.tsx.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --bg: #f7f8fa;
+  --surface: #ffffff;
+  --fg: #1b1f24;
+  --muted: #5f6b7a;
+  --border: #d9dee5;
+  --accent: #2f5bd3;
+  --accent-soft: #e8eefc;
+  --danger: #b42318;
+  --danger-soft: #fdecea;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-md: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.75rem;
+
+  --radius: 8px;
+  --radius-pill: 999px;
+  --border-width: 1px;
+  --line: var(--border-width) solid var(--border);
+
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --page-width: 1100px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1216;
+    --surface: #171b21;
+    --fg: #e6e9ee;
+    --muted: #97a3b3;
+    --border: #2c333d;
+    --accent: #7ea2ff;
+    --accent-soft: #1d2a47;
+    --danger: #ff8a7a;
+    --danger-soft: #3a1d1a;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: var(--text-md);
+  line-height: 1.5;
+}
+
+main {
+  max-width: var(--page-width);
+  margin: 0 auto;
+  padding: var(--space-5) var(--space-4) var(--space-6);
+}
+
+h1 {
+  font-size: var(--text-xl);
+  line-height: 1.2;
+  margin: 0 0 var(--space-4);
+}
+
+h2 {
+  font-size: var(--text-lg);
+  line-height: 1.3;
+  margin: var(--space-6) 0 var(--space-3);
+}
+
+p {
+  margin: 0 0 var(--space-3);
+}
+
+ul {
+  padding-left: var(--space-5);
+}
+
+a {
+  color: var(--accent);
+}
+
+code {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  padding: var(--space-2) var(--space-4);
+  border: var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+button:hover {
+  border-color: var(--accent);
+}
+
+input {
+  padding: var(--space-2) var(--space-3);
+  border: var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+figure {
+  margin: var(--space-5) 0;
+}
+
+figcaption {
+  font-size: var(--text-sm);
+  color: var(--muted);
+  margin-bottom: var(--space-2);
+}
+
+/* Charts shrink to the page width instead of pushing it sideways. */
+svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.chart {
+  border: var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.chart-marker {
+  stroke: var(--muted);
+}
+
+/* A quiet note: empty states, source notices, "n/a". */
+.note {
+  color: var(--muted);
+  font-size: var(--text-sm);
+  font-style: italic;
+}
+
+.alert {
+  padding: var(--space-3) var(--space-4);
+  border: var(--border-width) solid var(--danger);
+  border-radius: var(--radius);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.badge {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  border: var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.banner {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-1) var(--space-4);
+}
+
+/* Tables scroll inside their wrapper, so the page itself never scrolls sideways. */
+.table-wrap {
+  overflow-x: auto;
+  margin: 0 0 var(--space-4);
+  border: var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+th,
+td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: var(--line);
+  text-align: left;
+  white-space: nowrap;
+}
+
+th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.bar {
+  height: var(--space-2);
+  margin: 0 0 var(--space-4);
+  border: var(--line);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.bar > div {
+  height: 100%;
+  background: var(--accent);
+}

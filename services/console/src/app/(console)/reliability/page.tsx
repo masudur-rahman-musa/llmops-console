@@ -49,65 +49,71 @@ export default async function ReliabilityPage() {
       <SourceNotice sources={body.sources} />
 
       <h2>Error budgets</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>SLO</th>
-            <th>Objective</th>
-            <th>Window</th>
-            <th>Observed</th>
-            <th>Budget remaining</th>
-          </tr>
-        </thead>
-        <tbody>
-          {body.slos.map((slo) => (
-            <tr key={slo.name}>
-              <td>{slo.name}</td>
-              <td>{objective(slo)}</td>
-              <td>{slo.window}</td>
-              <td>{observed(slo)}</td>
-              <td>{budget(slo)}</td>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>SLO</th>
+              <th>Objective</th>
+              <th>Window</th>
+              <th>Observed</th>
+              <th>Budget remaining</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {body.slos.map((slo) => (
+              <tr key={slo.name}>
+                <td>{slo.name}</td>
+                <td>{objective(slo)}</td>
+                <td>{slo.window}</td>
+                <td>{observed(slo)}</td>
+                <td>{budget(slo)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
       <LineChart title="p95 latency" points={body.latency_p95} />
       <LineChart title="Error rate" points={body.error_rate} />
 
       <h2>Circuit breakers</h2>
-      <table>
-        <tbody>
-          {body.circuits.map((circuit) => (
-            <tr key={circuit.provider}>
-              <td>{circuit.provider}</td>
-              <td>{circuit.state}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <div className="table-wrap">
+        <table>
+          <tbody>
+            {body.circuits.map((circuit) => (
+              <tr key={circuit.provider}>
+                <td>{circuit.provider}</td>
+                <td>{circuit.state}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
       <h2>Fallbacks</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Tenant</th>
-            <th>Alias</th>
-            <th>Provider</th>
-            <th>Count</th>
-          </tr>
-        </thead>
-        <tbody>
-          {body.fallbacks.map((row) => (
-            <tr key={`${row.tenant}/${row.alias}/${row.provider}`}>
-              <td>{row.tenant}</td>
-              <td>{row.alias}</td>
-              <td>{row.provider}</td>
-              <td>{row.count}</td>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Tenant</th>
+              <th>Alias</th>
+              <th>Provider</th>
+              <th>Count</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {body.fallbacks.map((row) => (
+              <tr key={`${row.tenant}/${row.alias}/${row.provider}`}>
+                <td>{row.tenant}</td>
+                <td>{row.alias}</td>
+                <td>{row.provider}</td>
+                <td>{row.count}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </>
   );
 }

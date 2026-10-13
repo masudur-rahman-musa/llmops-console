@@ -13,7 +13,7 @@ export function SourceNotice({ sources }: { sources: Sources }) {
   return (
     <>
       {lines.map((line) => (
-        <p key={line} role="status">
+        <p key={line} role="status" className="note">
           {line}
         </p>
       ))}

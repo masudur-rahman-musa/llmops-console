@@ -3,6 +3,8 @@ import { Unavailable } from "@/components/unavailable";
 import { getConsolePage } from "@/lib/console-api";
 import { NA, ms, percent, usd } from "@/lib/format";
 
+import styles from "./home.module.css";
+
 export const dynamic = "force-dynamic";
 
 function residencyLine(violations: number | null): string {
@@ -22,19 +24,29 @@ export default async function HomePage() {
       <h1>Home</h1>
       <SourceNotice sources={body.sources} />
       <p>
-        Today the gateway handled {body.requests_today ?? NA} requests costing {usd(body.cost_usd_today)}.
+        Today the gateway handled <strong>{body.requests_today ?? NA}</strong> requests costing{" "}
+        <strong>{usd(body.cost_usd_today)}</strong>.
       </p>
-      <ul>
-        <li>p95 latency: {ms(body.p95_seconds)}</li>
-        <li>Error rate: {percent(body.error_rate)}</li>
-        <li>Open incidents: {body.open_incidents ?? NA}</li>
+      <ul className={styles.cards}>
+        <li className={styles.card}>
+          <span className={styles.label}>p95 latency:</span> <strong className={styles.value}>{ms(body.p95_seconds)}</strong>
+        </li>
+        <li className={styles.card}>
+          <span className={styles.label}>Error rate:</span> <strong className={styles.value}>{percent(body.error_rate)}</strong>
+        </li>
+        <li className={styles.card}>
+          <span className={styles.label}>Open incidents:</span>{" "}
+          <strong className={styles.value}>{body.open_incidents ?? NA}</strong>
+        </li>
+        <li className={styles.card}>
+          <span className={styles.value}>{residencyLine(body.residency_violations_today)}</span>
+        </li>
       </ul>
-      <p>
+      <p className="note">
         {body.last_eval === null
           ? "No eval yet."
           : `Last eval: decision accuracy ${percent(body.last_eval.decision_accuracy)}, ${body.last_eval.passed ? "passed" : "failed"}`}
       </p>
-      <p>{residencyLine(body.residency_violations_today)}</p>
     </>
   );
 }

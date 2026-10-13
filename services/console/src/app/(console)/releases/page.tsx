@@ -21,32 +21,34 @@ export default async function ReleasesPage() {
     <>
       <h1>Releases</h1>
       <SourceNotice sources={body.sources} />
-      <table>
-        <thead>
-          <tr>
-            <th>Commit</th>
-            <th>Deployed</th>
-            <th>Status</th>
-            <th>Eval</th>
-            <th>Pull request</th>
-          </tr>
-        </thead>
-        <tbody>
-          {body.releases.map((release) => (
-            <tr key={`${release.git_sha}/${release.deployed_at}`}>
-              <td>
-                <code>{shortSha(release.git_sha)}</code>
-              </td>
-              <td>{utcTime(release.deployed_at)}</td>
-              <td>{release.status}</td>
-              <td>{evalResult(release.eval_passed)}</td>
-              <td>
-                <ExternalLink url={release.pr_url} label="PR" />
-              </td>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Commit</th>
+              <th>Deployed</th>
+              <th>Status</th>
+              <th>Eval</th>
+              <th>Pull request</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {body.releases.map((release) => (
+              <tr key={`${release.git_sha}/${release.deployed_at}`}>
+                <td>
+                  <code>{shortSha(release.git_sha)}</code>
+                </td>
+                <td>{utcTime(release.deployed_at)}</td>
+                <td>{release.status}</td>
+                <td>{evalResult(release.eval_passed)}</td>
+                <td>
+                  <ExternalLink url={release.pr_url} label="PR" />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </>
   );
 }
