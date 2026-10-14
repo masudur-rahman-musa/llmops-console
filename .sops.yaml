@@ -5,7 +5,7 @@
 # rule below decides both the algorithm and the recipient, so an operator cannot
 # encrypt one file to a different key by typing a different command.
 #
-# Pinned by `tests/infra/test_secrets.py`
+# Pinned by `infra/tests/infra/test_secrets.py`
 # (`test_the_sops_rule_covers_the_encrypted_file_and_leaves_the_example_alone`
 # and `test_the_sops_policy_encrypts_exactly_the_two_data_keys`).
 creation_rules:

@@ -9,7 +9,7 @@
 # the first apply would be the first test of it. The copy removes the question.
 #
 # The duplication is mechanical, not a second thing to maintain:
-# `tests/infra/test_k8s_apps.py::test_each_apps_middleware_matches_its_platform_original`
+# `infra/tests/infra/test_k8s_apps.py::test_each_apps_middleware_matches_its_platform_original`
 # compares each `spec` here against its `platform` original field-for-field, both
 # sides read off the same build, so the two cannot drift silently in either
 # direction.

@@ -38,7 +38,7 @@ Like `/admin/routing`, this path is not counted by the request metrics
 (`COUNTED_PATH_PREFIX` is `/v1/`), is traced because `TracingMiddleware` spans
 every scope, and is cluster-internal: the `gateway` Ingress routes `/v1` and
 nothing wider, so no public router matches `/admin/directory`
-(`tests/infra/test_k8s_apps.py::test_no_public_router_matches_an_admin_path_or_the_scrape`,
+(`infra/tests/infra/test_k8s_apps.py::test_no_public_router_matches_an_admin_path_or_the_scrape`,
 which imports `ADMIN_DIRECTORY` from this module). The admin key above is
 unchanged and is still the control an in-cluster caller meets. Row 21a's
 NetworkPolicies are a separate layer again: they decide which pods may open a

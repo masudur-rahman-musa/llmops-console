@@ -58,7 +58,7 @@ checked nothing
 `/readyz`. It is served in-cluster only: the `gateway`
 Ingress routes `/v1` and nothing wider, so no public router matches this path and
 a request for it from the internet is Traefik's own 404
-(`tests/infra/test_k8s_apps.py::test_no_public_router_matches_an_admin_path_or_the_scrape`).
+(`infra/tests/infra/test_k8s_apps.py::test_no_public_router_matches_an_admin_path_or_the_scrape`).
 That matters because tenant names are label values. The path is deliberately
 outside `/v1/`, which keeps a scrape every fifteen seconds out of
 `gateway_requests_total` without a rule of its own

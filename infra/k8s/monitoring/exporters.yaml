@@ -16,7 +16,7 @@
 #
 # `kube-state-metrics` is the one subject in this repo with cluster-wide RBAC,
 # and it is read-only: listing objects across namespaces is the whole of what it
-# does, and it cannot be given less. `tests/infra/test_k8s_monitoring.py`'s
+# does, and it cannot be given less. `infra/tests/infra/test_k8s_monitoring.py`'s
 # `test_kube_state_metrics_is_the_only_subject_with_rbac_and_reads_only` scans
 # the WHOLE build for a second ClusterRole and for verbs outside
 # `get`, `list`, `watch`.

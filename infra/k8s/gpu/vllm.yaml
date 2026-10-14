@@ -217,7 +217,7 @@ spec:
 # node, which k3s's NetworkPolicy controller drops against a pod-selector rule.
 #
 # The port is written out in three places - here, the `vllm-ingress` policy's
-# ipBlock rule and `project-evals/tradeoff/gpu-vllm.yaml`'s `base_url` - and a
+# ipBlock rule and `infra/tradeoff/gpu-vllm.yaml`'s `base_url` - and a
 # test compares them, because the drift is only visible if both files say the
 # value. The host lives about four hours and is destroyed
 # with the run; a design note records the widening.

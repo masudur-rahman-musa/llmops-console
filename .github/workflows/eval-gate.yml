@@ -11,7 +11,7 @@ name: eval-gate
 # `POST /v1/eval/turn` - so this job is SKIPPED until the repository variable
 # `EVAL_TARGET_URL` is set. A stub target would score itself against a baseline
 # this repo wrote, and its green tick would read like evidence; a skip is the true
-# statement. See `docs/adr/0009-the-eval-gate-ships-inert-without-a-target.md`.
+# statement. See the project notes.
 #
 # Its own workflow rather than two more jobs in `ci.yml`: the design blocks a deploy
 # unless `ci.yml` AND `eval-gate.yml` are green, which is two required checks by

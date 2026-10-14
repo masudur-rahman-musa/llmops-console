@@ -49,12 +49,12 @@ SHAPE_SHA = "a87abf2"
 """The sha of the commit this repo already made the right way.
 
 Its real shape is the happy-path row below: subject `baseline: write the thresholds
-in points`, files `docs/adr/0008-the-baseline-is-written-in-points.md` and
+in points`, files the project notes and
 `backend/evals/baseline.json`.
 """
 
 SHAPE_SUBJECT = "baseline: write the thresholds in points"
-SHAPE_ADR = "docs/adr/0008-the-baseline-is-written-in-points.md"
+SHAPE_ADR = "dev/adr/0008-the-baseline-is-written-in-points.md"
 
 OTHER_SHA = "deadbee"
 
@@ -67,7 +67,7 @@ def test_the_four_constants_are_exactly_the_published_values() -> None:
     CLI all quote these strings."""
     assert BASELINE_PATH == "backend/evals/baseline.json"
     assert BASELINE_PREFIX == "baseline:"
-    assert ADR_PREFIX == "docs/adr/"
+    assert ADR_PREFIX == "dev/adr/"
     assert MAX_REF_LENGTH == 256
 
 
@@ -78,7 +78,7 @@ def test_the_three_published_strings_are_exactly_what_the_cli_prints() -> None:
     CLI cases passing over a stderr line no reviewer can act on, and catches a pass line
     whose placeholder is renamed so `.format(checked=n)` raises at the happy path."""
     assert MISSING_PREFIX_REASON == 'the subject does not start "baseline:"'
-    assert MISSING_ADR_REASON == "the commit adds no file under docs/adr/"
+    assert MISSING_ADR_REASON == "the commit adds no file under dev/adr/"
     assert GUARD_PASSED_LINE == "baseline guard passed: {checked} commits checked"
     assert GUARD_PASSED_LINE.format(checked=2) == "baseline guard passed: 2 commits checked"
 
@@ -216,12 +216,12 @@ def test_a_path_that_is_not_exactly_the_baseline_is_not_examined(label: str, pat
 
 
 ADR_CANDIDATES: tuple[tuple[str, str, bool], ...] = (
-    ("a real adr", "docs/adr/0009-x.md", True),
+    ("a real adr", "dev/adr/0009-x.md", True),
     ("the plural directory", "docs/adrs/0009-x.md", False),
     ("the bare directory name", "docs/adr", False),
-    ("adr somewhere else", "other/docs/adr/0009-x.md", False),
+    ("adr somewhere else", "other/dev/adr/0009-x.md", False),
 )
-"""Criterion 8's ADR rows, against `ADR_PREFIX == "docs/adr/"`.
+"""Criterion 8's ADR rows, against `ADR_PREFIX == "the project notes"`.
 
 `docs/adrs/0009-x.md` and the bare `docs/adr` both start with `docs/adr`, so a
 prefix test missing the trailing slash accepts both; the last row is the one an

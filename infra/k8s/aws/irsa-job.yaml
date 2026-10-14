@@ -3,7 +3,7 @@
 # role through the cluster's OIDC provider, not the node role, which has no bucket
 # access at all. Its log is captured as `irsa.txt`.
 #
-# Applied by `scripts/aws_evidence.sh run`, never by the overlay: the script first
+# Applied by `infra/scripts/aws_evidence.sh run`, never by the overlay: the script first
 # annotates the ServiceAccount and creates the `irsa-evidence` ConfigMap holding the
 # bucket name, which exists only while the module is applied.
 #

@@ -1,6 +1,6 @@
-# The AWS evidence deploy: what `scripts/aws_evidence.sh run` applies to the EKS
+# The AWS evidence deploy: what `infra/scripts/aws_evidence.sh run` applies to the EKS
 # cluster `infra/terraform/aws` creates, for about an hour, before it destroys it.
-# Shaped like the kind overlay in `project-evals/ci/kind`: base plus a named subset
+# Shaped like the kind overlay in `infra/k8s/kind`: base plus a named subset
 # of files, never `../apps` or `../platform` whole.
 #
 # Left out, and why:
@@ -40,7 +40,7 @@ patches:
   # The kind overlay's model fetch, reused by path so a fix there reaches this run.
   # Read against EKS: it downloads from Hugging Face over the NAT gateway, verifies
   # the sha256, and writes into the `models` volume, which is an emptyDir here.
-  - path: ../../../project-evals/ci/kind/llama-model-init-patch.yaml
+  - path: ../../../infra/k8s/kind/llama-model-init-patch.yaml
     target:
       kind: Deployment
       name: llama

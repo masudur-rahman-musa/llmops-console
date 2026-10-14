@@ -8,7 +8,7 @@ the comparison.
 
 The rule, from the design and #42: a commit that touches the baseline is clean
 only when its subject starts `baseline:` AND the same commit carries a file under
-`docs/adr/`. Same commit, not same pull request - a merge
+the project notes. Same commit, not same pull request - a merge
 and a revert can split a baseline change from its justification across a PR, and
 `a87abf2` is the shape this repo already has
 (`test_the_shape_commit_a87abf2_already_has_passes`).
@@ -43,7 +43,7 @@ The one commit subject in this repository that carries a colon: the house style
 has no `type: subject` prefixes, and this rule names the literal string. Published
 in `docs/eval-gate.md` since an earlier change."""
 
-ADR_PREFIX: Final[str] = "docs/adr/"
+ADR_PREFIX: Final[str] = "dev/adr/"
 """The directory the justification must land in, trailing slash included: without
 it `docs/adrs/0009-x.md` and the bare name `docs/adr` both count."""
 
@@ -69,7 +69,7 @@ MISSING_PREFIX_REASON: Final[str] = 'the subject does not start "baseline:"'
 """Half of what a reviewer is told, pinned exactly because the CLI prints it
 (`test_the_three_published_strings_are_exactly_what_the_cli_prints`)."""
 
-MISSING_ADR_REASON: Final[str] = "the commit adds no file under docs/adr/"
+MISSING_ADR_REASON: Final[str] = "the commit adds no file under dev/adr/"
 """The other half. Named separately so a commit that got the subject right and
 forgot the ADR is not sent back twice."""
 

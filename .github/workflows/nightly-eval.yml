@@ -7,7 +7,7 @@ name: nightly-eval
 # Gated exactly the way `eval-gate.yml`'s `eval` job is (decision A there): there is
 # no `EVAL_TARGET_URL` repository variable yet - no target exists to run this
 # against - so the job is wired but SKIPPED until that variable is set. See
-# `docs/adr/0009-the-eval-gate-ships-inert-without-a-target.md`.
+# the project notes.
 on:
   schedule:
     # 02:00 UTC, mirroring the k3s CronJob's own `0 2 * * *` (see that manifest's

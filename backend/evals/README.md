@@ -38,4 +38,4 @@ set and the per-label rows behind the disagreement, fix the rubric or the prompt
 and recalibrate. A judge whose agreement with a human is that weak is measuring
 its own wording, not the agent.
 
-Run: `make eval` or `/project-evals`. Reports land in `project-evals/reports/` (ignored).
+Run: `make eval` or `/project-evals`. Reports land in `backend/evals/reports/` (ignored).

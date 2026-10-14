@@ -11,9 +11,9 @@ repos:
       # Recorded fixtures are byte-exact: an SSE stream's last event ends in a
       # blank line, and a JSONL set may carry one on purpose.
       - id: end-of-file-fixer
-        exclude: ^tests/.*/fixtures/
+        exclude: ^(backend|infra)/tests/.*/fixtures/
       - id: trailing-whitespace
-        exclude: ^tests/.*/fixtures/
+        exclude: ^(backend|infra)/tests/.*/fixtures/
       - id: detect-private-key
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.24.3
@@ -25,3 +25,13 @@ repos:
       - id: ruff-check
         args: [--fix]
       - id: ruff-format
+  - repo: local
+    hooks:
+      # Keeps the repo root to the names in .claude/root-allowlist. The same
+      # check runs in CI (ci.yml) and as a Claude PreToolUse hook.
+      - id: check-root
+        name: check repo root against the allowlist
+        entry: python3 dev/scripts/check_root.py
+        language: system
+        pass_filenames: false
+        always_run: true

@@ -1,4 +1,4 @@
-r"""`project-evals/ci/eval-target-stub/main.py`: the kind e2e's throwaway eval target.
+r"""`backend/evals/target-stub/main.py`: the kind e2e's throwaway eval target.
 
 The module lives outside `opsconsole` on purpose (its own Dockerfile installs
 nothing else), so it is loaded here by file path rather than imported by dotted

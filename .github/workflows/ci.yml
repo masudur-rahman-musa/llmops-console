@@ -43,6 +43,10 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --locked --project backend
+      # The repo root holds only the names in .claude/root-allowlist (also a
+      # pre-commit and a Claude hook). An explicit step so a stray root reddens
+      # here by name, not only folded inside the pre-commit bundle.
+      - run: python3 dev/scripts/check_root.py
       # `make lint`, `typecheck` and `test` also run the console's scripts now
       # that web exists, so this job needs pnpm and its install too.
       - uses: pnpm/action-setup@v4
@@ -284,7 +288,7 @@ jobs:
           # a history scan over one commit is a green tick that proves nothing.
           fetch-depth: 0
       # 8.24.3 is written out four times on purpose, and NOT lifted into an `env:`
-      # var: `tests/ci/test_ci_workflow.py` compares this number against the
+      # var: `infra/tests/ci/test_ci_workflow.py` compares this number against the
       # `rev: v8.24.3` in `.pre-commit-config.yaml`, and that drift is only visible
       # to a static reader if this file SAYS the number. The two
       # scanners must agree on what counts as a secret.

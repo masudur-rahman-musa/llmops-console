@@ -40,7 +40,7 @@ are gone" have different fixes.
 Every threshold and every metric is a percentage between `0.0` and `100.0`, at
 the two decimal places `ACCURACY_SCALE` publishes. The baseline is written in
 the same unit as the report, so no conversion lives in the comparison. See
-`docs/adr/0008-the-baseline-is-written-in-points.md` for why that changed.
+the project notes for why that changed.
 
 A baseline is validated whole before any comparison runs: an unknown key, a
 threshold outside `0.0`-`100.0`, or a `golden_set` over 128 characters refuses
@@ -92,7 +92,7 @@ It reads `base..head` once with `git log --format=%H%x00%s --name-only` and
 answers a verdict over the commits in it. A commit that does not touch
 `project-evals/baseline.json` is not examined. One that does is clean only when
 its subject starts `baseline:` **and** that same commit carries a file under
-`docs/adr/`.
+the project notes.
 
 Same commit, not same pull request. A merge and a revert can separate a baseline
 change from its justification across a pull request; they cannot separate them
@@ -127,11 +127,11 @@ unless the repository variable `EVAL_TARGET_URL` is set**, and today nothing
 serves the eval target contract, so it is skipped everywhere. A stub target would
 score itself against a baseline this repository wrote, and its green tick would
 read like evidence.
-`docs/adr/0009-the-eval-gate-ships-inert-without-a-target.md` has the reasoning.
+the project notes has the reasoning.
 Setting that variable is what turns the eval half on, with no code change.
 
 When it does run: the stack comes up, the run happens against the target with
-`project-evals/ci/routing.ci.yaml` merged over `routing.yaml` (which caps the
+`backend/config/routing.ci.yaml` merged over `routing.yaml` (which caps the
 `evals` tenant at `$2.00` for the run), then `ops-eval gate` produces the verdict
 and the comment. The report directory is uploaded as a build artifact whatever
 the verdict, because a failed gate is when somebody opens it. The comment is

@@ -8,7 +8,7 @@ two reports of the same run diff.
 
 The vocabulary is eighteen words and it is CLOSED. Fifteen are the design's;
 `wrong_risk_class`, `false_clarify` and `residency_violation` are this row's
-addition, recorded in `docs/adr/0006-the-failure-taxonomy-adds-three-tags.md`,
+addition, recorded in the project notes,
 because each names a failure that already sinks a case today and under the
 fifteen would reach a report with no tag at all - the one thing #40 asks not to
 happen (`test_no_failed_case_in_a_run_covering_every_shape_has_an_empty_tag_tuple`).

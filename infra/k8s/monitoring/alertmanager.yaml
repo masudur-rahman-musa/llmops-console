@@ -27,7 +27,7 @@ metadata:
     app.kubernetes.io/name: alertmanager
 data:
   # Held as a string, so a typo here is valid YAML inside a valid ConfigMap and
-  # reaches the cluster unchallenged. `tests/infra/test_k8s_alerting.py` parses
+  # reaches the cluster unchallenged. `infra/tests/infra/test_k8s_alerting.py` parses
   # this value and asserts the route, the receiver and both channel configs.
   #
   # Every credential is a `${VAR}` reference into the environment `envFrom`

@@ -36,8 +36,8 @@ his.md
 pl/
 .claude/hooks/local_*
 # AI
-project-evals/reports/
-project-evals/load/results/
+backend/evals/reports/
+infra/load/results/
 # Service
 .terraform/
 *.tfstate
@@ -50,4 +50,4 @@ crash.log
 *.tsbuildinfo
 
 # local model weights
-models/
+.cache/

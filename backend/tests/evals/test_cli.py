@@ -2305,19 +2305,17 @@ def guard_repo(tmp_path_factory: pytest.TempPathFactory) -> GuardRepo:
     git(repo, "init", "--initial-branch=main", ".")
     shas = {
         "root": guard_commit(repo, "add the readme", ["README.md"]),
-        "clean": guard_commit(
-            repo, "add the routing overlay", ["project-evals/ci/routing.ci.yaml"]
-        ),
+        "clean": guard_commit(repo, "add the routing overlay", ["backend/config/routing.ci.yaml"]),
         "shape": guard_commit(
             repo,
             "baseline: write the thresholds in points",
-            ["docs/adr/0008-the-baseline-is-written-in-points.md", "project-evals/baseline.json"],
+            ["dev/adr/0008-the-baseline-is-written-in-points.md", "project-evals/baseline.json"],
         ),
         "no_adr": guard_commit(repo, "baseline: bump the floor", ["project-evals/baseline.json"]),
         "no_prefix": guard_commit(
             repo,
             "write the thresholds in points",
-            ["docs/adr/0010-x.md", "project-evals/baseline.json"],
+            ["dev/adr/0010-x.md", "project-evals/baseline.json"],
         ),
     }
     return GuardRepo(path=repo, shas=shas)

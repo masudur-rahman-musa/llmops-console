@@ -6,13 +6,13 @@
 # 27c decision B): the gateway is the real image, and the only thing that changes
 # between options is the routing policy mounted into it.
 #
-# No credential is written in this file. `scripts/tradeoff_run.sh` generates a
+# No credential is written in this file. `infra/scripts/tradeoff_run.sh` generates a
 # throwaway tenant key per run and passes it, and its digest, as environment only
 # - the same shape `make load` uses.
 services:
   gateway:
     environment:
-      # Written out rather than derived: `tests/infra/test_tradeoff_run.py` checks
+      # Written out rather than derived: `infra/tests/infra/test_tradeoff_run.py` checks
       # this path against the mount target below, and a drift between the two is a
       # gateway that quietly loads the shipped `routing.yaml` instead - every
       # option would then measure the same three candidates.

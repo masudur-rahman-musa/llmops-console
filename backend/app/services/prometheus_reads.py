@@ -67,7 +67,7 @@ AVAILABILITY_OBJECTIVE: Final[float] = 0.995
 AVAILABILITY_ALLOWED_BAD: Final[float] = 0.005
 LATENCY_THRESHOLD_SECONDS: Final[float] = 6.0
 LATENCY_ALLOWED_SLOW: Final[float] = 0.05
-"""The SLO numbers `project-obs/slo.md` documents, pinned by
+"""The SLO numbers the project notes documents, pinned by
 `test_the_budget_queries_are_the_pinned_literals`. The allowed shares are what an
 error budget spends: a p95 under 6 s allows 5% of requests at 6 s or over."""
 
@@ -91,7 +91,7 @@ LATENCY_BUDGET_QUERY: Final[str] = (
 )
 """The API tier's share of requests under 6 s over 30 days. Prometheus renders the
 bucket label `6.0`, never `6`. Streamed requests are counted too: the histogram has
-no streaming label, a gap `project-obs/slo.md` records."""
+no streaming label, a gap the project notes records."""
 
 RESIDENCY_VIOLATIONS_30D_QUERY: Final[str] = (
     "sum(increase(gateway_residency_violations_total[30d]))"

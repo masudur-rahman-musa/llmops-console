@@ -1,4 +1,4 @@
-r"""`scripts/tradeoff_policy.py` and `project-evals/tradeoff/`: the per-option effective policy.
+r"""`dev/scripts/tradeoff_policy.py` and `infra/tradeoff/`: the per-option effective policy.
 
 The measurement run resolves one alias four different ways. Rather than four full
 copies of `routing.yaml` that drift silently, each option ships a PARTIAL overlay that is
@@ -19,7 +19,7 @@ below). A refusal and a missing overlay BOTH exit 2, so the two are told apart b
 a pattern refusal prints the pattern, a missing overlay prints the path it looked for. That is
 what makes the boundary rows (1 and 32 characters accepted, 33 refused) observable at all.
 
-The script lives in `scripts/`, which is not a package, so its pure functions are loaded by file
+The script lives in `dev/scripts/`, which is not a package, so its pure functions are loaded by file
 path with `importlib.util` - the same technique `test_eval_target_stub.py` uses for the stub.
 Exit codes go through `subprocess`; merge semantics go through the import. No backing service,
 no network: the four end-to-end runs are made once for the module.
@@ -43,8 +43,8 @@ from app.evals.tradeoff import OPTION_ID_PATTERN
 from app.model_routing.policy import load_policy
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = REPO_ROOT / "scripts" / "tradeoff_policy.py"
-OVERLAY_DIR = REPO_ROOT / "project-evals" / "tradeoff"
+SCRIPT = REPO_ROOT / "dev" / "scripts" / "tradeoff_policy.py"
+OVERLAY_DIR = REPO_ROOT / "infra" / "tradeoff"
 ROUTING = REPO_ROOT / "routing.yaml"
 GPU_VLLM_MANIFEST = REPO_ROOT / "infra" / "k8s" / "gpu" / "vllm.yaml"
 
@@ -87,7 +87,7 @@ FORBIDDEN_LITERALS = ("key_env", "Bearer", "sk-")
 
 
 def _load_script() -> ModuleType:
-    """Load `tradeoff_policy.py` by path: `scripts/` carries no `__init__.py`."""
+    """Load `tradeoff_policy.py` by path: `dev/scripts/` carries no `__init__.py`."""
     assert SCRIPT.is_file(), f"{SCRIPT} does not exist"
     spec = importlib.util.spec_from_file_location("tradeoff_policy", SCRIPT)
     assert spec is not None and spec.loader is not None

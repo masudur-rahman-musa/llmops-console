@@ -8,7 +8,7 @@ sitting, and what it cost is recorded below.
 
 ## What the run does
 
-`make aws-evidence SHA=<commit>` runs `scripts/aws_evidence.sh run`, which:
+`make aws-evidence SHA=<commit>` runs `infra/scripts/aws_evidence.sh run`, which:
 
 1. Runs `terraform apply` on `infra/terraform/aws`. You read the plan and type yes.
 2. Writes a kubeconfig for the new cluster into a temporary directory that is

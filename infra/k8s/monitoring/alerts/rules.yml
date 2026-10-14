@@ -1,0 +1,133 @@
+# Alert rules for the AI Operations Console gateway and its cluster. Mounted into
+# Prometheus as a second key on `ConfigMap/prometheus-config`
+# (`infra/k8s/monitoring/prometheus.yaml`), named by its `rule_files` entry
+#. Firing alerts are routed to Alertmanager
+# (`infra/k8s/monitoring/alertmanager.yaml`), which sends every one of them to
+# both email and Telegram - no severity-based branching, since nothing in
+# SPEC.md or REQUIREMENTS.md asks for one.
+#
+# Every `expr` here reads a family `packages/opsconsole/opsconsole/core/metrics.py`
+# registers (a `gateway_` name), a non-gateway family already scraped in this
+# namespace (`up`, `kube_*`, `node_*`), or `certmanager_*` from the sixth scrape
+# target this plan adds. `infra/tests/infra/test_k8s_alerting.py` enforces this: an
+# unrecognised name is a typo this file would otherwise ship silently.
+#
+# `gateway_eval_*` (`NightlyEvalRegression`'s own family) is never registered by
+# `metrics.py` - row 24's nightly CronJob pushes it to a Pushgateway instead, so
+# it is allow-listed by prefix below rather than read off the gateway's own
+# registry. `BackupJobFailed` was the last alert marked inert this way, until
+# row 23d's CronJobs made it live.
+#
+# Response commands for every alert below live in the project notes's
+# "Respond to each alert" section.
+groups:
+  - name: gateway
+    rules:
+      - alert: GatewayDown
+        expr: up{job="gateway"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: The gateway has been unreachable by its own scrape target for 2 minutes.
+          runbook: dev/ops/runbook.md#gatewaydown
+
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(gateway_requests_total{status=~"5.."}[10m]))
+          /
+          sum(rate(gateway_requests_total[10m]))
+          > 0.02
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: More than 2% of gateway requests have returned a 5xx status over 10 minutes.
+          runbook: dev/ops/runbook.md#higherrorrate
+
+      - alert: LatencyOverSLO
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(gateway_request_latency_seconds_bucket[5m])) by (le)
+          ) > 6
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: The gateway's p95 request latency has stayed above 6 seconds for 15 minutes.
+          runbook: dev/ops/runbook.md#latencyoverslo
+
+      - alert: ResidencyViolation
+        expr: increase(gateway_residency_violations_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: A request was served from a region the tenant's residency policy does not allow.
+          runbook: dev/ops/runbook.md#residencyviolation
+
+      - alert: ProviderCircuitOpen
+        expr: gateway_circuit_state == 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: A provider's circuit breaker has stayed open for 5 minutes.
+          runbook: dev/ops/runbook.md#providercircuitopen
+
+      - alert: BudgetWarning
+        expr: gateway_budget_ratio >= 0.8
+        labels:
+          severity: warning
+        annotations:
+          summary: A tenant has consumed at least 80% of its period budget.
+          runbook: dev/ops/runbook.md#budgetwarning
+
+      - alert: BudgetExceeded
+        expr: gateway_budget_ratio >= 1.0
+        labels:
+          severity: critical
+        annotations:
+          summary: A tenant has consumed its entire period budget.
+          runbook: dev/ops/runbook.md#budgetexceeded
+
+      - alert: NightlyEvalRegression
+        expr: gateway_eval_decision_accuracy - quantile_over_time(0.5, gateway_eval_decision_accuracy[7d]) < -2
+        labels:
+          severity: warning
+        annotations:
+          summary: The nightly eval's decision accuracy dropped more than 2 points against its 7-day median.
+          runbook: dev/ops/runbook.md#nightlyevalregression
+
+      - alert: DiskSpaceLow
+        expr: node_filesystem_avail_bytes{fstype!="tmpfs"} / node_filesystem_size_bytes{fstype!="tmpfs"} < 0.2
+        labels:
+          severity: warning
+        annotations:
+          summary: A node's free disk space has dropped below 20% on a real filesystem.
+          runbook: dev/ops/runbook.md#diskspacelow
+
+      - alert: PodCrashLooping
+        expr: increase(kube_pod_container_status_restarts_total[15m]) >= 3
+        labels:
+          severity: warning
+        annotations:
+          summary: A container has restarted 3 or more times in the last 15 minutes.
+          runbook: dev/ops/runbook.md#podcrashlooping
+
+      - alert: BackupJobFailed
+        expr: kube_job_status_failed{job_name=~".*-backup.*"} > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: A backup CronJob's Job has failed.
+          runbook: dev/ops/runbook.md#backupjobfailed
+
+      - alert: CertificateExpiringSoon
+        expr: certmanager_certificate_expiration_timestamp_seconds - time() < 14 * 86400
+        labels:
+          severity: warning
+        annotations:
+          summary: A cert-manager certificate expires in less than 14 days.
+          runbook: dev/ops/runbook.md#certificateexpiringsoon

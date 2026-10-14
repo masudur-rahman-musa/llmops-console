@@ -40,7 +40,7 @@ mention itself again.
 | `alertmanager-secrets` | `monitoring` | `alertmanager-secrets.example.yaml` |
 
 The key names and who reads them are in `../k8s/README.md`'s secrets table; the
-templates carry the same sets, and `tests/infra/test_secrets.py` fails if the two
+templates carry the same sets, and `infra/tests/infra/test_secrets.py` fails if the two
 ever disagree or if either drifts from the `secretRef` names the build emits.
 
 `traefik-basic-auth` is one file of two documents because a Traefik `Middleware`
@@ -104,7 +104,7 @@ passwords and keys never change: `postgres-credentials`, `gateway-secrets`,
 `*.enc.yaml` is read as one document. Then `make secrets-encrypt`, delete the
 `*.dec.yaml`, and merge the six `*.enc.yaml` through a pull request. The deploy
 workflow applies them. the project notes has the whole procedure, and
-`tests/infra/test_server_secrets.py` pins the script.
+`infra/tests/infra/test_server_secrets.py` pins the script.
 
 ## Rotating one value
 

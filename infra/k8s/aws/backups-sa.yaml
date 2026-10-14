@@ -1,7 +1,7 @@
 # The service account the backups role in `infra/terraform/aws/backups.tf` trusts,
 # by exact subject: `platform` namespace, name `backups`. It carries no role
 # annotation in git, because the role ARN holds the account ID and exists only while
-# the module is applied. `scripts/aws_evidence.sh run` adds
+# the module is applied. `infra/scripts/aws_evidence.sh run` adds
 # `eks.amazonaws.com/role-arn` with `kubectl annotate` once apply has created it.
 apiVersion: v1
 kind: ServiceAccount

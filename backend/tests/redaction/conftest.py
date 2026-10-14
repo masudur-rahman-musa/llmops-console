@@ -17,7 +17,7 @@ Two helpers carry the load-bearing claims:
   the ordering and preservation claims are about.
 
 `round_metric` is the ONE rounding in this plan: `test_fixture_accuracy.py` and
-`scripts/redaction_report.py` both take their numbers through it, so the README
+`dev/scripts/redaction_report.py` both take their numbers through it, so the README
 table and the asserted floors cannot disagree by a half-ulp.
 """
 
@@ -39,7 +39,7 @@ from app.redaction import Detection, Kind, NameDirectory, RedactionResult, redac
 FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "cases.json"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 README_PATH = REPO_ROOT / "README.md"
-REPORT_SCRIPT_PATH = REPO_ROOT / "scripts" / "redaction_report.py"
+REPORT_SCRIPT_PATH = REPO_ROOT / "dev" / "scripts" / "redaction_report.py"
 
 # The README block the drift test compares against (contract: "README drift").
 TABLE_START = "<!-- redaction-table:start -->"
@@ -245,9 +245,9 @@ def emitted_detections(text: str, directory: NameDirectory | None = None) -> tup
 
 
 def load_report_module() -> ModuleType:
-    """Load `scripts/redaction_report.py` by file path.
+    """Load `dev/scripts/redaction_report.py` by file path.
 
-    `scripts/` has no `__init__.py` and is excluded from the built wheel
+    `dev/scripts/` has no `__init__.py` and is excluded from the built wheel
     (`[tool.hatch.build.targets.wheel] only-include`), so `import scripts.x`
     does not resolve from an installed checkout the way `app.x` does.
     Loading by path is the smallest thing that works without adding a package.

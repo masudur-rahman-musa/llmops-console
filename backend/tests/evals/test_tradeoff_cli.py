@@ -23,8 +23,8 @@ never by the assertion, so "the directory is empty" cannot be satisfied by a
 command that never created it.
 
 The helpers and the report fixture are imported from `test_tradeoff.py` rather
-than copied, the way `tests/infra/test_aws_module.py` imports from
-`tests/infra/test_hetzner_module.py`: one base report document, built once at
+than copied, the way `infra/tests/infra/test_aws_module.py` imports from
+`infra/tests/infra/test_hetzner_module.py`: one base report document, built once at
 module scope, shapes both files' cases. The import names the module as pytest and
 mypy both see it - `tests/evals/__init__.py` exists and `tests/__init__.py` does
 not, so this package is `evals`, and spelling it `tests.evals` loads the same file

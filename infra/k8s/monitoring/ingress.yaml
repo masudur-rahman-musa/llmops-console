@@ -24,7 +24,7 @@
 # and resolve to the copies in `middlewares.yaml`. An `apps-` prefix
 # copied from the gateway Ingress would resolve to nothing, and Traefik treats
 # that as no middleware at all;
-# `tests/infra/test_k8s_grafana.py::test_the_grafana_ingress_publishes_one_host_behind_two_middlewares_and_no_basic_auth`
+# `infra/tests/infra/test_k8s_grafana.py::test_the_grafana_ingress_publishes_one_host_behind_two_middlewares_and_no_basic_auth`
 # resolves every parsed reference against the `Middleware`s the build emits.
 #
 # `grafana-tls` is cert-manager's to create, from this `tls` block, and it is

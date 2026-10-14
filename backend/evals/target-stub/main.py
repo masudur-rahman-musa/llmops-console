@@ -20,10 +20,10 @@ names `allow_regions: [eu, self]` for `confidential` regardless of `ANTHROPIC_AP
 being set, `anthropic_eu` ships disabled, and only `local` (region `self`) is left - so
 the kind cluster's one real provider is reached with no header, no key and no
 `routing.yaml` change (`test_the_alias_and_tenant_resolve_to_the_local_provider_only` in
-`tests/infra/test_k8s_ci_kind_overlay.py` pins the routing-policy half of this claim).
+`infra/tests/infra/test_k8s_ci_kind_overlay.py` pins the routing-policy half of this claim).
 
 The tradeoff measurement run reuses this stub against a DIFFERENT policy:
-`scripts/tradeoff_policy.py` merges one option's overlay over the shipped file, and the
+`dev/scripts/tradeoff_policy.py` merges one option's overlay over the shipped file, and the
 two API options widen `confidential` there precisely because this stub sends no header.
 That is a change to the policy the gateway loads and none to this module - which is why
 the turn publishes what the gateway measured (`GatewayReply`) rather than judging any of

@@ -3,7 +3,7 @@
 Both behind the admin key space (`admin_key`), both cluster-internal: the
 `gateway` Ingress routes `/v1` and nothing wider, so no public router matches
 `/admin/*` and a request for one from the internet is Traefik's own 404
-(`tests/infra/test_k8s_apps.py::test_no_public_router_matches_an_admin_path_or_the_scrape`,
+(`infra/tests/infra/test_k8s_apps.py::test_no_public_router_matches_an_admin_path_or_the_scrape`,
 whose paths are imported from here and from `directory.py`).
 
 The view is the resolver's own answer rather than a re-reading of `routing.yaml`.

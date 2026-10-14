@@ -14,7 +14,7 @@
 #
 # Inert today: nothing merges this until the repository variable `EVAL_TARGET_URL`
 # is set, because with no eval target the `eval` job is skipped entirely. See
-# `docs/adr/0009-the-eval-gate-ships-inert-without-a-target.md`.
+# the project notes.
 tenants:
   evals:
     budget_usd_month: "2.00"

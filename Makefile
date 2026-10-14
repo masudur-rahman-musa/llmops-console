@@ -10,7 +10,7 @@ else echo "skip: no web yet - $(1)"; fi
 endef
 # The Python project lives in `backend/` (its `pyproject.toml`, venv and tests).
 # `UV_ROOT` keeps the shell in the repo root - for targets that also name root
-# paths like `project-evals/`, `scripts/` or `tests/infra/` - while using
+# paths like `infra/tests/`, `infra/load/` or `backend/evals/` - while using
 # backend's project and venv. `UV_BK` moves the shell into `backend/` for the
 # tools whose config is read relative to the working directory (ruff's `.`,
 # mypy's `files`, pytest's `testpaths`).
@@ -37,9 +37,9 @@ test:       ## Run tests with the coverage gate
 	COVERAGE_FILE=$(COV_DB) $(UV_ROOT) coverage report --include='$(COVERED_100)' --fail-under=100
 	$(call console,test)
 select-tests: ## Print the tests whose recorded coverage touches this change
-	@$(UV_ROOT) python scripts/select_tests.py --explain
+	@$(UV_ROOT) python dev/scripts/select_tests.py --explain
 test-adjacent: ## Run only the tests whose coverage touches this change
-	@$(UV_ROOT) python scripts/select_tests.py | tr ' ' '\n' | xargs $(UV_ROOT) pytest -q
+	@$(UV_ROOT) python dev/scripts/select_tests.py | tr ' ' '\n' | xargs $(UV_ROOT) pytest -q
 lint:       ## Lint
 	$(UV_BK) ruff check .
 	$(call console,lint)
@@ -61,17 +61,17 @@ purge-residency: ## Drop residency log partitions past the retention
 refresh-rollup: ## Refresh the daily cost rollup the console reads
 	$(UV_ROOT) ops-refresh-rollup
 eval:       ## Project evals: golden set vs backend/evals/baseline.json
-	$(UV_ROOT) ops-eval run --target http://localhost:8080 --set "$$GOLDEN_SET" --tenant evals --out project-evals/reports/local
+	$(UV_ROOT) ops-eval run --target http://localhost:8080 --set "$$GOLDEN_SET" --tenant evals --out backend/evals/reports/local
 # The published comparison (the design). Pure: it reads a manifest and the
 # report.json each option names, so it needs no stack and no key. MANIFEST and
 # OUT are overridable because the measured run builds its table from its own
 # evidence directory.
-MANIFEST ?= project-evals/tradeoff.json
+MANIFEST ?= infra/tradeoff/tradeoff.json
 OUT ?= docs
 tradeoff:   ## Build docs/tradeoff.md and docs/tradeoff.json from a manifest of runs
 	$(UV_ROOT) ops-eval tradeoff --manifest $(MANIFEST) --out $(OUT)
 # The three measurement steps behind that table, each a thin call into
-# `scripts/tradeoff_run.sh`. No `||` in any recipe: a measurement run that failed
+# `infra/scripts/tradeoff_run.sh`. No `||` in any recipe: a measurement run that failed
 # must fail its target, or the table is built from whatever the last run left on
 # disk. No workflow names them either: the GPU half applies
 # real infrastructure, which a project rule keeps in the owner's own shell.
@@ -79,11 +79,11 @@ tradeoff:   ## Build docs/tradeoff.md and docs/tradeoff.json from a manifest of 
 # OPTION, SHA, START and END have no defaults on purpose. A defaulted option id
 # would measure the wrong row; a defaulted sha would deploy the wrong image.
 tradeoff-option: ## Measure one option (OPTION=<id> TARGET=<eval target url>)
-	scripts/tradeoff_run.sh option $(OPTION) --target $(TARGET)
+	infra/scripts/tradeoff_run.sh option $(OPTION) --target $(TARGET)
 tradeoff-gpu: ## Apply the GPU host, measure gpu-vllm, capture, destroy (SHA=<commit>)
-	scripts/tradeoff_run.sh gpu $(SHA)
+	infra/scripts/tradeoff_run.sh gpu $(SHA)
 tradeoff-gpu-cost: ## Write docs/tradeoff-run/cost.json from Cost Explorer (START=, END=)
-	scripts/tradeoff_run.sh cost $(START) $(END)
+	infra/scripts/tradeoff_run.sh cost $(START) $(END)
 # The k6 load run: 50 RPS for ten minutes against the real gateway over the
 # fixed-delay mock provider (`docker-compose.load.yml`).
 #
@@ -97,8 +97,8 @@ tradeoff-gpu-cost: ## Write docs/tradeoff-run/cost.json from Cost Explorer (STAR
 # own non-root user, which on a Linux runner does not own the bind mount.
 LOAD_COMPOSE = docker compose -f docker-compose.yml -f docker-compose.load.yml --profile load
 load:       ## k6 load test, 50 RPS for 10 minutes, against a mock provider
-	@mkdir -p project-evals/load/results
-	@chmod a+rwx project-evals/load/results
+	@mkdir -p infra/load/results
+	@chmod a+rwx infra/load/results
 	@key=$$(openssl rand -hex 32); \
 	digest=$$(printf '%s' "$$key" | openssl dgst -sha256 -r | cut -d' ' -f1); \
 	export LOAD_API_KEY="$$key"; \
@@ -150,9 +150,9 @@ k8s-server-check: ## Build the node overlay and validate it (no apply)
 # Builds both images on this machine, loads them into the node's k3s and
 # applies the overlay. The owner runs it; CI never does.
 server-secrets: ## Write the node's six infra/secrets/*.dec.yaml to encrypt, generating the node-only values once
-	bash scripts/server_secrets.sh
+	bash infra/scripts/server_secrets.sh
 server-helpdesk-data: ## Load the Helpdesk's corpus, demo tenants and vectors onto the node (once)
-	bash scripts/server_helpdesk_data.sh
+	bash infra/scripts/server_helpdesk_data.sh
 # The GPU measurement build, with the same kubeconform flags as `k8s-check`. It
 # is standalone (the root build does not include it), so nothing else checks it.
 k8s-gpu-check: ## Build the GPU measurement kustomization and validate it (no apply)
@@ -161,9 +161,9 @@ k8s-gpu-check: ## Build the GPU measurement kustomization and validate it (no ap
 # `run` applies real infrastructure, so no workflow calls either target.
 # docs/aws-evidence/README.md lists what has to be in place first.
 aws-evidence: ## Apply, deploy, capture and destroy the AWS stack once (SHA=<commit>)
-	scripts/aws_evidence.sh run "$(SHA)"
+	infra/scripts/aws_evidence.sh run "$(SHA)"
 aws-evidence-cost: ## Write docs/aws-evidence/cost.json (START=YYYY-MM-DD END=YYYY-MM-DD)
-	scripts/aws_evidence.sh cost "$(START)" "$(END)"
+	infra/scripts/aws_evidence.sh cost "$(START)" "$(END)"
 
 # The three secrets targets. `sops` is NOT a build dependency of this repository
 # and the age key is never in it, so each of the two that shell out to `sops`
@@ -177,7 +177,7 @@ aws-evidence-cost: ## Write docs/aws-evidence/cost.json (START=YYYY-MM-DD END=YY
 # runs, so a failed encrypt would leave an empty `.enc.yaml` behind that looks
 # like a result.
 #
-# Pinned by `tests/infra/test_secrets.py`
+# Pinned by `infra/tests/infra/test_secrets.py`
 # (`test_the_sops_targets_refuse_to_run_when_sops_is_missing` and
 # `test_the_sops_targets_refuse_to_report_success_over_an_empty_glob`).
 SECRETS_DIR = infra/secrets
@@ -218,4 +218,4 @@ secrets-decrypt: ## Decrypt every infra/secrets/*.enc.yaml to its *.dec.yaml
 # `git ls-files` and on the kustomize build, so it is the one secrets target that
 # runs on any machine and in CI.
 secrets-check: ## Check the secrets policy and contracts (no sops, no age needed)
-	$(UV_ROOT) pytest -q tests/infra/test_secrets.py
+	$(UV_ROOT) pytest -q infra/tests/infra/test_secrets.py

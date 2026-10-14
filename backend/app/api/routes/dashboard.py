@@ -80,7 +80,7 @@ CONSOLE_PATHS: Final[tuple[str, ...]] = (
 )
 """All seven, pinned as literals against the app's OpenAPI document by
 `test_the_seven_console_paths_are_pinned` and kept off every public router by
-`tests/infra/test_k8s_apps.py::test_no_public_router_matches_a_console_path`."""
+`infra/tests/infra/test_k8s_apps.py::test_no_public_router_matches_a_console_path`."""
 
 DAYS_PARAM: Final[str] = "days"
 MIN_DAYS: Final[int] = 1

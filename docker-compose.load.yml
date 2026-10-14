@@ -10,18 +10,18 @@
 services:
   gateway:
     environment:
-      # Written out rather than derived: `tests/load/test_load_compose.py` checks
+      # Written out rather than derived: `infra/tests/load/test_load_compose.py` checks
       # this path against the mount target below, and a drift between the two is
       # a gateway that refuses to start.
       OPSCONSOLE_ROUTING_POLICY_PATH: /etc/opsconsole/routing.load.yaml
       OPSCONSOLE_API_KEYS: ${OPSCONSOLE_API_KEYS}
     volumes:
-      - ./project-evals/load/routing.load.yaml:/etc/opsconsole/routing.load.yaml:ro
+      - ./infra/load/routing.load.yaml:/etc/opsconsole/routing.load.yaml:ro
     depends_on:
       mock-provider: { condition: service_healthy }
 
   mock-provider:
-    build: project-evals/load/mock-provider
+    build: infra/load/mock-provider
     profiles: [load]
     healthcheck:
       # The slim image carries no curl, so the check is the interpreter itself.
@@ -38,7 +38,7 @@ services:
       LOAD_API_KEY: ${LOAD_API_KEY}
       GATEWAY_URL: http://gateway:8080
     volumes:
-      - ./project-evals/load/k6:/scripts:ro
-      - ./project-evals/load/results:/results
+      - ./infra/load/k6:/scripts:ro
+      - ./infra/load/results:/results
     depends_on:
       gateway: { condition: service_healthy }

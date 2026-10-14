@@ -14,7 +14,7 @@
 # both directions and everything after it is an additive allow, because Kubernetes
 # unions allows and has no deny rule. So the guarantee #54 asks for - only the
 # gateway reaches the internet - is a property of what is ABSENT from this file,
-# not of anything written in it, which is why `tests/infra/test_k8s_netpol.py`
+# not of anything written in it, which is why `infra/tests/infra/test_k8s_netpol.py`
 # asserts by equality and scans the whole build for a second `ipBlock` rather
 # than reading `gateway-egress` alone.
 #
@@ -650,7 +650,7 @@ spec:
     # this kustomize build owns a cert-manager pod template to resolve one
     # against (it is helm-installed, unmanaged by this repo), so this is the
     # one entry that has to be asserted by the number 23a's scrape config
-    # dials - `tests/infra/test_k8s_alerting.py` documents why this peer
+    # dials - `infra/tests/infra/test_k8s_alerting.py` documents why this peer
     # carries no `podSelector` at all.
     - to:
         - namespaceSelector:
@@ -782,7 +782,7 @@ spec:
 
 # Alertmanager is the second and last pod anywhere in this build with a route
 # to the public internet (`gateway-egress` above is the first and only other
-# one - `tests/infra/test_k8s_netpol.py` scans the whole build for an
+# one - `infra/tests/infra/test_k8s_netpol.py` scans the whole build for an
 # `ipBlock` and pins the set to exactly these two). SMTP and Telegram are both
 # public endpoints, so this is the one genuinely new capability an earlier change adds
 # to the cluster rather than a rewiring of an existing one.

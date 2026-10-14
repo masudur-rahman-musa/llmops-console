@@ -4,7 +4,7 @@ Four options, one golden set, one table. This directory holds the evidence: each
 option's two report files under `reports/<option id>/`, the GPU host's capture
 under a dated directory, and `cost.json` once the spend has landed.
 
-The published table is `docs/tradeoff.md`, built from `project-evals/tradeoff.json`
+The published table is `docs/tradeoff.md`, built from `infra/tradeoff/tradeoff.json`
 by `make tradeoff`.
 
 ## What you need before you start
@@ -51,7 +51,7 @@ About a day later, once Cost Explorer has the spend:
 
 Then build the table and fill in the row below:
 
-    make tradeoff MANIFEST=project-evals/tradeoff.json OUT=docs
+    make tradeoff MANIFEST=infra/tradeoff/tradeoff.json OUT=docs
 
 ## How the numbers were produced, and what they cannot tell you
 

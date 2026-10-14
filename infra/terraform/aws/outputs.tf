@@ -2,7 +2,7 @@
 # no cluster admin file is published: Terraform Cloud stores every output in state
 # and prints it in the run log, so an output is the widest place a credential can land
 #. The database credential is read from the AWS-managed store the
-# RDS instance names, never from here. The scan in tests/infra/test_aws_module.py
+# RDS instance names, never from here. The scan in infra/tests/infra/test_aws_module.py
 # refuses the credential words anywhere in this file, comments included.
 output "region" {
   description = "The region every resource was created in."

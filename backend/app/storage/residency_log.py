@@ -18,7 +18,7 @@ what a log kept as evidence must not contain. Pinned by
 0004). `record_residency` logs at ERROR and returns. The evidence trail is
 best-effort on purpose: this write sits on the hot path of every served request,
 and a Postgres blip taking out a gateway whose residency behaviour is entirely
-unchanged is the worse failure. `docs/adr/0004-residency-log-write-is-not-on-the-
+unchanged is the worse failure. the project notes
 request-s-critical-path.md` says what would change that.
 
 **Partitions are made on demand** (decision B), cached per process per day. A

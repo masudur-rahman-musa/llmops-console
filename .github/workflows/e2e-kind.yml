@@ -6,14 +6,14 @@ name: e2e-kind
 # No dependency on `build.yml` or GHCR (decision D): the gateway's and the
 # stub's images are BUILT and `kind load docker-image`d fresh in the runner, so
 # a pull request with no push to `main` yet - and therefore no image published
-# under its SHA - can still run this whole. `project-evals/ci/kind/` narrows the
+# under its SHA - can still run this whole. `infra/k8s/kind/` narrows the
 # production kustomization to what a bare kind cluster can actually run; see
 # that directory's own comments for why the four Helpdesk workloads, the
 # console, every Ingress and two of `platform`'s files are absent.
 #
 # While the local model is out of use (2026-10-12) the run deploys without the
 # two llama.cpp servers and checks the gateway's model-free paths with
-# `project-evals/ci/kind/smoke.sh`, in place of the ten golden cases, which all
+# `infra/k8s/kind/smoke.sh`, in place of the ten golden cases, which all
 # need that model.
 on:
   pull_request:
@@ -50,11 +50,11 @@ jobs:
 
       # `kubectl apply -k` has no `--load-restrictor` flag of its own (only
       # `kubectl kustomize` does), so the relaxed build is piped in rather than
-      # built inline - `project-evals/ci/kind/kustomization.yaml`'s own comment
+      # built inline - `infra/k8s/kind/kustomization.yaml`'s own comment
       # says why this overlay needs it at all.
       - name: Apply the CI-only kind kustomization
         run: |
-          kubectl kustomize --load-restrictor=LoadRestrictionsNone project-evals/ci/kind \
+          kubectl kustomize --load-restrictor=LoadRestrictionsNone infra/k8s/kind \
             | kubectl apply -f -
 
       - name: Wait for the gateway and the stub target to roll out
@@ -74,7 +74,7 @@ jobs:
           sleep 3
 
       - name: Check the deployed gateway without a model
-        run: project-evals/ci/kind/smoke.sh http://127.0.0.1:18080
+        run: infra/k8s/kind/smoke.sh http://127.0.0.1:18080
 
       # `always()`, the same reason `eval-gate.yml`'s upload is: a FAILED run -
       # a cluster-up failure, a rollout timeout, or a failed case - is exactly

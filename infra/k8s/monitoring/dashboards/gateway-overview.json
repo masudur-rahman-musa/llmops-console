@@ -160,7 +160,7 @@
       "id": 7,
       "type": "stat",
       "title": "Availability: 5xx share over 30d",
-      "description": "Objective 99.5%: the budget is spent when this reaches 0.5%. Budget remaining = 1 - value / 0.005. The console's SLO table reads the same query (project-obs/slo.md).",
+      "description": "Objective 99.5%: the budget is spent when this reaches 0.5%. Budget remaining = 1 - value / 0.005. The console's SLO table reads the same query (dev/ops/slo.md).",
       "gridPos": { "h": 6, "w": 8, "x": 0, "y": 17 },
       "fieldConfig": {
         "defaults": {
@@ -195,7 +195,7 @@
       "id": 8,
       "type": "stat",
       "title": "Latency: API-tier share under 6s over 30d",
-      "description": "Objective p95 under 6s: the budget is spent when this falls to 95%. Budget remaining = 1 - (1 - value) / 0.05. Streamed requests are counted too (project-obs/slo.md).",
+      "description": "Objective p95 under 6s: the budget is spent when this falls to 95%. Budget remaining = 1 - (1 - value) / 0.05. Streamed requests are counted too (dev/ops/slo.md).",
       "gridPos": { "h": 6, "w": 8, "x": 8, "y": 17 },
       "fieldConfig": {
         "defaults": {

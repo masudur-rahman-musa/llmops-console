@@ -20,7 +20,7 @@ engine's older callers unchanged.
 Accuracy is measured rather than asserted: the 57-case fixture in
 `tests/redaction/fixtures/cases.json` scores precision and recall, the floors
 live in `tests/redaction/test_fixture_accuracy.py`, and the numbers reach the
-README through `scripts/redaction_report.py`.
+README through `dev/scripts/redaction_report.py`.
 """
 
 from __future__ import annotations

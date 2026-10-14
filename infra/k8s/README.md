@@ -57,14 +57,14 @@ and upstream charts would have to be edited before they could be installed.
 
 Raising any row means re-totalling this table and the comment in
 `base/quotas.yaml` by hand. Only the manifests are checked mechanically:
-`tests/infra/test_k8s_base.py` pins every quantity above against what kustomize
+`infra/tests/infra/test_k8s_base.py` pins every quantity above against what kustomize
 actually emits, and derives the two totals from those same built objects rather
 than restating them - so a row raised in isolation fails there.
 
 Two rows of prose below ARE in that loop, because a table nobody checks is a
-table that quietly stops being true. `tests/infra/test_k8s_platform.py` reads
+table that quietly stops being true. `infra/tests/infra/test_k8s_platform.py` reads
 the cert-manager row of the platform budget, which has no manifest under it to
-check instead; `tests/infra/test_k8s_apps.py` reads the `apps` row of the table
+check instead; `infra/tests/infra/test_k8s_apps.py` reads the `apps` row of the table
 above, whose limits column is the one a workload still to land depends on.
 Everything else here is prose.
 
@@ -84,7 +84,7 @@ for (see below), held as a reserve rather than discovered at install time.
 | `qdrant-backup`, `qdrant-snapshot` init (32Mi/25m/64Mi) + `rclone-sync` (64Mi/50m/96Mi) | 96Mi | 75m | 160Mi |
 | **total** | **1600Mi** | **705m** | **3040Mi** |
 
-`tests/infra/test_k8s_platform.py` derives those three totals from the built pod
+`infra/tests/infra/test_k8s_platform.py` derives those three totals from the built pod
 templates plus the same reserve and checks them against the `platform` quota, so
 a row raised in isolation fails there rather than at `helm install`. Row 23d's two
 CronJobs leave the namespace 448Mi / 95m / 32Mi of headroom - the limits column is
@@ -119,7 +119,7 @@ scale-up at admission, which is the one event an autoscaler exists to serve.
 | `console`, 1 pod | 256Mi | 100m | 512Mi |
 | **total** | **2880Mi** | **1250m** | **6784Mi** |
 
-`tests/infra/test_k8s_apps.py` derives those three totals the same way - the
+`infra/tests/infra/test_k8s_apps.py` derives those three totals the same way - the
 built pod templates, the gateway multiplied by the `maxReplicas` of the HPA in
 the same build - and checks them against the `apps` quota. llama.cpp and the
 console each moved from a reserve row to the built side when their manifests
@@ -170,10 +170,10 @@ is one pod here and would be one per node on a larger one.
 
 The total now reads the envelope exactly, with nothing left over: Alertmanager is the exact remainder the four rows above it left.
 
-`tests/infra/test_k8s_grafana.py` derives those three totals from the built pod
+`infra/tests/infra/test_k8s_grafana.py` derives those three totals from the built pod
 templates and checks them against the `monitoring` quota, the same way the two
-budgets above are checked; `tests/infra/test_k8s_monitoring.py` holds the three
-scrape rows and `tests/infra/test_k8s_alerting.py` holds Alertmanager's own row
+budgets above are checked; `infra/tests/infra/test_k8s_monitoring.py` holds the three
+scrape rows and `infra/tests/infra/test_k8s_alerting.py` holds Alertmanager's own row
 against the values they are priced at here.
 
 What used to be left - 32Mi of requests, 50m of CPU and 64Mi of the limits
@@ -253,7 +253,7 @@ on the seven `apps` routers, `monitoring-<name>@kubernetescrd` on the Grafana on
 Traefik treats a reference it cannot resolve as no middleware at all rather than
 as an error, so a `platform-` prefix here, or an `apps-` prefix copied onto the
 Grafana row, would serve unprotected traffic silently;
-`tests/infra/test_k8s_apps.py` and `tests/infra/test_k8s_grafana.py` each
+`infra/tests/infra/test_k8s_apps.py` and `infra/tests/infra/test_k8s_grafana.py` each
 resolve every parsed reference against the `Middleware`s the build actually
 emits.
 
@@ -394,7 +394,7 @@ first apply. `../secrets/` holds one plaintext contract per Secret
 copy, and the key procedure; `../../.sops.yaml` is the policy that decides what
 gets encrypted and to whom. The key names below and the ones in those templates
 are asserted equal, and equal to the names the build references, by
-`tests/infra/test_secrets.py`:
+`infra/tests/infra/test_secrets.py`:
 
 | Secret | namespace | keys | read by |
 |---|---|---|---|
@@ -601,7 +601,7 @@ The owner's one-time setup and every later deploy are in the project notes.
 
 - The nightly eval CronJob in `evals/`.
 - `monitoring/` carries Grafana with all six dashboards and
-  Alertmanager with the rules in `../../project-obs/alerts/` - the
+  Alertmanager with the rules in `../../infra/k8s/monitoring/alerts/` - the
   namespace's envelope is now spent exactly, to the byte. Postgres and Redis
   exporters are not planned yet and are what the platform dashboard's two empty
   panels are waiting on.
