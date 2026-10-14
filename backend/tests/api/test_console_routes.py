@@ -23,7 +23,7 @@ The contract these cases are written against, before it exists:
 
 * `app.api.routes.dashboard`: the `CONSOLE_*` path constants and
   `CONSOLE_PATHS`, `MIN_DAYS`/`MAX_DAYS`/`DEFAULT_DAYS`, `SourceState`;
-* `app.gateway.console_reads`: the read models, `ConsoleReader`,
+* `app.storage.dashboard_reads`: the read models, `ConsoleReader`,
   `UnconfiguredConsoleReader`, `HIGHER_IS_BETTER_METRICS` and `regressed_metrics`;
 * `app.services.prometheus_reads`: `PrometheusClient` and the named queries;
 * `app.state.console_reader` and `app.state.prometheus`, built by `create_app`.
@@ -47,7 +47,21 @@ from fastapi.testclient import TestClient
 from app.api.routes import dashboard as console
 from app.core.config import Settings
 from app.core.validation import MAX_IDENTIFIER_LENGTH
-from app.gateway.console_reads import (
+from app.limits.budget import current_month
+from app.limits.prices import PriceTable
+from app.main import create_app
+from app.services.prometheus_reads import (
+    AVAILABILITY_BUDGET_QUERY,
+    CIRCUITS_QUERY,
+    ERROR_RATE_QUERY,
+    LATENCY_BUDGET_QUERY,
+    P95_QUERY,
+    QUERY_PATH,
+    QUERY_RANGE_PATH,
+    RESIDENCY_VIOLATIONS_30D_QUERY,
+    PrometheusClient,
+)
+from app.storage.dashboard_reads import (
     HIGHER_IS_BETTER_METRICS,
     AliasCost,
     BlockedRelease,
@@ -68,20 +82,6 @@ from app.gateway.console_reads import (
     TagCount,
     UnconfiguredConsoleReader,
     regressed_metrics,
-)
-from app.limits.budget import current_month
-from app.limits.prices import PriceTable
-from app.main import create_app
-from app.services.prometheus_reads import (
-    AVAILABILITY_BUDGET_QUERY,
-    CIRCUITS_QUERY,
-    ERROR_RATE_QUERY,
-    LATENCY_BUDGET_QUERY,
-    P95_QUERY,
-    QUERY_PATH,
-    QUERY_RANGE_PATH,
-    RESIDENCY_VIOLATIONS_30D_QUERY,
-    PrometheusClient,
 )
 
 from .conftest import (

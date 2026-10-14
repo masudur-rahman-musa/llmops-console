@@ -35,16 +35,16 @@ from fastapi.testclient import TestClient
 from httpx import Response
 
 from app.core.config import Settings
-from app.ledger import (
+from app.main import create_app
+from app.model_routing.policy import DataClass, Policy, load_policy
+from app.model_routing.resolver import Resolved
+from app.storage import (
     InMemoryResidencyLogWriter,
     ResidencyLogRow,
     ResidencyLogWriter,
     record_residency,
     region_allowed,
 )
-from app.main import create_app
-from app.model_routing.policy import DataClass, Policy, load_policy
-from app.model_routing.resolver import Resolved
 
 from .conftest import (
     EU_ALLOWED_REGIONS,

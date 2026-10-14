@@ -1,4 +1,4 @@
-r"""`evals/store.py`: the two rows a run stores, and the checks that run before any SQL.
+r"""`storage/eval_store.py`: the two rows a run stores, and the checks that run before any SQL.
 
 Nothing here opens a connection. Two pool doubles do the work, and which one a
 case takes IS the claim it makes:
@@ -11,7 +11,7 @@ case takes IS the claim it makes:
   quietly without writing anything raises nothing either, and would pass an "is
   accepted" case that only checked for the absence of an exception.
 
-The cases needing a real server live in tests/ledger/test_eval_store_postgres.py
+The cases needing a real server live in tests/storage/test_eval_store_postgres.py
 (decision D: beside the ONE session pool, isolated by schema, a project rule)
 and are skipped without `OPSCONSOLE_TEST_DATABASE_URL`.
 
@@ -79,16 +79,18 @@ from psycopg.rows import TupleRow
 from psycopg.types.json import Jsonb, JsonbBinaryDumper
 from psycopg_pool import ConnectionPool
 
+from app.cli.evals import RUN_KINDS
 from app.core.validation import MAX_IDENTIFIER_LENGTH
 from app.evals.assertions import AssertionResult, AssertionStatus, CaseAssertions
 from app.evals.cases import EvalCategory
-from app.evals.cli import RUN_KINDS
 from app.evals.judge import JudgeVerdict
 from app.evals.outcome import CaseOutcome
+from app.evals.region_check import ResidencyVerdict
 from app.evals.report import REPORT_JSON_NAME, RunCalibration, RunReport, build_report
-from app.evals.residency import ResidencyVerdict
 from app.evals.runner import CaseRun, RunResult
-from app.evals.store import (
+from app.evals.target import TurnFailureKind
+from app.model_routing.errors import IdentifierInvalid
+from app.storage.eval_store import (
     MAX_REPORT_PATH_LENGTH,
     MAX_SET_NAME_LENGTH,
     MAX_TARGET_LENGTH,
@@ -97,8 +99,6 @@ from app.evals.store import (
     PostgresEvalStore,
     rows_from_report,
 )
-from app.evals.target import TurnFailureKind
-from app.model_routing.errors import IdentifierInvalid
 
 Pool = ConnectionPool[Connection[TupleRow]]
 
@@ -458,7 +458,7 @@ def test_the_report_path_is_the_report_json_that_was_written() -> None:
 def test_a_case_whose_turn_failed_stores_no_measurements_and_its_error() -> None:
     """The criterion in one case. Catches a store filling the four measured columns with
     `0` and `""` on a turn that never answered: a broken case would then be averaged in as
-    a free, instant, EU-served case, which lifts every latency and cost number `evals/metrics.py`
+    a free, instant, EU-served case, which lifts every latency and cost number `evals/scores.py`
     reports exactly when the target is failing. `is None` on each, because `0 == None` is
     False but `not 0` is not, and the error text is asserted so the row still says why."""
     report = build(MIXED)
@@ -790,7 +790,7 @@ def test_write_refuses_a_run_kind_outside_the_three_before_any_sql(label: str, v
     finds - the gate would report on a subset of its own history and say nothing. The
     CHECK constraint in
     `003_eval_runs.sql` is the second guard and it is pinned in
-    tests/ledger/test_eval_store_postgres.py; this is the one that refuses before a
+    tests/storage/test_eval_store_postgres.py; this is the one that refuses before a
     connection is borrowed at all."""
     write_refused(run_kind=value)
 

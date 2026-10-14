@@ -45,7 +45,6 @@ from httpx import Response
 
 from app.cache import InProcessResponseCache, InProcessSemanticCache
 from app.core.config import Settings
-from app.ledger import InMemoryCostLedgerWriter
 from app.limits.budget import (
     BUDGET_OVERRIDE_HEADER,
     MAX_OVERRIDE_HEADER_CHARS,
@@ -54,6 +53,7 @@ from app.limits.budget import (
     to_micro_usd,
 )
 from app.providers.base import Adapter
+from app.storage import InMemoryCostLedgerWriter
 
 from .conftest import (
     API_KEYS,

@@ -11,8 +11,8 @@ case takes IS the claim it makes:
   issued a second `CREATE` is invisible against a real PostgreSQL, where the
   second create would simply be skipped or ignored.
 
-The cases needing a real server live in tests/ledger/test_postgres_writer.py,
-tests/ledger/test_migrations.py and tests/ledger/test_cli.py, and are skipped
+The cases needing a real server live in tests/storage/test_postgres_writer.py,
+tests/storage/test_migrations.py and tests/storage/test_cli.py, and are skipped
 without `OPSCONSOLE_TEST_DATABASE_URL`.
 
 a project rule on the identifier pre-checks: `tenant`, `alias`, `provider` and
@@ -43,7 +43,10 @@ from psycopg.rows import TupleRow
 from psycopg_pool import ConnectionPool
 
 from app.core.validation import MAX_IDENTIFIER_LENGTH
-from app.ledger import (
+from app.model_routing.errors import IdentifierInvalid
+from app.model_routing.policy import DataClass, Policy, load_policy
+from app.model_routing.resolver import Resolved
+from app.storage import (
     RESIDENCY_LOG_RETENTION_DAYS,
     InMemoryResidencyLogWriter,
     PostgresResidencyLogWriter,
@@ -52,10 +55,7 @@ from app.ledger import (
     record_residency,
     region_allowed,
 )
-from app.ledger.residency import partition_name
-from app.model_routing.errors import IdentifierInvalid
-from app.model_routing.policy import DataClass, Policy, load_policy
-from app.model_routing.resolver import Resolved
+from app.storage.residency_log import partition_name
 
 Pool = ConnectionPool[Connection[TupleRow]]
 
@@ -208,17 +208,17 @@ def test_the_partition_name_is_the_pinned_format(day: date, expected: str) -> No
 
 
 def test_the_public_names_are_exported_from_the_package() -> None:
-    """Catches names that land in `residency.py` and are never re-exported: `gateway/
-    app.py` and the chat route import from `app.ledger`, so a missing export is an
+    """Catches names that land in `residency_log.py` and are never re-exported: `gateway/
+    app.py` and the chat route import from `app.storage`, so a missing export is an
     ImportError at process start rather than a failure in one test."""
-    from app import ledger
+    from app import storage
 
-    assert ledger.ResidencyLogRow is ResidencyLogRow
-    assert ledger.InMemoryResidencyLogWriter is InMemoryResidencyLogWriter
-    assert ledger.PostgresResidencyLogWriter is PostgresResidencyLogWriter
-    assert ledger.record_residency is record_residency
-    assert ledger.region_allowed is region_allowed
-    assert ledger.RESIDENCY_LOG_RETENTION_DAYS == RESIDENCY_LOG_RETENTION_DAYS
+    assert storage.ResidencyLogRow is ResidencyLogRow
+    assert storage.InMemoryResidencyLogWriter is InMemoryResidencyLogWriter
+    assert storage.PostgresResidencyLogWriter is PostgresResidencyLogWriter
+    assert storage.record_residency is record_residency
+    assert storage.region_allowed is region_allowed
+    assert storage.RESIDENCY_LOG_RETENTION_DAYS == RESIDENCY_LOG_RETENTION_DAYS
 
 
 # --------------------------------------------------------------------------

@@ -7,13 +7,13 @@ exists:
 * `PUSHGATEWAY_JOB: Final[str] = "eval_nightly"` - the fixed job label, a project rule's
   bound pinned by value.
 * `push_metrics(metrics, pushgateway_url, *, client) -> str | None`, taking a
-  `Mapping[str, object]` shaped like `app.evals.metrics.compute_metrics`'s output, an
+  `Mapping[str, object]` shaped like `app.evals.scores.compute_metrics`'s output, an
   injected `httpx.Client` (exactly the seam `judge.JudgeClient` and `target.TargetClient`
   already use, per `tests/evals/test_judge.py`'s own docstring), and answering `None` on a
   successful push or a short string on any way the push failed - never raising for a
   transport failure, mirroring `cli.py`'s `_store_rows` "answer the problem, never raise"
   convention.
-* One `Gauge` per `app.evals.metrics.METRIC_NAMES` key whose VALUE in the caller's
+* One `Gauge` per `app.evals.scores.METRIC_NAMES` key whose VALUE in the caller's
   dict is not `None`, named `f"gateway_eval_{name}"`. A key whose value IS `None` (an
   accuracy nothing stated, or `judge_kappa_vs_human` with no calibration) contributes no
   series at all - not a gauge left at its zero default, which would read as a real score of
@@ -38,7 +38,7 @@ import httpx
 import prometheus_client
 import pytest
 
-from app.evals.metrics_push import PUSHGATEWAY_JOB, push_metrics
+from app.evals.push import PUSHGATEWAY_JOB, push_metrics
 
 PUSHGATEWAY_URL = "http://pushgateway.example:9091"
 

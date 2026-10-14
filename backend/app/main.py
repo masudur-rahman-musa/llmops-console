@@ -50,23 +50,6 @@ from app.core.tracing import (
     parent_context,
     start_root_span,
 )
-from app.gateway.console_reads import (
-    ConsoleReader,
-    PostgresConsoleReader,
-    UnconfiguredConsoleReader,
-)
-from app.ledger import (
-    ConsoleEventWriter,
-    CostLedgerWriter,
-    InMemoryConsoleEventWriter,
-    InMemoryCostLedgerWriter,
-    InMemoryResidencyLogWriter,
-    PostgresConsoleEventWriter,
-    PostgresCostLedgerWriter,
-    PostgresResidencyLogWriter,
-    ResidencyLogWriter,
-    build_pool,
-)
 from app.limits.budget import BudgetStore, InProcessBudgetStore, RedisBudgetStore
 from app.limits.prices import PriceStore
 from app.limits.ratelimit import (
@@ -88,6 +71,23 @@ from app.redaction import (
     RedisRedactionMapStore,
 )
 from app.services.prometheus_reads import PrometheusClient, build_prometheus_http
+from app.storage import (
+    ConsoleEventWriter,
+    CostLedgerWriter,
+    InMemoryConsoleEventWriter,
+    InMemoryCostLedgerWriter,
+    InMemoryResidencyLogWriter,
+    PostgresConsoleEventWriter,
+    PostgresCostLedgerWriter,
+    PostgresResidencyLogWriter,
+    ResidencyLogWriter,
+    build_pool,
+)
+from app.storage.dashboard_reads import (
+    ConsoleReader,
+    PostgresConsoleReader,
+    UnconfiguredConsoleReader,
+)
 
 
 def build_qdrant_data_client(base_url: str) -> httpx.Client:

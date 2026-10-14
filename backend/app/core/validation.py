@@ -14,7 +14,7 @@ cycle.
 
 A check with a different message, `param` or width keeps its own wrapper and only
 sources the constants from here (the `param=`-carrying stores, the Postgres
-identifier limit in `ledger/db.py`, the wider principal and set-name caps).
+identifier limit in `storage/db.py`, the wider principal and set-name caps).
 """
 
 from __future__ import annotations

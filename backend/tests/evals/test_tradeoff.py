@@ -55,7 +55,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from app.evals.metrics import METRIC_NAMES
+from app.evals.scores import METRIC_NAMES
 from app.evals.tradeoff import (
     ACCURACY_TOLERANCE,
     CONCLUSION_HEADING,

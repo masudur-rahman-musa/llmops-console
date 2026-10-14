@@ -365,7 +365,7 @@ def record_tokens(
 def record_cost_usd(*, tenant: str, provider: str, model: str, usd: Decimal) -> None:
     """Book one request's spend, exactly as the ledger row records it (#29).
 
-    The number comes from the row `app.ledger.record_cost` ANSWERS, never
+    The number comes from the row `app.storage.record_cost` ANSWERS, never
     from a second pricing: the counter, the `X-Gateway-Cost-USD` header and the
     ledger row are one figure computed once, so a dashboard and an invoice cannot
     disagree by a rounding (an earlier change decision G,
@@ -540,7 +540,7 @@ def record_residency_violation(*, tenant: str) -> None:
     is the proof - so this counter is expected to stay at zero forever, which is
     exactly what makes the design's "alert above zero" a usable alert rather than
     a threshold someone has to tune. It moves only from
-    `ledger/residency.py::record_residency`, on a row whose `allowed` came back
+    `storage/residency_log.py::record_residency`, on a row whose `allowed` came back
     false; if it ever moves, the log row beside it names the tenant, the alias,
     the provider and the region.
 

@@ -4,73 +4,74 @@ the design gives this package the project's Postgres writes, and an earlier chan
 first of them, so the connection pool, the migration runner and the schema
 convention arrive here rather than in the one table that needed them first.
 
-Four modules: `db` is the seam and the runner, `residency` is the decision log,
-`cost_ledger` is the spend row and its daily rollup, and `console_events` is the
-two records an operator and CI write by hand through `/admin/*`. `cli` is not
-re-exported - it is what `make migrate`, `make purge-residency` and
-`make refresh-rollup` call, and nothing in the gateway imports it.
+The modules: `db` is the seam and the runner, `residency_log` is the decision
+log, `cost_ledger` is the spend row and its daily rollup, `console_events` is the
+two records an operator and CI write by hand through `/admin/*`, `eval_store` is
+the eval run and case rows, and `dashboard_reads` is the console's read side. The
+command-line entry points are not re-exported - they live in `app.cli.ledger`,
+which `make migrate`, `make purge-residency` and `make refresh-rollup` call.
 """
 
-from app.ledger.console_events import (
+from app.storage.console_events import (
     ConsoleEventWriter as ConsoleEventWriter,
 )
-from app.ledger.console_events import (
+from app.storage.console_events import (
     IncidentRow as IncidentRow,
 )
-from app.ledger.console_events import (
+from app.storage.console_events import (
     InMemoryConsoleEventWriter as InMemoryConsoleEventWriter,
 )
-from app.ledger.console_events import (
+from app.storage.console_events import (
     PostgresConsoleEventWriter as PostgresConsoleEventWriter,
 )
-from app.ledger.console_events import (
+from app.storage.console_events import (
     ReleaseRow as ReleaseRow,
 )
-from app.ledger.cost_ledger import (
+from app.storage.cost_ledger import (
     CostLedgerRow as CostLedgerRow,
 )
-from app.ledger.cost_ledger import (
+from app.storage.cost_ledger import (
     CostLedgerWriter as CostLedgerWriter,
 )
-from app.ledger.cost_ledger import (
+from app.storage.cost_ledger import (
     InMemoryCostLedgerWriter as InMemoryCostLedgerWriter,
 )
-from app.ledger.cost_ledger import (
+from app.storage.cost_ledger import (
     PostgresCostLedgerWriter as PostgresCostLedgerWriter,
 )
-from app.ledger.cost_ledger import (
+from app.storage.cost_ledger import (
     record_cost as record_cost,
 )
-from app.ledger.db import (
+from app.storage.db import (
     DEFAULT_SCHEMA as DEFAULT_SCHEMA,
 )
-from app.ledger.db import (
+from app.storage.db import (
     apply_migrations as apply_migrations,
 )
-from app.ledger.db import (
+from app.storage.db import (
     build_pool as build_pool,
 )
-from app.ledger.residency import (
+from app.storage.residency_log import (
     RESIDENCY_LOG_RETENTION_DAYS as RESIDENCY_LOG_RETENTION_DAYS,
 )
-from app.ledger.residency import (
+from app.storage.residency_log import (
     InMemoryResidencyLogWriter as InMemoryResidencyLogWriter,
 )
-from app.ledger.residency import (
+from app.storage.residency_log import (
     PostgresResidencyLogWriter as PostgresResidencyLogWriter,
 )
-from app.ledger.residency import (
+from app.storage.residency_log import (
     ResidencyLogRow as ResidencyLogRow,
 )
-from app.ledger.residency import (
+from app.storage.residency_log import (
     ResidencyLogWriter as ResidencyLogWriter,
 )
-from app.ledger.residency import (
+from app.storage.residency_log import (
     partition_name as partition_name,
 )
-from app.ledger.residency import (
+from app.storage.residency_log import (
     record_residency as record_residency,
 )
-from app.ledger.residency import (
+from app.storage.residency_log import (
     region_allowed as region_allowed,
 )

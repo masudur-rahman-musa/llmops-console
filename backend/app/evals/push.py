@@ -11,7 +11,7 @@ The `httpx.Client` is injected for the reason `judge.JudgeClient`'s and
 `httpx.MockTransport` with nothing real listening. A push failure - the
 Pushgateway unreachable, or answering a non-2xx - is reported as a string and
 never raised: this is a side channel the CLI's own exit code does not depend on
-(`cli.py`'s own `_store_rows` answers a database failure the same way, though
+(`app.cli.evals`'s own `_store_rows` answers a database failure the same way, though
 unlike that one a pushgateway failure never changes the caller's exit code).
 """
 
@@ -23,7 +23,7 @@ from typing import Final
 import httpx
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Gauge, generate_latest
 
-from app.evals.metrics import METRIC_NAMES
+from app.evals.scores import METRIC_NAMES
 
 PUSHGATEWAY_JOB: Final[str] = "eval_nightly"
 """The fixed job label every push carries (§1's "fixed job label", never derived from a

@@ -51,12 +51,12 @@ from fastapi.testclient import TestClient
 
 from app.api.routes.admin import incidents, releases
 from app.core.config import Settings
-from app.ledger.console_events import (
+from app.main import create_app
+from app.storage.console_events import (
     IncidentRow,
     InMemoryConsoleEventWriter,
     ReleaseRow,
 )
-from app.main import create_app
 
 from .conftest import (
     ADMIN_KEY,

@@ -16,7 +16,7 @@ suite's tables. The schema name is a uuid4 hex under a fixed prefix, so it is a
 lowercase slug and satisfies `SCHEMA_PATTERN` without the fixture having to
 special-case anything.
 
-The fourth file, tests/ledger/test_residency_writer.py, needs nothing: its
+The fourth file, tests/storage/test_residency_writer.py, needs nothing: its
 subject is the pre-checks and the row model, and it uses the pool doubles
 defined there rather than these fixtures.
 """
@@ -32,7 +32,7 @@ from psycopg import Connection, sql
 from psycopg.rows import TupleRow
 from psycopg_pool import ConnectionPool
 
-from app.ledger.db import apply_migrations, build_pool
+from app.storage.db import apply_migrations, build_pool
 
 Pool = ConnectionPool[Connection[TupleRow]]
 """The pool type `build_pool` answers, spelled once so the fixtures agree."""

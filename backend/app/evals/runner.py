@@ -29,7 +29,7 @@ from app.evals.assertions import AssertionStatus, CaseAssertions, assert_case
 from app.evals.cases import EvalCase, EvalCategory
 from app.evals.judge import JUDGE_LOW_SCORE, JudgeClient, JudgeVerdict
 from app.evals.outcome import CaseOutcome
-from app.evals.residency import EVAL_DATA_CLASS, ResidencyVerdict, check_residency
+from app.evals.region_check import EVAL_DATA_CLASS, ResidencyVerdict, check_residency
 from app.evals.target import TargetClient, TurnFailed, TurnFailureKind
 from app.model_routing.policy import Policy
 

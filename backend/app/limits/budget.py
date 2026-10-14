@@ -1,7 +1,7 @@
 r"""One tenant's monthly spend: where it is counted, and what it decides (#27).
 
 The gateway prices every served request already - `app.limits.cost` turns
-a usage report into a `Decimal`, and `app.ledger` files it. This module is
+a usage report into a `Decimal`, and `app.storage` files it. This module is
 the running TOTAL of those rows for the month in progress, and the two thresholds
 the design puts on it: a warning at 80% of the tenant's `budget_usd_month` and a
 refusal at 100%.

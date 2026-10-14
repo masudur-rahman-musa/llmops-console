@@ -37,7 +37,7 @@ runs give one stable answer
 candidate at all the table still publishes every row and names no winner
 (`test_with_no_option_carrying_both_numbers_the_pinned_no_winner_line_is_rendered`).
 
-`ACCURACY_TOLERANCE` is applied to the metric as `metrics.py` emits it, which is
+`ACCURACY_TOLERANCE` is applied to the metric as `scores.py` emits it, which is
 POINTS (0-100). The two published documents carry the tolerance beside the table
 for that reason: a reader who sees a less accurate option win has the band in
 front of them.
@@ -60,8 +60,8 @@ from typing import Annotated, Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from app.evals.metrics import METRIC_NAMES
 from app.evals.report import RunReport
+from app.evals.scores import METRIC_NAMES
 
 TRADEOFF_MD_NAME: Final[str] = "tradeoff.md"
 """The markdown table's file name, and never anything a caller supplies: `make
@@ -88,7 +88,7 @@ there is a hundredth of a cent nobody can act on
 
 ACCURACY_TOLERANCE: Final[Decimal] = Decimal("0.02")
 """The band inside which two `decision_accuracy` values count as equal, in the
-points `metrics.py` emits. Widening it lets a materially less accurate option win
+points `scores.py` emits. Widening it lets a materially less accurate option win
 on price (`test_the_accuracy_band_is_inclusive_at_exactly_the_tolerance`)."""
 
 TURNS_PER_1000: Final[Decimal] = Decimal(1000)
@@ -499,7 +499,7 @@ def build_table(manifest: TradeoffManifest, *, base_dir: Path) -> TradeoffTable:
 
     Every report is loaded and checked before any row is built, and nothing is
     written from here at all, so a refusal on the last option cannot leave a
-    half-rendered table behind (the shape `_gate` already has in `evals/cli.py`).
+    half-rendered table behind (the shape `_gate` already has in `cli/evals.py`).
     """
     rows: list[TradeoffRow] = []
     for option in manifest.options:

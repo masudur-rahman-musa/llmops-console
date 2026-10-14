@@ -4,7 +4,7 @@ Nothing here opens a connection. Every case reaches either a module-level
 checker or `InMemoryConsoleEventWriter`, which is what a gateway with no
 `database_url` builds. The cases needing a real server -
 the two CHECK constraints, the composite key and the nullable foreign key - live
-in tests/ledger/test_console_events_postgres.py and are skipped without
+in tests/storage/test_console_events_postgres.py and are skipped without
 `OPSCONSOLE_TEST_DATABASE_URL`.
 
 Every rejection row asserts BOTH directions of the contract: that
@@ -49,7 +49,8 @@ from typing import Any
 
 import pytest
 
-from app.ledger.console_events import (
+from app.model_routing.errors import IdentifierInvalid
+from app.storage.console_events import (
     INCIDENT_ID_LENGTH,
     MAX_GIT_SHA_LENGTH,
     MAX_SUMMARY_LENGTH,
@@ -70,7 +71,6 @@ from app.ledger.console_events import (
     checked_title,
     checked_url,
 )
-from app.model_routing.errors import IdentifierInvalid
 
 STARTED = datetime(2026, 9, 7, 22, 45, 13, tzinfo=UTC)
 RESOLVED = datetime(2026, 9, 8, 1, 30, 0, tzinfo=UTC)

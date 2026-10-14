@@ -91,7 +91,7 @@ CronJobs leave the namespace 448Mi / 95m / 32Mi of headroom - the limits column 
 now the tight one.
 
 An earlier change adds two more `platform` CronJobs on the gateway image - `residency-purge`
-and `rollup-refresh` (`app/ledger/cli.py`) - but the table above does not grow,
+and `rollup-refresh` (`app/cli/ledger.py`) - but the table above does not grow,
 and the headroom does not shrink. A CronJob costs the quota only while its Job pod
 exists, so jobs at different hours never coexist. The two backups share 03:00 and
 are counted together (the peak); the two maintenance jobs run at 01:00 and 02:00,

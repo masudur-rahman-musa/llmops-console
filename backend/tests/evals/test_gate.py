@@ -67,8 +67,8 @@ from app.evals.gate import (
     gate_comment,
     load_baseline,
 )
-from app.evals.metrics import METRIC_NAMES
 from app.evals.report import JUDGE_METRIC_NAMES, RunCalibration, RunReport
+from app.evals.scores import METRIC_NAMES
 
 COUNT_KEYS: frozenset[str] = frozenset(
     {"cases", "passed", "failed", "residency_violations", "leaked"}

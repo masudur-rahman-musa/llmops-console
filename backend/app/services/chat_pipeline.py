@@ -30,13 +30,6 @@ from app.core.metrics import (
     record_tokens,
 )
 from app.core.tracing import SpanAttributes, annotate, stage_span
-from app.ledger import (
-    CostLedgerRow,
-    CostLedgerWriter,
-    ResidencyLogWriter,
-    record_cost,
-    record_residency,
-)
 from app.limits.budget import (
     BudgetDecision,
     BudgetStore,
@@ -63,6 +56,13 @@ from app.services.redaction_flow import (
     redact_or_reject,
     redaction_applies,
     tenant_directory,
+)
+from app.storage import (
+    CostLedgerRow,
+    CostLedgerWriter,
+    ResidencyLogWriter,
+    record_cost,
+    record_residency,
 )
 
 CACHE_STATUS_MISS = "miss"
@@ -378,7 +378,7 @@ def debit_tokens(state: State, context: RequestContext, *, row: CostLedgerRow) -
     A CACHED ROW DEBITS ZERO, and this is the one branch here. A cached row keeps
     the replayed answer's token counts on purpose
     (`test_a_cached_row_keeps_the_replayed_answers_token_counts` in
-    tests/ledger/test_cost_ledger.py), so reading `input_tokens + output_tokens`
+    tests/storage/test_cost_ledger.py), so reading `input_tokens + output_tokens`
     off it would charge a tenant's `tpm` again for every hit and make the cache
     actively expensive in the one currency it saves. Zero is still a DEBIT: the
     call happens, which is what separates a path that cost nothing from a path
@@ -523,7 +523,7 @@ def book_cost(
     The four numbers a request reports its cost through - the row in
     `cost_ledger`, the `gateway_cost_usd_total` counter, the tenant's monthly
     budget counter and `X-Gateway-Cost-USD` - come from ONE call to
-    `app.ledger.record_cost` here (an earlier change decisions A and G, an earlier change
+    `app.storage.record_cost` here (an earlier change decisions A and G, an earlier change
     criterion 5). Four call sites pricing separately is how a dashboard comes to
     disagree with an invoice by a rounding, and how a cap comes to refuse traffic
     on a total nobody can reconcile with the ledger; only one of the four would

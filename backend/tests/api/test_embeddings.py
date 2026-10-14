@@ -47,7 +47,6 @@ from providers.conftest import (
 from app.api.routes.embeddings import EMBEDDINGS
 from app.core.config import Settings
 from app.core.errors import ProviderError
-from app.ledger import InMemoryCostLedgerWriter
 from app.model_routing.policy import Policy
 from app.model_routing.resolver import Resolved, resolve
 from app.providers.base import EmbeddingAdapter, EmbeddingRequest
@@ -58,6 +57,7 @@ from app.schemas.embeddings import (
     MAX_EMBEDDING_INPUTS,
 )
 from app.services.embedding_pipeline import to_base64
+from app.storage import InMemoryCostLedgerWriter
 
 from .conftest import (
     EMBED_ALIAS,

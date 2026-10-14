@@ -16,7 +16,6 @@ from typing import Final
 import psycopg
 from fastapi import Request
 
-from app.gateway.console_reads import ConsoleReader
 from app.limits.budget import budget_ratio, current_month, to_micro_usd, to_usd
 from app.model_routing.policy import PolicyStore
 from app.schemas.dashboard import Budget, Slo, SourceState
@@ -31,6 +30,7 @@ from app.services.prometheus_reads import (
     PrometheusClient,
     PrometheusError,
 )
+from app.storage.dashboard_reads import ConsoleReader
 
 logger = logging.getLogger(__name__)
 

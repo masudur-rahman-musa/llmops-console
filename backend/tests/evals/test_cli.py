@@ -1,4 +1,4 @@
-"""`evals/cli.py`: `ops-eval run`, `calibrate`, `gate` and `baseline-guard` - the codes.
+"""`cli/evals.py`: `ops-eval run`, `calibrate`, `gate` and `baseline-guard` - the codes.
 
 No network and no backing service: `run_set` is replaced by a recording stand-in,
 so what is under test here is the SHELL - what the CLI refuses before anything
@@ -27,7 +27,7 @@ The contract these cases are written against, before it exists:
 * `CaseRun` carrying `category` and `outcome` beside what `16b` shipped, which
   is where a `CaseReport`'s category and its four measured fields come from -
   `build_report` reads the `RunResult` and nothing else.
-* `16d`'s two seams, both resolved as attributes of `app.evals.cli`:
+* `16d`'s two seams, both resolved as attributes of `app.cli.evals`:
   `cli.build_pool`, called with `Settings().database_url` only when that is set,
   and `cli.PostgresEvalStore`, whose `write(run_row, case_rows)` is called AFTER
   `write_reports` (decision E). The store cases below replace both, because a
@@ -37,7 +37,7 @@ The contract these cases are written against, before it exists:
   arrangement every other case in this file already runs under.
 
 * 17e's one seam, resolved the same way: `cli.JudgeClient` as an attribute of
-  `app.evals.cli`. The `calibrate` subcommand opens its own
+  `app.cli.evals`. The `calibrate` subcommand opens its own
   `httpx.Client`, so replacing the client would mean doubling `httpx` itself;
   replacing the CLIENT CLASS with a factory over an `httpx.MockTransport` keeps
   a real `JudgeClient` - 17c's three samples, its one retry and its median all
@@ -73,8 +73,17 @@ from typing import Any, NoReturn
 import httpx
 import pytest
 
+from app.cli import evals as cli
+from app.cli.evals import (
+    EXIT_FAILED,
+    EXIT_OK,
+    EXIT_RESIDENCY,
+    EXIT_USAGE,
+    UNJUDGED_LINE,
+    UNSTORED_LINE,
+    UNTRUSTED_JUDGE_LINE,
+)
 from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
-from app.evals import cli
 from app.evals.assertions import AssertionResult, AssertionStatus, CaseAssertions
 from app.evals.baseline_guard import (
     GUARD_PASSED_LINE,
@@ -90,15 +99,6 @@ from app.evals.calibration import (
     write_calibration,
 )
 from app.evals.cases import EvalCase, EvalCategory
-from app.evals.cli import (
-    EXIT_FAILED,
-    EXIT_OK,
-    EXIT_RESIDENCY,
-    EXIT_USAGE,
-    UNJUDGED_LINE,
-    UNSTORED_LINE,
-    UNTRUSTED_JUDGE_LINE,
-)
 from app.evals.gate import (
     RULE_CROSS_TENANT_LEAKS,
     RULE_DECISION_ACCURACY,
@@ -111,8 +111,8 @@ from app.evals.judge import (
     JudgeClient,
     judge_prompt_version,
 )
-from app.evals.metrics import METRIC_NAMES
 from app.evals.outcome import CaseOutcome
+from app.evals.region_check import ResidencyVerdict
 from app.evals.report import (
     REPORT_JSON_NAME,
     REPORT_MD_NAME,
@@ -120,8 +120,8 @@ from app.evals.report import (
     RunReport,
     report_json,
 )
-from app.evals.residency import ResidencyVerdict
 from app.evals.runner import CaseRun, RunResult
+from app.evals.scores import METRIC_NAMES
 from app.evals.target import TargetClient
 from app.model_routing.policy import Policy
 

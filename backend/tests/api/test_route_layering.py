@@ -27,6 +27,34 @@ _GONE_GATEWAY_MODULES = (
     "app.gateway.routes",
 )
 
+_GONE_STORAGE_AND_CLI_MODULES = (
+    "app.ledger",
+    "app.ledger.cli",
+    "app.ledger.db",
+    "app.ledger.residency",
+    "app.evals.store",
+    "app.evals.metrics",
+    "app.evals.metrics_push",
+    "app.evals.residency",
+    "app.evals.cli",
+    "app.redaction.directory",
+)
+
+_NEW_STORAGE_AND_CLI_MODULES = (
+    "app.storage.db",
+    "app.storage.cost_ledger",
+    "app.storage.console_events",
+    "app.storage.residency_log",
+    "app.storage.eval_store",
+    "app.storage.dashboard_reads",
+    "app.cli.ledger",
+    "app.cli.evals",
+    "app.evals.scores",
+    "app.evals.push",
+    "app.evals.region_check",
+    "app.redaction.names_store",
+)
+
 
 def _imported_modules(path: Path) -> list[str]:
     """Return every `from X import ...` target module named in the file at path."""
@@ -81,8 +109,32 @@ def test_the_gateway_api_modules_are_gone() -> None:
     for name in _GONE_GATEWAY_MODULES:
         with pytest.raises(ModuleNotFoundError):
             importlib.import_module(name)
-    # console_reads stays until an earlier change, so app.gateway is still a package that imports it.
-    importlib.import_module("app.gateway.console_reads")
+
+
+def test_the_gateway_package_is_gone() -> None:
+    """Catches an impl that left the gateway namespace importable after console_reads moved."""
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("app.gateway")
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("app.gateway.console_reads")
+
+
+def test_the_old_storage_and_cli_modules_are_gone() -> None:
+    """Catches an impl that left an old storage/cli/renamed module importable."""
+    for name in _GONE_STORAGE_AND_CLI_MODULES:
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(name)
+
+
+def test_the_storage_and_cli_packages_exist() -> None:
+    """Catches an impl that did not create the new storage/cli packages and renamed modules."""
+    for name in _NEW_STORAGE_AND_CLI_MODULES:
+        importlib.import_module(name)
+    app_dir = Path(app.__file__).parent
+    for pkg in ("storage", "cli"):
+        pkg_dir = app_dir / pkg
+        assert pkg_dir.is_dir(), f"expected new package at {pkg_dir}"
+        assert (pkg_dir / "__init__.py").is_file(), f"expected {pkg_dir / '__init__.py'}"
 
 
 def test_the_admin_routes_are_split() -> None:

@@ -12,13 +12,13 @@ condition, so removing that one filter is what changes the answer.
 
 Skipped without `OPSCONSOLE_TEST_DATABASE_URL`. One
 session pool, one throwaway schema per test - the fixtures in
-tests/ledger/conftest.py, unchanged.
+tests/storage/conftest.py, unchanged.
 
 The contract these cases are written against, before it exists:
 
 * `PostgresConsoleReader(pool, *, schema)` with `home`, `cost`, `quality`,
   `residency`, `incidents` and `releases`, answering the frozen read models of
-  `app.gateway.console_reads`;
+  `app.storage.dashboard_reads`;
 * a window of `now - timedelta(days=days)`, compared with `>=` on timestamps and
   with `day >= since.date()` on the rollup; "today" is `[UTC midnight, +1 day)`.
 """
@@ -34,7 +34,8 @@ import pytest
 from psycopg import sql
 from psycopg.types.json import Jsonb
 
-from app.gateway.console_reads import (
+from app.limits.prices import PriceTable, load_prices
+from app.storage.dashboard_reads import (
     ROW_LIMIT,
     AliasCost,
     BlockedRelease,
@@ -51,7 +52,6 @@ from app.gateway.console_reads import (
     Saving,
     TagCount,
 )
-from app.limits.prices import PriceTable, load_prices
 
 from .conftest import Pool, requires_postgres
 

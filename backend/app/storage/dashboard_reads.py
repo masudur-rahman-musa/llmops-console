@@ -1,6 +1,6 @@
 """Every Postgres read the console makes, one method per page.
 
-The reader shape follows the writers in `ledger/`: a Protocol, a Postgres
+The reader shape follows the writers in `storage/`: a Protocol, a Postgres
 implementation over the app's one pool, and a stand-in for a gateway with no
 `database_url`. The stand-in is `UnconfiguredConsoleReader`, and its
 `configured = False` is what the routes read to answer `postgres: unconfigured`
@@ -44,10 +44,10 @@ from psycopg.rows import TupleRow
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, ConfigDict
 
-from app.ledger.db import DEFAULT_SCHEMA, checked_schema
 from app.limits.cost import cost_for
 from app.limits.prices import PriceTable
 from app.providers.base import Usage
+from app.storage.db import DEFAULT_SCHEMA, checked_schema
 
 ROW_LIMIT: Final[int] = 100
 """The most rows any list on a page carries (`test_incidents_are_newest_first_and_capped_at_100`,

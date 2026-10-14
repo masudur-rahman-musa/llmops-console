@@ -1,4 +1,4 @@
-r"""`evals/report.py`: the two files a run writes, and the record `evals/store.py` stores.
+r"""`evals/report.py`: the two files a run writes, and the record `storage/eval_store.py` stores.
 
 Pure: no network, no backing service, no clock of its own. `build_report` is
 handed the two timestamps (decision F), so every case here is deterministic and
@@ -75,8 +75,8 @@ from app.evals.assertions import (
 from app.evals.calibration import JUDGE_TRUST_MIN
 from app.evals.cases import EvalCategory
 from app.evals.judge import JudgeVerdict
-from app.evals.metrics import METRIC_NAMES, compute_metrics
 from app.evals.outcome import CaseOutcome
+from app.evals.region_check import ResidencyVerdict
 from app.evals.report import (
     CATEGORY_METRICS_HEADING,
     METRICS_HEADING,
@@ -95,8 +95,8 @@ from app.evals.report import (
     report_markdown,
     write_reports,
 )
-from app.evals.residency import ResidencyVerdict
 from app.evals.runner import CaseRun, RunResult
+from app.evals.scores import METRIC_NAMES, compute_metrics
 from app.evals.target import TurnFailureKind
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"

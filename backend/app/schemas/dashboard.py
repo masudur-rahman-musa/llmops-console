@@ -4,8 +4,7 @@
 `sources: {postgres, prometheus}`, each `ok`, `unconfigured` or `error`, so a
 source that is down empties its own fields while the route stays 200 and the
 other source still renders. The read models each page composes
-(`LastEval`, `CostDay`, ...) live in `app.gateway.console_reads` (an earlier change moves
-them to `app.storage.dashboard_reads`).
+(`LastEval`, `CostDay`, ...) live in `app.storage.dashboard_reads`.
 """
 
 from __future__ import annotations
@@ -15,7 +14,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
 
-from app.gateway.console_reads import (
+from app.storage.dashboard_reads import (
     AliasCost,
     CategoryCount,
     CostDay,

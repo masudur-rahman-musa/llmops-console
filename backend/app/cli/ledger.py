@@ -33,9 +33,9 @@ from psycopg.rows import TupleRow
 from psycopg_pool import ConnectionPool
 
 from app.core.config import Settings
-from app.ledger.cost_ledger import COST_LEDGER_DAILY
-from app.ledger.db import DEFAULT_SCHEMA, apply_migrations, build_pool, checked_schema
-from app.ledger.residency import (
+from app.storage.cost_ledger import COST_LEDGER_DAILY
+from app.storage.db import DEFAULT_SCHEMA, apply_migrations, build_pool, checked_schema
+from app.storage.residency_log import (
     PARTITION_DAY_FORMAT,
     RESIDENCY_LOG,
     RESIDENCY_LOG_RETENTION_DAYS,

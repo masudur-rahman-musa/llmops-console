@@ -3,7 +3,7 @@
 The incidents table is one nothing else in the system produces: the console's
 timeline is written by a human rather than by a served request, which is why it
 arrives here rather than as a code path. What it stores, and why each field is
-checked before any statement runs, is `app.ledger.console_events`.
+checked before any statement runs, is `app.storage.console_events`.
 
 Behind the admin key (`admin_key`): a working tenant key is 401 on both, and an
 unset admin key authorises nobody rather than everybody
@@ -20,12 +20,12 @@ import uuid
 from fastapi import APIRouter, Depends, Request
 
 from app.api.deps import admin_key
-from app.ledger.console_events import (
+from app.schemas.admin import IncidentCreate, IncidentCreated, IncidentResolve
+from app.storage.console_events import (
     ConsoleEventWriter,
     IncidentRow,
     checked_incident_id,
 )
-from app.schemas.admin import IncidentCreate, IncidentCreated, IncidentResolve
 
 ADMIN_INCIDENTS = "/admin/incidents"
 """Where an incident is recorded. Pinned against the mounted route by
@@ -88,7 +88,7 @@ def resolve_incident(request: Request, incident_id: str, body: IncidentResolve) 
     view above.
 
     Both failures are 422 `VALIDATION` naming `id` and are
-    told apart by their messages, which `ledger.console_events` owns:
+    told apart by their messages, which `storage.console_events` owns:
     `ErrorCode.VALIDATION` is fixed at 422, and a 404 or a 409 carrying that code
     would break the one-status-per-code table
     `tests/api/test_error_contract.py` holds. Resolving twice is a refusal

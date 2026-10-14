@@ -2,7 +2,7 @@
 
 The releases table is written by CI rather than by a served request, which is why
 it arrives here rather than as a code path. What it stores, and why each field is
-checked before any statement runs, is `app.ledger.console_events`.
+checked before any statement runs, is `app.storage.console_events`.
 
 Behind the admin key (`admin_key`): a working tenant key is 401, and an unset
 admin key authorises nobody (`test_every_console_event_route_is_401_without_an_admin_key`,
@@ -19,9 +19,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request
 
 from app.api.deps import admin_key
-from app.ledger.console_events import EVAL_RUN_ID_FIELD, ConsoleEventWriter, ReleaseRow
 from app.model_routing.errors import IdentifierInvalid
 from app.schemas.admin import ReleaseCreate
+from app.storage.console_events import EVAL_RUN_ID_FIELD, ConsoleEventWriter, ReleaseRow
 
 ADMIN_RELEASES = "/admin/releases"
 """Where a deploy is recorded. Pinned against the mounted route by

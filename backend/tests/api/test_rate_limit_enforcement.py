@@ -77,7 +77,6 @@ from httpx import Response
 
 from app.cache import InProcessResponseCache, InProcessSemanticCache
 from app.core.config import Settings
-from app.ledger import CostLedgerRow, CostLedgerWriter, InMemoryCostLedgerWriter
 from app.limits.budget import InProcessBudgetStore, current_month, to_micro_usd
 from app.limits.ratelimit import (
     SECONDS_PER_MINUTE,
@@ -94,6 +93,7 @@ from app.services.chat_pipeline import (
     CACHE_STATUS_MISS,
     CACHE_STATUS_SEMANTIC,
 )
+from app.storage import CostLedgerRow, CostLedgerWriter, InMemoryCostLedgerWriter
 
 from .conftest import (
     API_KEYS,
@@ -872,7 +872,7 @@ def test_a_cache_hit_debits_zero_tokens(
     This is the row where the obvious implementation is wrong. A cached ledger row KEEPS
     the replayed answer's token counts on purpose
     (`test_a_cached_row_keeps_the_replayed_answers_token_counts` in
-    tests/ledger/test_cost_ledger.py), so a `debit_tokens` that reads `input_tokens +
+    tests/storage/test_cost_ledger.py), so a `debit_tokens` that reads `input_tokens +
     output_tokens` off the row charges a tenant's `tpm` again for every hit and makes the
     cache actively expensive in the one currency it was meant to save. Catches exactly
     that, and catches the opposite - a hit that skips the debit entirely, which no bucket

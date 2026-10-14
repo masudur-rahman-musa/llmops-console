@@ -12,10 +12,10 @@ requests rather than as a failure.
 
 Skipped without `OPSCONSOLE_TEST_DATABASE_URL`. One
 session pool, one throwaway schema per test - the fixtures in
-tests/ledger/conftest.py, unchanged.
+tests/storage/conftest.py, unchanged.
 
 The statement-level view of the same writer - that the pre-checks refuse before a
-connection is borrowed at all - is in tests/ledger/test_cost_ledger.py, where a
+connection is borrowed at all - is in tests/storage/test_cost_ledger.py, where a
 pool double can see it; a real server cannot tell a statement that was never
 issued from one that was rejected.
 
@@ -24,7 +24,7 @@ The contract these cases are written against, before it exists:
 * `cost_ledger_daily` has the columns `day, tenant, alias, provider, model,
   region, requests, cached_requests, input_tokens, output_tokens, cost_usd`, with
   `day` the UTC date of `ts`;
-* `app.ledger.cli.refresh_daily_rollup(pool, *, schema=...) -> bool`
+* `app.cli.ledger.refresh_daily_rollup(pool, *, schema=...) -> bool`
   refreshes it and answers whether it ran CONCURRENTLY - `False` the first time,
   because a never-populated materialised view cannot be refreshed concurrently,
   and `True` afterwards. It takes the POOL rather than a connection because
@@ -41,9 +41,9 @@ from typing import Any
 import pytest
 from psycopg import sql
 
-from app.ledger import CostLedgerRow, PostgresCostLedgerWriter
-from app.ledger.cli import refresh_daily_rollup
-from app.ledger.cost_ledger import COST_LEDGER, COST_LEDGER_DAILY
+from app.cli.ledger import refresh_daily_rollup
+from app.storage import CostLedgerRow, PostgresCostLedgerWriter
+from app.storage.cost_ledger import COST_LEDGER, COST_LEDGER_DAILY
 
 from .conftest import Pool, requires_postgres
 

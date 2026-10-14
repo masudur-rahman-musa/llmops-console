@@ -1,4 +1,4 @@
-"""`evals/residency.py`: the per-turn residency verdict (#38), deny by default.
+"""`evals/region_check.py`: the per-turn residency verdict (#38), deny by default.
 
 Pure and in-memory: a `Policy` built straight from the models, a region string,
 a verdict back. No YAML, no network, no database - `16d` brings Postgres, and
@@ -31,7 +31,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.evals.residency import (
+from app.evals.region_check import (
     EVAL_DATA_CLASS,
     ResidencyVerdict,
     check_residency,

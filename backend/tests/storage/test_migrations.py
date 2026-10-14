@@ -3,7 +3,7 @@ r"""The migration runner: what it applies, what it refuses, and what the table b
 Most of this file needs a real PostgreSQL, because the claims are PostgreSQL's
 own: a partitioned parent, an attached DEFAULT partition, and a second run that
 changes nothing. Those cases carry `requires_postgres` from
-tests/ledger/conftest.py, which skips with `OPSCONSOLE_TEST_DATABASE_URL` named
+tests/storage/conftest.py, which skips with `OPSCONSOLE_TEST_DATABASE_URL` named
 in the reason. Per-test isolation is a throwaway
 SCHEMA the runner migrates into; the pool is built once for
 the session.
@@ -25,7 +25,7 @@ import pytest
 from psycopg import Connection, sql
 from psycopg.rows import TupleRow
 
-from app.ledger.db import (
+from app.storage.db import (
     DEFAULT_SCHEMA,
     MAX_POOL_SIZE,
     MAX_SCHEMA_LENGTH,
@@ -179,7 +179,7 @@ def test_a_schema_name_that_is_not_a_slug_is_refused_before_any_statement(
 def test_the_schema_pattern_accepts_the_names_this_suite_and_the_default_use() -> None:
     """The other direction, so a pattern that refuses everything - which would satisfy
     every row above - cannot pass. Catches a pattern with no underscore in its separator
-    class: the throwaway schemas in tests/ledger/conftest.py are `opsconsole_test_<hex>`,
+    class: the throwaway schemas in tests/storage/conftest.py are `opsconsole_test_<hex>`,
     and the whole Postgres half of this directory would skip on a ValueError that looked
     like a broken fixture."""
     assert SCHEMA_PATTERN.fullmatch(DEFAULT_SCHEMA) is not None

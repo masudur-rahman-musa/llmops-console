@@ -29,10 +29,10 @@ from datetime import UTC, date, datetime, time, timedelta
 import pytest
 from psycopg import sql
 
-from app.ledger import RESIDENCY_LOG_RETENTION_DAYS, PostgresResidencyLogWriter
-from app.ledger.cli import migrate, purge, purge_partitions, refresh_rollup
-from app.ledger.residency import ResidencyLogRow, partition_name
+from app.cli.ledger import migrate, purge, purge_partitions, refresh_rollup
 from app.model_routing.policy import DataClass
+from app.storage import RESIDENCY_LOG_RETENTION_DAYS, PostgresResidencyLogWriter
+from app.storage.residency_log import ResidencyLogRow, partition_name
 
 from .conftest import DATABASE_URL, Pool, partitions, requires_postgres
 

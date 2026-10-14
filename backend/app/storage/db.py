@@ -21,7 +21,7 @@ interpolated into DDL - so `SCHEMA_PATTERN` and `MAX_SCHEMA_LENGTH` are checked
 before the file is read and before a single statement runs. That check is also
 what lets the test suite migrate into a throwaway schema per test rather than
 rebuilding a database. Pinned by
-tests/ledger/test_migrations.py, whose rejection table carries a trailing
+tests/storage/test_migrations.py, whose rejection table carries a trailing
 newline, a trailing CRLF and a trailing space.
 """
 

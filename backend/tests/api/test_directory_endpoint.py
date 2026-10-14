@@ -37,7 +37,7 @@ from httpx import Response
 
 from app.api.routes.admin.directory import ADMIN_DIRECTORY
 from app.core.validation import MAX_IDENTIFIER_LENGTH
-from app.redaction.directory import (
+from app.redaction.names_store import (
     MAX_DIRECTORY_NAME_CHARS,
     MAX_DIRECTORY_NAMES,
     MIN_DIRECTORY_NAME_CHARS,

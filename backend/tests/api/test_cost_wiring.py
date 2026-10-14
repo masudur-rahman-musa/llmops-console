@@ -2,7 +2,7 @@
 
 Everything here is settled by a real request through `TestClient` against an app
 `create_app` built, because the question is never "does
-`record_cost` price correctly" - tests/ledger/test_cost_ledger.py settles that -
+`record_cost` price correctly" - tests/storage/test_cost_ledger.py settles that -
 but "does every path book exactly one row, naming what served, and does the
 number in the row, in `gateway_cost_usd_total` and in `X-Gateway-Cost-USD` stay
 one number".
@@ -75,11 +75,6 @@ from app.cache import (
 )
 from app.core.config import Settings
 from app.core.errors import ProviderError
-from app.ledger import (
-    CostLedgerRow,
-    CostLedgerWriter,
-    InMemoryCostLedgerWriter,
-)
 from app.limits import PriceStore, PriceTableInvalid, price_for
 from app.main import close_adapters, create_app
 from app.providers.base import (
@@ -95,6 +90,11 @@ from app.services.chat_pipeline import (
     CACHE_STATUS_HIT,
     CACHE_STATUS_MISS,
     CACHE_STATUS_SEMANTIC,
+)
+from app.storage import (
+    CostLedgerRow,
+    CostLedgerWriter,
+    InMemoryCostLedgerWriter,
 )
 
 from .conftest import (

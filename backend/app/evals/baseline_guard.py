@@ -3,7 +3,7 @@ r"""`ops-eval baseline-guard`: #42's rule over `backend/evals/baseline.json`.
 Pure, for `gate.py`'s reason one step further along: the same commits give the
 same verdict on a laptop and in `.github/workflows/eval-gate.yml`, so every way
 of bypassing the rule is a test row rather than a pull request somebody has to
-open. The git read and the exit code live in `evals/cli.py`; what lives here is
+open. The git read and the exit code live in `cli/evals.py`; what lives here is
 the comparison.
 
 The rule, from the design and #42: a commit that touches the baseline is clean

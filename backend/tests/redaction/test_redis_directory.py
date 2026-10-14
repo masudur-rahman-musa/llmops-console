@@ -47,7 +47,8 @@ import redis
 
 from app.core.validation import MAX_IDENTIFIER_LENGTH
 from app.model_routing.errors import IdentifierInvalid
-from app.redaction.directory import (
+from app.redaction.errors import DirectoryNameInvalid, DirectoryStoreUnavailable
+from app.redaction.names_store import (
     DIRECTORY_KEY_PREFIX,
     MAX_DIRECTORY_NAME_CHARS,
     MAX_DIRECTORY_NAMES,
@@ -56,7 +57,6 @@ from app.redaction.directory import (
     name_field,
     normalise_name,
 )
-from app.redaction.errors import DirectoryNameInvalid, DirectoryStoreUnavailable
 
 REDIS_URL_VAR = "OPSCONSOLE_TEST_REDIS_URL"
 REDIS_URL = os.environ.get(REDIS_URL_VAR)

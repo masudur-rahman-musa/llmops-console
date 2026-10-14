@@ -3,11 +3,11 @@ r"""`ops-eval gate`: the design's five rules over one published run (#41, #42).
 Pure, and deliberately so. Everything here reads a `report.json` that already
 exists and a `baseline.json` that is checked into the repo, so the same two files
 give the same verdict on a laptop and in the eval gate workflow - no clock, no
-database, no gateway. The command that shells over it lives in `evals/cli.py`;
+database, no gateway. The command that shells over it lives in `cli/evals.py`;
 what lives here is the comparison, the verdict and the markdown that verdict
 becomes.
 
-Every number in this module is in POINTS, 0-100. `metrics.py` emits percentages
+Every number in this module is in POINTS, 0-100. `scores.py` emits percentages
 (`_percentage` answers `100 * passed / total` at `ACCURACY_SCALE` places) and
 the design is written in points, so the baseline is written in points too
 (decision A, a design note). That is not a formatting preference: the file shipped
@@ -105,7 +105,7 @@ _COUNT_RULES: Final[frozenset[str]] = frozenset(
 )
 """The two rules that are counts rather than percentages, and the two that make
 `GateVerdict.residency_breached` true. Both are `> 0` breaches, both outrank a
-threshold breach in `evals/cli.py`'s exit code (decision D)."""
+threshold breach in `cli/evals.py`'s exit code (decision D)."""
 
 _Points = Annotated[float, Field(ge=BASELINE_MIN, le=BASELINE_MAX)]
 """A number in the baseline: a percentage in points, bounded inclusively at both ends."""
@@ -120,7 +120,7 @@ class GateInputInvalid(Exception):
     `tests/gateway/test_error_contract.py` walks `GatewayError.__subclasses__()`
     asserting one class per wire code.
 
-    Two subclasses rather than one class with a flag, so `evals/cli.py`'s refusal
+    Two subclasses rather than one class with a flag, so `cli/evals.py`'s refusal
     block can say which of the two files it refused without parsing the reason.
     """
 
@@ -227,7 +227,7 @@ class GateVerdict(BaseModel):
 
     `residency_breached` is carried rather than recomputed by callers because it
     is what decides `EXIT_RESIDENCY` over `EXIT_FAILED` (decision D), and a second
-    `> 0` in `evals/cli.py` is a second place that ranking can be got wrong.
+    `> 0` in `cli/evals.py` is a second place that ranking can be got wrong.
     """
 
     model_config = ConfigDict(frozen=True)

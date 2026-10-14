@@ -28,7 +28,8 @@ import hashlib
 import pytest
 
 from app.core.errors import GatewayError
-from app.redaction.directory import (
+from app.redaction.errors import DirectoryNameInvalid, DirectoryStoreUnavailable
+from app.redaction.names_store import (
     DIRECTORY_KEY_PREFIX,
     MAX_DIRECTORY_NAME_CHARS,
     MAX_DIRECTORY_NAMES,
@@ -38,7 +39,6 @@ from app.redaction.directory import (
     name_field,
     normalise_name,
 )
-from app.redaction.errors import DirectoryNameInvalid, DirectoryStoreUnavailable
 
 TENANT = "nordlicht"
 OTHER_TENANT = "cuan"

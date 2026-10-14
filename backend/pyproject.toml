@@ -44,13 +44,13 @@ dependencies = [
 # rather than left to `python -m`, because the Makefile targets and the k8s Job
 # and CronJob that will call them all want one name that works inside the image.
 [project.scripts]
-ops-migrate = "app.ledger.cli:migrate"
-ops-purge-residency = "app.ledger.cli:purge"
-ops-refresh-rollup = "app.ledger.cli:refresh_rollup"
+ops-migrate = "app.cli.ledger:migrate"
+ops-purge-residency = "app.cli.ledger:purge"
+ops-refresh-rollup = "app.cli.ledger:refresh_rollup"
 # The eval harness. `make eval` names this command, and so will the
 # CronJob that runs the nightly set, which is why it is a script and not a
 # `python -m` invocation nobody can spell inside the image.
-ops-eval = "app.evals.cli:main"
+ops-eval = "app.cli.evals:main"
 
 [dependency-groups]
 dev = [

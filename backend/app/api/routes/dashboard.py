@@ -34,7 +34,6 @@ from typing import Annotated, Final
 from fastapi import APIRouter, Depends, Query, Request
 
 from app.api.deps import _checked_tenant, admin_key
-from app.gateway.console_reads import regressed_metrics
 from app.limits.prices import PriceStore
 from app.schemas.dashboard import (
     BlockedItem,
@@ -60,6 +59,7 @@ from app.services.prometheus_reads import (
     fallbacks_query,
     redactions_query,
 )
+from app.storage.dashboard_reads import regressed_metrics
 
 CONSOLE_HOME: Final[str] = "/console/home"
 CONSOLE_COST: Final[str] = "/console/cost"

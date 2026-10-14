@@ -35,7 +35,7 @@ Four properties are worth more than the arithmetic.
 Nothing here opens a socket of its own: the `JudgeClient` is handed in, so the
 whole module is drivable against `httpx.MockTransport` with no gateway up,
 exactly as `evals/judge.py` and `evals/target.py` are. It imports `judge.py` and
-`judge.py` does not import back - `evals/cli.py` is the only caller of either.
+`judge.py` does not import back - `cli/evals.py` is the only caller of either.
 """
 
 from __future__ import annotations
@@ -279,7 +279,7 @@ class CalibrationReport(BaseModel):
     the field that keeps this document honest across time: a calibration computed
     under one prompt and read against a run made under another is a stale number
     worn as trust. Nothing checks that HERE - `read_calibration` validates the
-    document and `evals/cli.py` refuses the mismatch, before the run starts (17f
+    document and `cli/evals.py` refuses the mismatch, before the run starts (17f
     decision D, `test_a_calibration_computed_against_another_prompt_is_refused_before_the_run`).
 
     `kappa` is `None` when chance agreement was total, and `reason` says so;

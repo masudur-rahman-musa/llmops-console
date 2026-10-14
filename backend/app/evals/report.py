@@ -38,7 +38,7 @@ The two file names are constants and nothing a caller supplies shapes a path
 inside it, and a rerun overwrites
 (`test_a_rerun_overwrites_the_two_files_rather_than_appending`).
 
-`evals/store.py` reads this record: migration `003` and the `eval_runs` and
+`storage/eval_store.py` reads this record: migration `003` and the `eval_runs` and
 `eval_cases` rows are built from the fields published here and in
 `docs/eval-report.md`, and from no other source.
 """
@@ -58,9 +58,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_serializer
 from app.evals.assertions import AssertionResult, AssertionStatus, CaseAssertions
 from app.evals.calibration import JUDGE_TRUST_MIN
 from app.evals.judge import JUDGE_LOW_SCORE, JUDGE_MAX_SCORE, JudgeVerdict
-from app.evals.metrics import METRIC_NAMES, compute_metrics
-from app.evals.residency import ResidencyVerdict
+from app.evals.region_check import ResidencyVerdict
 from app.evals.runner import CaseRun, RunResult
+from app.evals.scores import METRIC_NAMES, compute_metrics
 from app.evals.taxonomy import TAG_ORDER, tags_for
 
 REPORT_JSON_NAME: Final[str] = "report.json"
@@ -235,7 +235,7 @@ class RunCalibration(BaseModel):
 
     `judge_prompt_version` is repeated here rather than read off `RunReport`: the
     run's own field is the prompt this run SCORED with, and this one is the prompt
-    the calibration was COMPUTED under. `evals/cli.py` refuses a run where the two
+    the calibration was COMPUTED under. `cli/evals.py` refuses a run where the two
     differ (17f decision D), and the two fields are what makes that refusal
     checkable in a stored document rather than only in the process that made it.
 
@@ -291,7 +291,7 @@ class RunReport(BaseModel):
     `extra="forbid"`, and what stops an uncalibrated run manufacturing an empty
     record that reads as "calibrated, against nothing"
     (`test_a_run_with_no_calibration_carries_null_in_the_field_and_in_the_metric`).
-    `evals/store.py` reads `kappa` off this field and never out of the `metrics`
+    `storage/eval_store.py` reads `kappa` off this field and never out of the `metrics`
     mapping, so `mypy --strict` still sees the type going into a
     `double precision` column."""
     cases: tuple[CaseReport, ...]

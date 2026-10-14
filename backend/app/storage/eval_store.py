@@ -1,13 +1,12 @@
 r"""The two rows a run stores: `eval_runs` and `eval_cases` (#39, part).
 
 `16c` writes the two report files; this module writes the two rows built from the
-same `RunReport`, and it lives in `evals/` rather than beside the other Postgres
-writer. The migration has no such choice - it must sit in
-`ledger/migrations/` for `ledger.db.apply_migrations` to find it - but a writer in
-`ledger/` would have to import `evals.report` for the record it writes, and
-`ledger/` is the lower layer `evals/` and `gateway/` both sit on. The dependency
-therefore points one way only: this module imports `ledger.db` and nothing in
-`ledger/` imports back.
+same `RunReport`. It lives in `storage/` with the other Postgres writers - the
+folder restructure gathered every Postgres write here, reversing plan
+16d decision A's placement in `evals/`. It still reads the record it writes from
+`evals.report`, so the dependency points from `storage` up into `evals`; there is
+no import contract forbidding it. The migration sits in `migrations/` for
+`storage.db.apply_migrations` to find it, and this module imports `storage.db`.
 
 Three things it holds that no single field states:
 
@@ -18,7 +17,7 @@ Three things it holds that no single field states:
 * **A case that measured nothing stores NULL, never `0` and never `""`.** A turn
   that never answered has no latency, cost, provider or region; a zero there
   would be averaged in as a free, instant, in-region case and would lift every
-  number `evals/metrics.py` reports exactly when the target is failing
+  number `evals/scores.py` reports exactly when the target is failing
   (`test_a_case_whose_turn_failed_stores_no_measurements_and_its_error`).
 * **Every pre-check runs before a connection is borrowed**,
   which `test_write_refuses_a_malformed_tenant_before_any_sql` asserts as "no
@@ -29,8 +28,9 @@ Three things it holds that no single field states:
   later query counts as one and as none.
 
 `run_kind` is checked against `report.RunKind`'s own three words rather than
-against `cli.RUN_KINDS`, because `cli` imports this module and the reverse import
-would be a cycle; `test_each_run_kind_the_command_accepts_is_written` is
+against `app.cli.evals.RUN_KINDS`, because `app.cli.evals` imports this module
+and the reverse import would be a cycle;
+`test_each_run_kind_the_command_accepts_is_written` is
 parametrised over the command's tuple, so the two cannot drift apart in silence.
 The CHECK constraint in `003_eval_runs.sql` is the second guard, for the row
 somebody loads with `psql`.
@@ -74,8 +74,8 @@ from pydantic import BaseModel, ConfigDict
 from app.core.validation import checked_identifier
 from app.evals.cases import EvalCategory
 from app.evals.report import SET_SHA_PATTERN, CaseReport, RunKind, RunReport
-from app.ledger.db import DEFAULT_SCHEMA, checked_schema
 from app.model_routing.errors import IdentifierInvalid
+from app.storage.db import DEFAULT_SCHEMA, checked_schema
 
 EVAL_RUNS: Final[str] = "eval_runs"
 """The run table `migrations/003_eval_runs.sql` creates."""
@@ -84,7 +84,7 @@ EVAL_CASES: Final[str] = "eval_cases"
 """The per-case table beside it, whose `run_id` cascades from `eval_runs.id`.
 
 Both names are constants because the statements below build their identifiers
-from them and tests/ledger/test_eval_store_postgres.py reads the catalogue by the
+from them and tests/storage/test_eval_store_postgres.py reads the catalogue by the
 same names, so a rename cannot reach only one of the two."""
 
 MAX_SET_NAME_LENGTH: Final[int] = 128
@@ -108,14 +108,14 @@ gate and the console both open this value. Pinned by the same two cases.
 MAX_TARGET_LENGTH: Final[int] = 512
 """The longest `--target` URL a row may record.
 
-`cli._checked_target` already refuses anything that is not an absolute http(s)
+`app.cli.evals._checked_target` already refuses anything that is not an absolute http(s)
 URL, and says nothing about its length; this is the only bound on it. Pinned by
 the same two cases.
 """
 
 RUN_KINDS: Final[tuple[str, ...]] = get_args(RunKind)
 """The three words `run_kind` may be, taken from `report.RunKind` rather than
-restated - `cli` imports this module, so importing `cli.RUN_KINDS` back would be
+restated - `app.cli.evals` imports this module, so importing `app.cli.evals.RUN_KINDS` back would be
 a cycle. `test_each_run_kind_the_command_accepts_is_written` is parametrised over
 the command's own tuple, which is what pins the two together."""
 
@@ -193,7 +193,7 @@ class EvalStore(Protocol):
 
     A Protocol rather than a base class, the shape `CostLedgerWriter` established:
     a test double satisfies it without importing anything to inherit from. `write`
-    is allowed to RAISE - `cli` is what guards it, in one place, and decision E is
+    is allowed to RAISE - `app.cli.evals` is what guards it, in one place, and decision E is
     what that guard does with the failure.
     """
 

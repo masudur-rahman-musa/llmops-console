@@ -39,8 +39,8 @@ from pathlib import Path
 
 import pytest
 
-from app.evals import cli
-from app.evals.cli import EXIT_OK, EXIT_USAGE
+from app.cli import evals as cli
+from app.cli.evals import EXIT_OK, EXIT_USAGE
 from app.evals.tradeoff import (
     CONCLUSION_HEADING,
     KIND_API,

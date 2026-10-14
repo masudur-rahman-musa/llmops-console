@@ -5,7 +5,7 @@ map, with no HTTP surface and no dependency on the routing policy. Alongside it,
 `store.py` holds the placeholder maps a call produced, keyed by tenant and
 expiring after an hour, `rehydrate.py` puts those values back into an answer -
 whole, or fragment by fragment as a stream delivers it - and
-`directory.py` holds the display names a tenant's operator pushed. The gateway's
+`names_store.py` holds the display names a tenant's operator pushed. The gateway's
 `POST /v1/redact`, `POST /admin/directory` and the inline call sites live in
 `app.api.routes`, not here.
 
@@ -34,7 +34,14 @@ from app.redaction.detectors import (
     compact_separators,
     detect_all,
 )
-from app.redaction.directory import (
+from app.redaction.errors import (
+    DirectoryNameInvalid,
+    DirectoryStoreUnavailable,
+    RedactionInputTooLong,
+    RedactionMapStoreUnavailable,
+)
+from app.redaction.names import NameDirectory
+from app.redaction.names_store import (
     DIRECTORY_KEY_PREFIX,
     MAX_DIRECTORY_NAME_CHARS,
     MAX_DIRECTORY_NAMES,
@@ -46,13 +53,6 @@ from app.redaction.directory import (
     name_field,
     normalise_name,
 )
-from app.redaction.errors import (
-    DirectoryNameInvalid,
-    DirectoryStoreUnavailable,
-    RedactionInputTooLong,
-    RedactionMapStoreUnavailable,
-)
-from app.redaction.names import NameDirectory
 from app.redaction.redactor import (
     MAX_REDACTION_INPUT_CHARS,
     RedactionResult,

@@ -11,7 +11,7 @@ case takes IS the claim it makes:
   would raise nothing either, and would pass an "is accepted" case that only
   checked for the absence of an exception.
 
-The cases needing a real server live in tests/ledger/test_cost_ledger_postgres.py
+The cases needing a real server live in tests/storage/test_cost_ledger_postgres.py
 and are skipped without `OPSCONSOLE_TEST_DATABASE_URL`.
 
 a project rule on the three patterns: `tenant`, `alias`, `provider`, `region`
@@ -53,14 +53,19 @@ from psycopg.rows import TupleRow
 from psycopg_pool import ConnectionPool
 
 from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
-from app.ledger import (
+from app.limits.cost import UNPRICED_VERSION
+from app.limits.prices import PriceTable
+from app.model_routing.errors import IdentifierInvalid
+from app.model_routing.policy import Policy, load_policy
+from app.providers.base import Usage
+from app.storage import (
     CostLedgerRow,
     CostLedgerWriter,
     InMemoryCostLedgerWriter,
     PostgresCostLedgerWriter,
     record_cost,
 )
-from app.ledger.cost_ledger import (
+from app.storage.cost_ledger import (
     COST_LEDGER,
     COST_LEDGER_DAILY,
     MAX_MODEL_LENGTH,
@@ -69,11 +74,6 @@ from app.ledger.cost_ledger import (
     TRACE_ID_LENGTH,
     TRACE_ID_PATTERN,
 )
-from app.limits.cost import UNPRICED_VERSION
-from app.limits.prices import PriceTable
-from app.model_routing.errors import IdentifierInvalid
-from app.model_routing.policy import Policy, load_policy
-from app.providers.base import Usage
 
 Pool = ConnectionPool[Connection[TupleRow]]
 

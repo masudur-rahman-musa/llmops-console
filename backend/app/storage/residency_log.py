@@ -42,9 +42,9 @@ from pydantic import BaseModel, ConfigDict
 
 from app.core.metrics import record_residency_violation
 from app.core.validation import checked_identifier
-from app.ledger.db import DEFAULT_SCHEMA, checked_schema
 from app.model_routing.policy import DataClass, Policy, Residency
 from app.model_routing.resolver import Resolved
+from app.storage.db import DEFAULT_SCHEMA, checked_schema
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ _PARTITION_PREFIX: Final[str] = f"{RESIDENCY_LOG}_"
 PARTITION_DAY_FORMAT: Final[str] = "%Y%m%d"
 """`residency_log_20260907`. Pinned by `test_the_partition_name_is_the_pinned_format`.
 
-The writer builds this name and `ledger/cli.py`'s purge parses it back, so the
+The writer builds this name and `cli/ledger.py`'s purge parses it back, so the
 two agree by construction only as long as nobody changes one of them; the format
 is a constant here for that reason and asserted against literals there.
 """

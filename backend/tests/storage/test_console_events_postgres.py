@@ -10,7 +10,7 @@ two `text` columns, is invisible to PostgreSQL and to mypy both.
 The three raw-SQL cases are deliberate, not a shortcut. `severity`, `status` and
 `eval_run_id` each have a Python pre-check in front of them, so a case going
 through the writer would be refused before any statement ran and would prove
-only that the pre-check exists - which tests/ledger/test_console_events.py
+only that the pre-check exists - which tests/storage/test_console_events.py
 already proves. Going round the pre-check is the ONLY way to ask whether the
 table itself would have stopped the value, which is the question a migration
 case exists to answer: the pre-check is the message, the constraint is the
@@ -18,7 +18,7 @@ guarantee.
 
 Skipped without `OPSCONSOLE_TEST_DATABASE_URL`. One
 session pool, one throwaway schema per test - the fixtures in
-tests/ledger/conftest.py, unchanged.
+tests/storage/conftest.py, unchanged.
 
 The contract these cases are written against, before it exists:
 
@@ -39,7 +39,7 @@ import psycopg
 import pytest
 from psycopg import sql
 
-from app.ledger.console_events import (
+from app.storage.console_events import (
     INCIDENTS,
     RELEASES,
     IncidentRow,

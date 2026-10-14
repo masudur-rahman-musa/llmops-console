@@ -2,7 +2,7 @@
 
 The resolved-routing view's shapes, the reload result, and the bodies the two
 hand-written records accept. What each field is checked against before a
-statement runs is `app.storage.console_events` (today `app.ledger.console_events`).
+statement runs is `app.storage.console_events`.
 """
 
 from __future__ import annotations

@@ -11,7 +11,7 @@ Skipped without `OPSCONSOLE_TEST_DATABASE_URL`. One
 session pool, one throwaway schema per test.
 
 The statement-level view of the same writer - how many `CREATE`s it issues, and
-in what order - is in tests/ledger/test_residency_writer.py, where a recording
+in what order - is in tests/storage/test_residency_writer.py, where a recording
 pool double can see it; a real server cannot tell a create that was skipped from
 one that was issued and did nothing.
 """
@@ -22,10 +22,10 @@ from datetime import UTC, datetime, timedelta
 
 from psycopg import sql
 
-from app.ledger import PostgresResidencyLogWriter, ResidencyLogRow
-from app.ledger.db import apply_migrations
-from app.ledger.residency import partition_name
 from app.model_routing.policy import DataClass
+from app.storage import PostgresResidencyLogWriter, ResidencyLogRow
+from app.storage.db import apply_migrations
+from app.storage.residency_log import partition_name
 
 from .conftest import Pool, new_schema_name, partitions, requires_postgres, table_names
 

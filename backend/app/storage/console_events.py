@@ -1,13 +1,13 @@
 r"""Incidents and releases: the two console records a human and CI write by hand.
 
-Every other table in `ledger/` is filled by a code path. These two are filled
+Every other table in `storage/` is filled by a code path. These two are filled
 through `/admin/incidents` and `/admin/releases`, so the values arriving here are
 typed by an operator or pasted by a CI job rather than produced by the gateway,
 and a project rule applies to all seven of them: each is pre-checked against
 this module's own constant BEFORE any statement runs, and each refusal names its
 field in `IdentifierInvalid.param`, which is what the route copies into the
 `param` a 422 body carries. The inclusive boundaries are
-tests/ledger/test_console_events.py's seven tables.
+tests/storage/test_console_events.py's seven tables.
 
 **An incident is born open** (the design). `resolved_at` is the one nullable
 timestamp and a NULL there IS "open", so there is no status column that can
@@ -57,8 +57,8 @@ from psycopg.rows import TupleRow
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, ConfigDict
 
-from app.ledger.db import DEFAULT_SCHEMA, checked_schema
 from app.model_routing.errors import IdentifierInvalid
+from app.storage.db import DEFAULT_SCHEMA, checked_schema
 
 INCIDENTS: Final[str] = "incidents"
 """One of the two tables `migrations/004_console_events.sql` creates. Pinned
@@ -70,7 +70,7 @@ RELEASES: Final[str] = "releases"
 EVAL_RUNS: Final[str] = "eval_runs"
 """The table `releases.eval_run_id` references, and the one `eval_run_exists`
 reads. Created by `migrations/003_eval_runs.sql` and named here rather than
-imported because `evals/store.py` is the layer ABOVE this one."""
+imported because `storage/eval_store.py` is the layer ABOVE this one."""
 
 SEVERITIES: Final[frozenset[str]] = frozenset({"sev1", "sev2", "sev3"})
 """The closed severity vocabulary, spelled in lowercase exactly as the table's

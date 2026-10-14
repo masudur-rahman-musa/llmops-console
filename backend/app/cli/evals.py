@@ -55,8 +55,8 @@ and 4) before any policy is consulted - the tenant against the gateway's OWN
 `report.SET_SHA_PATTERN`. The tenant selects a tenant's residency rules and both
 are written into `report.json` and into `16d`'s `eval_runs` row, so `acme\n` and
 `../a1b2c3d` are refused before anything runs. Neither shapes a path: the two
-report file names are constants (`16c` decision B). This module, `evals/store.py`
-and `evals/residency.py` are three of the TWENTY-ONE `IdentifierInvalid` raisers
+report file names are constants (`16c` decision B). This module, `storage/eval_store.py`
+and `evals/region_check.py` are three of the TWENTY-ONE `IdentifierInvalid` raisers
 that r`grep -rlE "raise Identifier[I]nvalid" packages/` returns as of an earlier change,
 and the enumeration in `routing/errors.py` was re-derived whole from that command.
 
@@ -126,7 +126,7 @@ from app.evals.gate import (
     verdict_line,
 )
 from app.evals.judge import JudgeClient, judge_prompt_version
-from app.evals.metrics_push import push_metrics
+from app.evals.push import push_metrics
 from app.evals.report import (
     REPORT_JSON_NAME,
     SET_SHA_PATTERN,
@@ -136,7 +136,6 @@ from app.evals.report import (
     write_reports,
 )
 from app.evals.runner import RunResult, run_set
-from app.evals.store import PostgresEvalStore, rows_from_report
 from app.evals.target import TargetClient, TargetUnreachable
 from app.evals.tradeoff import (
     TradeoffInputInvalid,
@@ -144,9 +143,10 @@ from app.evals.tradeoff import (
     load_manifest,
     write_tradeoff,
 )
-from app.ledger.db import build_pool
 from app.model_routing.errors import IdentifierInvalid, PolicyInvalid
 from app.model_routing.policy import Policy, load_policy
+from app.storage.db import build_pool
+from app.storage.eval_store import PostgresEvalStore, rows_from_report
 
 EXIT_OK: Final[int] = 0
 """Every case passed and every turn stayed in region."""

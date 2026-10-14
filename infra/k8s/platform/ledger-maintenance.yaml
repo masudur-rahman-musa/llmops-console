@@ -2,7 +2,7 @@
 # that nothing called on a schedule until now: `ops-purge-residency` drops the
 # residency_log day partitions past the 90-day retention, and `ops-refresh-rollup`
 # recomputes the `cost_ledger_daily` materialised view the console's cost page reads
-# (`app/ledger/cli.py`). They run on the gateway image, the one image that already
+# (`app/cli/ledger.py`). They run on the gateway image, the one image that already
 # carries that code.
 #
 # `image: gateway` is the bare name on purpose, the same as `apps/gateway.yaml`: the

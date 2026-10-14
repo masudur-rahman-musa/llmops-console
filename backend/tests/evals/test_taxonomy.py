@@ -44,7 +44,7 @@ from app.evals.assertions import (
 from app.evals.cases import EvalCategory
 from app.evals.judge import JUDGE_LOW_SCORE, JudgeVerdict
 from app.evals.outcome import CaseOutcome
-from app.evals.residency import ResidencyVerdict
+from app.evals.region_check import ResidencyVerdict
 from app.evals.runner import CaseRun
 from app.evals.target import TurnFailureKind
 from app.evals.taxonomy import TAG_ORDER, FailureTag, tags_for

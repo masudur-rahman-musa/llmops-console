@@ -70,7 +70,6 @@ from app.core.clients import PROBE_TIMEOUT_SECONDS
 from app.core.config import Settings
 from app.core.errors import ProviderError
 from app.core.metrics import SEMANTIC_CACHE_KIND
-from app.ledger import InMemoryResidencyLogWriter, ResidencyLogRow
 from app.main import build_qdrant_data_client, close_adapters, create_app
 from app.providers.base import (
     Adapter,
@@ -91,6 +90,7 @@ from app.services.chat_pipeline import (
     EMBED_ALIAS,
     SEMANTIC_SPAN,
 )
+from app.storage import InMemoryResidencyLogWriter, ResidencyLogRow
 
 from .conftest import (
     API_KEYS,

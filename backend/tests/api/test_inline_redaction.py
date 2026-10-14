@@ -41,8 +41,8 @@ from app.core.config import Settings
 from app.model_routing.policy import Policy
 from app.model_routing.resolver import Resolved, resolve
 from app.redaction import MAX_REDACTION_INPUT_CHARS
-from app.redaction.directory import DirectoryStore
 from app.redaction.errors import DirectoryStoreUnavailable
+from app.redaction.names_store import DirectoryStore
 from app.schemas.embeddings import MAX_EMBEDDING_INPUT_CHARS
 from app.services.chat_pipeline import REDACTED_FALSE, REDACTED_TRUE, gateway_headers
 

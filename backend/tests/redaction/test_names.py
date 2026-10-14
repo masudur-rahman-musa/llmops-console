@@ -32,8 +32,8 @@ import pytest
 
 from app.redaction import Kind
 from app.redaction.detectors import Detection
-from app.redaction.directory import MAX_DIRECTORY_NAMES
 from app.redaction.names import NameDirectory
+from app.redaction.names_store import MAX_DIRECTORY_NAMES
 from app.redaction.redactor import MAX_REDACTION_INPUT_CHARS
 
 #: The boundary `NameDirectory` compiles, as a guard a case can state: `(?<!\w)` refuses a

@@ -9,9 +9,9 @@ is invisible to PostgreSQL and to mypy both. The `numeric` scale is the same gap
 in the other direction - a column narrower than six places rounds a cost the
 ledger computed exactly, and a run's spend then stops matching the ledger's own.
 
-These cases live in tests/ledger/ rather than beside the pure ones (an earlier change
+These cases live in tests/storage/ rather than beside the pure ones (an earlier change
 decision D): a project rule wants ONE session-scoped pool for the suite, and the
-fixtures in tests/ledger/conftest.py already have it. Per-test isolation is a
+fixtures in tests/storage/conftest.py already have it. Per-test isolation is a
 throwaway SCHEMA, never a fresh pool and never a wipe. Skipped without
 `OPSCONSOLE_TEST_DATABASE_URL`.
 
@@ -30,7 +30,7 @@ The contract these cases are written against, before it exists:
   ON DELETE CASCADE, an index on `eval_cases (run_id)` and one on
   `eval_runs (started_at DESC)`, and a CHECK over `run_kind`'s three words
   (decision C);
-* `app.evals.store` publishes `EVAL_RUNS` and `EVAL_CASES`, the two table
+* `app.storage.eval_store` publishes `EVAL_RUNS` and `EVAL_CASES`, the two table
   names its statements build their identifiers from;
 * `PostgresEvalStore(pool, *, schema=...).write(run_row, case_rows)` writes both
   in ONE transaction (decision G).
@@ -49,10 +49,10 @@ from psycopg import sql
 from app.evals.assertions import AssertionResult, AssertionStatus, CaseAssertions
 from app.evals.cases import EvalCategory
 from app.evals.outcome import CaseOutcome
+from app.evals.region_check import ResidencyVerdict
 from app.evals.report import REPORT_JSON_NAME, RunReport, build_report
-from app.evals.residency import ResidencyVerdict
 from app.evals.runner import CaseRun, RunResult
-from app.evals.store import EVAL_CASES, EVAL_RUNS, PostgresEvalStore, rows_from_report
+from app.storage.eval_store import EVAL_CASES, EVAL_RUNS, PostgresEvalStore, rows_from_report
 
 from .conftest import Pool, requires_postgres, table_names
 
@@ -416,7 +416,7 @@ def test_every_case_row_lands_with_its_own_measurements_and_its_details(
     """Catches the four measured columns declared NOT NULL, which would refuse exactly the
     rows a failing target produces, and a store that wrote `0` and `''` into them instead
     - a broken turn would then be averaged in as a free, instant, EU-served case and lift
-    every number `evals/metrics.py` reports. `tags` is asserted as the empty array
+    every number `evals/scores.py` reports. `tags` is asserted as the empty array
     rather than as NULL
     (decision F), because a NULL array is a value every later `unnest` has to know about."""
     store_report(pool, migrated_schema, a_report())

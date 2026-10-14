@@ -1,4 +1,4 @@
-"""`evals/metrics.py`: the fixed metric set of #40, computed over one run.
+"""`evals/scores.py`: the fixed metric set of #40, computed over one run.
 
 Pure: `compute_metrics` reads the `CaseRun` records it is handed and nothing
 else - no clock, no file, no backing service - so every case here is a hand-built
@@ -50,10 +50,10 @@ import pytest
 from app.evals.assertions import AssertionResult, AssertionStatus, CaseAssertions
 from app.evals.cases import EvalCategory
 from app.evals.judge import JudgeVerdict
-from app.evals.metrics import ACCURACY_SCALE, COST_SCALE, METRIC_NAMES, compute_metrics
 from app.evals.outcome import CaseOutcome
-from app.evals.residency import ResidencyVerdict
+from app.evals.region_check import ResidencyVerdict
 from app.evals.runner import CaseRun, RunResult
+from app.evals.scores import ACCURACY_SCALE, COST_SCALE, METRIC_NAMES, compute_metrics
 from app.evals.target import TurnFailureKind
 
 TENANT = "acme"
