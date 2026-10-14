@@ -31,7 +31,7 @@ run:        ## Run the project locally
 COVERED_100 = backend/app/model_routing/*,backend/app/core/validation.py
 # The per-test coverage map the adjacent check selects from. Written by the
 # same run that proves the suite green, so it can never be staler than it.
-COV_DB = .coverage-baseline
+COV_DB = backend/.coverage-baseline
 test:       ## Run tests with the coverage gate
 	COVERAGE_FILE=$(COV_DB) $(UV_ROOT) pytest -q backend/tests --cov --cov-context=test --cov-fail-under=80
 	COVERAGE_FILE=$(COV_DB) $(UV_ROOT) coverage report --include='$(COVERED_100)' --fail-under=100
