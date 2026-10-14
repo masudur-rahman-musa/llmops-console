@@ -50,7 +50,7 @@ GUARANTEE_TESTS = [
 ]
 
 #: A the project notes entry links the committed rules file or a committed postmortem.
-WHAT_BROKE_PREFIXES = ("dev-process/rules.md", "project-obs/postmortems/")
+WHAT_BROKE_PREFIXES = ("dev/docs/rules.md", "project-obs/postmortems/")
 
 ADR_PREFIX = "docs/adr/"
 ADR_TEMPLATE = "docs/adr/0000-template.md"
@@ -104,6 +104,7 @@ SCANNED_FOR_PRIVATE_REFERENCES = (README, CUSTOMIZING, AZURE, THREAT_MODEL)
 #: segment ending in "pl", and both would redden a document the plan requires.
 PRIVATE_REFERENCES = [
     ("dev-process/plans/", re.compile(r"dev-process/plans/")),
+    ("dev/plans/", re.compile(r"(?<![A-Za-z0-9_-])dev/plans/")),
     ("notes.md", re.compile(r"(?<![A-Za-z0-9_-])notes\.md")),
     ("REQUIREMENTS.md", re.compile(r"(?<![A-Za-z0-9_-])REQUIREMENTS\.md")),
     ("his.md", re.compile(r"(?<![A-Za-z0-9_-])his\.md")),

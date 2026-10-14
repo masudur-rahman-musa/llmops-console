@@ -21,7 +21,7 @@ run:        ## Run the project locally
 # flag overrides `[tool.coverage.run] source` and would silently unmeasure
 # everything outside the path.
 COVERED_100 = packages/opsconsole/opsconsole/routing/*
-# The per-test coverage map /adjacent-regression selects from. Written by the
+# The per-test coverage map the adjacent check selects from. Written by the
 # same run that proves the suite green, so it can never be staler than it.
 COV_DB = .coverage-baseline
 test:       ## Run tests with the coverage gate

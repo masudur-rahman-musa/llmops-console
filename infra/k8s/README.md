@@ -582,7 +582,7 @@ and Qdrant in `platform`, the gateway, `traefik-basic-auth`, and the `server`
 overlay itself. Its own database is `helpdesk` on the shared Postgres. Renaming
 any of those means checking that repo first.
 
-The owner's one-time setup and every later deploy are in `dev-process/deploy.md`.
+The owner's one-time setup and every later deploy are in the project notes.
 
 ## Still to land
 

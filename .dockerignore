@@ -1,5 +1,5 @@
 # What never enters the shipped image. Mirror of the rule:
-# src/ is what runs, tests/ is what checks, dev-process/ is how we work.
+# src/ is what runs, tests/ is what checks, dev/ is how we work.
 
 # version control and editor
 .git
@@ -62,3 +62,5 @@ his.md
 REQUIREMENTS.md
 pl
 dev-process
+dev
+switches.md

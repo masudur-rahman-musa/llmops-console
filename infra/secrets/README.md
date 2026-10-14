@@ -103,7 +103,7 @@ passwords and keys never change: `postgres-credentials`, `gateway-secrets`,
 (`traefik-basic-auth-platform` and `traefik-basic-auth-apps`), because each
 `*.enc.yaml` is read as one document. Then `make secrets-encrypt`, delete the
 `*.dec.yaml`, and merge the six `*.enc.yaml` through a pull request. The deploy
-workflow applies them. `dev-process/deploy.md` has the whole procedure, and
+workflow applies them. the project notes has the whole procedure, and
 `tests/infra/test_server_secrets.py` pins the script.
 
 ## Rotating one value

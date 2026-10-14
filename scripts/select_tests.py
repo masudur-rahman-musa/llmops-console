@@ -1,6 +1,6 @@
 """Which tests actually execute the lines this change touched.
 
-`/adjacent-regression` used to select tests by grepping for module names,
+The adjacent check used to select tests by grepping for module names,
 which is a guess: a grep written slightly wrong silently selects too little
 and nothing reports it. This selects by evidence instead — coverage.py
 records, per test, which source lines that test executed, so the question
