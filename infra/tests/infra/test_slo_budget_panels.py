@@ -34,9 +34,7 @@ BUDGET_EXPRS = [
 def overview_panels(built: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Every panel of the generated gateway overview, nested panels included."""
     dashboards = dashboard_documents(built)
-    assert DASHBOARD_KEY in dashboards, (
-        f"{DASHBOARD_KEY} is not in {sorted(dashboards)}"
-    )
+    assert DASHBOARD_KEY in dashboards, f"{DASHBOARD_KEY} is not in {sorted(dashboards)}"
     return panels_of(dashboards[DASHBOARD_KEY])
 
 
@@ -47,18 +45,12 @@ def target_exprs(panel: dict[str, Any]) -> list[str]:
 
 def budget_panels(panels: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """The panels with any target reading one of the three budget queries."""
-    return [
-        panel
-        for panel in panels
-        if any(expr in BUDGET_EXPRS for expr in target_exprs(panel))
-    ]
+    return [panel for panel in panels if any(expr in BUDGET_EXPRS for expr in target_exprs(panel))]
 
 
 def y_of(panel: dict[str, Any]) -> int:
     grid = panel.get("gridPos", {})
-    assert isinstance(grid, dict) and "y" in grid, (
-        f"{panel.get('title')!r} has no gridPos.y"
-    )
+    assert isinstance(grid, dict) and "y" in grid, f"{panel.get('title')!r} has no gridPos.y"
     return int(grid["y"])
 
 
@@ -72,21 +64,15 @@ def test_gateway_overview_has_the_slo_row_with_three_stat_panels(
     panels = overview_panels(built)
 
     rows = [
-        panel
-        for panel in panels
-        if panel.get("type") == "row" and panel.get("title") == ROW_TITLE
+        panel for panel in panels if panel.get("type") == "row" and panel.get("title") == ROW_TITLE
     ]
     assert len(rows) == 1, f"{DASHBOARD_KEY} has {len(rows)} rows titled {ROW_TITLE!r}"
 
     found = budget_panels(panels)
     assert len(found) == 3, [panel.get("title") for panel in found]
     for panel in found:
-        assert panel.get("type") == "stat", (
-            f"{panel.get('title')!r} is {panel.get('type')!r}"
-        )
-        assert y_of(panel) > y_of(rows[0]), (
-            f"{panel.get('title')!r} sits above {ROW_TITLE!r}"
-        )
+        assert panel.get("type") == "stat", f"{panel.get('title')!r} is {panel.get('type')!r}"
+        assert y_of(panel) > y_of(rows[0]), f"{panel.get('title')!r} sits above {ROW_TITLE!r}"
 
 
 def test_each_slo_panel_expr_equals_its_prometheus_constant(
@@ -99,7 +85,5 @@ def test_each_slo_panel_expr_equals_its_prometheus_constant(
     found = budget_panels(overview_panels(built))
 
     for panel in found:
-        assert len(target_exprs(panel)) == 1, (
-            f"{panel.get('title')!r}: {target_exprs(panel)}"
-        )
+        assert len(target_exprs(panel)) == 1, f"{panel.get('title')!r}: {target_exprs(panel)}"
     assert sorted(target_exprs(panel)[0] for panel in found) == sorted(BUDGET_EXPRS)

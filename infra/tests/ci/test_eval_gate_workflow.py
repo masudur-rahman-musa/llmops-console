@@ -117,9 +117,7 @@ def test_the_baseline_guard_checks_out_the_full_history(jobs: dict[str, Any]) ->
     with no `with:` block, and catches a `fetch-depth` of some other number - only 0 is the
     whole history. The CLI's unresolvable-ref case is the other half of this defence."""
     checkouts = [
-        step
-        for step in steps(jobs["baseline-guard"])
-        if "actions/checkout" in uses_of(step)
+        step for step in steps(jobs["baseline-guard"]) if "actions/checkout" in uses_of(step)
     ]
 
     assert len(checkouts) == 1
@@ -132,9 +130,7 @@ def test_the_baseline_guard_job_invokes_the_subcommand(jobs: dict[str, Any]) -> 
     since every step in it succeeds. Decision B put the logic in `ops-eval baseline-guard`
     precisely so this line is the only thing the YAML has to get right."""
     guard_steps = [
-        step
-        for step in steps(jobs["baseline-guard"])
-        if "ops-eval baseline-guard" in run_of(step)
+        step for step in steps(jobs["baseline-guard"]) if "ops-eval baseline-guard" in run_of(step)
     ]
 
     assert len(guard_steps) == 1
@@ -157,11 +153,7 @@ def test_the_report_artifact_is_uploaded_even_when_the_gate_fails(
     `if` is skipped once an earlier step fails. Catches the upload inheriting the default
     success condition, which publishes evidence only for the runs nobody needs it for.
     `always()` exactly, because `failure()` would drop it on the passing runs."""
-    uploads = [
-        step
-        for step in steps(jobs["eval"])
-        if "actions/upload-artifact" in uses_of(step)
-    ]
+    uploads = [step for step in steps(jobs["eval"]) if "actions/upload-artifact" in uses_of(step)]
 
     assert len(uploads) == 1
     assert uploads[0]["if"] == "always()"
@@ -174,14 +166,10 @@ def test_the_comment_step_is_skipped_on_a_fork_pull_request(
     would fail the job on every contributor's pull request. Catches an unguarded comment
     step. The upload above is deliberately NOT guarded this way, so the evidence still
     reaches a fork PR - which is why the two are separate cases."""
-    commenters = [
-        step for step in steps(jobs["eval"]) if "gh pr comment" in run_of(step)
-    ]
+    commenters = [step for step in steps(jobs["eval"]) if "gh pr comment" in run_of(step)]
 
     assert len(commenters) == 1
-    assert "github.event.pull_request.head.repo.fork == false" in str(
-        commenters[0]["if"]
-    )
+    assert "github.event.pull_request.head.repo.fork == false" in str(commenters[0]["if"])
 
 
 def test_the_gate_step_passes_the_report_the_baseline_and_the_comment(
@@ -196,10 +184,7 @@ def test_the_gate_step_passes_the_report_the_baseline_and_the_comment(
     gate_steps = [
         script
         for script in scripts
-        if all(
-            flag in script
-            for flag in ("ops-eval gate", "--report", "--baseline", "--comment")
-        )
+        if all(flag in script for flag in ("ops-eval gate", "--report", "--baseline", "--comment"))
     ]
 
     assert len(gate_steps) == 1
@@ -211,9 +196,7 @@ def test_the_eval_job_uses_the_ci_routing_overlay(jobs: dict[str, Any]) -> None:
     a CI run bills against the prod tenant's `10.00` and the number in the repo is
     decoration."""
     overlay_steps = [
-        step
-        for step in steps(jobs["eval"])
-        if "backend/config/routing.ci.yaml" in run_of(step)
+        step for step in steps(jobs["eval"]) if "backend/config/routing.ci.yaml" in run_of(step)
     ]
 
     assert overlay_steps != []

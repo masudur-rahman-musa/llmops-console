@@ -22,9 +22,12 @@ repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.16.6
     hooks:
+      # The ruff settings live in backend/pyproject.toml. Naming it with --config
+      # applies them to every Python file, and its paths resolve from the root.
       - id: ruff-check
-        args: [--fix]
+        args: [--fix, --config, backend/pyproject.toml]
       - id: ruff-format
+        args: [--config, backend/pyproject.toml]
   - repo: local
     hooks:
       # Keeps the repo root to the names in .claude/root-allowlist. The same

@@ -97,9 +97,7 @@ def raw_config_map_data(path: Path, name: str) -> dict[str, str]:
         and document.get("kind") == "ConfigMap"
         and name_of(document) == name
     ]
-    assert len(matches) == 1, (
-        f"{path} declares {len(matches)} ConfigMaps named {name}, not 1"
-    )
+    assert len(matches) == 1, f"{path} declares {len(matches)} ConfigMaps named {name}, not 1"
     data = matches[0].get("data", {})
     assert isinstance(data, dict), f"{path}: {name} declares no data mapping"
     return {str(key): str(value) for key, value in data.items()}
@@ -115,15 +113,11 @@ def gateway_config(built: list[dict[str, Any]]) -> dict[str, str]:
 def prometheus_template(built: list[dict[str, Any]]) -> dict[str, Any]:
     """The Prometheus pod template in `monitoring`, the one a named port resolves against."""
     templates = pod_templates(built, MONITORING)
-    assert PROMETHEUS in templates, (
-        f"{MONITORING} has no {PROMETHEUS} pod: {sorted(templates)}"
-    )
+    assert PROMETHEUS in templates, f"{MONITORING} has no {PROMETHEUS} pod: {sorted(templates)}"
     return templates[PROMETHEUS]
 
 
-def reaches_prometheus(
-    rule: dict[str, Any], built: list[dict[str, Any]], label: str
-) -> bool:
+def reaches_prometheus(rule: dict[str, Any], built: list[dict[str, Any]], label: str) -> bool:
     """Whether one egress rule of an `apps` policy lets its pods open TCP 9090 on Prometheus.
 
     A rule with no `to` allows every destination, so it counts. `ipBlock` peers are skipped: the
@@ -173,9 +167,7 @@ def test_the_gateway_prometheus_url_equals_the_grafana_datasource_url() -> None:
     urls: list[str] = []
     for key, text in grafana_data.items():
         parsed = yaml.safe_load(text)
-        assert isinstance(parsed, dict), (
-            f"{GRAFANA_DATASOURCES_CONFIG_MAP}/{key} is not a mapping"
-        )
+        assert isinstance(parsed, dict), f"{GRAFANA_DATASOURCES_CONFIG_MAP}/{key} is not a mapping"
         declared = parsed.get("datasources", [])
         assert isinstance(declared, list), f"{key} declares datasources {declared!r}"
         urls.extend(
@@ -183,9 +175,7 @@ def test_the_gateway_prometheus_url_equals_the_grafana_datasource_url() -> None:
             for entry in declared
             if isinstance(entry, dict) and entry.get("type") == PROMETHEUS
         )
-    assert len(urls) == 1, (
-        f"{GRAFANA_MANIFEST} declares {len(urls)} prometheus datasources"
-    )
+    assert len(urls) == 1, f"{GRAFANA_MANIFEST} declares {len(urls)} prometheus datasources"
     assert urls[0] == gateway_value, (
         f"Grafana reads Prometheus at {urls[0]!r}, the gateway at {gateway_value!r}"
     )
@@ -197,9 +187,7 @@ def test_the_config_key_is_the_setting_the_gateway_reads(
     """Criterion 3. Catches the ConfigMap key and the `Settings` field disagreeing - the field
     renamed, or the settings prefix changed - so the pod starts with the variable set and the
     gateway reads `None`, with no error anywhere."""
-    assert PROMETHEUS_URL_KEY in gateway_config(built), (
-        f"{GATEWAY_CONFIG_MAP} lacks the key"
-    )
+    assert PROMETHEUS_URL_KEY in gateway_config(built), f"{GATEWAY_CONFIG_MAP} lacks the key"
     assert Settings.model_config.get("env_prefix") == SETTINGS_PREFIX
     assert PROMETHEUS_URL_KEY.startswith(SETTINGS_PREFIX)
     field = PROMETHEUS_URL_KEY.removeprefix(SETTINGS_PREFIX).lower()
@@ -236,9 +224,7 @@ def test_the_gateway_egress_reaches_prometheus_on_exactly_9090(
         f"{label} opens {sorted(numeric_ports(rule, label))} to {PROMETHEUS}"
     )
     targets = peer_targets(built, GATEWAY_PROMETHEUS_EGRESS_PEER, APPS)
-    assert targets == {(MONITORING, PROMETHEUS)}, (
-        f"the peer resolves to {sorted(targets)}"
-    )
+    assert targets == {(MONITORING, PROMETHEUS)}, f"the peer resolves to {sorted(targets)}"
 
 
 def test_the_gateway_egress_ip_block_rule_still_carries_only_443(
@@ -265,9 +251,7 @@ def test_prometheus_admits_only_the_gateway_from_apps_on_9090(
     assert pod_selector(document) == {"matchLabels": {NAME_LABEL: PROMETHEUS}}, (
         f"{label} selects {pod_selector(document)}"
     )
-    assert policy_types(document) == ["Ingress"], (
-        f"{label} declares {policy_types(document)}"
-    )
+    assert policy_types(document) == ["Ingress"], f"{label} declares {policy_types(document)}"
     assert "egress" not in spec_of(document), f"{label} declares an egress block"
 
     rules = rules_of(document, "ingress")
@@ -280,9 +264,9 @@ def test_prometheus_admits_only_the_gateway_from_apps_on_9090(
     assert declared_ports(rule, label) == [("TCP", PROMETHEUS_PORT_NAME)], (
         f"{label} declares {declared_ports(rule, label)}"
     )
-    assert resolved_ports(built, document, rule) == {
-        PROMETHEUS: {("TCP", PROMETHEUS_PORT)}
-    }, f"{label} resolves to {resolved_ports(built, document, rule)}"
+    assert resolved_ports(built, document, rule) == {PROMETHEUS: {("TCP", PROMETHEUS_PORT)}}, (
+        f"{label} resolves to {resolved_ports(built, document, rule)}"
+    )
 
 
 def test_no_other_apps_pod_may_reach_prometheus(built: list[dict[str, Any]]) -> None:
@@ -296,14 +280,9 @@ def test_no_other_apps_pod_may_reach_prometheus(built: list[dict[str, Any]]) -> 
         if namespace_of(document) != APPS:
             continue
         label = f"{APPS}/{name_of(document)}"
-        if any(
-            reaches_prometheus(rule, built, label)
-            for rule in rules_of(document, "egress")
-        ):
+        if any(reaches_prometheus(rule, built, label) for rule in rules_of(document, "egress")):
             reaching |= matched_workloads(built, pod_selector(document), APPS)
-    assert reaching == {GATEWAY}, (
-        f"apps pods whose egress reaches {PROMETHEUS}: {sorted(reaching)}"
-    )
+    assert reaching == {GATEWAY}, f"apps pods whose egress reaches {PROMETHEUS}: {sorted(reaching)}"
 
 
 def test_the_monitoring_scrape_ingress_carries_no_apps_peer(
@@ -318,6 +297,4 @@ def test_the_monitoring_scrape_ingress_carries_no_apps_peer(
         for rule in rules_of(document, "ingress")
         for peer in peers_of(rule, "from")
     }
-    assert APPS not in namespaces, (
-        f"metrics-ingress-from-monitoring admits from {namespaces}"
-    )
+    assert APPS not in namespaces, f"metrics-ingress-from-monitoring admits from {namespaces}"

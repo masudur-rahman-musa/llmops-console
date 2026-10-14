@@ -173,10 +173,7 @@ def the_one(
         document
         for document in objects(built, kind)
         if document.get("metadata", {}).get("name") == name
-        and (
-            namespace is None
-            or document.get("metadata", {}).get("namespace") == namespace
-        )
+        and (namespace is None or document.get("metadata", {}).get("namespace") == namespace)
     ]
     assert len(found) == 1, f"{len(found)} {kind} {namespace}/{name} in the gpu build"
     return found[0]
@@ -189,12 +186,7 @@ def pod_spec(document: dict[str, Any]) -> dict[str, Any]:
 
 
 def pod_labels(document: dict[str, Any]) -> dict[str, str]:
-    labels = (
-        document.get("spec", {})
-        .get("template", {})
-        .get("metadata", {})
-        .get("labels", {})
-    )
+    labels = document.get("spec", {}).get("template", {}).get("metadata", {}).get("labels", {})
     assert isinstance(labels, dict)
     return {str(key): str(value) for key, value in labels.items()}
 
@@ -224,12 +216,8 @@ def fetch_job(built: list[dict[str, Any]]) -> dict[str, Any]:
 
 def fetch_script(built: list[dict[str, Any]]) -> str:
     """The fetch Job's one Python script: `command: [python3, -c]`, `args: [<script>]`."""
-    job_container = sole(
-        pod_spec(fetch_job(built)).get("containers", []), "fetch containers"
-    )
-    assert job_container.get("command") == ["python3", "-c"], job_container.get(
-        "command"
-    )
+    job_container = sole(pod_spec(fetch_job(built)).get("containers", []), "fetch containers")
+    assert job_container.get("command") == ["python3", "-c"], job_container.get("command")
     arguments = job_container.get("args")
     assert isinstance(arguments, list) and len(arguments) == 1, arguments
     return str(arguments[0])
@@ -279,12 +267,8 @@ def peer_key(peer: dict[str, Any], own_namespace: str) -> Peer:
         namespace = "*"
     else:
         labels = namespace_selector.get("matchLabels", {})
-        plain = set(namespace_selector) == {"matchLabels"} and set(labels) == {
-            NAMESPACE_NAME_LABEL
-        }
-        namespace = (
-            str(labels[NAMESPACE_NAME_LABEL]) if plain else repr(namespace_selector)
-        )
+        plain = set(namespace_selector) == {"matchLabels"} and set(labels) == {NAMESPACE_NAME_LABEL}
+        namespace = str(labels[NAMESPACE_NAME_LABEL]) if plain else repr(namespace_selector)
     return ("peer", namespace, selector_key(peer.get("podSelector")))
 
 
@@ -369,9 +353,7 @@ def test_the_runtime_class_and_device_plugin_are_pinned(
 
     assert runtime.get("handler") == "nvidia"
     assert spec.get("runtimeClassName") == "nvidia"
-    assert [entry.get("image") for entry in spec.get("containers", [])] == [
-        DEVICE_PLUGIN_IMAGE
-    ]
+    assert [entry.get("image") for entry in spec.get("containers", [])] == [DEVICE_PLUGIN_IMAGE]
 
 
 # ---------------------------------------------------------------------------------------------
@@ -420,23 +402,13 @@ def test_vllm_runs_offline_with_a_memory_backed_shm(
     the volume declared and never mounted at `/dev/shm`."""
     spec = pod_spec(vllm(built_gpu))
     server = container(spec, "vllm")
-    offline = [
-        entry
-        for entry in server.get("env", [])
-        if entry.get("name") == "HF_HUB_OFFLINE"
-    ]
+    offline = [entry for entry in server.get("env", []) if entry.get("name") == "HF_HUB_OFFLINE"]
     shm_mounts = [
-        mount
-        for mount in server.get("volumeMounts", [])
-        if mount.get("mountPath") == "/dev/shm"
+        mount for mount in server.get("volumeMounts", []) if mount.get("mountPath") == "/dev/shm"
     ]
     mount = sole(shm_mounts, "mounts at /dev/shm")
     volume = sole(
-        [
-            entry
-            for entry in spec.get("volumes", [])
-            if entry.get("name") == mount.get("name")
-        ],
+        [entry for entry in spec.get("volumes", []) if entry.get("name") == mount.get("name")],
         f"volumes named {mount.get('name')}",
     )
 
@@ -547,9 +519,7 @@ def resolved_target_port(
         for port in container_spec.get("ports", []) or []
         if port.get("name") == target
     }
-    assert len(numbers) == 1, (
-        f"{service['metadata']['name']}: {target} resolves to {numbers}"
-    )
+    assert len(numbers) == 1, f"{service['metadata']['name']}: {target} resolves to {numbers}"
     return numbers.pop()
 
 
@@ -570,10 +540,7 @@ def test_the_node_port_service_publishes_vllm_on_the_port_the_harness_dials(
 
     assert service["spec"].get("type") == "NodePort"
     assert as_strings(service["spec"].get("selector", {})) == {NAME_LABEL: "vllm"}
-    assert (
-        as_strings(service["spec"]["selector"]).items()
-        <= pod_labels(deployment).items()
-    )
+    assert as_strings(service["spec"]["selector"]).items() <= pod_labels(deployment).items()
     assert len(ports) == 1, f"{NODE_SERVICE} publishes {len(ports)} ports: {ports}"
     assert int(ports[0]["nodePort"]) == NODE_PORT
     assert resolved_target_port(service, ports[0], deployment) == VLLM_PORT
@@ -630,9 +597,7 @@ def test_the_hpa_comment_names_the_one_gpu_pending_replica() -> None:
     """Criterion 19. Catches the comment dropped, which leaves the next reader to discover by
     incident that replica 2 can never schedule on a host with one GPU."""
     text = read(GPU_DIR / "vllm.yaml")
-    comments = " ".join(
-        line for line in text.splitlines() if line.lstrip().startswith("#")
-    )
+    comments = " ".join(line for line in text.splitlines() if line.lstrip().startswith("#"))
 
     assert "Pending" in comments, "no comment on vllm.yaml says replica 2 stays Pending"
 
@@ -679,12 +644,8 @@ def test_the_local_prometheus_image_equals_the_monitoring_one(
         and document.get("kind") in ("Deployment", "StatefulSet")
         and document.get("metadata", {}).get("name") == "prometheus"
     ]
-    reference = container(
-        pod_spec(sole(monitoring, "monitoring Prometheus")), "prometheus"
-    )
-    local = container(
-        pod_spec(the_one(built_gpu, "Deployment", "prometheus", GPU)), "prometheus"
-    )
+    reference = container(pod_spec(sole(monitoring, "monitoring Prometheus")), "prometheus")
+    local = container(pod_spec(the_one(built_gpu, "Deployment", "prometheus", GPU)), "prometheus")
 
     assert reference.get("image") == PROMETHEUS_IMAGE
     assert local.get("image") == reference.get("image")
@@ -705,9 +666,7 @@ def test_the_local_prometheus_scrapes_only_vllm_pods_in_gpu(
         "regex": "vllm",
     }
 
-    assert job.get("kubernetes_sd_configs") == [
-        {"role": "pod", "namespaces": {"names": [GPU]}}
-    ]
+    assert job.get("kubernetes_sd_configs") == [{"role": "pod", "namespaces": {"names": [GPU]}}]
     assert keep in job.get("relabel_configs", [])
 
 
@@ -872,9 +831,7 @@ def test_exactly_two_policies_carry_an_ip_block_each_on_its_own_port(
             for rule in document["spec"].get(direction, []) or []:
                 if not any("ipBlock" in peer for peer in rule.get(field) or []):
                     continue
-                ports = [port_key(port) for port in rule.get("ports") or []] or [
-                    ALL_PORTS
-                ]
+                ports = [port_key(port) for port in rule.get("ports") or []] or [ALL_PORTS]
                 with_blocks.setdefault(name, set()).update(ports)
     document = policy(built_gpu, GPU, "vllm-model-fetch-egress")
     fetch_labels = pod_labels(fetch_job(built_gpu))
@@ -911,9 +868,7 @@ def test_the_fetch_except_list_equals_the_gateway_egress_one(
     }
     expected = [peer[2] for peer in reference_blocks if peer[0] == "ipBlock"]
     document = policy(built_gpu, GPU, "vllm-model-fetch-egress")
-    found = [
-        peer[2] for peer, _port in grants(document, "egress") if peer[0] == "ipBlock"
-    ]
+    found = [peer[2] for peer, _port in grants(document, "egress") if peer[0] == "ipBlock"]
 
     assert len(expected) == 1, expected
     assert expected[0] != ()

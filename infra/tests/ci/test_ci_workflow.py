@@ -54,11 +54,11 @@ named anywhere in that job is a version somebody will read as the one being inst
 from __future__ import annotations
 
 import re
+import tomllib
 from pathlib import Path
 from typing import Any
 
 import pytest
-import tomllib
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -220,9 +220,7 @@ def one_command(lines: list[str], fragment: str) -> str:
     one taken, because a second export or a second audit is a second
     contract and picking either silently would hide it."""
     matches = [line for line in joined_commands(lines) if fragment in line]
-    assert len(matches) == 1, (
-        f"{len(matches)} command lines carry {fragment!r}: {matches}"
-    )
+    assert len(matches) == 1, f"{len(matches)} command lines carry {fragment!r}: {matches}"
     return matches[0]
 
 
@@ -291,17 +289,11 @@ def test_the_secrets_job_checks_out_the_whole_history(jobs: dict[str, Any]) -> N
     empty directory. Every checkout step in the job is required to carry the depth, so a second
     one added later cannot be the shallow one the scan actually reads."""
     assert SECRETS_JOB in jobs, f"`ci.yml` declares no `{SECRETS_JOB}` job"
-    checkouts = [
-        step for step in steps(jobs[SECRETS_JOB]) if "actions/checkout" in uses_of(step)
-    ]
+    checkouts = [step for step in steps(jobs[SECRETS_JOB]) if "actions/checkout" in uses_of(step)]
 
-    assert len(checkouts) == 1, (
-        f"{len(checkouts)} checkout steps in the `{SECRETS_JOB}` job"
-    )
+    assert len(checkouts) == 1, f"{len(checkouts)} checkout steps in the `{SECRETS_JOB}` job"
     depth = with_of(checkouts[0]).get("fetch-depth")
-    assert str(depth) == "0", (
-        f"the checkout fetches depth {depth!r}, not the whole history"
-    )
+    assert str(depth) == "0", f"the checkout fetches depth {depth!r}, not the whole history"
 
 
 @pytest.mark.parametrize("fragment", REQUIRED_SCAN_FRAGMENTS)
@@ -317,15 +309,11 @@ def test_the_secrets_job_scans_history_redacted_and_fails_on_a_finding(
     lines = job_commands(jobs, SECRETS_JOB)
 
     assert lines != [], f"the `{SECRETS_JOB}` job runs no command at all"
-    assert any(fragment in line for line in lines), (
-        f"no command carries {fragment!r}: {lines}"
-    )
+    assert any(fragment in line for line in lines), f"no command carries {fragment!r}: {lines}"
 
 
 @pytest.mark.parametrize("flag", FORBIDDEN_SCAN_FLAGS)
-def test_the_secrets_job_carries_neither_staging_area_flag(
-    jobs: dict[str, Any], flag: str
-) -> None:
+def test_the_secrets_job_carries_neither_staging_area_flag(jobs: dict[str, Any], flag: str) -> None:
     """Case 3, one row per flag. Both are the LOCAL hook's flags, and the likeliest way
     this job gets written is by copying the hook's entry from `.pre-commit-config.yaml` - at
     which point the scan narrows to a staging area a runner never has, finds nothing by
@@ -351,9 +339,7 @@ def test_the_archive_is_verified_before_the_binary_runs(jobs: dict[str, Any]) ->
     checks = [index for index, line in enumerate(lines) if CHECKSUM_CHECK in line]
     scans = [index for index, line in enumerate(lines) if SCAN_COMMAND in line]
 
-    assert len(checks) == 1, (
-        f"{len(checks)} command lines run {CHECKSUM_CHECK}: {lines}"
-    )
+    assert len(checks) == 1, f"{len(checks)} command lines run {CHECKSUM_CHECK}: {lines}"
     assert len(scans) == 1, f"{len(scans)} command lines run {SCAN_COMMAND}: {lines}"
     assert checks[0] < scans[0], f"the binary runs before it is verified: {lines}"
 
@@ -371,9 +357,7 @@ def test_the_installed_version_is_the_one_the_commit_hook_pins(
     assert SECRETS_JOB in jobs, f"`ci.yml` declares no `{SECRETS_JOB}` job"
     text = render(jobs[SECRETS_JOB])
 
-    assert GITLEAKS_VERSION in text, (
-        f"the `{SECRETS_JOB}` job never says {GITLEAKS_VERSION}"
-    )
+    assert GITLEAKS_VERSION in text, f"the `{SECRETS_JOB}` job never says {GITLEAKS_VERSION}"
     assert gitleaks_rev().removeprefix("v") == GITLEAKS_VERSION, (
         f"the commit hook pins {gitleaks_rev()}, the workflow installs {GITLEAKS_VERSION}"
     )
@@ -392,9 +376,7 @@ def test_neither_new_job_may_fail_without_failing_the_build(
     assert name in jobs, f"`ci.yml` declares no `{name}` job"
     job = jobs[name]
 
-    assert job.get("continue-on-error", False) is False, (
-        f"the `{name}` job cannot fail the build"
-    )
+    assert job.get("continue-on-error", False) is False, f"the `{name}` job cannot fail the build"
     for step in steps(job):
         assert step.get("continue-on-error", False) is False, (
             f"a `{name}` step cannot fail the job: {step.get('name', step)}"
@@ -434,9 +416,7 @@ def test_every_ignored_line_is_a_single_generic_api_key_fingerprint() -> None:
         (f"{SAMPLE_COMMIT}:tests/x.py:generic-api-key:1\n", False),
     ],
 )
-def test_the_fingerprint_pattern_refuses_a_short_commit(
-    candidate: str, accepted: bool
-) -> None:
+def test_the_fingerprint_pattern_refuses_a_short_commit(candidate: str, accepted: bool) -> None:
     r"""Case 9's boundary, 40 against 39, asserted directly against the module's pattern so
     the rows exercise the same constant the case above runs over the real file. The 39 row
     catches a quantifier written as a minimum or a range (`{7,40}`, `{40,}`), which would accept
@@ -470,16 +450,10 @@ def test_a_source_path_is_not_an_allowed_fingerprint_location() -> None:
     Without it that case passes vacuously the day somebody widens the prefix tuple to `("",)`
     or to `"packages/"` while adding the exception they wanted: every real fingerprint still
     passes, and nothing says the control stopped controlling. This row is the one that flips."""
-    source_fingerprint = (
-        f"{SAMPLE_COMMIT}:{REJECTED_FINGERPRINT_PATH}:generic-api-key:1"
-    )
+    source_fingerprint = f"{SAMPLE_COMMIT}:{REJECTED_FINGERPRINT_PATH}:generic-api-key:1"
 
-    assert FINGERPRINT_PATTERN.fullmatch(source_fingerprint) is not None, (
-        "the row is malformed"
-    )
-    assert not fingerprint_path(source_fingerprint).startswith(
-        ALLOWED_FINGERPRINT_PREFIXES
-    )
+    assert FINGERPRINT_PATTERN.fullmatch(source_fingerprint) is not None, "the row is malformed"
+    assert not fingerprint_path(source_fingerprint).startswith(ALLOWED_FINGERPRINT_PREFIXES)
 
 
 @pytest.mark.parametrize("key", FORBIDDEN_ALLOWLIST_KEYS)
@@ -492,15 +466,11 @@ def test_no_allowlist_widens_the_scan_by_path_or_regex(key: str) -> None:
     without asserting anything about a file nobody wrote; both forms of the table - one table
     or an array of them - are walked, so a second allowlist cannot hide behind the first."""
     for table in allowlists():
-        assert key not in table, (
-            f"`.gitleaks.toml` widens the scan with `{key}`: {table[key]}"
-        )
+        assert key not in table, f"`.gitleaks.toml` widens the scan with `{key}`: {table[key]}"
 
 
 @pytest.mark.parametrize("flag", EXPORT_FLAGS)
-def test_the_audit_exports_the_locked_dependency_set(
-    jobs: dict[str, Any], flag: str
-) -> None:
+def test_the_audit_exports_the_locked_dependency_set(jobs: dict[str, Any], flag: str) -> None:
     """Case 12, one row per flag. `--locked` is the row that matters: without it `uv
     export` may re-resolve, so the audit reads a dependency set the lockfile never had and
     reports on packages CI will not install. `--format requirements-txt` catches an export in
@@ -515,9 +485,7 @@ def test_the_audit_exports_the_locked_dependency_set(
 
 
 @pytest.mark.parametrize("flag", AUDIT_FLAGS)
-def test_the_audit_runs_the_pinned_pip_audit_strictly(
-    jobs: dict[str, Any], flag: str
-) -> None:
+def test_the_audit_runs_the_pinned_pip_audit_strictly(jobs: dict[str, Any], flag: str) -> None:
     """Case 13, one row per flag. `pip-audit==2.9.0` catches an unpinned `uvx pip-audit`,
     whose behaviour and vulnerability set change under CI without a commit - the class of gate
     that fails on a Tuesday for no reason in the diff. `--strict` catches the default, where a
@@ -554,6 +522,4 @@ def test_the_audit_reads_exactly_the_file_the_export_wrote(
 
     assert len(written) == 1, f"the export writes {written} files: {export}"
     assert len(read) == 1, f"the audit reads {read} files: {audit}"
-    assert written[0] == read[0], (
-        f"the export writes {written[0]}, the audit reads {read[0]}"
-    )
+    assert written[0] == read[0], f"the export writes {written[0]}, the audit reads {read[0]}"

@@ -44,13 +44,9 @@ def test_one_postmortem_besides_the_template_carries_every_template_heading() ->
     that drops or renames a template section - "What went well" or the action items are the
     ones a hurried write-up skips."""
     template_headings = headings(TEMPLATE.read_text(encoding="utf-8"))
-    assert template_headings, (
-        "TEMPLATE.md has no level-two headings; this case asserts nothing"
-    )
+    assert template_headings, "TEMPLATE.md has no level-two headings; this case asserts nothing"
 
-    written = sorted(
-        path for path in POSTMORTEMS_DIR.glob("*.md") if path.name != TEMPLATE.name
-    )
+    written = sorted(path for path in POSTMORTEMS_DIR.glob("*.md") if path.name != TEMPLATE.name)
     assert len(written) == 1, [path.name for path in written]
 
     present = set(headings(written[0].read_text(encoding="utf-8")))
@@ -63,9 +59,7 @@ def test_the_readme_links_the_postmortem_and_slo_md() -> None:
     linking a path that is not the file: each must appear as a markdown link target."""
     text = README.read_text(encoding="utf-8")
     for target in (POSTMORTEM_LINK, SLO_LINK):
-        assert re.search(rf"\]\({re.escape(target)}\)", text), (
-            f"README.md does not link {target}"
-        )
+        assert re.search(rf"\]\({re.escape(target)}\)", text), f"README.md does not link {target}"
         assert (REPO_ROOT / target).is_file(), f"{target} does not exist"
 
 

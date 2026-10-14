@@ -12,8 +12,9 @@ endef
 # `UV_ROOT` keeps the shell in the repo root - for targets that also name root
 # paths like `infra/tests/`, `infra/load/` or `backend/evals/` - while using
 # backend's project and venv. `UV_BK` moves the shell into `backend/` for the
-# tools whose config is read relative to the working directory (ruff's `.`,
-# mypy's `files`, pytest's `testpaths`).
+# tools whose config is read relative to the working directory (mypy's `files`,
+# pytest's `testpaths`). Ruff runs from the root over the whole repo and names
+# `backend/pyproject.toml` with `--config`, so its paths resolve from the root.
 UV_ROOT = uv run --project backend
 UV_BK = uv run --directory backend
 help:       ## Show all targets
@@ -41,13 +42,13 @@ select-tests: ## Print the tests whose recorded coverage touches this change
 test-adjacent: ## Run only the tests whose coverage touches this change
 	@$(UV_ROOT) python dev/scripts/select_tests.py | tr ' ' '\n' | xargs $(UV_ROOT) pytest -q
 lint:       ## Lint
-	$(UV_BK) ruff check .
+	$(UV_ROOT) ruff check --config backend/pyproject.toml .
 	$(call console,lint)
 typecheck:  ## Static types
 	$(UV_BK) mypy
 	$(call console,typecheck)
 format:     ## Auto-format
-	$(UV_BK) ruff format .
+	$(UV_ROOT) ruff format --config backend/pyproject.toml .
 verify: format lint typecheck test   ## The full gate, in order
 # The ledger's schema is applied by a deploy STEP, never on app start: replicas
 # coming up together would otherwise race each other over the same DDL, and

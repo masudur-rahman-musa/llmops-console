@@ -132,9 +132,7 @@ def resources(text: str) -> dict[tuple[str, str], str]:
 def resource(path: Path, kind: str, name: str) -> str:
     """The body of one named resource in `path`, failing this case alone when absent."""
     found = resources(read(path))
-    assert (kind, name) in found, (
-        f"{path.name} declares no {kind}.{name}, only {sorted(found)}"
-    )
+    assert (kind, name) in found, f"{path.name} declares no {kind}.{name}, only {sorted(found)}"
     return found[(kind, name)]
 
 
@@ -191,8 +189,7 @@ def conditions(variable: str) -> list[str]:
     variables = named_blocks(read(VARIABLES_TF), "variable")
     assert variable in variables, f"variables.tf declares no {variable}"
     return [
-        argument(block, "condition")
-        for block in inner_blocks(variables[variable], "validation")
+        argument(block, "condition") for block in inner_blocks(variables[variable], "validation")
     ]
 
 
@@ -241,9 +238,7 @@ def test_region_defaults_to_frankfurt_and_its_condition_is_the_eu_pattern() -> N
         ("EU-central-1", False),
     ],
 )
-def test_the_region_pattern_refuses_every_non_eu_region(
-    value: str, accepted: bool
-) -> None:
+def test_the_region_pattern_refuses_every_non_eu_region(value: str, accepted: bool) -> None:
     """Criterion 40's non-EU row, read off the file's own pattern. Catches the pattern losing an
     anchor (`eu-[a-z]+-[0-9]` unanchored accepts `xeu-central-1`) or its `^eu-` prefix, which
     the row set above makes visible as a US region accepted rather than a string mismatch."""
@@ -276,9 +271,7 @@ def test_the_name_condition_is_the_agreed_pattern_on_the_name_variable() -> None
         ("ab c", False),
     ],
 )
-def test_the_name_pattern_holds_its_twenty_character_boundary(
-    value: str, accepted: bool
-) -> None:
+def test_the_name_pattern_holds_its_twenty_character_boundary(value: str, accepted: bool) -> None:
     """Criterion 39's unhappy path with the inclusive boundary: 20 characters
     in, 21 out. Catches `{0,20}` or `{1,19}` in the pattern, and a pattern that lets a leading
     digit, a hyphen, a capital or an underscore through."""
@@ -303,9 +296,7 @@ def test_every_input_is_validated_and_the_admin_cidrs_have_no_default() -> None:
 
     assert missing == [], f"variables.tf declares no {missing}"
     assert unvalidated == [], f"no validation block on {unvalidated}"
-    assert argument(variables["admin_ips"], "default") == "", (
-        "admin_ips carries a default"
-    )
+    assert argument(variables["admin_ips"], "default") == "", "admin_ips carries a default"
 
     joined = " ".join(conditions("admin_ips"))
     assert "length(var.admin_ips) > 0" in joined, "an empty admin_ips is accepted"
@@ -328,16 +319,12 @@ def test_the_terraform_block_pins_core_provider_and_its_own_workspace() -> None:
     aws = provider_block(text, "aws")
 
     assert re.search(r'required_version\s*=\s*">= 1\.9"', text) is not None
-    assert [argument(block, "name") for block in workspaces] == [
-        '"ai-operations-console-aws"'
-    ]
+    assert [argument(block, "name") for block in workspaces] == ['"ai-operations-console-aws"']
     assert argument(aws, "source") == '"hashicorp/aws"'
     assert argument(aws, "version") == '"~> 6.64"'
 
 
-def test_the_provider_uses_the_validated_region_and_tags_everything_as_evidence() -> (
-    None
-):
+def test_the_provider_uses_the_validated_region_and_tags_everything_as_evidence() -> None:
     """Criterion 32. Catches `region = "eu-central-1"` hard-coded in the provider, which makes
     the validated variable decorative, and catches `default_tags` missing or carrying a
     different value, which is how a forgotten evidence resource hides from the cost explorer."""
@@ -382,10 +369,7 @@ def test_the_vpc_spans_two_zones_with_public_and_private_subnets() -> None:
     nowhere to land."""
     vpc = module_block(NETWORK_TF, "vpc")
 
-    assert (
-        argument(vpc, "azs")
-        == "slice(data.aws_availability_zones.available.names, 0, 2)"
-    )
+    assert argument(vpc, "azs") == "slice(data.aws_availability_zones.available.names, 0, 2)"
     for subnets in ("private_subnets", "public_subnets"):
         value = argument(vpc, subnets)
         assert value not in ("", "[]"), f"{subnets} is {value or 'absent'}"
@@ -473,9 +457,7 @@ def test_no_tf_file_carries_a_password_argument() -> None:
     argument NAME at line start, so the required `manage_master_user_password = true` is not a
     finding; the directory and its `.tf` files are asserted first, so a missing module cannot
     pass as a clean scan."""
-    findings = [
-        path.name for path in tf_files() if PASSWORD_ARGUMENT.search(read(path))
-    ]
+    findings = [path.name for path in tf_files() if PASSWORD_ARGUMENT.search(read(path))]
 
     assert findings == [], f"a password argument in {findings}"
 
@@ -532,9 +514,7 @@ def test_each_data_store_lives_in_the_private_subnets(
     ("group", "port"),
     [("postgres", "5432"), ("redis", "6379")],
 )
-def test_each_store_group_admits_only_the_node_group_on_its_own_port(
-    group: str, port: str
-) -> None:
+def test_each_store_group_admits_only_the_node_group_on_its_own_port(group: str, port: str) -> None:
     """Criteria 11 and 12. Catches a second ingress rule on the group (a CIDR rule "for
     debugging", in any file of the module), an inline `ingress` on the security group itself,
     a rule sourced from a CIDR or a prefix list instead of `module.eks.node_security_group_id`,
@@ -550,10 +530,7 @@ def test_each_store_group_admits_only_the_node_group_on_its_own_port(
     assert INLINE_INGRESS.search(security_group) is None, f"inline ingress on {group}"
     assert len(rules) == 1, f"{len(rules)} ingress rules on aws_security_group.{group}"
     rule = rules[0]
-    assert (
-        argument(rule, "referenced_security_group_id")
-        == "module.eks.node_security_group_id"
-    )
+    assert argument(rule, "referenced_security_group_id") == "module.eks.node_security_group_id"
     assert argument(rule, "from_port") == port
     assert argument(rule, "to_port") == port
     assert argument(rule, "ip_protocol") == '"tcp"'
@@ -587,13 +564,9 @@ def test_no_ingress_anywhere_in_the_module_names_the_world() -> None:
     for path in tf_files():
         text = read(path)
         bodies = inner_blocks(text, "ingress") + [
-            body
-            for kind, _name, body in resource_list(text)
-            if is_ingress_rule(kind, body)
+            body for kind, _name, body in resource_list(text) if is_ingress_rule(kind, body)
         ]
-        findings += [
-            f"{path.name}: {net}" for body in bodies for net in WORLD if net in body
-        ]
+        findings += [f"{path.name}: {net}" for body in bodies for net in WORLD if net in body]
 
     assert findings == [], f"world-open ingress: {findings}"
 
@@ -647,9 +620,7 @@ def test_there_is_one_irsa_role_trusted_through_the_cluster_oidc_provider() -> N
     with S3 access is the shortcut), and catches a trust policy that does not go through the
     cluster's OIDC provider, which is what makes the role IRSA rather than assumable by anyone
     the policy happens to name."""
-    roles = [
-        (name, body) for kind, name, body in all_resources() if kind == "aws_iam_role"
-    ]
+    roles = [(name, body) for kind, name, body in all_resources() if kind == "aws_iam_role"]
     names = [name for name, _body in roles]
 
     assert names == ["backups"], f"IAM roles: {names}"
@@ -661,9 +632,7 @@ def test_the_irsa_policy_reaches_the_backup_bucket_and_nothing_else() -> None:
     this one, a `NotResource` that grants everything except the bucket, and a managed-policy
     attachment (`AmazonS3FullAccess`) that widens the role without touching the inline policy."""
     policies = [
-        (name, body)
-        for kind, name, body in all_resources()
-        if kind == "aws_iam_role_policy"
+        (name, body) for kind, name, body in all_resources() if kind == "aws_iam_role_policy"
     ]
     attachments = [
         f"{kind}.{name}"
@@ -685,9 +654,7 @@ def test_the_irsa_policy_reaches_the_backup_bucket_and_nothing_else() -> None:
         rest = policy[match.end() :]
         if rest.startswith("["):
             closing = rest.index("]")
-            reached |= {
-                item.strip() for item in rest[1:closing].split(",") if item.strip()
-            }
+            reached |= {item.strip() for item in rest[1:closing].split(",") if item.strip()}
         else:
             reached.add(rest.splitlines()[0].strip().rstrip(","))
     assert reached == BACKUP_RESOURCES
@@ -793,9 +760,7 @@ def test_the_tf_aws_init_falls_back_to_no_backend_without_a_token() -> None:
     which fails every fork pull request before `validate` runs, and catches the opposite, an
     init that never uses the backend, so the plan step has no state to plan against."""
     job = tf_aws_job()
-    inits = [
-        step for step in steps_running(job, "terraform init") if not is_printer(step)
-    ]
+    inits = [step for step in steps_running(job, "terraform init") if not is_printer(step)]
     assert len(inits) == 1, f"{len(inits)} steps run `terraform init`"
     script = str(inits[0]["run"])
 
@@ -803,36 +768,26 @@ def test_the_tf_aws_init_falls_back_to_no_backend_without_a_token() -> None:
     assert re.search(r"(?m)^\s*terraform init -input=false\s*$", script) is not None
 
 
-def test_the_tf_aws_plan_runs_only_with_both_credentials_after_assuming_the_role() -> (
-    None
-):
+def test_the_tf_aws_plan_runs_only_with_both_credentials_after_assuming_the_role() -> None:
     """Criterion 42 and decision C. Catches `||` in place of `&&` (a plan with a token and no
     role fails on credentials), an unconditional plan, a condition on an env flag the job never
     defines (always false, so the plan silently never runs), and the credentials step placed
     after the plan or gated differently from it. The `echo` skip is excluded."""
     job = tf_aws_job()
     listed = steps(job)
-    planners = [
-        step for step in steps_running(job, "terraform plan") if not is_printer(step)
-    ]
+    planners = [step for step in steps_running(job, "terraform plan") if not is_printer(step)]
     credentials = [
         step
         for step in listed
-        if str(step.get("uses", "")).startswith(
-            "aws-actions/configure-aws-credentials@v4"
-        )
+        if str(step.get("uses", "")).startswith("aws-actions/configure-aws-credentials@v4")
     ]
 
-    assert "TF_API_TOKEN_PRESENT" in job.get("env", {}), (
-        "the plan's env flag is never defined"
-    )
+    assert "TF_API_TOKEN_PRESENT" in job.get("env", {}), "the plan's env flag is never defined"
     assert len(planners) == 1, f"{len(planners)} steps run `terraform plan`"
     assert len(credentials) == 1, f"{len(credentials)} configure-aws-credentials steps"
     assert planners[0].get("if") == PLAN_CONDITION
     assert credentials[0].get("if") == PLAN_CONDITION
-    assert listed.index(credentials[0]) < listed.index(planners[0]), (
-        "credentials after plan"
-    )
+    assert listed.index(credentials[0]) < listed.index(planners[0]), "credentials after plan"
 
 
 def test_the_tf_aws_job_says_so_when_the_plan_is_skipped() -> None:

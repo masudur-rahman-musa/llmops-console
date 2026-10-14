@@ -36,9 +36,7 @@ def built() -> list[dict[str, Any]]:
     exists to report - not a reason to report nothing.
     """
     if shutil.which("kubectl") is None:
-        pytest.skip(
-            "kubectl is not on PATH; CI's `k8s` job is the copy that cannot skip"
-        )
+        pytest.skip("kubectl is not on PATH; CI's `k8s` job is the copy that cannot skip")
     completed = subprocess.run(
         ["kubectl", "kustomize", str(K8S_ROOT)],
         capture_output=True,
@@ -71,9 +69,7 @@ def built_gpu() -> list[dict[str, Any]]:
     failure `test_k8s_gpu.py` exists to report.
     """
     if shutil.which("kubectl") is None:
-        pytest.skip(
-            "kubectl is not on PATH; CI's `k8s` job is the copy that cannot skip"
-        )
+        pytest.skip("kubectl is not on PATH; CI's `k8s` job is the copy that cannot skip")
     completed = subprocess.run(
         ["kubectl", "kustomize", str(K8S_GPU)],
         capture_output=True,
@@ -106,9 +102,7 @@ def server_built() -> list[dict[str, Any]]:
     failure `test_k8s_server.py` exists to report (a project rule: built once per session).
     """
     if shutil.which("kubectl") is None:
-        pytest.skip(
-            "kubectl is not on PATH; CI's `k8s` job is the copy that cannot skip"
-        )
+        pytest.skip("kubectl is not on PATH; CI's `k8s` job is the copy that cannot skip")
     completed = subprocess.run(
         [
             "kubectl",

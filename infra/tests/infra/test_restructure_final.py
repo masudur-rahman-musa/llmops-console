@@ -186,9 +186,7 @@ def test_the_root_allowlist_has_no_temporary_section() -> None:
     TEMPORARY block in place, which would keep every old root (services/, packages/, the bare
     config files) legal at the repository root even after nothing uses it."""
     text = ROOT_ALLOWLIST.read_text(encoding="utf-8")
-    assert TEMPORARY_MARKER not in text, (
-        f"{ROOT_ALLOWLIST.name} still carries a TEMPORARY block"
-    )
+    assert TEMPORARY_MARKER not in text, f"{ROOT_ALLOWLIST.name} still carries a TEMPORARY block"
 
     entries = set(allowlist_entries())
     leftover = [entry for entry in TEMPORARY_ENTRIES if entry in entries]
@@ -237,9 +235,7 @@ def test_every_moved_root_exists() -> None:
             missing_new.append(f"file {relative}")
     assert missing_new == [], f"moved roots missing at their new home: {missing_new}"
 
-    still_present = [
-        relative for relative in REMOVED_DIRS if (REPO_ROOT / relative).exists()
-    ]
+    still_present = [relative for relative in REMOVED_DIRS if (REPO_ROOT / relative).exists()]
     assert still_present == [], f"old roots not removed: {still_present}"
 
 
@@ -248,15 +244,11 @@ def test_precommit_and_ci_run_check_root() -> None:
     local check-root hook, or a CI workflow that never runs dev/scripts/check_root.py, would
     let a bad root land because no gate actually runs the check."""
     precommit = PRECOMMIT.read_text(encoding="utf-8")
-    assert "- repo: local" in precommit, (
-        "pre-commit config has no `- repo: local` section"
-    )
+    assert "- repo: local" in precommit, "pre-commit config has no `- repo: local` section"
     assert "check-root" in precommit, "pre-commit config defines no `check-root` hook"
 
     ci = CI_WORKFLOW.read_text(encoding="utf-8")
-    assert "dev/scripts/check_root.py" in ci, (
-        "CI workflow does not run dev/scripts/check_root.py"
-    )
+    assert "dev/scripts/check_root.py" in ci, "CI workflow does not run dev/scripts/check_root.py"
 
 
 def test_the_one_alert_rules_copy() -> None:
@@ -266,6 +258,4 @@ def test_the_one_alert_rules_copy() -> None:
     assert ALERT_RULES.is_file(), f"{ALERT_RULES.relative_to(REPO_ROOT)} does not exist"
 
     old_copies = walk_matches("rules.yml", under="project-obs")
-    assert old_copies == [], (
-        f"an old alert-rules copy survives under project-obs/: {old_copies}"
-    )
+    assert old_copies == [], f"an old alert-rules copy survives under project-obs/: {old_copies}"

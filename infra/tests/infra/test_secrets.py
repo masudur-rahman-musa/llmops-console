@@ -315,15 +315,11 @@ def example_contracts() -> dict[str, tuple[frozenset[str], frozenset[str]]]:
     keys: dict[str, set[str]] = {}
     for filename in sorted(present):
         for document in documents_in(SECRETS_DIR / filename):
-            assert document.get("kind") == SECRET_KIND, (
-                f"{filename} declares a non-Secret"
-            )
+            assert document.get("kind") == SECRET_KIND, f"{filename} declares a non-Secret"
             name = name_of(document)
             assert name, f"{filename} has a document with no metadata.name"
             namespace = namespace_of(document)
-            assert namespace is not None, (
-                f"{filename}'s {name} declares no metadata.namespace"
-            )
+            assert namespace is not None, f"{filename}'s {name} declares no metadata.namespace"
             namespaces.setdefault(name, set()).add(namespace)
             for _, mapping in data_mappings(document):
                 keys.setdefault(name, set()).update(str(key) for key in mapping)
@@ -351,9 +347,7 @@ def readme_contracts() -> dict[str, tuple[frozenset[str], frozenset[str]]]:
     """
     lines = read(K8S_README).splitlines()
     headers = [
-        index
-        for index, line in enumerate(lines)
-        if table_cells(line) == README_HEADER_CELLS
+        index for index, line in enumerate(lines) if table_cells(line) == README_HEADER_CELLS
     ]
     assert len(headers) == 1, (
         f"{len(headers)} rows in {K8S_README} read {' | '.join(README_HEADER_CELLS)}"
@@ -366,18 +360,12 @@ def readme_contracts() -> dict[str, tuple[frozenset[str], frozenset[str]]]:
         if all(cell and set(cell) <= {"-", ":"} for cell in cells):
             continue
         rows.append(cells)
-    assert len(rows) == len(EXPECTED_NAMESPACES), (
-        f"the secrets table has {len(rows)} data rows"
-    )
+    assert len(rows) == len(EXPECTED_NAMESPACES), f"the secrets table has {len(rows)} data rows"
     contracts: dict[str, tuple[frozenset[str], frozenset[str]]] = {}
     for cells in rows:
-        assert len(cells) == len(README_HEADER_CELLS), (
-            f"a secrets row has {len(cells)} cells"
-        )
+        assert len(cells) == len(README_HEADER_CELLS), f"a secrets row has {len(cells)} cells"
         names = BACKTICKED.findall(cells[0])
-        assert len(names) == 1, (
-            f"the Secret cell {cells[0]!r} names {len(names)} backticked ids"
-        )
+        assert len(names) == 1, f"the Secret cell {cells[0]!r} names {len(names)} backticked ids"
         contracts[names[0]] = (
             frozenset(BACKTICKED.findall(cells[1])),
             frozenset(BACKTICKED.findall(cells[2])),
@@ -431,10 +419,7 @@ def envfrom_secret_names(document: dict[str, Any]) -> set[str]:
 
 def middleware_secret_names(document: dict[str, Any]) -> set[str]:
     """A Traefik `Middleware`'s `spec.basicAuth.secret`, the second shape a reference takes."""
-    if (
-        document.get("kind") != MIDDLEWARE_KIND
-        or document.get("apiVersion") != TRAEFIK_API_VERSION
-    ):
+    if document.get("kind") != MIDDLEWARE_KIND or document.get("apiVersion") != TRAEFIK_API_VERSION:
         return set()
     spec = document.get("spec")
     if not isinstance(spec, dict):
@@ -533,9 +518,7 @@ def kustomization_paths(path: Path) -> list[str]:
 def sops_creation_rules() -> list[dict[str, Any]]:
     """`.sops.yaml`'s `creation_rules`, as a list of mappings."""
     documents = documents_in(SOPS_CONFIG)
-    assert len(documents) == 1, (
-        f"{SOPS_CONFIG} carries {len(documents)} documents, not 1"
-    )
+    assert len(documents) == 1, f"{SOPS_CONFIG} carries {len(documents)} documents, not 1"
     rules = documents[0].get("creation_rules")
     assert isinstance(rules, list), f"{SOPS_CONFIG} declares no creation_rules list"
     return [rule for rule in rules if isinstance(rule, dict)]
@@ -579,9 +562,7 @@ def test_every_encrypted_secret_is_ciphertext_under_a_named_age_recipient(
     document = yaml.safe_load(read(path))
     assert isinstance(document, dict), f"{path.name} is not a YAML mapping"
     metadata = document.get("sops")
-    assert isinstance(metadata, dict), (
-        f"{path.name} carries no top-level `sops:` mapping"
-    )
+    assert isinstance(metadata, dict), f"{path.name} carries no top-level `sops:` mapping"
     recipients = metadata.get("age")
     assert isinstance(recipients, list) and recipients, (
         f"{path.name}'s sops block lists no age recipient, so nothing can decrypt it"
@@ -617,9 +598,7 @@ def test_the_sops_rule_covers_the_encrypted_file_and_leaves_the_example_alone(
     rules = sops_creation_rules()
     assert len(rules) == 1, f"{SOPS_CONFIG} has {len(rules)} creation rules, not 1"
     pattern = rules[0].get("path_regex")
-    assert isinstance(pattern, str) and pattern, (
-        "the creation rule declares no path_regex"
-    )
+    assert isinstance(pattern, str) and pattern, "the creation rule declares no path_regex"
     matched = re.search(pattern, candidate) is not None
     assert matched is should_match, (
         f"path_regex {pattern!r} {'misses' if should_match else 'matches'} {candidate}"
@@ -670,9 +649,7 @@ def test_no_private_key_and_no_decrypted_secret_is_tracked_by_git() -> None:
         for pattern in IGNORED_PATTERNS
         if fnmatch.fnmatch(Path(path).name, pattern)
     )
-    assert offending == [], (
-        f"tracked files matching {list(IGNORED_PATTERNS)}: {offending}"
-    )
+    assert offending == [], f"tracked files matching {list(IGNORED_PATTERNS)}: {offending}"
 
 
 def test_the_example_templates_state_the_same_contracts_as_the_readme_table() -> None:
@@ -690,9 +667,7 @@ def test_the_example_templates_state_the_same_contracts_as_the_readme_table() ->
     from_files = example_contracts()
     from_readme = readme_contracts()
     differing = sorted(
-        name
-        for name in set(from_files) & set(from_readme)
-        if from_files[name] != from_readme[name]
+        name for name in set(from_files) & set(from_readme) if from_files[name] != from_readme[name]
     )
     assert from_files == from_readme, (
         f"only in the templates: {sorted(set(from_files) - set(from_readme))}; "
@@ -701,9 +676,7 @@ def test_the_example_templates_state_the_same_contracts_as_the_readme_table() ->
     )
     assert {name: namespaces for name, (namespaces, _) in from_files.items()} == (
         EXPECTED_NAMESPACES
-    ), (
-        f"the templates state namespaces {[(n, sorted(ns)) for n, (ns, _) in from_files.items()]}"
-    )
+    ), f"the templates state namespaces {[(n, sorted(ns)) for n, (ns, _) in from_files.items()]}"
 
 
 #: `infra/secrets/README.md`, whose contracts table and its two counts are compared against
@@ -739,9 +712,7 @@ def test_the_secrets_readme_lists_every_template_and_counts_them() -> None:
             continue
         names = BACKTICKED.findall(cells[0])
         templates = BACKTICKED.findall(cells[2])
-        assert len(names) == 1 and len(templates) == 1, (
-            f"a contracts row reads {cells!r}"
-        )
+        assert len(names) == 1 and len(templates) == 1, f"a contracts row reads {cells!r}"
         assert names[0] not in rows, f"{names[0]} has two rows in the contracts table"
         rows[names[0]] = templates[0]
     listed = frozenset(rows.values())
@@ -749,9 +720,7 @@ def test_the_secrets_readme_lists_every_template_and_counts_them() -> None:
         f"only in the table: {sorted(listed - EXAMPLE_FILENAMES)}; "
         f"missing from it: {sorted(EXAMPLE_FILENAMES - listed)}"
     )
-    assert frozenset(rows) == frozenset(EXPECTED_NAMESPACES), (
-        f"table names {sorted(rows)}"
-    )
+    assert frozenset(rows) == frozenset(EXPECTED_NAMESPACES), f"table names {sorted(rows)}"
     assert rows == {name: f"{name}.example.yaml" for name in EXPECTED_NAMESPACES}, (
         f"a row points at another Secret's template: {rows}"
     )
@@ -815,18 +784,14 @@ def test_no_kustomization_lists_a_path_under_infra_secrets() -> None:
     not grepped, so a COMMENT saying `infra/secrets` is decrypted in CD -
     which is exactly the comment the implementation is likely to write - cannot redden it."""
     kustomizations = sorted(K8S_ROOT.rglob("kustomization.yaml"))
-    assert kustomizations, (
-        f"{K8S_ROOT} holds no kustomization.yaml, so this scan read nothing"
-    )
+    assert kustomizations, f"{K8S_ROOT} holds no kustomization.yaml, so this scan read nothing"
     offending = sorted(
         f"{path.relative_to(REPO_ROOT)}: {listed}"
         for path in kustomizations
         for listed in kustomization_paths(path)
         if any(fragment in listed for fragment in FORBIDDEN_PATH_FRAGMENTS)
     )
-    assert offending == [], (
-        f"kustomizations pointing into the secrets directory: {offending}"
-    )
+    assert offending == [], f"kustomizations pointing into the secrets directory: {offending}"
 
 
 def test_the_build_emits_no_secret_object(built: list[dict[str, Any]]) -> None:
@@ -838,14 +803,10 @@ def test_the_build_emits_no_secret_object(built: list[dict[str, Any]]) -> None:
     the `apps` story, and criterion 5 is the claim for the whole build, so it is stated here
     against the stream rather than inherited."""
     emitted = [document for document in built if document.get("kind") == SECRET_KIND]
-    assert emitted == [], (
-        f"the build emits Secrets: {[name_of(document) for document in emitted]}"
-    )
+    assert emitted == [], f"the build emits Secrets: {[name_of(document) for document in emitted]}"
 
 
-@pytest.mark.parametrize(
-    "filename", sorted(EXAMPLE_FILENAMES), ids=sorted(EXAMPLE_FILENAMES)
-)
+@pytest.mark.parametrize("filename", sorted(EXAMPLE_FILENAMES), ids=sorted(EXAMPLE_FILENAMES))
 def test_every_example_value_is_the_literal_placeholder(filename: str) -> None:
     """Criterion 4, across EVERY document in a file - `traefik-basic-auth.example.yaml` is two
     documents, and a reader of the first would never see a real password left in the second.
@@ -864,40 +825,30 @@ def test_every_example_value_is_the_literal_placeholder(filename: str) -> None:
     checked = 0
     for document in documents:
         mappings = data_mappings(document)
-        assert mappings, (
-            f"{filename}'s {name_of(document)} declares neither data nor stringData"
-        )
+        assert mappings, f"{filename}'s {name_of(document)} declares neither data nor stringData"
         for key, mapping in mappings:
             assert mapping, f"{filename}'s `{key}` is empty"
             for name, value in mapping.items():
                 checked += 1
                 text = str(value)
                 if str(name) != "users":
-                    assert text == PLACEHOLDER, (
-                        f"{filename}: `{key}.{name}` is {text!r}"
-                    )
+                    assert text == PLACEHOLDER, f"{filename}: `{key}.{name}` is {text!r}"
                     continue
                 lines = [line for line in text.splitlines() if line.strip()]
                 assert lines, f"{filename}: `{key}.users` carries no htpasswd line"
                 for line in lines:
                     matched = HTPASSWD_LINE.fullmatch(line.strip())
-                    assert matched is not None, (
-                        f"{filename}: {line!r} is not `<user>:<password>`"
-                    )
+                    assert matched is not None, f"{filename}: {line!r} is not `<user>:<password>`"
                     assert matched.group("password") == PLACEHOLDER, (
                         f"{filename}: `users` carries a real-looking password"
                     )
-    assert checked, (
-        f"{filename} declares no values at all, so this scan asserted nothing"
-    )
+    assert checked, f"{filename} declares no values at all, so this scan asserted nothing"
 
 
 def comment_text(path: Path) -> str:
     """Every comment line of a template, joined, `#` markers included. A key NAME or a value is
     never a comment, so a fact stated only as a key does not count as stated."""
-    return "\n".join(
-        line for line in read(path).splitlines() if line.lstrip().startswith("#")
-    )
+    return "\n".join(line for line in read(path).splitlines() if line.lstrip().startswith("#"))
 
 
 def test_the_ghcr_pull_contract_is_a_dockerconfigjson_secret_in_apps() -> None:
@@ -913,19 +864,13 @@ def test_the_ghcr_pull_contract_is_a_dockerconfigjson_secret_in_apps() -> None:
     documents = documents_in(path)
     assert len(documents) == 1, f"{path.name} carries {len(documents)} documents, not 1"
     document = documents[0]
-    assert document.get("kind") == SECRET_KIND, (
-        f"{path.name} declares a {document.get('kind')}"
-    )
+    assert document.get("kind") == SECRET_KIND, f"{path.name} declares a {document.get('kind')}"
     assert name_of(document) == GHCR_PULL, f"{path.name} names {name_of(document)!r}"
-    assert namespace_of(document) == APPS, (
-        f"{path.name} is in {namespace_of(document)!r}"
-    )
+    assert namespace_of(document) == APPS, f"{path.name} is in {namespace_of(document)!r}"
     assert document.get("type") == DOCKERCONFIGJSON_TYPE, (
         f"{path.name} is of type {document.get('type')!r}, not {DOCKERCONFIGJSON_TYPE}"
     )
-    assert "data" not in document, (
-        f"{path.name} carries a `data` mapping beside `stringData`"
-    )
+    assert "data" not in document, f"{path.name} carries a `data` mapping beside `stringData`"
     assert document.get("stringData") == {DOCKERCONFIGJSON_KEY: PLACEHOLDER}, (
         f"{path.name}'s stringData is {document.get('stringData')!r}"
     )
@@ -955,9 +900,7 @@ def test_the_helpdesk_secret_template_carries_the_published_keys() -> None:
         f"missing: {sorted(HELPDESK_SECRET_KEYS - keys)}"
     )
     filled = sorted(key for key, value in values.items() if value != PLACEHOLDER)
-    assert filled == [], (
-        f"{path.name} carries values other than {PLACEHOLDER} for {filled}"
-    )
+    assert filled == [], f"{path.name} carries values other than {PLACEHOLDER} for {filled}"
 
 
 @pytest.mark.parametrize(

@@ -61,8 +61,8 @@ jobs:
       # Same checks as the local pre-commit hooks, and unskippable here.
       - run: uv run --project backend pre-commit run --all-files
       # Mirrors the Makefile gate. `format` runs as a check with the locked ruff,
-      # not only through the pre-commit-pinned one, over the `backend/` tree.
-      - run: uv run --project backend ruff format --check backend
+      # not only through the pre-commit-pinned one, over the whole repo.
+      - run: uv run --project backend ruff format --config backend/pyproject.toml --check .
       - run: make lint
       - run: make typecheck
       - run: make test

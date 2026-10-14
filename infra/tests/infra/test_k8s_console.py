@@ -85,9 +85,7 @@ CONSOLE_DIR = REPO_ROOT / "services" / "console"
 CONSOLE_DOCKERFILE = CONSOLE_DIR / "Dockerfile"
 CONSOLE_DOCKERIGNORE = CONSOLE_DIR / ".dockerignore"
 NEXT_CONFIG = CONSOLE_DIR / "next.config.ts"
-CONSOLE_SECRETS_EXAMPLE = (
-    REPO_ROOT / "infra" / "secrets" / "console-secrets.example.yaml"
-)
+CONSOLE_SECRETS_EXAMPLE = REPO_ROOT / "infra" / "secrets" / "console-secrets.example.yaml"
 
 #: The six objects `apps/console.yaml` emits, each carrying `app.kubernetes.io/name: console`.
 CONSOLE_LABELLED: frozenset[tuple[str, str]] = frozenset(
@@ -121,8 +119,7 @@ CONSOLE_PORT = 3001
 
 #: Decision F's per-pod row, DERIVED from the reserve the apps budget held.
 CONSOLE_RESOURCES: dict[str, str] = {
-    key: str(CONSOLE_RESERVE[key])
-    for key in ("requests.memory", "requests.cpu", "limits.memory")
+    key: str(CONSOLE_RESERVE[key]) for key in ("requests.memory", "requests.cpu", "limits.memory")
 }
 CONSOLE_REPLICAS = int(str(CONSOLE_RESERVE["pods"]))
 
@@ -160,9 +157,7 @@ CONSOLE_ROUTERS: dict[str, dict[str, Any]] = {
         "path": "/api/login",
         "path_type": PATH_TYPE_EXACT,
         "tls": "console-login-tls",
-        "middlewares": frozenset(
-            {"basic-auth", CONSOLE_LOGIN_RATE_LIMIT, "security-headers"}
-        ),
+        "middlewares": frozenset({"basic-auth", CONSOLE_LOGIN_RATE_LIMIT, "security-headers"}),
     },
 }
 
@@ -326,38 +321,26 @@ def test_the_build_emits_exactly_the_console_objects_the_plan_names(
         if labels_of(document).get(SELECTOR_LABEL) == CONSOLE
     }
     missing = sorted(CONSOLE_LABELLED - labelled)
-    assert missing == [], (
-        f"console objects without {SELECTOR_LABEL}: {CONSOLE}: {missing}"
-    )
+    assert missing == [], f"console objects without {SELECTOR_LABEL}: {CONSOLE}: {missing}"
     stray = sorted(labelled - {(kind, name) for kind, name, _ in CONSOLE_NAMED})
-    assert stray == [], (
-        f"objects labelled as the console that the plan does not name: {stray}"
-    )
+    assert stray == [], f"objects labelled as the console that the plan does not name: {stray}"
 
     owner = console_owner(built)
     match_labels = owner["spec"]["selector"]["matchLabels"]
-    assert (
-        isinstance(match_labels, dict) and match_labels.get(SELECTOR_LABEL) == CONSOLE
-    ), f"{CONSOLE} selects {match_labels}"
-    labels = template_labels(owner)
-    assert labels.get(SELECTOR_LABEL) == CONSOLE, (
-        f"the pod template is labelled {labels}"
+    assert isinstance(match_labels, dict) and match_labels.get(SELECTOR_LABEL) == CONSOLE, (
+        f"{CONSOLE} selects {match_labels}"
     )
-    unmatched = {
-        key: value for key, value in match_labels.items() if labels.get(key) != value
-    }
+    labels = template_labels(owner)
+    assert labels.get(SELECTOR_LABEL) == CONSOLE, f"the pod template is labelled {labels}"
+    unmatched = {key: value for key, value in match_labels.items() if labels.get(key) != value}
     assert unmatched == {}, f"{CONSOLE}'s selector {unmatched} matches no pod: {labels}"
 
     selector = sole_object(built, "Service", CONSOLE)["spec"].get("selector", {})
     assert isinstance(selector, dict) and selector.get(SELECTOR_LABEL) == CONSOLE, (
         f"Service/{CONSOLE} selects {selector}"
     )
-    stray_selector = {
-        key: value for key, value in selector.items() if labels.get(key) != value
-    }
-    assert stray_selector == {}, (
-        f"Service/{CONSOLE} selector {stray_selector} matches no pod"
-    )
+    stray_selector = {key: value for key, value in selector.items() if labels.get(key) != value}
+    assert stray_selector == {}, f"Service/{CONSOLE} selector {stray_selector} matches no pod"
 
 
 def test_the_console_image_is_the_ghcr_console_repository_at_the_unbuilt_tag(
@@ -369,18 +352,14 @@ def test_the_console_image_is_the_ghcr_console_repository_at_the_unbuilt_tag(
     reference itself: that bypasses the transformer, so `deploy.yml`'s `set image console=`
     changes nothing and every deploy runs the placeholder."""
     image = str(sole_container(console_owner(built)).get("image", ""))
-    assert image == f"{CONSOLE_IMAGE_REPOSITORY}:{CONSOLE_IMAGE_TAG}", (
-        f"{CONSOLE} runs {image!r}"
-    )
+    assert image == f"{CONSOLE_IMAGE_REPOSITORY}:{CONSOLE_IMAGE_TAG}", f"{CONSOLE} runs {image!r}"
 
     kustomization = yaml.safe_load(read(APPS_KUSTOMIZATION))
     assert isinstance(kustomization, dict)
     assert "console.yaml" in kustomization.get("resources", []), (
         f"apps/kustomization.yaml lists {kustomization.get('resources')}"
     )
-    entries = [
-        entry for entry in kustomization["images"] if entry.get("name") == CONSOLE
-    ]
+    entries = [entry for entry in kustomization["images"] if entry.get("name") == CONSOLE]
     assert entries == [
         {
             "name": CONSOLE,
@@ -394,9 +373,7 @@ def test_the_console_image_is_the_ghcr_console_repository_at_the_unbuilt_tag(
         for document in raw_documents(CONSOLE_MANIFEST)
         if document.get("kind") == "Deployment"
     ]
-    assert len(written) == 1, (
-        f"{CONSOLE_MANIFEST.name} writes {len(written)} Deployments"
-    )
+    assert len(written) == 1, f"{CONSOLE_MANIFEST.name} writes {len(written)} Deployments"
     containers = written[0]["spec"]["template"]["spec"]["containers"]
     assert [str(container.get("image")) for container in containers] == [CONSOLE], (
         f"{CONSOLE_MANIFEST.name} writes images {[c.get('image') for c in containers]}"
@@ -416,9 +393,7 @@ def test_the_console_declares_the_quantities_the_reserve_held(
     assert quantities == CONSOLE_RESOURCES, f"{CONSOLE} declares {quantities}"
 
     lines = read(K8S_README).splitlines()
-    assert lines.count(APPS_BUDGET_HEADING) == 1, (
-        f"the README has no single {APPS_BUDGET_HEADING}"
-    )
+    assert lines.count(APPS_BUDGET_HEADING) == 1, f"the README has no single {APPS_BUDGET_HEADING}"
     start = lines.index(APPS_BUDGET_HEADING) + 1
     section: list[str] = []
     for line in lines[start:]:
@@ -435,9 +410,7 @@ def test_the_console_declares_the_quantities_the_reserve_held(
     reserves = [row for row in rows if "reserve" in row[0].lower()]
     assert reserves == [], f"the apps budget still holds reserve rows: {reserves}"
     console_rows = [row for row in rows if row[0].startswith(f"`{CONSOLE}`")]
-    assert len(console_rows) == 1, (
-        f"the apps budget has {len(console_rows)} built console rows"
-    )
+    assert len(console_rows) == 1, f"the apps budget has {len(console_rows)} built console rows"
     assert console_rows[0][1:4] == [
         CONSOLE_RESOURCES["requests.memory"],
         CONSOLE_RESOURCES["requests.cpu"],
@@ -493,24 +466,17 @@ def test_the_console_probes_readyz_for_readiness_and_healthz_for_liveness(
         probe = container.get(key, {})
         http_get = probe.get("httpGet", {}) if isinstance(probe, dict) else {}
         assert http_get.get("path") == path, f"{CONSOLE}'s {key} is {probe}"
-        assert http_get.get("port") == CONTAINER_PORT_NAME, (
-            f"{CONSOLE}'s {key} is {probe}"
-        )
+        assert http_get.get("port") == CONTAINER_PORT_NAME, f"{CONSOLE}'s {key} is {probe}"
 
     ports = [
-        (str(port.get("name")), int(port["containerPort"]))
-        for port in container.get("ports", [])
+        (str(port.get("name")), int(port["containerPort"])) for port in container.get("ports", [])
     ]
-    assert ports == [(CONTAINER_PORT_NAME, CONSOLE_PORT)], (
-        f"{CONSOLE} declares ports {ports}"
-    )
+    assert ports == [(CONTAINER_PORT_NAME, CONSOLE_PORT)], f"{CONSOLE} declares ports {ports}"
 
     service_ports = sole_object(built, "Service", CONSOLE)["spec"].get("ports", [])
     assert len(service_ports) == 1, f"Service/{CONSOLE} publishes {service_ports}"
     published = service_ports[0]
-    assert published.get("name") == CONTAINER_PORT_NAME, (
-        f"Service/{CONSOLE} is {published}"
-    )
+    assert published.get("name") == CONTAINER_PORT_NAME, f"Service/{CONSOLE} is {published}"
     assert published.get("port") == CONSOLE_PORT, f"Service/{CONSOLE} is {published}"
     assert published.get("targetPort", CONSOLE_PORT) in (
         CONTAINER_PORT_NAME,
@@ -531,19 +497,14 @@ def test_the_console_config_names_the_gateway_by_its_fully_qualified_address_and
     assert data.get(CONSOLE_API_URL_KEY) == CONSOLE_API_URL, (
         f"{CONSOLE_CONFIG_MAP} sets {CONSOLE_API_URL_KEY}={data.get(CONSOLE_API_URL_KEY)!r}"
     )
-    assert TRADEOFF_PATH_KEY not in data, (
-        f"{CONSOLE_CONFIG_MAP} sets {TRADEOFF_PATH_KEY}"
-    )
+    assert TRADEOFF_PATH_KEY not in data, f"{CONSOLE_CONFIG_MAP} sets {TRADEOFF_PATH_KEY}"
     leaked = sorted(CONSOLE_SECRET_KEYS & set(data))
     assert leaked == [], f"{CONSOLE_CONFIG_MAP} carries credentials {leaked}"
 
     env_names = [
-        str(entry.get("name"))
-        for entry in sole_container(console_owner(built)).get("env", [])
+        str(entry.get("name")) for entry in sole_container(console_owner(built)).get("env", [])
     ]
-    assert TRADEOFF_PATH_KEY not in env_names, (
-        f"{CONSOLE} sets {TRADEOFF_PATH_KEY} by env"
-    )
+    assert TRADEOFF_PATH_KEY not in env_names, f"{CONSOLE} sets {TRADEOFF_PATH_KEY} by env"
 
 
 def test_the_console_reads_its_config_map_and_console_secrets_by_env_from(
@@ -568,18 +529,12 @@ def test_the_console_reads_its_config_map_and_console_secrets_by_env_from(
     ], f"{CONSOLE} takes its environment from {sources}"
 
     documents = raw_documents(CONSOLE_SECRETS_EXAMPLE)
-    assert len(documents) == 1, (
-        f"{CONSOLE_SECRETS_EXAMPLE.name} holds {len(documents)} documents"
-    )
+    assert len(documents) == 1, f"{CONSOLE_SECRETS_EXAMPLE.name} holds {len(documents)} documents"
     secret = documents[0]
     assert secret.get("kind") == "Secret" and name_of(secret) == CONSOLE_SECRET
-    assert namespace_of(secret) == APPS, (
-        f"{CONSOLE_SECRET} is in {namespace_of(secret)}"
-    )
+    assert namespace_of(secret) == APPS, f"{CONSOLE_SECRET} is in {namespace_of(secret)}"
     values = {**secret.get("data", {}), **secret.get("stringData", {})}
-    assert set(values) == CONSOLE_SECRET_KEYS, (
-        f"{CONSOLE_SECRET} carries {sorted(values)}"
-    )
+    assert set(values) == CONSOLE_SECRET_KEYS, f"{CONSOLE_SECRET} carries {sorted(values)}"
     assert all(str(value) == PLACEHOLDER for value in values.values()), values
 
     rows = [
@@ -592,9 +547,7 @@ def test_the_console_reads_its_config_map_and_console_secrets_by_env_from(
         f"the `{CONSOLE_SECRET}` row does not pair CONSOLE_ADMIN_KEY with "
         f"{GATEWAY_ADMIN_DIGEST_KEY}"
     )
-    assert "envFrom" in rows[0], (
-        f"the `{CONSOLE_SECRET}` row does not say it is read by envFrom"
-    )
+    assert "envFrom" in rows[0], f"the `{CONSOLE_SECRET}` row does not say it is read by envFrom"
 
 
 def test_the_three_console_routers_publish_one_host_with_their_paths_middlewares_and_tls(
@@ -617,9 +570,7 @@ def test_the_three_console_routers_publish_one_host_with_their_paths_middlewares
 
     for ingress_name, expected in CONSOLE_ROUTERS.items():
         ingress = sole_object(built, "Ingress", ingress_name)
-        issuer = (
-            ingress["metadata"].get("annotations", {}).get(CLUSTER_ISSUER_ANNOTATION)
-        )
+        issuer = ingress["metadata"].get("annotations", {}).get(CLUSTER_ISSUER_ANNOTATION)
         assert issuer == CLUSTER_ISSUER, f"{ingress_name} is issued by {issuer!r}"
 
         assert router_paths(ingress) == [
@@ -641,9 +592,7 @@ def test_the_three_console_routers_publish_one_host_with_their_paths_middlewares
         assert parsed == {(APPS, name) for name in expected["middlewares"]}, (
             f"{ingress_name} names {sorted(parsed)}"
         )
-        assert parsed <= emitted, (
-            f"{ingress_name} names unresolved {sorted(parsed - emitted)}"
-        )
+        assert parsed <= emitted, f"{ingress_name} names unresolved {sorted(parsed - emitted)}"
 
 
 def test_the_login_router_matches_exactly_api_login(
@@ -723,17 +672,11 @@ def test_the_console_admits_only_traefik_and_reaches_only_the_gateway(
     peers: set[tuple[str, str]] = set()
     for rule in rules:
         listed = peers_of(rule, "from")
-        assert listed, (
-            "console-ingress has a rule with no `from`, which admits everyone"
-        )
+        assert listed, "console-ingress has a rule with no `from`, which admits everyone"
         for peer in listed:
             peers |= peer_targets(built, peer, APPS)
-        assert declared_ports(rule, "apps/console-ingress") == [
-            ("TCP", CONTAINER_PORT_NAME)
-        ]
-        assert resolved_ports(built, ingress, rule) == {
-            CONSOLE: {("TCP", CONSOLE_PORT)}
-        }
+        assert declared_ports(rule, "apps/console-ingress") == [("TCP", CONTAINER_PORT_NAME)]
+        assert resolved_ports(built, ingress, rule) == {CONSOLE: {("TCP", CONSOLE_PORT)}}
     assert peers == {(KUBE_SYSTEM, ANY_POD)}, f"console-ingress admits {sorted(peers)}"
 
     egress = policy(built, APPS, "console-egress")
@@ -776,9 +719,7 @@ def test_the_gateway_ingress_still_admits_every_pod_in_apps(
     assert CONSOLE in matched_workloads(built, {}, APPS), f"{APPS} holds no console pod"
 
 
-def test_the_console_dockerfile_runs_the_standalone_server_as_uid_1000_on_3001() -> (
-    None
-):
+def test_the_console_dockerfile_runs_the_standalone_server_as_uid_1000_on_3001() -> None:
     """Decision A. Catches a floating `node:22` or `node:lts` base, a tag with no digest, a
     single-stage image carrying the whole build context, a runtime stage copying `node_modules`
     or the source tree, running as root, `HOSTNAME` left to the container hostname (the server
@@ -788,18 +729,14 @@ def test_the_console_dockerfile_runs_the_standalone_server_as_uid_1000_on_3001()
     assert len(parsed) == 2, f"the console Dockerfile has {len(parsed)} stages"
     for stage in parsed:
         tokens = without_flags(stage[0][1])
-        assert tokens and BASE_IMAGE.fullmatch(tokens[0]), (
-            f"a stage starts FROM {stage[0][1]!r}"
-        )
+        assert tokens and BASE_IMAGE.fullmatch(tokens[0]), f"a stage starts FROM {stage[0][1]!r}"
 
     runtime = parsed[-1]
     copies = [arguments for keyword, arguments in runtime if keyword in ("COPY", "ADD")]
     assert all(keyword != "ADD" for keyword, _ in runtime), "the runtime stage uses ADD"
     copied: set[str] = set()
     for arguments in copies:
-        assert "--from=" in arguments, (
-            f"the runtime stage copies from the context: {arguments}"
-        )
+        assert "--from=" in arguments, f"the runtime stage copies from the context: {arguments}"
         for source in without_flags(arguments)[:-1]:
             normalised = source.rstrip("/")
             matched = [
@@ -809,9 +746,7 @@ def test_the_console_dockerfile_runs_the_standalone_server_as_uid_1000_on_3001()
             ]
             assert matched, f"the runtime stage copies {source!r}"
             copied.update(matched)
-    assert copied >= REQUIRED_RUNTIME_COPY_SOURCES, (
-        f"the runtime stage copies only {copied}"
-    )
+    assert copied >= REQUIRED_RUNTIME_COPY_SOURCES, f"the runtime stage copies only {copied}"
 
     users = [arguments for keyword, arguments in runtime if keyword == "USER"]
     assert users and users[-1].split(":")[0] == "1000", f"the runtime runs as {users}"
@@ -821,17 +756,13 @@ def test_the_console_dockerfile_runs_the_standalone_server_as_uid_1000_on_3001()
         if keyword == "EXPOSE"
         for token in arguments.split()
     ]
-    assert exposed and all(
-        token.split("/")[0] == str(CONSOLE_PORT) for token in exposed
-    ), exposed
+    assert exposed and all(token.split("/")[0] == str(CONSOLE_PORT) for token in exposed), exposed
 
     environment: dict[str, str] = {}
     for keyword, arguments in runtime:
         if keyword == "ENV":
             environment.update(env_assignments(arguments))
-    assert {key: environment.get(key) for key in RUNTIME_ENV} == RUNTIME_ENV, (
-        environment
-    )
+    assert {key: environment.get(key) for key in RUNTIME_ENV} == RUNTIME_ENV, environment
 
     commands = [arguments for keyword, arguments in runtime if keyword == "CMD"]
     assert commands, "the runtime stage declares no CMD"
@@ -848,21 +779,11 @@ def test_the_console_dockerignore_keeps_env_files_node_modules_and_tests_out() -
     AFTER `.env.*`, because the last matching line wins and an earlier one is overridden."""
     entries = dockerignore_entries(read(CONSOLE_DOCKERIGNORE))
     missing = sorted(DOCKERIGNORE_EXCLUDED - set(entries))
-    assert missing == [], (
-        f"the console .dockerignore does not exclude {missing}: {entries}"
-    )
-    assert DOCKERIGNORE_KEPT in entries, (
-        f"the console .dockerignore drops .env.example: {entries}"
-    )
-    last_exclude = max(
-        index for index, entry in enumerate(entries) if entry == ".env.*"
-    )
-    last_keep = max(
-        index for index, entry in enumerate(entries) if entry == DOCKERIGNORE_KEPT
-    )
-    assert last_keep > last_exclude, (
-        f"`.env.*` overrides `{DOCKERIGNORE_KEPT}`: {entries}"
-    )
+    assert missing == [], f"the console .dockerignore does not exclude {missing}: {entries}"
+    assert DOCKERIGNORE_KEPT in entries, f"the console .dockerignore drops .env.example: {entries}"
+    last_exclude = max(index for index, entry in enumerate(entries) if entry == ".env.*")
+    last_keep = max(index for index, entry in enumerate(entries) if entry == DOCKERIGNORE_KEPT)
+    assert last_keep > last_exclude, f"`.env.*` overrides `{DOCKERIGNORE_KEPT}`: {entries}"
 
 
 def test_next_config_builds_standalone() -> None:
@@ -870,7 +791,5 @@ def test_next_config_builds_standalone() -> None:
     the image's CMD, and the edit dropping `reactStrictMode: true` or `poweredByHeader: false`,
     the second of which advertises the framework in every response header."""
     text = read(NEXT_CONFIG)
-    missing = [
-        pattern.pattern for pattern in NEXT_CONFIG_REQUIRED if not pattern.search(text)
-    ]
+    missing = [pattern.pattern for pattern in NEXT_CONFIG_REQUIRED if not pattern.search(text)]
     assert missing == [], f"next.config.ts does not carry {missing}"

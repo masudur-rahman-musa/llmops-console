@@ -114,9 +114,7 @@ def test_the_boundaries_in_the_script_produce_80_10_10_and_a_20_percent_repeat(
         "__ENV.GATEWAY_URL",
     ],
 )
-def test_requests_use_the_load_tenant_aliases_and_environment_key(
-    script: str, pinned: str
-) -> None:
+def test_requests_use_the_load_tenant_aliases_and_environment_key(script: str, pinned: str) -> None:
     """Criteria 12 and 18: catches a different tenant or alias (budget and cache
     booked elsewhere), or a key or address written into the script."""
     assert pinned in script

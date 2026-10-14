@@ -269,9 +269,7 @@ class Run:
 
     def exposure(self) -> str:
         """Everything the harness could have been handed: docker's argv and its environment."""
-        recorded = [
-            path.read_text(encoding="utf-8") for path in sorted(self.env_dir.iterdir())
-        ]
+        recorded = [path.read_text(encoding="utf-8") for path in sorted(self.env_dir.iterdir())]
         return "\n".join([*self.log(), *recorded])
 
     def evidence(self) -> Path:
@@ -352,9 +350,7 @@ def calls(run: Run, tool: str) -> list[tuple[int, list[str]]]:
 def runs(tokens: list[str], *words: str) -> bool:
     """`words` appear consecutively anywhere in `tokens`: `docker compose up` counts."""
     width = len(words)
-    return any(
-        tokens[i : i + width] == list(words) for i in range(len(tokens) - width + 1)
-    )
+    return any(tokens[i : i + width] == list(words) for i in range(len(tokens) - width + 1))
 
 
 def flag(tokens: list[str], name: str) -> str | None:
@@ -378,9 +374,7 @@ def policy_builds(run: Run) -> list[tuple[int, list[str]]]:
 
 def eval_runs(run: Run) -> list[tuple[int, list[str]]]:
     """Every `ops-eval run ...` call, whether reached directly or through `uv run`."""
-    return [
-        (index, tokens) for index, tokens in calls(run, "ops-eval") if "run" in tokens
-    ]
+    return [(index, tokens) for index, tokens in calls(run, "ops-eval") if "run" in tokens]
 
 
 def flushes(run: Run) -> list[int]:
@@ -404,8 +398,7 @@ def terraform_calls(run: Run, verb: str) -> list[tuple[int, list[str]]]:
         for index, tokens in calls(run, "terraform")
         if verb in tokens
         and any(
-            token.startswith("-chdir=")
-            and token.rstrip("/").endswith("infra/terraform/aws-gpu")
+            token.startswith("-chdir=") and token.rstrip("/").endswith("infra/terraform/aws-gpu")
             for token in tokens
         )
     ]
@@ -416,15 +409,11 @@ def dated_dir(run: Run) -> Path:
     evidence = run.evidence()
     assert evidence.is_dir(), f"the run wrote no {evidence}"
     dated = [
-        path
-        for path in evidence.iterdir()
-        if path.is_dir() and DATE_NAME.fullmatch(path.name)
+        path for path in evidence.iterdir() if path.is_dir() and DATE_NAME.fullmatch(path.name)
     ]
     assert len(dated) == 1, f"{len(dated)} dated directories: {dated}"
     allowed = {run.started.isoformat(), run.finished.isoformat()}
-    assert dated[0].name in allowed, (
-        f"{dated[0].name} is not today's UTC date {sorted(allowed)}"
-    )
+    assert dated[0].name in allowed, f"{dated[0].name} is not today's UTC date {sorted(allowed)}"
     return dated[0]
 
 
@@ -472,9 +461,7 @@ def readme_section(text: str, word: str) -> list[str]:
 @pytest.fixture(scope="module")
 def option_run(tmp_path_factory: pytest.TempPathFactory) -> Run:
     """`option cheap-api --target <url>` against fakes that all succeed, made ONCE."""
-    return invoke(
-        tmp_path_factory.mktemp("option"), ["option", OPTION, "--target", TARGET_URL]
-    )
+    return invoke(tmp_path_factory.mktemp("option"), ["option", OPTION, "--target", TARGET_URL])
 
 
 @pytest.fixture(scope="module")
@@ -544,9 +531,7 @@ def test_cost_refuses_a_malformed_or_empty_window_before_any_tool(
         pytest.param(["cost", "2026-09-01"], id="cost-without-end"),
     ],
 )
-def test_a_missing_or_unknown_subcommand_is_refused(
-    tmp_path: Path, arguments: list[str]
-) -> None:
+def test_a_missing_or_unknown_subcommand_is_refused(tmp_path: Path, arguments: list[str]) -> None:
     """The argument shape behind criteria 43, 47 and 54. Catches a dispatcher whose default
     branch falls through to `option` or `gpu`, and a missing positional expanding to an empty
     string that a later `terraform apply` never sees refused."""
@@ -615,9 +600,7 @@ def test_option_runs_the_named_set_as_the_evals_tenant_with_the_policy_it_built(
     evaluations = eval_runs(option_run)
     assert len(builds) == 1 and len(evaluations) == 1, option_run.log()
     arguments = evaluations[0][1]
-    built_for = [
-        token for token in builds[0][1] if not token.endswith("tradeoff_policy.py")
-    ]
+    built_for = [token for token in builds[0][1] if not token.endswith("tradeoff_policy.py")]
 
     assert flag(arguments, "--tenant") == TENANT
     assert str(flag(arguments, "--set")).endswith(SET_PATH)
@@ -637,16 +620,12 @@ def test_a_failing_eval_still_tears_down_and_reports_the_targets_own_exit_code(
     files are written and the table reads them. Catches `ops-eval ... || true`, which hides a
     target that never answered at all, a `set -e` script that exits before the teardown and
     leaves the stack up for the next option, and an exit code invented by the wrapper."""
-    run = invoke(
-        tmp_path, ["option", OPTION, "--target", TARGET_URL], FAKE_FAIL_OPS_EVAL="1"
-    )
+    run = invoke(tmp_path, ["option", OPTION, "--target", TARGET_URL], FAKE_FAIL_OPS_EVAL="1")
     downs = [(i, t) for i, t in calls(run, "docker") if runs(t, "down")]
     evaluations = eval_runs(run)
     reports = sorted(path.name for path in run.evidence().rglob("report.*"))
 
-    assert run.completed.returncode == 1, (
-        f"exit {run.completed.returncode}, not the target's 1"
-    )
+    assert run.completed.returncode == 1, f"exit {run.completed.returncode}, not the target's 1"
     assert evaluations, f"ops-eval was never called: {run.log()}"
     assert downs, f"no teardown after the failed run: {run.log()}"
     assert downs[-1][0] > evaluations[0][0]
@@ -668,8 +647,7 @@ def test_the_generated_tenant_key_reaches_the_harness_and_no_file(
     written = [
         str(path.relative_to(option_run.root))
         for path in sorted(option_run.root.rglob("*"))
-        if path.is_file()
-        and FAKE_TENANT_KEY in path.read_text(encoding="utf-8", errors="replace")
+        if path.is_file() and FAKE_TENANT_KEY in path.read_text(encoding="utf-8", errors="replace")
     ]
 
     assert digest in exposure, "the gateway was never handed the key's digest"
@@ -702,32 +680,22 @@ def test_gpu_applies_connects_deploys_waits_measures_and_destroys_in_that_order(
         if runs(t, "apply") and any(token.endswith("infra/k8s/gpu") for token in t)
     ]
     waits = [
-        (i, t)
-        for i, t in calls(gpu_run, "kubectl")
-        if "wait" in t or runs(t, "rollout", "status")
+        (i, t) for i, t in calls(gpu_run, "kubectl") if "wait" in t or runs(t, "rollout", "status")
     ]
     evaluations = eval_runs(gpu_run)
-    destroys = [
-        (i, t) for i, t in terraform_calls(gpu_run, "destroy") if "-auto-approve" in t
-    ]
+    destroys = [(i, t) for i, t in terraform_calls(gpu_run, "destroy") if "-auto-approve" in t]
 
     assert len(applies) == 1, f"{len(applies)} terraform apply calls: {log}"
     assert "-auto-approve" not in applies[0][1], "apply does not wait for the owner"
     assert fetches, f"the kubeconfig is never fetched: {log}"
-    assert len(deploys) == 1, (
-        f"{len(deploys)} `kubectl apply -k infra/k8s/gpu` calls: {log}"
-    )
-    assert len(waits) >= 2, (
-        f"{len(waits)} waits, expected the fetch Job and the rollout: {log}"
-    )
+    assert len(deploys) == 1, f"{len(deploys)} `kubectl apply -k infra/k8s/gpu` calls: {log}"
+    assert len(waits) >= 2, f"{len(waits)} waits, expected the fetch Job and the rollout: {log}"
     assert len(evaluations) == 1, f"{len(evaluations)} ops-eval run calls: {log}"
     assert len(destroys) == 1, f"{len(destroys)} destroy -auto-approve calls: {log}"
 
     assert applies[0][0] < fetches[0][0] < deploys[0][0] < waits[0][0]
     assert waits[1][0] < evaluations[0][0] < destroys[0][0]
-    assert destroys[0][0] == len(log) - 1, (
-        f"a call after destroy: {log[destroys[0][0] :]}"
-    )
+    assert destroys[0][0] == len(log) - 1, f"a call after destroy: {log[destroys[0][0] :]}"
 
 
 def test_gpu_measures_the_gpu_option(gpu_run: Run) -> None:
@@ -752,9 +720,7 @@ def test_a_failing_kubectl_still_destroys_the_instance(tmp_path: Path) -> None:
     succeed, so the only thing that can stop the destroy is the missing trap."""
     run = invoke(tmp_path, ["gpu", VALID_SHA], FAKE_FAIL_KUBECTL="1")
     applies = terraform_calls(run, "apply")
-    destroys = [
-        (i, t) for i, t in terraform_calls(run, "destroy") if "-auto-approve" in t
-    ]
+    destroys = [(i, t) for i, t in terraform_calls(run, "destroy") if "-auto-approve" in t]
 
     assert run.completed.returncode != 0, "a failed kubectl reported success"
     assert len(applies) == 1, f"no apply before the failure: {run.log()}"
@@ -784,8 +750,7 @@ def test_every_captured_account_id_is_redacted(gpu_run: Run) -> None:
     leaking = [
         str(path.relative_to(directory))
         for path in sorted(directory.rglob("*"))
-        if path.is_file()
-        and ACCOUNT_ID in path.read_text(encoding="utf-8", errors="replace")
+        if path.is_file() and ACCOUNT_ID in path.read_text(encoding="utf-8", errors="replace")
     ]
     unredacted = [
         name
@@ -834,9 +799,7 @@ def test_cost_queries_the_whole_account_daily_by_service(tmp_path: Path) -> None
 # The scripts as text
 
 
-def test_both_scripts_are_executable_and_never_trace_or_name_the_default_kubeconfig() -> (
-    None
-):
+def test_both_scripts_are_executable_and_never_trace_or_name_the_default_kubeconfig() -> None:
     """Criterion 51. Catches `set -x` or `set -euxo pipefail`, which prints every expanded
     command - the tenant key among them - to the owner's terminal and scrollback, `.kube/config`
     named anywhere, and either file committed without its execute bit, where `make
@@ -869,9 +832,7 @@ def test_no_file_this_plan_writes_carries_a_token_shaped_literal() -> None:
     findings = [
         f"{path.relative_to(REPO_ROOT)}: {name}"
         for path in files
-        for name, value in ASSIGNMENT.findall(
-            path.read_text(encoding="utf-8", errors="replace")
-        )
+        for name, value in ASSIGNMENT.findall(path.read_text(encoding="utf-8", errors="replace"))
         if SECRETISH_NAME.fullmatch(name) and TOKEN_LITERAL.fullmatch(value)
     ]
 
@@ -897,9 +858,7 @@ def test_the_overlay_adds_exactly_the_stub_service() -> None:
     assert str(context).rstrip("/").endswith(STUB_BUILD_DIR), f"built from {context}"
 
 
-def test_the_overlay_mounts_the_effective_policy_read_only_and_points_the_gateway_at_it() -> (
-    None
-):
+def test_the_overlay_mounts_the_effective_policy_read_only_and_points_the_gateway_at_it() -> None:
     """Criteria 32 and 33. Catches the policy mounted read-write (the gateway process could
     rewrite the file the measurement is defined by), the mount and `OPSCONSOLE_ROUTING_POLICY_PATH`
     naming different paths - the gateway then silently loads the shipped `routing.yaml` and every
@@ -909,9 +868,7 @@ def test_the_overlay_mounts_the_effective_policy_read_only_and_points_the_gatewa
     environment = gateway.get("environment") or {}
     if isinstance(environment, list):
         environment = dict(
-            entry.split("=", 1)
-            for entry in environment
-            if isinstance(entry, str) and "=" in entry
+            entry.split("=", 1) for entry in environment if isinstance(entry, str) and "=" in entry
         )
     mounts = [str(entry) for entry in gateway.get("volumes") or []]
     read_only = [entry for entry in mounts if entry.endswith(":ro")]
@@ -919,9 +876,7 @@ def test_the_overlay_mounts_the_effective_policy_read_only_and_points_the_gatewa
 
     assert target, f"{POLICY_ENV} is not set on the gateway"
     assert len(read_only) == len(mounts) == 1, f"gateway volumes: {mounts}"
-    assert read_only[0].split(":")[1] == target, (
-        f"{read_only[0]} does not mount {target}"
-    )
+    assert read_only[0].split(":")[1] == target, f"{read_only[0]} does not mount {target}"
     assert "host.docker.internal:host-gateway" in [
         str(entry) for entry in gateway.get("extra_hosts") or []
     ], f"extra_hosts: {gateway.get('extra_hosts')}"
@@ -937,9 +892,7 @@ def test_the_overlay_publishes_no_port_the_base_stack_already_publishes() -> Non
     base = host_ports(BASE_COMPOSE)
     overlay = host_ports(COMPOSE_OVERLAY)
 
-    assert base == set(BASE_HOST_PORTS), (
-        f"docker-compose.yml now publishes {sorted(base)}"
-    )
+    assert base == set(BASE_HOST_PORTS), f"docker-compose.yml now publishes {sorted(base)}"
     assert overlay & base == set(), f"the overlay reuses {sorted(overlay & base)}"
     assert overlay <= {STUB_PORT}, f"the overlay publishes {sorted(overlay)}"
 
@@ -954,9 +907,7 @@ def test_the_overlay_publishes_no_port_the_base_stack_already_publishes() -> Non
 # The manifest, the Makefile, the workflows and the two READMEs
 
 
-def test_the_manifest_names_the_four_options_in_order_against_the_stand_in_set() -> (
-    None
-):
+def test_the_manifest_names_the_four_options_in_order_against_the_stand_in_set() -> None:
     """Criteria 58 and 59, and a project rule's spirit about published numbers. Catches the
     example manifest copied across with its `helpdesk-golden-v1.jsonl` set name (decision E: the
     Helpdesk set does not exist yet), the options reordered so the table's rows do not match
@@ -983,9 +934,7 @@ def test_the_manifest_names_the_four_options_in_order_against_the_stand_in_set()
     self_hosted = [option for option in options if option["kind"] == "self_hosted"]
     assert len(self_hosted) == 2, [option["id"] for option in self_hosted]
     for option in self_hosted:
-        assert str(option["hourly_usd"]) != PLACEHOLDER_HOURLY, (
-            f"{option['id']} keeps the example"
-        )
+        assert str(option["hourly_usd"]) != PLACEHOLDER_HOURLY, f"{option['id']} keeps the example"
         assert NOTE_DATE.search(str(option["notes"])) is not None, option["notes"]
 
 
@@ -995,13 +944,9 @@ def test_each_tradeoff_target_calls_the_script(target: str, subcommand: str) -> 
     excluded, a project rule), the subcommands swapped between targets, and `||` in a recipe,
     which reports success for a measurement run that failed."""
     lines = [
-        line
-        for line in recipe(read(MAKEFILE), target)
-        if not line.lstrip("@-").startswith("echo")
+        line for line in recipe(read(MAKEFILE), target) if not line.lstrip("@-").startswith("echo")
     ]
-    calling = [
-        line for line in lines if f"infra/scripts/tradeoff_run.sh {subcommand}" in line
-    ]
+    calling = [line for line in lines if f"infra/scripts/tradeoff_run.sh {subcommand}" in line]
 
     assert calling, f"{target}: {lines}"
     assert all("||" not in line for line in lines), f"{target}: {lines}"
@@ -1025,27 +970,21 @@ def test_no_workflow_names_the_measurement_tooling() -> None:
     assert naming == [], f"workflows naming the measurement tooling: {naming}"
 
 
-def test_the_run_readme_states_the_methodology_the_numbers_have_to_be_read_with() -> (
-    None
-):
+def test_the_run_readme_states_the_methodology_the_numbers_have_to_be_read_with() -> None:
     """Criterion 62 and risk 4. Ten cases move `decision_accuracy` in ten-point steps and one
     sequential stream measures no concurrency, so a table published without those two sentences
     implies a precision it has not got. Catches a README that lists the commands and leaves the
     methodology out, and one whose cost table is missing entirely."""
     text = read(RUN_README)
     folded = text.casefold()
-    missing = [
-        word for word in (SET_NAME, "sequential") if word.casefold() not in folded
-    ]
+    missing = [word for word in (SET_NAME, "sequential") if word.casefold() not in folded]
 
     assert missing == [], f"the run README does not name {missing}"
     assert all(option_id in text for option_id in OPTION_IDS), text[:200]
     assert "|" in text, "the run README carries no cost table"
 
 
-def test_readme_section_seven_links_the_table_and_marks_the_conclusion_pending() -> (
-    None
-):
+def test_readme_section_seven_links_the_table_and_marks_the_conclusion_pending() -> None:
     """Criterion 63 and decision G. SPEC section 21 fixes this section's position, so the
     heading and the link land with the tooling and the run replaces ONE line. Catches the
     section added with a conclusion already written (a claim about numbers nobody has measured),

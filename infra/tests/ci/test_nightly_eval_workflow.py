@@ -87,11 +87,7 @@ def test_the_workflow_triggers_on_a_schedule_and_manually(
     block = trigger(workflow)
     assert "schedule" in block, "the workflow declares no schedule trigger"
     assert "workflow_dispatch" in block, "the workflow cannot be run by hand"
-    crons = [
-        str(entry.get("cron", ""))
-        for entry in block["schedule"]
-        if isinstance(entry, dict)
-    ]
+    crons = [str(entry.get("cron", "")) for entry in block["schedule"] if isinstance(entry, dict)]
     assert any(crons), "the schedule trigger names no cron expression"
 
 
@@ -121,13 +117,9 @@ def test_the_job_invokes_ops_eval_run_with_the_nightly_run_kind(
     and its `quantile_over_time` window are read against."""
     scripts = [run_of(step) for step in steps(jobs["nightly-eval"])]
     matches = [
-        script
-        for script in scripts
-        if "ops-eval run" in script and "--run-kind nightly" in script
+        script for script in scripts if "ops-eval run" in script and "--run-kind nightly" in script
     ]
-    assert len(matches) == 1, (
-        f"{len(matches)} steps run `ops-eval run --run-kind nightly`"
-    )
+    assert len(matches) == 1, f"{len(matches)} steps run `ops-eval run --run-kind nightly`"
 
 
 def test_the_job_passes_a_pushgateway_url(jobs: dict[str, Any]) -> None:

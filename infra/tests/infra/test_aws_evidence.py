@@ -1,4 +1,5 @@
-r"""`infra/scripts/aws_evidence.sh` and `infra/k8s/aws`: the one-off AWS evidence run, before it runs.
+r"""`infra/scripts/aws_evidence.sh` and `infra/k8s/aws`: the one-off AWS evidence run,
+before it runs.
 
 The run itself is a human action against a real account, so what can be proven
 here is the tooling around it, in two halves.
@@ -93,7 +94,9 @@ RDS_SECRET_ARN = "arn:aws:secretsmanager:eu-central-1:123456789012:secret:rds!db
 #: The role ARN the fake `aws iam get-role` prints; IRSA needs it on the service account.
 BACKUPS_ROLE_ARN = "arn:aws:iam::123456789012:role/aioc-evidence-backups"
 
-REDIS_URL = "OPSCONSOLE_REDIS_URL=rediss://master.aioc-evidence.abc123.euc1.cache.amazonaws.com:6379/0"
+REDIS_URL = (
+    "OPSCONSOLE_REDIS_URL=rediss://master.aioc-evidence.abc123.euc1.cache.amazonaws.com:6379/0"
+)
 GATEWAY_IMAGE = "ghcr.io/masudur-rahman-musa/ai-operations-console/gateway"
 
 #: The literals the Secret on stdin carries (criteria 6 to 8).
@@ -217,10 +220,7 @@ class Run:
 
     def stdins(self) -> list[str]:
         """Every stdin a `kubectl ... -f -` call received."""
-        return [
-            path.read_text(encoding="utf-8")
-            for path in sorted(self.stdin_dir.iterdir())
-        ]
+        return [path.read_text(encoding="utf-8") for path in sorted(self.stdin_dir.iterdir())]
 
     def seen_kubeconfigs(self) -> list[str]:
         """Every kubeconfig path the fake `aws` found a directory for at call time."""
@@ -299,9 +299,7 @@ def calls(run: Run, tool: str) -> list[tuple[int, list[str]]]:
 def runs(tokens: list[str], *words: str) -> bool:
     """`words` appear consecutively anywhere in `tokens`: `kubectl -n apps set env` counts."""
     width = len(words)
-    return any(
-        tokens[i : i + width] == list(words) for i in range(len(tokens) - width + 1)
-    )
+    return any(tokens[i : i + width] == list(words) for i in range(len(tokens) - width + 1))
 
 
 def option(tokens: list[str], name: str) -> str | None:
@@ -321,8 +319,7 @@ def terraform_calls(run: Run, verb: str) -> list[tuple[int, list[str]]]:
         for index, tokens in calls(run, "terraform")
         if verb in tokens
         and any(
-            token.startswith("-chdir=")
-            and token.rstrip("/").endswith("infra/terraform/aws")
+            token.startswith("-chdir=") and token.rstrip("/").endswith("infra/terraform/aws")
             for token in tokens
         )
     ]
@@ -333,23 +330,17 @@ def dated_dir(run: Run) -> Path:
     evidence = run.evidence()
     assert evidence.is_dir(), f"the run wrote no {evidence}"
     dated = [
-        path
-        for path in evidence.iterdir()
-        if path.is_dir() and DATE_NAME.fullmatch(path.name)
+        path for path in evidence.iterdir() if path.is_dir() and DATE_NAME.fullmatch(path.name)
     ]
     assert len(dated) == 1, f"{len(dated)} dated evidence directories: {dated}"
     allowed = {run.started.isoformat(), run.finished.isoformat()}
-    assert dated[0].name in allowed, (
-        f"{dated[0].name} is not today's UTC date {sorted(allowed)}"
-    )
+    assert dated[0].name in allowed, f"{dated[0].name} is not today's UTC date {sorted(allowed)}"
     return dated[0]
 
 
 def documents(path: Path) -> list[dict[str, Any]]:
     """Every mapping document in a multi-document YAML file."""
-    return [
-        doc for doc in yaml.safe_load_all(read(path)) if isinstance(doc, dict) and doc
-    ]
+    return [doc for doc in yaml.safe_load_all(read(path)) if isinstance(doc, dict) and doc]
 
 
 def identity(document: dict[str, Any]) -> tuple[str, str, str]:
@@ -371,29 +362,16 @@ def the_one(path: Path, kind: str, name: str) -> dict[str, Any]:
 
 def volume(document: dict[str, Any], name: str) -> dict[str, Any]:
     """The pod template's volume `name`."""
-    volumes = (
-        document.get("spec", {}).get("template", {}).get("spec", {}).get("volumes")
-        or []
-    )
-    matched = [
-        entry
-        for entry in volumes
-        if isinstance(entry, dict) and entry.get("name") == name
-    ]
-    assert len(matched) == 1, (
-        f"{identity(document)} has {len(matched)} volumes named {name}"
-    )
+    volumes = document.get("spec", {}).get("template", {}).get("spec", {}).get("volumes") or []
+    matched = [entry for entry in volumes if isinstance(entry, dict) and entry.get("name") == name]
+    assert len(matched) == 1, f"{identity(document)} has {len(matched)} volumes named {name}"
     return matched[0]
 
 
 def image_entry(path: Path, name: str) -> dict[str, Any]:
     """The `images:` entry `name` of a kustomization."""
     images = load_yaml(path).get("images") or []
-    matched = [
-        entry
-        for entry in images
-        if isinstance(entry, dict) and entry.get("name") == name
-    ]
+    matched = [entry for entry in images if isinstance(entry, dict) and entry.get("name") == name]
     assert len(matched) == 1, f"{path} has {len(matched)} image entries named {name}"
     return matched[0]
 
@@ -468,9 +446,7 @@ def test_cost_refuses_a_malformed_or_empty_window_before_any_tool(
         pytest.param(["cost", "2026-09-01"], id="cost-without-end"),
     ],
 )
-def test_a_missing_or_unknown_subcommand_is_refused(
-    tmp_path: Path, arguments: list[str]
-) -> None:
+def test_a_missing_or_unknown_subcommand_is_refused(tmp_path: Path, arguments: list[str]) -> None:
     """Criterion 1's input validation for the argument shape. Catches a dispatcher whose default
     branch falls through to `run`, and a missing positional expanding to an empty string that a
     later `terraform apply` never sees refused."""
@@ -493,13 +469,9 @@ def test_run_applies_connects_deploys_and_destroys_in_that_order(happy: Run) -> 
     log = happy.log()
     applies = terraform_calls(happy, "apply")
     outputs = [(i, t) for i, t in terraform_calls(happy, "output") if "-json" in t]
-    connects = [
-        (i, t) for i, t in calls(happy, "aws") if runs(t, "eks", "update-kubeconfig")
-    ]
+    connects = [(i, t) for i, t in calls(happy, "aws") if runs(t, "eks", "update-kubeconfig")]
     kubectl = calls(happy, "kubectl")
-    destroys = [
-        (i, t) for i, t in terraform_calls(happy, "destroy") if "-auto-approve" in t
-    ]
+    destroys = [(i, t) for i, t in terraform_calls(happy, "destroy") if "-auto-approve" in t]
 
     assert len(applies) == 1, f"{len(applies)} terraform apply calls: {log}"
     assert "-auto-approve" not in applies[0][1], "apply does not wait for the owner"
@@ -512,9 +484,7 @@ def test_run_applies_connects_deploys_and_destroys_in_that_order(happy: Run) -> 
 
     assert applies[0][0] < outputs[0][0] < connects[0][0] < kubectl[0][0]
     assert kubectl[-1][0] < destroys[0][0]
-    assert destroys[0][0] == len(log) - 1, (
-        f"a call after destroy: {log[destroys[0][0] :]}"
-    )
+    assert destroys[0][0] == len(log) - 1, f"a call after destroy: {log[destroys[0][0] :]}"
 
 
 def test_a_failing_kubectl_still_destroys_the_cluster(tmp_path: Path) -> None:
@@ -523,9 +493,7 @@ def test_a_failing_kubectl_still_destroys_the_cluster(tmp_path: Path) -> None:
     for terraform and aws succeed, so the only thing that can stop destroy is the missing trap."""
     run = invoke(tmp_path, ["run", VALID_SHA], FAKE_FAIL_KUBECTL="1")
     applies = terraform_calls(run, "apply")
-    destroys = [
-        (i, t) for i, t in terraform_calls(run, "destroy") if "-auto-approve" in t
-    ]
+    destroys = [(i, t) for i, t in terraform_calls(run, "destroy") if "-auto-approve" in t]
 
     assert run.completed.returncode != 0, "a failed kubectl reported success"
     assert len(applies) == 1, f"no apply before the failure: {run.log()}"
@@ -539,18 +507,14 @@ def test_the_kubeconfig_lives_in_a_temp_dir_removed_on_exit(happy: Run) -> None:
     into the evidence folder that is about to be committed, a path whose directory was never
     created, and a temp directory the EXIT trap never removes."""
     succeeded(happy)
-    connects = [
-        t for _i, t in calls(happy, "aws") if runs(t, "eks", "update-kubeconfig")
-    ]
+    connects = [t for _i, t in calls(happy, "aws") if runs(t, "eks", "update-kubeconfig")]
     assert len(connects) == 1, f"{len(connects)} update-kubeconfig calls"
     path = option(connects[0], "--kubeconfig")
     assert path is not None, "update-kubeconfig writes the default kubeconfig"
     kubeconfig = Path(path)
 
     assert kubeconfig.is_absolute(), f"{path} is relative to wherever the owner stands"
-    assert happy.seen_kubeconfigs() == [path], (
-        "the kubeconfig directory did not exist at call"
-    )
+    assert happy.seen_kubeconfigs() == [path], "the kubeconfig directory did not exist at call"
     assert not kubeconfig.parent.exists(), f"{kubeconfig.parent} survived the run"
     assert ".kube" not in kubeconfig.parts, f"{path} is under a .kube directory"
     assert not kubeconfig.is_relative_to(happy.home), f"{path} is under HOME"
@@ -572,15 +536,11 @@ def test_the_secret_is_built_from_the_rds_secret_and_piped_on_stdin(happy: Run) 
     secrets = [text for text in happy.stdins() if "gateway-secrets" in text]
 
     assert len(fetches) == 1, f"{len(fetches)} get-secret-value calls"
-    assert RDS_SECRET_ARN in fetches[0], (
-        f"the secret fetched is not the RDS one: {fetches[0]}"
-    )
+    assert RDS_SECRET_ARN in fetches[0], f"the secret fetched is not the RDS one: {fetches[0]}"
     assert len(secrets) == 1, f"{len(secrets)} kubectl stdins carry gateway-secrets"
     missing = [literal for literal in SECRET_LITERALS if literal not in secrets[0]]
     assert missing == [], f"the Secret lacks {missing}"
-    assert TENANT_DIGEST.search(secrets[0]) is not None, (
-        "no evals:<sha256> in the Secret"
-    )
+    assert TENANT_DIGEST.search(secrets[0]) is not None, "no evals:<sha256> in the Secret"
 
 
 def test_each_run_generates_a_fresh_tenant_key(happy: Run, tmp_path: Path) -> None:
@@ -591,9 +551,7 @@ def test_each_run_generates_a_fresh_tenant_key(happy: Run, tmp_path: Path) -> No
     succeeded(second)
 
     def digest(run: Run) -> str:
-        found = {
-            m.group(0) for text in run.stdins() for m in TENANT_DIGEST.finditer(text)
-        }
+        found = {m.group(0) for text in run.stdins() for m in TENANT_DIGEST.finditer(text)}
         assert len(found) == 1, f"{len(found)} tenant digests in one run: {found}"
         return found.pop()
 
@@ -613,9 +571,7 @@ def test_the_gateway_is_pointed_at_elasticache_over_tls_and_the_sha_image(
     image = re.compile(rf"(?:^|=){re.escape(GATEWAY_IMAGE)}:{VALID_SHA}$")
 
     assert any(REDIS_URL in t for t in set_env), f"no {REDIS_URL} in {set_env}"
-    assert any(image.search(token) for t in set_image for token in t), (
-        f"image: {set_image}"
-    )
+    assert any(image.search(token) for t in set_image for token in t), f"image: {set_image}"
 
 
 def test_the_backups_service_account_carries_the_role_arn_and_the_job_runs(
@@ -629,9 +585,7 @@ def test_the_backups_service_account_carries_the_role_arn_and_the_job_runs(
     annotation = f"eks.amazonaws.com/role-arn={BACKUPS_ROLE_ARN}"
 
     assert any("annotate" in line and annotation in line for line in kubectl), kubectl
-    assert any("infra/k8s/aws" in line for line in kubectl), (
-        "the overlay is never applied"
-    )
+    assert any("infra/k8s/aws" in line for line in kubectl), "the overlay is never applied"
     assert any("irsa" in line for line in kubectl), "the IRSA Job is never run"
 
 
@@ -655,13 +609,10 @@ def test_every_captured_account_id_is_redacted(happy: Run) -> None:
     leaking = [
         str(path.relative_to(directory))
         for path in sorted(directory.rglob("*"))
-        if path.is_file()
-        and ACCOUNT_ID in path.read_text(encoding="utf-8", errors="replace")
+        if path.is_file() and ACCOUNT_ID in path.read_text(encoding="utf-8", errors="replace")
     ]
     unredacted = [
-        name
-        for name in REDACTED_CAPTURES
-        if ACCOUNT_PLACEHOLDER not in read(directory / name)
+        name for name in REDACTED_CAPTURES if ACCOUNT_PLACEHOLDER not in read(directory / name)
     ]
 
     assert leaking == [], f"the account ID is in {leaking}"
@@ -676,8 +627,7 @@ def test_the_database_password_never_leaves_stdin(happy: Run) -> None:
     written = [
         str(path.relative_to(happy.root))
         for path in sorted(happy.root.rglob("*"))
-        if path.is_file()
-        and DB_PASSWORD in path.read_text(encoding="utf-8", errors="replace")
+        if path.is_file() and DB_PASSWORD in path.read_text(encoding="utf-8", errors="replace")
     ]
 
     assert DB_PASSWORD not in happy.completed.stdout, "the password is on stdout"
@@ -707,9 +657,7 @@ def test_cost_queries_the_whole_account_daily_by_service(tmp_path: Path) -> None
 # The script as text
 
 
-def test_the_script_is_executable_never_traces_and_never_names_the_default_kubeconfig() -> (
-    None
-):
+def test_the_script_is_executable_never_traces_and_never_names_the_default_kubeconfig() -> None:
     """Criteria 5 and 7. Catches `set -x` or `set -euxo pipefail` (every expanded command, the
     database URL included, printed to the owner's terminal and scrollback), `.kube/config`
     named anywhere, and the file committed without its execute bit, where `make aws-evidence`
@@ -743,15 +691,9 @@ def test_the_overlay_reuses_the_kind_llama_patch_by_path() -> None:
     emptyDir patch not wired into the overlay at all."""
     patches = load_yaml(AWS_KUSTOMIZATION).get("patches")
     assert isinstance(patches, list), "the overlay has no patches list"
-    by_path = {
-        str(entry.get("path")): entry for entry in patches if isinstance(entry, dict)
-    }
+    by_path = {str(entry.get("path")): entry for entry in patches if isinstance(entry, dict)}
     assert AWS_OVERLAY.is_dir(), f"{AWS_OVERLAY} does not exist"
-    copies = [
-        path
-        for path in AWS_OVERLAY.rglob("*")
-        if path.name == Path(KIND_LLAMA_PATCH).name
-    ]
+    copies = [path for path in AWS_OVERLAY.rglob("*") if path.name == Path(KIND_LLAMA_PATCH).name]
 
     assert KIND_LLAMA_PATCH in by_path, f"patches: {sorted(by_path)}"
     target = by_path[KIND_LLAMA_PATCH].get("target") or {}
@@ -892,9 +834,7 @@ def test_the_evidence_targets_call_the_script(target: str, command: str) -> None
     """Criterion 24. Catches a target that only prints its usage (an `echo` naming the script
     is excluded, a project rule), and the two subcommands swapped between the targets."""
     lines = [
-        line
-        for line in recipe(read(MAKEFILE), target)
-        if not line.lstrip("@-").startswith("echo")
+        line for line in recipe(read(MAKEFILE), target) if not line.lstrip("@-").startswith("echo")
     ]
 
     assert any(command in line for line in lines), f"{target}: {lines}"
@@ -927,8 +867,7 @@ def test_no_workflow_runs_the_evidence_tooling() -> None:
     naming = [
         path.name
         for path in files
-        if "aws-evidence" in (text := path.read_text(encoding="utf-8"))
-        or "aws_evidence" in text
+        if "aws-evidence" in (text := path.read_text(encoding="utf-8")) or "aws_evidence" in text
     ]
 
     assert naming == [], f"workflows naming the evidence tooling: {naming}"

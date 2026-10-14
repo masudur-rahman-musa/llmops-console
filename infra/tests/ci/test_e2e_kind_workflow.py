@@ -108,10 +108,7 @@ def test_both_images_are_built_locally_and_loaded_into_kind(
     scripts = [run_of(step) for step in steps(job)]
     build_scripts = " ".join(scripts)
     assert "docker build -t gateway:e2e-kind ." in build_scripts
-    assert (
-        "docker build -t eval-target-stub:e2e-kind backend/evals/target-stub"
-        in build_scripts
-    )
+    assert "docker build -t eval-target-stub:e2e-kind backend/evals/target-stub" in build_scripts
     load_steps = [script for script in scripts if "kind load docker-image" in script]
     assert len(load_steps) == 1
     assert "kind load docker-image gateway:e2e-kind" in load_steps[0]
@@ -136,10 +133,7 @@ def test_the_workflow_waits_for_the_gateway_and_stub_rollouts(
     """Criterion 3: both Deployments, each with the five-minute ceiling."""
     scripts = " ".join(run_of(step) for step in steps(job))
     assert "kubectl -n apps rollout status deployment/gateway --timeout=5m" in scripts
-    assert (
-        "kubectl -n apps rollout status deployment/eval-target-stub --timeout=5m"
-        in scripts
-    )
+    assert "kubectl -n apps rollout status deployment/eval-target-stub --timeout=5m" in scripts
 
 
 def test_the_run_reaches_the_gateway_through_a_port_forward_never_a_public_address(
@@ -161,11 +155,7 @@ def test_the_run_checks_the_gateway_with_the_model_free_smoke_script(
     against the forwarded gateway, and no step runs the golden set, whose cases
     all need that model and would fail every commit."""
     scripts = [run_of(step) for step in steps(job)]
-    smoke = [
-        script
-        for script in scripts
-        if f"{SMOKE_SCRIPT} http://127.0.0.1:18080" in script
-    ]
+    smoke = [script for script in scripts if f"{SMOKE_SCRIPT} http://127.0.0.1:18080" in script]
     assert len(smoke) == 1
     assert not any("ops-eval run" in script for script in scripts)
     assert (REPO_ROOT / SMOKE_SCRIPT).is_file()
@@ -177,9 +167,7 @@ def test_the_report_artifact_is_uploaded_even_when_the_run_fails(
     """Criterion 7: the unhappy path - a cluster-up failure, a rollout timeout or
     a failed case - still uploads the report, `eval-gate.yml`'s own reason:
     `always()` exactly, because `failure()` would drop it on the passing runs."""
-    uploads = [
-        step for step in steps(job) if "actions/upload-artifact" in uses_of(step)
-    ]
+    uploads = [step for step in steps(job) if "actions/upload-artifact" in uses_of(step)]
     assert len(uploads) == 1
     assert uploads[0]["if"] == "always()"
 

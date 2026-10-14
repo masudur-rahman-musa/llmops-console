@@ -108,9 +108,7 @@ def all_steps(jobs: dict[str, Any]) -> list[dict[str, Any]]:
 def step_using(jobs: dict[str, Any], action: str) -> dict[str, Any]:
     """The one step whose `uses` names `action`; a second one is a failure, not a pick."""
     matches = [step for step in all_steps(jobs) if action in uses_of(step)]
-    assert len(matches) == 1, (
-        f"expected exactly one step using {action}, found {len(matches)}"
-    )
+    assert len(matches) == 1, f"expected exactly one step using {action}, found {len(matches)}"
     return matches[0]
 
 
@@ -125,14 +123,8 @@ def overlay_image_name(image: str) -> str:
     """The `newName` of the `image` entry in the apps overlay's `images:` list."""
     images = load(KUSTOMIZATION)["images"]
     assert isinstance(images, list)
-    entries = [
-        entry
-        for entry in images
-        if isinstance(entry, dict) and entry.get("name") == image
-    ]
-    assert len(entries) == 1, (
-        f"the apps overlay does not carry exactly one `{image}` image"
-    )
+    entries = [entry for entry in images if isinstance(entry, dict) and entry.get("name") == image]
+    assert len(entries) == 1, f"the apps overlay does not carry exactly one `{image}` image"
     return str(entries[0]["newName"])
 
 
@@ -304,9 +296,7 @@ def test_every_published_tag_is_the_commit_sha(build: dict[str, Any]) -> None:
     SHA; `github.sha` truncated by an expression would still contain the fragment, which is
     why the neighbouring case pins the absence of floating names separately."""
     for line in tag_lines(build):
-        assert "github.sha" in tag_of(line), (
-            f"tag {tag_of(line)!r} does not come from the SHA"
-        )
+        assert "github.sha" in tag_of(line), f"tag {tag_of(line)!r} does not come from the SHA"
 
 
 @pytest.mark.parametrize("floating", ["latest", "main"])
@@ -380,9 +370,7 @@ def test_trivy_scans_the_image_the_build_just_pushed(
 
     assert repository_of(reference) == gateway_image_name()
     assert "github.sha" in tag_of(reference)
-    assert repository_of(reference) in {
-        repository_of(line) for line in tag_lines(build)
-    }
+    assert repository_of(reference) in {repository_of(line) for line in tag_lines(build)}
 
 
 def test_the_console_job_builds_the_console_dockerfile_for_the_live_nodes_architecture(
@@ -397,13 +385,9 @@ def test_the_console_job_builds_the_console_dockerfile_for_the_live_nodes_archit
     console_job = only_job(jobs, CONSOLE_JOB)
     build = with_of(step_using(console_job, BUILD_ACTION))
 
-    assert build["context"] == CONSOLE_CONTEXT, (
-        f"the console builds from {build['context']!r}"
-    )
+    assert build["context"] == CONSOLE_CONTEXT, f"the console builds from {build['context']!r}"
     assert build["file"] == CONSOLE_DOCKERFILE, f"the console builds {build['file']!r}"
-    assert (REPO_ROOT / CONSOLE_DOCKERFILE).is_file(), (
-        f"{CONSOLE_DOCKERFILE} does not exist"
-    )
+    assert (REPO_ROOT / CONSOLE_DOCKERFILE).is_file(), f"{CONSOLE_DOCKERFILE} does not exist"
     assert build["platforms"] == EXPECTED_PLATFORMS
     assert build["push"] is True
 
@@ -458,6 +442,6 @@ def test_the_console_job_scans_and_publishes_its_sbom(
     assert trivy["severity"] == "CRITICAL"
     assert trivy["exit-code"] == "1"
     assert trivy["ignore-unfixed"] is True
-    assert (
-        str(trivy["image-ref"]) == f"{CONSOLE_REPOSITORY}:{CONSOLE_TAG_EXPRESSION}"
-    ), f"the console job scans {trivy['image-ref']!r}"
+    assert str(trivy["image-ref"]) == f"{CONSOLE_REPOSITORY}:{CONSOLE_TAG_EXPRESSION}", (
+        f"the console job scans {trivy['image-ref']!r}"
+    )

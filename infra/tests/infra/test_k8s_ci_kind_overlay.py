@@ -67,9 +67,7 @@ EXCLUDED_NAMES: frozenset[str] = frozenset(
     }
 )
 
-EXCLUDED_KINDS: frozenset[str] = frozenset(
-    {"Ingress", "Middleware", "ClusterIssuer", "CronJob"}
-)
+EXCLUDED_KINDS: frozenset[str] = frozenset({"Ingress", "Middleware", "ClusterIssuer", "CronJob"})
 
 GATEWAY_IMAGE_TAG = "e2e-kind"
 STUB_IMAGE_TAG = "e2e-kind"
@@ -96,9 +94,7 @@ def built() -> list[dict[str, Any]]:
     the identical flag, pinned by `infra/tests/ci/test_e2e_kind_workflow.py`, so the two
     cannot disagree about how this directory is meant to be built."""
     if shutil.which("kubectl") is None:
-        pytest.skip(
-            "kubectl is not on PATH; CI's `k8s` job is the copy that cannot skip"
-        )
+        pytest.skip("kubectl is not on PATH; CI's `k8s` job is the copy that cannot skip")
     completed = subprocess.run(
         [
             "kubectl",
@@ -178,9 +174,7 @@ def test_the_gateway_image_is_the_locally_built_ci_tag(
 ) -> None:
     """Decision D: the gateway's image is what THIS workflow builds and
     `kind load docker-image`s, never a GHCR reference a PR run cannot publish to."""
-    container = _deployment(built, "gateway")["spec"]["template"]["spec"]["containers"][
-        0
-    ]
+    container = _deployment(built, "gateway")["spec"]["template"]["spec"]["containers"][0]
     assert container["image"] == f"gateway:{GATEWAY_IMAGE_TAG}"
 
 
@@ -189,9 +183,7 @@ def test_the_stub_image_is_the_locally_built_ci_tag(
 ) -> None:
     """The stub has no production counterpart to copy a tag from at all - this
     overlay is the only place its image is ever named."""
-    container = _deployment(built, "eval-target-stub")["spec"]["template"]["spec"][
-        "containers"
-    ][0]
+    container = _deployment(built, "eval-target-stub")["spec"]["template"]["spec"]["containers"][0]
     assert container["image"] == f"eval-target-stub:{STUB_IMAGE_TAG}"
 
 
@@ -202,9 +194,7 @@ def test_no_llama_server_is_deployed_while_the_local_model_is_out_of_use(
     never finished downloading before the run needed it. Catches either llama.cpp
     server creeping back into this build without the golden set that needs it."""
     names = {document["metadata"]["name"] for document in built}
-    assert names.isdisjoint(
-        {"llama", "llama-embed", "llama-models", "llama-embed-models"}
-    )
+    assert names.isdisjoint({"llama", "llama-embed", "llama-models", "llama-embed-models"})
 
 
 def test_the_kept_model_fetch_patch_still_verifies_a_checksum() -> None:
@@ -228,8 +218,7 @@ def test_the_ci_secret_carries_no_provider_key(built: list[dict[str, Any]]) -> N
     matches = [
         document
         for document in built
-        if document["kind"] == "Secret"
-        and document["metadata"]["name"] == "gateway-secrets"
+        if document["kind"] == "Secret" and document["metadata"]["name"] == "gateway-secrets"
     ]
     assert len(matches) == 1
     keys = set(matches[0].get("stringData", {})) | set(matches[0].get("data", {}))

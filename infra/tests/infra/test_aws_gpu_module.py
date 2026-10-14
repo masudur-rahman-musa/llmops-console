@@ -73,9 +73,7 @@ REGION_CONDITION = r'can(regex("^eu-[a-z]+-[0-9]$", var.region))'
 NAME_CONDITION = r'can(regex("^[a-z][a-z0-9-]{0,19}$", var.name))'
 INSTANCE_TYPE_CONDITION = r'can(regex("^g[56]\\.xlarge$", var.instance_type))'
 SSH_KEY_CONDITION = r'startswith(var.ssh_public_key, "ssh-ed25519 ")'
-AUTO_TERMINATE_CONDITION = (
-    "var.auto_terminate_minutes >= 30 && var.auto_terminate_minutes <= 480"
-)
+AUTO_TERMINATE_CONDITION = "var.auto_terminate_minutes >= 30 && var.auto_terminate_minutes <= 480"
 
 AMI_NAME_FILTER = '["Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 22.04) *"]'
 
@@ -111,9 +109,7 @@ def tf_files() -> list[Path]:
 
 
 def all_resources() -> list[tuple[str, str, str]]:
-    return [
-        entry for path in tf_files() for entry in entries(RESOURCE_HEADER, read(path))
-    ]
+    return [entry for path in tf_files() for entry in entries(RESOURCE_HEADER, read(path))]
 
 
 def resources_of(kind: str) -> list[tuple[str, str]]:
@@ -123,26 +119,19 @@ def resources_of(kind: str) -> list[tuple[str, str]]:
 
 def sole_resource(kind: str) -> str:
     found = resources_of(kind)
-    assert len(found) == 1, (
-        f"{len(found)} {kind} resources: {[name for name, _ in found]}"
-    )
+    assert len(found) == 1, f"{len(found)} {kind} resources: {[name for name, _ in found]}"
     return found[0][1]
 
 
 def variable(name: str) -> str:
     variables = named_blocks(read(VARIABLES_TF), "variable")
-    assert name in variables, (
-        f"variables.tf declares no {name}, only {sorted(variables)}"
-    )
+    assert name in variables, f"variables.tf declares no {name}, only {sorted(variables)}"
     return variables[name]
 
 
 def conditions(name: str) -> list[str]:
     """Every `condition` of `name`'s validation blocks, as written."""
-    return [
-        argument(block, "condition")
-        for block in inner_blocks(variable(name), "validation")
-    ]
+    return [argument(block, "condition") for block in inner_blocks(variable(name), "validation")]
 
 
 def regex_literal(condition: str) -> str:
@@ -167,9 +156,7 @@ def is_ingress_rule(kind: str, body: str) -> bool:
 def tf_aws_gpu_job() -> dict[str, Any]:
     jobs = load_yaml(WORKFLOW)["jobs"]
     assert isinstance(jobs, dict)
-    assert "tf-aws-gpu" in jobs, (
-        f"ci.yml declares no `tf-aws-gpu` job, only {sorted(jobs)}"
-    )
+    assert "tf-aws-gpu" in jobs, f"ci.yml declares no `tf-aws-gpu` job, only {sorted(jobs)}"
     job = jobs["tf-aws-gpu"]
     assert isinstance(job, dict)
     return job
@@ -204,9 +191,7 @@ def test_the_ami_is_amazons_latest_deep_learning_gpu_base() -> None:
     assert len(amis) == 1, f"{len(amis)} aws_ami data sources"
     name, ami = amis[0]
     name_filters = [
-        block
-        for block in inner_blocks(ami, "filter")
-        if argument(block, "name") == '"name"'
+        block for block in inner_blocks(ami, "filter") if argument(block, "name") == '"name"'
     ]
 
     assert argument(ami, "owners") == '["amazon"]'
@@ -238,9 +223,7 @@ def test_the_security_group_has_exactly_one_ingress_ssh_from_the_admins() -> Non
     """Criterion 33. Catches a second inline `ingress {` in any file (8000 opened "to test the
     API from a laptop"), SSH admitted from a literal CIDR list that drifts from the validated
     `admin_ips`, a port range around 22, and `protocol = "-1"`."""
-    blocks = [
-        block for path in tf_files() for block in inner_blocks(read(path), "ingress")
-    ]
+    blocks = [block for path in tf_files() for block in inner_blocks(read(path), "ingress")]
     assert len(blocks) == 1, f"{len(blocks)} ingress blocks in the module"
     rule = blocks[0]
 
@@ -301,9 +284,9 @@ def test_no_ingress_anywhere_names_the_world_or_opens_8000_or_6443() -> None:
 def test_the_instance_terminates_when_it_shuts_down() -> None:
     """Criterion 35. Catches the default `stop`, where the cloud-init shutdown timer leaves a
     stopped instance with a 100GB volume and an Elastic address still billing."""
-    assert argument(
-        sole_resource("aws_instance"), "instance_initiated_shutdown_behavior"
-    ) == ('"terminate"')
+    assert argument(sole_resource("aws_instance"), "instance_initiated_shutdown_behavior") == (
+        '"terminate"'
+    )
 
 
 def test_cloud_init_arms_the_shutdown_timer_from_the_variable() -> None:
@@ -316,9 +299,7 @@ def test_cloud_init_arms_the_shutdown_timer_from_the_variable() -> None:
     assert argument(variable("auto_terminate_minutes"), "default") == "240"
     assert "templatefile(" in instance
     assert "cloud-init.yaml" in instance
-    assert re.search(
-        r"auto_terminate_minutes\s*=\s*var\.auto_terminate_minutes", instance
-    )
+    assert re.search(r"auto_terminate_minutes\s*=\s*var\.auto_terminate_minutes", instance)
 
 
 def test_cloud_init_installs_the_same_k3s_as_hetzner() -> None:
@@ -338,9 +319,7 @@ def test_cloud_init_installs_the_same_k3s_as_hetzner() -> None:
 # Budget, provider and outputs
 
 
-def test_the_budget_is_fifteen_dollars_of_cost_mailed_at_eighty_percent_actual() -> (
-    None
-):
+def test_the_budget_is_fifteen_dollars_of_cost_mailed_at_eighty_percent_actual() -> None:
     """Criteria 38 and 39. Catches a `USAGE` budget that counts hours, `limit_amount = "150"`,
     `FORECASTED` (silent in the first hours of a month, which is exactly a forgotten GPU),
     `threshold = 100`, and a subscriber hard-coded instead of the validated `budget_email`."""
@@ -389,9 +368,7 @@ def test_the_terraform_block_pins_core_provider_and_its_own_workspace() -> None:
     aws = provider_block(text, "aws")
 
     assert re.search(r'required_version\s*=\s*">= 1\.9"', text) is not None
-    assert [argument(block, "name") for block in workspaces] == [
-        '"ai-operations-console-aws-gpu"'
-    ]
+    assert [argument(block, "name") for block in workspaces] == ['"ai-operations-console-aws-gpu"']
     assert argument(aws, "source") == '"hashicorp/aws"'
     assert argument(aws, "version") == '"~> 6.64"'
 
@@ -426,9 +403,7 @@ def test_every_input_is_validated_and_admin_ips_has_no_default() -> None:
 
     assert missing == [], f"variables.tf declares no {missing}"
     assert unvalidated == [], f"no validation block on {unvalidated}"
-    assert argument(variables["admin_ips"], "default") == "", (
-        "admin_ips carries a default"
-    )
+    assert argument(variables["admin_ips"], "default") == "", "admin_ips carries a default"
     assert argument(variables["region"], "default") == '"eu-central-1"'
 
 
@@ -489,9 +464,7 @@ def test_the_region_and_type_patterns_refuse_the_unhappy_rows(
     ("value", "accepted"),
     [(29, False), (30, True), (480, True), (481, False)],
 )
-def test_auto_terminate_bounds_hold_their_inclusive_edges(
-    value: int, accepted: bool
-) -> None:
+def test_auto_terminate_bounds_hold_their_inclusive_edges(value: int, accepted: bool) -> None:
     """Criterion 45's `29` and `481` rows with the inclusive edges. Parsed from
     the condition, so it catches the agreed bounds themselves being off by one (`> 30` agreed as
     `>= 31`), which the exact-condition case cannot see when both files carry the same typo."""
@@ -539,9 +512,7 @@ def test_the_tf_aws_gpu_init_falls_back_to_no_backend_without_a_token() -> None:
     """Criterion 46's `-backend=false`. Catches an init that always contacts Terraform Cloud and
     fails every fork pull request before `validate` runs."""
     job = tf_aws_gpu_job()
-    inits = [
-        step for step in steps_running(job, "terraform init") if not is_printer(step)
-    ]
+    inits = [step for step in steps_running(job, "terraform init") if not is_printer(step)]
     assert len(inits) == 1, f"{len(inits)} steps run `terraform init`"
 
     assert "-backend=false" in str(inits[0]["run"])
@@ -551,13 +522,9 @@ def test_the_tf_aws_gpu_plan_runs_only_with_both_credentials() -> None:
     """Criterion 47. Catches `||` in place of `&&`, an unconditional plan that fails on every
     credential-less pull request, and a plan conditioned on the token alone."""
     job = tf_aws_gpu_job()
-    planners = [
-        step for step in steps_running(job, "terraform plan") if not is_printer(step)
-    ]
+    planners = [step for step in steps_running(job, "terraform plan") if not is_printer(step)]
 
-    assert "TF_API_TOKEN_PRESENT" in job.get("env", {}), (
-        "the plan's env flag is never defined"
-    )
+    assert "TF_API_TOKEN_PRESENT" in job.get("env", {}), "the plan's env flag is never defined"
     assert len(planners) == 1, f"{len(planners)} steps run `terraform plan`"
     assert planners[0].get("if") == PLAN_CONDITION
 

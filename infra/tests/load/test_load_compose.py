@@ -19,9 +19,7 @@ COMPOSE_LOAD = REPO_ROOT / "infra" / "load" / "compose.yml"
 MAKEFILE = REPO_ROOT / "Makefile"
 GITIGNORE = REPO_ROOT / ".gitignore"
 
-LOAD_COMPOSE = (
-    "docker compose -f docker-compose.yml -f infra/load/compose.yml --profile load"
-)
+LOAD_COMPOSE = "docker compose -f docker-compose.yml -f infra/load/compose.yml --profile load"
 POLICY_SOURCE = "./infra/load/routing.load.yaml"
 POLICY_TARGET = "/etc/opsconsole/routing.load.yaml"
 CREDENTIAL_WORDS = ("KEY", "SECRET", "TOKEN", "PASSWORD")
@@ -117,9 +115,7 @@ def test_the_gateway_policy_path_is_the_mounted_load_routing_file(
     policy_path = environment_of(gateway)["OPSCONSOLE_ROUTING_POLICY_PATH"]
     assert policy_path == POLICY_TARGET
     mounts = [volume.split(":") for volume in volumes_of(gateway)]
-    at_target = [
-        mount for mount in mounts if len(mount) >= 2 and mount[1] == policy_path
-    ]
+    at_target = [mount for mount in mounts if len(mount) >= 2 and mount[1] == policy_path]
     assert at_target, f"nothing is mounted at {policy_path}"
     assert all(mount[0] == POLICY_SOURCE for mount in at_target)
     assert f"{POLICY_SOURCE}:{POLICY_TARGET}:ro" in volumes_of(gateway)
@@ -179,9 +175,7 @@ def load_recipe_lines() -> list[str]:
     Makefile must define `load:` exactly once, and the recipe runs until the first
     line that is not tab-indented."""
     lines = MAKEFILE.read_text(encoding="utf-8").splitlines()
-    starts = [
-        index for index, line in enumerate(lines) if re.match(r"^load\s*:(?!=)", line)
-    ]
+    starts = [index for index, line in enumerate(lines) if re.match(r"^load\s*:(?!=)", line)]
     assert len(starts) == 1, f"`load:` is defined {len(starts)} times"
     recipe: list[str] = []
     for line in lines[starts[0] + 1 :]:
@@ -267,12 +261,8 @@ def test_make_load_derives_the_tenant_digest_with_sha256() -> None:
 def test_make_load_exports_both_keys_as_environment_only() -> None:
     """Criterion 18: catches a recipe that computes the key but never exports it to
     compose, or exports a tenant other than `load`."""
-    exported = [
-        statement for statement in statements() if statement.startswith("export ")
-    ]
-    assert any(
-        re.match(r"^export\s+LOAD_API_KEY\b", statement) for statement in exported
-    )
+    exported = [statement for statement in statements() if statement.startswith("export ")]
+    assert any(re.match(r"^export\s+LOAD_API_KEY\b", statement) for statement in exported)
     assert any(
         re.match(r'^export\s+OPSCONSOLE_API_KEYS="load:\$\$digest"$', statement)
         for statement in exported
@@ -332,7 +322,5 @@ def test_make_load_writes_nothing_to_disk_through_a_redirect() -> None:
 
 def test_the_results_directory_is_gitignored() -> None:
     """Criterion 17: catches `summary.json` from a local run landing in a commit."""
-    lines = [
-        line.strip() for line in GITIGNORE.read_text(encoding="utf-8").splitlines()
-    ]
+    lines = [line.strip() for line in GITIGNORE.read_text(encoding="utf-8").splitlines()]
     assert "infra/load/results/" in lines

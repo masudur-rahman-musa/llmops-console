@@ -113,10 +113,7 @@ def named_blocks(text: str, keyword: str) -> dict[str, str]:
 
 def inner_blocks(text: str, keyword: str) -> list[str]:
     """Every bare `<keyword> {` body in `text`, in file order."""
-    return [
-        body_after(text, match.end() - 1)
-        for match in re.finditer(rf"\b{keyword}\s*\{{", text)
-    ]
+    return [body_after(text, match.end() - 1) for match in re.finditer(rf"\b{keyword}\s*\{{", text)]
 
 
 def provider_block(text: str, name: str) -> str:
@@ -194,12 +191,8 @@ def test_the_firewall_opens_ssh_to_the_admins_and_nothing_else_to_them() -> None
     assert "var.admin_ips" in argument(by_port["22"], "source_ips")
     for port in ("80", "443"):
         sources = argument(by_port[port], "source_ips")
-        assert all(network in sources for network in WORLD), (
-            f"port {port} sources: {sources}"
-        )
-        assert "admin_ips" not in sources, (
-            f"port {port} is restricted to the admin CIDRs"
-        )
+        assert all(network in sources for network in WORLD), f"port {port} sources: {sources}"
+        assert "admin_ips" not in sources, f"port {port} is restricted to the admin CIDRs"
 
 
 def test_ci_reaches_ssh_through_a_declared_list_that_defaults_to_empty() -> None:
@@ -217,16 +210,12 @@ def test_ci_reaches_ssh_through_a_declared_list_that_defaults_to_empty() -> None
     this module is: `terraform validate` accepts every one of those shapes."""
     variables = named_blocks(read(VARIABLES_TF), "variable")
     firewalls = named_blocks(read(MAIN_TF), "resource")
-    assert "ci_ips" in variables, (
-        f"variables.tf declares no ci_ips, only {sorted(variables)}"
-    )
+    assert "ci_ips" in variables, f"variables.tf declares no ci_ips, only {sorted(variables)}"
     assert "hcloud_firewall" in firewalls, "main.tf declares no hcloud_firewall"
     rules = inner_blocks(firewalls["hcloud_firewall"], "rule")
     by_port = {argument(rule, "port").strip('"'): rule for rule in rules}
 
-    assert argument(variables["ci_ips"], "default") == "[]", (
-        "ci_ips does not default to empty"
-    )
+    assert argument(variables["ci_ips"], "default") == "[]", "ci_ips does not default to empty"
     assert len(rules) == 3, f"the firewall carries {len(rules)} rule blocks, not 3"
     assert "var.ci_ips" in argument(by_port["22"], "source_ips")
     assert "var.admin_ips" in argument(by_port["22"], "source_ips")
@@ -253,13 +242,9 @@ def test_the_cloud_init_pins_k3s_once_and_disables_nothing() -> None:
     from this module at all. Counted over the raw text, so a commented-out copy still counts."""
     text = read(CLOUD_INIT)
 
-    assert text.count(K3S_VERSION) == 1, (
-        f"{K3S_VERSION} occurs {text.count(K3S_VERSION)} times"
-    )
+    assert text.count(K3S_VERSION) == 1, f"{K3S_VERSION} occurs {text.count(K3S_VERSION)} times"
     assert text.count("latest") == 0, "cloud-init.yaml names `latest`"
-    assert text.count("--disable") == 0, (
-        "cloud-init.yaml disables a bundled k3s component"
-    )
+    assert text.count("--disable") == 0, "cloud-init.yaml disables a bundled k3s component"
 
 
 def test_the_terraform_block_pins_the_core_and_both_providers() -> None:
@@ -272,9 +257,7 @@ def test_the_terraform_block_pins_the_core_and_both_providers() -> None:
     required = {name: provider_block(text, name) for name in ("hcloud", "cloudflare")}
 
     assert re.search(r'required_version\s*=\s*">= 1\.9"', text) is not None
-    assert re.search(r"(?m)^\s*cloud\s*\{", text) is not None, (
-        "no Terraform Cloud block"
-    )
+    assert re.search(r"(?m)^\s*cloud\s*\{", text) is not None, "no Terraform Cloud block"
     assert '"hetznercloud/hcloud"' in required["hcloud"]
     assert '"~> 1.49"' in required["hcloud"]
     assert '"cloudflare/cloudflare"' in required["cloudflare"]
@@ -298,17 +281,14 @@ def test_every_input_is_validated_and_the_admin_cidrs_have_no_default() -> None:
 
     assert missing == [], f"variables.tf declares no {missing}"
     assert unvalidated == [], f"no validation block on {unvalidated}"
-    assert argument(variables["admin_ips"], "default") == "", (
-        "admin_ips carries a default"
-    )
+    assert argument(variables["admin_ips"], "default") == "", "admin_ips carries a default"
 
     # Criterion 7 names the two cases by hand, so the conditions are pinned by what
     # they call and not only by their presence: `length(...) > 0` is the empty list,
     # `cidrhost` is what refuses a bare address. A validation block that checked
     # neither would satisfy the loop above.
     conditions = " ".join(
-        argument(block, "condition")
-        for block in inner_blocks(variables["admin_ips"], "validation")
+        argument(block, "condition") for block in inner_blocks(variables["admin_ips"], "validation")
     )
     assert "length(var.admin_ips) > 0" in conditions, "an empty admin_ips is accepted"
     assert "cidrhost(" in conditions, "admin_ips entries are not checked as CIDRs"
@@ -384,8 +364,7 @@ def test_the_ci_job_checks_terraform_always_and_plans_only_with_credentials() ->
     skips = [
         step
         for step in steps(job)
-        if "TF_API_TOKEN" in str(step.get("if", ""))
-        and "echo" in str(step.get("run", ""))
+        if "TF_API_TOKEN" in str(step.get("if", "")) and "echo" in str(step.get("run", ""))
     ]
     assert skips != [], "the skipped plan leaves nothing in the log"
 

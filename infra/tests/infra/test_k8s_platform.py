@@ -85,8 +85,8 @@ PLATFORM_OBJECTS: frozenset[tuple[str, str, str | None]] = frozenset(
         # untouched and this is a third name here.
         ("NetworkPolicy", "metrics-ingress-from-monitoring", PLATFORM),
         # Row 23a's RBAC, cluster-scoped and therefore inside this case's `None` half although it
-        # belongs to `monitoring/`. `infra/tests/infra/test_k8s_monitoring.py` owns what it grants and
-        # that there is no third ClusterRole in the build; these are the two names.
+        # belongs to `monitoring/`. `infra/tests/infra/test_k8s_monitoring.py` owns what it grants
+        # and that there is no third ClusterRole in the build; these are the two names.
         ("ClusterRole", "kube-state-metrics", None),
         ("ClusterRoleBinding", "kube-state-metrics", None),
         # Row 23d: the shared PVC and the two nightly backup CronJobs.
@@ -170,9 +170,7 @@ MAINTENANCE_ENTRYPOINTS = {
 #: The gateway image both maintenance jobs run, as the built stream reads it after the
 #: platform kustomization's images transformer (bare `gateway` -> this full path at the
 #: placeholder tag; deploy.yml sets the real SHA at deploy time and commits nothing back).
-MAINTENANCE_IMAGE = (
-    "ghcr.io/masudur-rahman-musa/ai-operations-console/gateway:0.0.0-unbuilt"
-)
+MAINTENANCE_IMAGE = "ghcr.io/masudur-rahman-musa/ai-operations-console/gateway:0.0.0-unbuilt"
 #: The DB credential parts the maintenance env expands from `postgres-credentials` by $(VAR),
 #: so OPSCONSOLE_DATABASE_URL carries no literal secret.
 POSTGRES_CREDENTIALS_SECRET = "postgres-credentials"
@@ -405,9 +403,7 @@ def pod_spec(owner: dict[str, Any]) -> dict[str, Any]:
 def template_labels(owner: dict[str, Any]) -> dict[str, str]:
     """The pod template's `metadata.labels`, the labels a selector has to match."""
     metadata = owner_spec(owner)["template"].get("metadata", {})
-    assert isinstance(metadata, dict), (
-        f"{name_of(owner)}'s pod template has no metadata"
-    )
+    assert isinstance(metadata, dict), f"{name_of(owner)}'s pod template has no metadata"
     labels = metadata.get("labels", {})
     assert isinstance(labels, dict), f"{name_of(owner)}'s pod template has no labels"
     return {str(key): str(value) for key, value in labels.items()}
@@ -421,9 +417,7 @@ def all_containers(owner: dict[str, Any]) -> list[dict[str, Any]]:
     for key in ("initContainers", "containers"):
         listed = spec.get(key, [])
         assert isinstance(listed, list), f"{name_of(owner)}.{key} is not a list"
-        collected.extend(
-            container for container in listed if isinstance(container, dict)
-        )
+        collected.extend(container for container in listed if isinstance(container, dict))
     return collected
 
 
@@ -434,9 +428,7 @@ def workload(documents: list[dict[str, Any]], workload_name: str) -> dict[str, A
         for owner in pod_owners(documents)
         if name_of(owner) == workload_name and namespace_of(owner) == PLATFORM
     ]
-    assert len(found) == 1, (
-        f"{len(found)} pod-owning objects named {workload_name} in platform"
-    )
+    assert len(found) == 1, f"{len(found)} pod-owning objects named {workload_name} in platform"
     return found[0]
 
 
@@ -484,9 +476,7 @@ def compose_images() -> dict[str, str]:
     images: dict[str, str] = {}
     for workload_name, service_name in COMPOSE_SERVICES.items():
         service = services.get(service_name, {})
-        assert isinstance(service, dict), (
-            f"compose declares no `{service_name}` service"
-        )
+        assert isinstance(service, dict), f"compose declares no `{service_name}` service"
         images[workload_name] = str(service.get("image", ""))
     return images
 
@@ -536,9 +526,7 @@ def inline_credentials(label: str, lines: list[str]) -> list[str]:
             continue
         if not CREDENTIAL_ENV_NAME.match(line):
             continue
-        for offset, following in enumerate(
-            lines[index + 1 : index + 1 + ENV_VALUE_LOOKAHEAD]
-        ):
+        for offset, following in enumerate(lines[index + 1 : index + 1 + ENV_VALUE_LOOKAHEAD]):
             if ENV_VALUE.match(following):
                 offenders.append(
                     f"{label}:{index + offset + 2}: {line.strip()} -> {following.strip()}"
@@ -600,22 +588,16 @@ def test_every_container_in_the_build_declares_requests_and_a_memory_limit(
             quantities = resource_quantities(container)
             where = f"{label}:{container.get('name')}"
             missing.extend(
-                f"{where} has no {key}"
-                for key in REQUIRED_CONTAINER_KEYS
-                if key not in quantities
+                f"{where} has no {key}" for key in REQUIRED_CONTAINER_KEYS if key not in quantities
             )
             if FORBIDDEN_CONTAINER_KEY in quantities:
                 forbidden.append(where)
 
     assert missing == [], f"containers missing resources: {missing}"
-    assert forbidden == [], (
-        f"containers declaring {FORBIDDEN_CONTAINER_KEY}: {forbidden}"
-    )
+    assert forbidden == [], f"containers declaring {FORBIDDEN_CONTAINER_KEY}: {forbidden}"
 
 
-@pytest.mark.parametrize(
-    ("workload_name", "expected"), sorted(WORKLOAD_RESOURCES.items())
-)
+@pytest.mark.parametrize(("workload_name", "expected"), sorted(WORKLOAD_RESOURCES.items()))
 def test_each_platform_workload_carries_the_agreed_quantities(
     workload_name: str, expected: dict[str, str], built: list[dict[str, Any]]
 ) -> None:
@@ -671,9 +653,7 @@ def test_the_platform_subtotals_fit_inside_the_namespace_quota(
     # together, as before); the two maintenance jobs sit at their own hours and add nothing.
     owners = [owner for owner in pod_owners(built) if namespace_of(owner) == PLATFORM]
     expected_owners = (
-        len(WORKLOAD_RESOURCES)
-        + len(BACKUP_CRONJOB_NAMES)
-        + len(MAINTENANCE_CRONJOB_NAMES)
+        len(WORKLOAD_RESOURCES) + len(BACKUP_CRONJOB_NAMES) + len(MAINTENANCE_CRONJOB_NAMES)
     )
     assert len(owners) == expected_owners, f"{len(owners)} platform workloads built"
 
@@ -683,15 +663,9 @@ def test_the_platform_subtotals_fit_inside_the_namespace_quota(
         replicas = replicas_of(owner)
         for container in all_containers(owner):
             quantities = resource_quantities(container)
-            totals["requests.memory"] += replicas * memory_bytes(
-                quantities["requests.memory"]
-            )
-            totals["requests.cpu"] += replicas * cpu_millicores(
-                quantities["requests.cpu"]
-            )
-            totals["limits.memory"] += replicas * memory_bytes(
-                quantities["limits.memory"]
-            )
+            totals["requests.memory"] += replicas * memory_bytes(quantities["requests.memory"])
+            totals["requests.cpu"] += replicas * cpu_millicores(quantities["requests.cpu"])
+            totals["limits.memory"] += replicas * memory_bytes(quantities["limits.memory"])
 
     by_hour: dict[str, dict[str, int]] = {}
     for owner in owners:
@@ -759,9 +733,7 @@ def test_the_images_match_docker_compose(built: list[dict[str, Any]]) -> None:
     changes underneath a StatefulSet's PVC. The mapping compare, rather than three
     assertions, is what makes a missing workload visible here too."""
     from_k8s = {
-        workload_name: str(
-            sole_container(workload(built, workload_name)).get("image", "")
-        )
+        workload_name: str(sole_container(workload(built, workload_name)).get("image", ""))
         for workload_name in COMPOSE_SERVICES
     }
     assert from_k8s == compose_images()
@@ -790,23 +762,13 @@ def test_each_workload_has_both_probes_and_a_service_that_resolves(
 
     labels = template_labels(owner)
     match_labels = owner["spec"]["selector"]["matchLabels"]
-    assert isinstance(match_labels, dict) and match_labels, (
-        f"{workload_name} selects nothing"
-    )
-    unmatched = {
-        key: value for key, value in match_labels.items() if labels.get(key) != value
-    }
-    assert unmatched == {}, (
-        f"{workload_name}'s selector {unmatched} matches no pod: {labels}"
-    )
+    assert isinstance(match_labels, dict) and match_labels, f"{workload_name} selects nothing"
+    unmatched = {key: value for key, value in match_labels.items() if labels.get(key) != value}
+    assert unmatched == {}, f"{workload_name}'s selector {unmatched} matches no pod: {labels}"
 
     declared = container.get("ports", [])
-    assert isinstance(declared, list) and declared, (
-        f"{workload_name} declares no container ports"
-    )
-    numbers = {
-        int(port["containerPort"]) for port in declared if "containerPort" in port
-    }
+    assert isinstance(declared, list) and declared, f"{workload_name} declares no container ports"
+    numbers = {int(port["containerPort"]) for port in declared if "containerPort" in port}
     names = {str(port["name"]) for port in declared if port.get("name")}
 
     services = [
@@ -814,34 +776,22 @@ def test_each_workload_has_both_probes_and_a_service_that_resolves(
         for document in objects_of_kind(built, "Service")
         if name_of(document) == workload_name and namespace_of(document) == PLATFORM
     ]
-    assert len(services) == 1, (
-        f"{len(services)} Services named {workload_name} in {PLATFORM}"
-    )
+    assert len(services) == 1, f"{len(services)} Services named {workload_name} in {PLATFORM}"
     service_spec = services[0]["spec"]
 
     selector = service_spec.get("selector", {})
-    assert isinstance(selector, dict) and selector, (
-        f"{workload_name}'s Service selects nothing"
-    )
+    assert isinstance(selector, dict) and selector, f"{workload_name}'s Service selects nothing"
     stray = {key: value for key, value in selector.items() if labels.get(key) != value}
-    assert stray == {}, (
-        f"{workload_name}'s Service selector {stray} matches no pod: {labels}"
-    )
+    assert stray == {}, f"{workload_name}'s Service selector {stray} matches no pod: {labels}"
 
     ports = service_spec.get("ports", [])
-    assert isinstance(ports, list) and ports, (
-        f"{workload_name}'s Service publishes no ports"
-    )
+    assert isinstance(ports, list) and ports, f"{workload_name}'s Service publishes no ports"
     assert {int(port["port"]) for port in ports} == SERVICE_PORTS[workload_name]
 
     unresolved = [
         port["targetPort"]
         for port in ports
-        if (
-            port["targetPort"] not in names
-            if isinstance(port["targetPort"], str)
-            else True
-        )
+        if (port["targetPort"] not in names if isinstance(port["targetPort"], str) else True)
         and (
             int(port["targetPort"]) not in numbers
             if not isinstance(port["targetPort"], str)
@@ -859,9 +809,7 @@ def container_named(owner: dict[str, Any], container_name: str) -> dict[str, Any
     asserting exactly one carries that name - the two backup CronJobs each name their sync
     container `rclone-sync`, so a name is not unique across CronJobs, only within one."""
     found = [
-        container
-        for container in all_containers(owner)
-        if container.get("name") == container_name
+        container for container in all_containers(owner) if container.get("name") == container_name
     ]
     assert len(found) == 1, (
         f"{name_of(owner)} declares {len(found)} containers named {container_name}"
@@ -885,9 +833,7 @@ def test_each_backup_cronjob_carries_the_agreed_schedule_and_policy(
         for document in objects_of_kind(built, "CronJob")
         if name_of(document) == cronjob_name and namespace_of(document) == PLATFORM
     ]
-    assert len(cronjobs) == 1, (
-        f"{len(cronjobs)} CronJobs named {cronjob_name} in {PLATFORM}"
-    )
+    assert len(cronjobs) == 1, f"{len(cronjobs)} CronJobs named {cronjob_name} in {PLATFORM}"
     spec = cronjobs[0]["spec"]
     assert spec.get("schedule") == BACKUP_SCHEDULE, (
         f"{cronjob_name} schedule is {spec.get('schedule')}"
@@ -949,8 +895,7 @@ def test_each_backup_cronjobs_containers_mount_the_shared_pvc_at_the_agreed_path
     claims = {
         volume["name"]: volume["persistentVolumeClaim"]["claimName"]
         for volume in volumes
-        if isinstance(volume, dict)
-        and isinstance(volume.get("persistentVolumeClaim"), dict)
+        if isinstance(volume, dict) and isinstance(volume.get("persistentVolumeClaim"), dict)
     }
     assert claims, f"{cronjob_name} declares no PVC volume"
     for container_name in BACKUP_CONTAINERS[cronjob_name]:
@@ -988,9 +933,7 @@ def test_each_rclone_sync_container_reads_backup_secrets_and_guards_backup_bucke
         for entry in sources
         if isinstance(entry, dict) and isinstance(entry.get("secretRef"), dict)
     }
-    assert names == {BACKUP_SECRET_NAME}, (
-        f"{cronjob_name}.rclone-sync envFrom is {names}"
-    )
+    assert names == {BACKUP_SECRET_NAME}, f"{cronjob_name}.rclone-sync envFrom is {names}"
 
     command = " ".join(str(part) for part in container.get("command", []))
     assert ': "${BACKUP_BUCKET:?}"' in command, (
@@ -1014,9 +957,7 @@ def test_the_two_maintenance_cronjobs_exist(built: list[dict[str, Any]]) -> None
             for d in objects_of_kind(built, "CronJob")
             if name_of(d) == cronjob_name and namespace_of(d) == PLATFORM
         ]
-        assert len(found) == 1, (
-            f"{len(found)} CronJobs named {cronjob_name} in {PLATFORM}"
-        )
+        assert len(found) == 1, f"{len(found)} CronJobs named {cronjob_name} in {PLATFORM}"
 
 
 def test_the_maintenance_jobs_run_the_ledger_entrypoints(
@@ -1051,22 +992,16 @@ def test_the_maintenance_jobs_carry_no_literal_database_url(
             for e in container.get("envFrom", [])
             if isinstance(e, dict) and isinstance(e.get("secretRef"), dict)
         }
-        assert POSTGRES_CREDENTIALS_SECRET in sources, (
-            f"{cronjob_name} envFrom {sources}"
-        )
+        assert POSTGRES_CREDENTIALS_SECRET in sources, f"{cronjob_name} envFrom {sources}"
         env = {e["name"]: e for e in container.get("env", []) if isinstance(e, dict)}
-        assert "OPSCONSOLE_DATABASE_URL" in env, (
-            f"{cronjob_name} sets no OPSCONSOLE_DATABASE_URL"
-        )
+        assert "OPSCONSOLE_DATABASE_URL" in env, f"{cronjob_name} sets no OPSCONSOLE_DATABASE_URL"
         entry = env["OPSCONSOLE_DATABASE_URL"]
         assert "valueFrom" not in entry, (
             f"{cronjob_name} reads the URL from a secret key, not $(VAR)"
         )
         value = str(entry.get("value", ""))
         for part in DATABASE_URL_EXPANSIONS:
-            assert part in value, (
-                f"{cronjob_name} OPSCONSOLE_DATABASE_URL lacks {part}: {value!r}"
-            )
+            assert part in value, f"{cronjob_name} OPSCONSOLE_DATABASE_URL lacks {part}: {value!r}"
 
 
 def test_the_four_platform_cronjobs_run_at_distinct_hours(
@@ -1082,14 +1017,10 @@ def test_the_four_platform_cronjobs_run_at_distinct_hours(
     platform_cronjobs = [
         d for d in objects_of_kind(built, "CronJob") if namespace_of(d) == PLATFORM
     ]
-    hour_of = {
-        name_of(d): str(d["spec"]["schedule"]).split()[1] for d in platform_cronjobs
-    }
+    hour_of = {name_of(d): str(d["spec"]["schedule"]).split()[1] for d in platform_cronjobs}
     for mname in MAINTENANCE_CRONJOB_NAMES:
         assert mname in hour_of, f"{mname} is not a platform CronJob"
-        sharers = sorted(
-            n for n, h in hour_of.items() if h == hour_of[mname] and n != mname
-        )
+        sharers = sorted(n for n, h in hour_of.items() if h == hour_of[mname] and n != mname)
         assert sharers == [], f"{mname} shares hour {hour_of[mname]} with {sharers}"
 
 
@@ -1144,25 +1075,16 @@ def test_both_cluster_issuers_use_the_exact_acme_urls_and_the_traefik_solver(
     HTTP-01 solver replaced or its ingress class changed off `traefik`, which is the only path
     a design note's DNS-only records leave open for a challenge, and catches a personal account
     email replacing the domain one."""
-    issuers = {
-        name_of(document): document
-        for document in objects_of_kind(built, "ClusterIssuer")
-    }
+    issuers = {name_of(document): document for document in objects_of_kind(built, "ClusterIssuer")}
     assert set(issuers) == set(ISSUERS)
 
     keys: list[str] = []
     for name, expected in ISSUERS.items():
         document = issuers[name]
-        assert document.get("apiVersion") == ISSUER_API_VERSION, (
-            f"{name} is not cert-manager's"
-        )
-        assert namespace_of(document) is None, (
-            f"{name} is namespaced and cert-manager ignores it"
-        )
+        assert document.get("apiVersion") == ISSUER_API_VERSION, f"{name} is not cert-manager's"
+        assert namespace_of(document) is None, f"{name} is namespaced and cert-manager ignores it"
         acme = document["spec"]["acme"]
-        assert acme["server"] == expected["server"], (
-            f"{name} points at {acme['server']}"
-        )
+        assert acme["server"] == expected["server"], f"{name} points at {acme['server']}"
         assert acme["email"] == ACME_EMAIL
         assert acme["solvers"] == ACME_SOLVERS, f"{name} solves with {acme['solvers']}"
         assert acme["privateKeySecretRef"]["name"] == expected["privateKeySecretRef"]
@@ -1193,25 +1115,19 @@ def test_no_secret_is_emitted_and_no_credential_is_written_inline(
     uses, which a key-anchored pattern alone walks straight past (found by mutating the
     throwaway stub, a project rule)."""
     emitted = objects_of_kind(built, "Secret")
-    assert emitted == [], (
-        f"the build emits Secrets: {[name_of(document) for document in emitted]}"
-    )
+    assert emitted == [], f"the build emits Secrets: {[name_of(document) for document in emitted]}"
 
-    referenced = {
-        name for name in secret_references(built, set()) if name
-    } - tls_secret_names(built)
+    referenced = {name for name in secret_references(built, set()) if name} - tls_secret_names(
+        built
+    )
     assert referenced <= PINNED_SECRET_NAMES, (
         f"the build references {sorted(referenced - PINNED_SECRET_NAMES)}, which nothing supplies"
     )
 
-    assert PLATFORM_DIR.is_dir(), (
-        f"{PLATFORM_DIR} does not exist, so this scan reads no files"
-    )
+    assert PLATFORM_DIR.is_dir(), f"{PLATFORM_DIR} does not exist, so this scan reads no files"
     files = sorted(PLATFORM_DIR.glob("*.yaml"))
     assert files, f"{PLATFORM_DIR} holds no YAML at all"
     offenders: list[str] = []
     for path in files:
         offenders.extend(inline_credentials(path.name, read(path).splitlines()))
-    assert offenders == [], (
-        f"inline credentials under {PLATFORM_DIR.name}/: {offenders}"
-    )
+    assert offenders == [], f"inline credentials under {PLATFORM_DIR.name}/: {offenders}"

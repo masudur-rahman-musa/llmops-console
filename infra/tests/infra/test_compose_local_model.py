@@ -74,9 +74,7 @@ def compose_services(*extra: str) -> set[str]:
         check=False,
     )
     if completed.returncode != 0:
-        pytest.fail(
-            f"docker compose config failed ({completed.returncode}): {completed.stderr}"
-        )
+        pytest.fail(f"docker compose config failed ({completed.returncode}): {completed.stderr}")
     return {line.strip() for line in completed.stdout.splitlines() if line.strip()}
 
 
@@ -84,9 +82,7 @@ def compose_services(*extra: str) -> set[str]:
 def listed() -> dict[str, set[str]]:
     """Both `config --services` runs, made ONCE for this module; skips without `docker`."""
     if shutil.which("docker") is None:
-        pytest.skip(
-            "docker is not on PATH; the YAML cases in this file still pin the profiles"
-        )
+        pytest.skip("docker is not on PATH; the YAML cases in this file still pin the profiles")
     return {
         "default": compose_services(),
         "profile": compose_services("--profile", PROFILE),
@@ -160,11 +156,7 @@ def test_the_tradeoff_run_brings_the_local_model_up() -> None:
     Catches a tradeoff script that never enables the profile, so its `local-cpu` option
     routes to a llama service that was never started.
     """
-    lines = [
-        line
-        for line in read(TRADEOFF_SCRIPT).splitlines()
-        if line.startswith("COMPOSE=")
-    ]
+    lines = [line for line in read(TRADEOFF_SCRIPT).splitlines() if line.startswith("COMPOSE=")]
     assert len(lines) == 1, f"expected exactly one COMPOSE= line, found {lines}"
     flags = re.findall(r"--profile\s+(\S+?)\)?(?=\s|$)", lines[0])
     assert "tradeoff" in flags, lines[0]
@@ -217,9 +209,7 @@ def test_the_readme_default_up_drops_the_local_model() -> None:
     Catches a quickstart comment still listing "local model" among what the default starts.
     """
     commented = [
-        line
-        for line in read(README).splitlines()
-        if "docker compose up -d" in line and "#" in line
+        line for line in read(README).splitlines() if "docker compose up -d" in line and "#" in line
     ]
     assert commented, "README has no commented `docker compose up -d` line"
     for line in commented:

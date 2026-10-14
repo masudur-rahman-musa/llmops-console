@@ -99,18 +99,12 @@ def test_the_results_are_uploaded_even_when_a_threshold_fails(
     before the run it is meant to collect."""
     listed = steps(job)
     uploads = [
-        index
-        for index, step in enumerate(listed)
-        if "actions/upload-artifact" in uses_of(step)
+        index for index, step in enumerate(listed) if "actions/upload-artifact" in uses_of(step)
     ]
     assert len(uploads) == 1
     upload = listed[uploads[0]]
     assert uses_of(upload) == "actions/upload-artifact@v4"
     assert upload["if"] == "always()"
     assert upload["with"]["path"] == RESULTS_PATH
-    runs = [
-        index
-        for index, step in enumerate(listed)
-        if run_of(step).strip() == "make load"
-    ]
+    runs = [index for index, step in enumerate(listed) if run_of(step).strip() == "make load"]
     assert runs and max(runs) < uploads[0]

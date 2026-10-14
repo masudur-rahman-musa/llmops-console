@@ -65,9 +65,7 @@ AZURE_ADAPTER = "packages/opsconsole/opsconsole/providers/azure_openai.py"
 AZURE_ROUTING_ROW = "azure_eu"
 
 THREAT_MODEL_HEADING = "# Threat model"
-THREAT_TABLE_HEADER = (
-    "| Component | Threat (S/T/R/I/D/E) | Scenario | Mitigation | Status |"
-)
+THREAT_TABLE_HEADER = "| Component | Threat (S/T/R/I/D/E) | Scenario | Mitigation | Status |"
 #: The unfilled template's placeholder row. Its survival means the table was never filled.
 THREAT_PLACEHOLDER_CELL = "ADAPT"
 
@@ -204,9 +202,7 @@ def test_the_seven_guarantees_link_the_seven_tests() -> None:
     links six or eight tests, links the same test twice to reach seven, or links a test path
     that no longer exists after a rename."""
     body = section_body(read(README), "## The seven guarantees")
-    linked = [
-        target for target in relative_targets(body) if target.startswith("tests/")
-    ]
+    linked = [target for target in relative_targets(body) if target.startswith("tests/")]
 
     assert sorted(linked) == sorted(GUARANTEE_TESTS), linked
     assert missing_paths(linked) == []
@@ -222,9 +218,7 @@ def test_what_broke_carries_exactly_five_entries() -> None:
     entries = [
         line
         for line in body.splitlines()
-        if any(
-            target.startswith(WHAT_BROKE_PREFIXES) for target in relative_targets(line)
-        )
+        if any(target.startswith(WHAT_BROKE_PREFIXES) for target in relative_targets(line))
     ]
     assert len(entries) == 5, entries
 
@@ -237,9 +231,7 @@ def test_the_decisions_link_at_least_ten_distinct_adrs() -> None:
     count with the ADR template instead of a real decision, or that links an ADR number nobody
     ever wrote."""
     body = section_body(read(README), "## The decisions")
-    linked = {
-        target for target in relative_targets(body) if target.startswith(ADR_PREFIX)
-    }
+    linked = {target for target in relative_targets(body) if target.startswith(ADR_PREFIX)}
 
     assert ADR_TEMPLATE not in linked
     assert len(linked) >= MINIMUM_ADRS, sorted(linked)
@@ -274,14 +266,10 @@ def test_the_threat_model_covers_all_ten_named_threats() -> None:
     assert THREAT_TABLE_HEADER in [line.strip() for line in text.splitlines()]
 
     rows = table_rows(text)
-    placeholders = [
-        row for row in rows if row[COMPONENT_COLUMN] == THREAT_PLACEHOLDER_CELL
-    ]
+    placeholders = [row for row in rows if row[COMPONENT_COLUMN] == THREAT_PLACEHOLDER_CELL]
     assert placeholders == []
 
-    scenarios = " ".join(
-        row[SCENARIO_COLUMN] for row in rows if len(row) > SCENARIO_COLUMN
-    ).lower()
+    scenarios = " ".join(row[SCENARIO_COLUMN] for row in rows if len(row) > SCENARIO_COLUMN).lower()
     missing = [threat for threat in THREAT_SCENARIOS if threat not in scenarios]
     assert missing == [], f"no scenario cell covers {missing}"
 
@@ -293,11 +281,7 @@ def test_every_threat_model_status_is_one_of_three_words() -> None:
     rows = table_rows(read(THREAT_MODEL))
     assert rows, "the threat model has no data rows; this case would assert nothing"
 
-    statuses = {
-        row[STATUS_COLUMN].strip("`").lower()
-        for row in rows
-        if len(row) > STATUS_COLUMN
-    }
+    statuses = {row[STATUS_COLUMN].strip("`").lower() for row in rows if len(row) > STATUS_COLUMN}
     assert statuses <= ALLOWED_STATUSES, sorted(statuses - ALLOWED_STATUSES)
 
 
@@ -335,11 +319,7 @@ def test_customizing_names_exactly_two_must_edit_files() -> None:
     """Catches the template's central promise quietly growing a third must-edit file: the
     must-edit line is located by its own marker and every `.yaml` or `.py` path on it is read,
     so an added module or config makes the set unequal."""
-    lines = [
-        line
-        for line in read(CUSTOMIZING).splitlines()
-        if CUSTOMIZING_MUST_EDIT.search(line)
-    ]
+    lines = [line for line in read(CUSTOMIZING).splitlines() if CUSTOMIZING_MUST_EDIT.search(line)]
     assert len(lines) == 1, lines
 
     named = set(YAML_OR_PY_PATH.findall(lines[0]))
@@ -362,8 +342,6 @@ def test_no_public_document_references_a_private_working_file() -> None:
         text = read(path)
         for label, pattern in PRIVATE_REFERENCES:
             for match in pattern.finditer(text):
-                found.append(
-                    f"{path.relative_to(REPO_ROOT)}: {label} -> {match.group(0)!r}"
-                )
+                found.append(f"{path.relative_to(REPO_ROOT)}: {label} -> {match.group(0)!r}")
 
     assert found == []

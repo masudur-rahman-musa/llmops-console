@@ -3,8 +3,8 @@ NetworkPolicy widenings an earlier change agrees, as `kubectl kustomize infra/k8
 
 The stream comes from the session-scoped `built` fixture in `infra/tests/infra/conftest.py`: one
 `kubectl kustomize infra/k8s` for the whole session, shared with every other
-`infra/tests/infra/test_k8s_*.py` module. Nothing here builds again, and every manifest claim is read
-off the BUILT stream rather than off a raw file, so a manifest written and never listed in a
+`infra/tests/infra/test_k8s_*.py` module. Nothing here builds again, and every manifest claim is
+read off the BUILT stream rather than off a raw file, so a manifest written and never listed in a
 `resources:` block is the same failure as a manifest never written.
 
 Everything is asserted by EQUALITY where the plan names a whole set (the object inventory, the
@@ -52,10 +52,10 @@ Go template) is a different, undocumented mechanism the implementer would need t
 test's `ENV_PLACEHOLDER` for, rather than something this scan silently waves through.
 
 `registered_metric_names` and the PromQL identifier scanner are COPIES of
-`infra/tests/infra/test_k8s_grafana.py`'s, not imports - the convention of this suite. So are the plain
-document helpers (`name_of`, `namespace_of`, `objects_of_kind`, `object_named`, `pod_templates`,
-`policies`, `policy`, ...), copied from `infra/tests/infra/test_k8s_monitoring.py` and
-`infra/tests/infra/test_k8s_netpol.py`.
+`infra/tests/infra/test_k8s_grafana.py`'s, not imports - the convention of this suite. So are the
+plain document helpers (`name_of`, `namespace_of`, `objects_of_kind`, `object_named`,
+`pod_templates`, `policies`, `policy`, ...), copied from
+`infra/tests/infra/test_k8s_monitoring.py` and `infra/tests/infra/test_k8s_netpol.py`.
 """
 
 from __future__ import annotations
@@ -188,9 +188,7 @@ FAMILY_SUFFIXES: dict[str, tuple[str, ...]] = {
 PROMQL_IDENTIFIER = re.compile(
     r"(?<![0-9A-Za-z_:])[A-Za-z_:][A-Za-z0-9_:]*(?![0-9A-Za-z_:])(?!\s*\()"
 )
-PROMQL_KEYWORDS = frozenset(
-    {"and", "or", "unless", "bool", "offset", "start", "end", "inf", "nan"}
-)
+PROMQL_KEYWORDS = frozenset({"and", "or", "unless", "bool", "offset", "start", "end", "inf", "nan"})
 PROMQL_GROUPING = re.compile(
     r"\b(?:by|without|on|ignoring|group_left|group_right)\s*\([^)]*\)", re.IGNORECASE
 )
@@ -218,19 +216,11 @@ def objects_of_kind(documents: list[dict[str, Any]], kind: str) -> list[dict[str
     return [document for document in documents if document.get("kind") == kind]
 
 
-def object_named(
-    documents: list[dict[str, Any]], kind: str, name: str
-) -> dict[str, Any]:
+def object_named(documents: list[dict[str, Any]], kind: str, name: str) -> dict[str, Any]:
     """The one `kind` named `name`, asserting the build emits exactly one."""
-    found = [
-        document
-        for document in objects_of_kind(documents, kind)
-        if name_of(document) == name
-    ]
+    found = [document for document in objects_of_kind(documents, kind) if name_of(document) == name]
     emitted = sorted(name_of(document) for document in objects_of_kind(documents, kind))
-    assert len(found) == 1, (
-        f"expected one {kind}/{name}; the build has {kind}s {emitted}"
-    )
+    assert len(found) == 1, f"expected one {kind}/{name}; the build has {kind}s {emitted}"
     return found[0]
 
 
@@ -256,9 +246,7 @@ def template_labels(template: dict[str, Any]) -> dict[str, str]:
     return {str(key): str(value) for key, value in labels.items()}
 
 
-def pod_templates(
-    documents: list[dict[str, Any]], namespace: str
-) -> dict[str, dict[str, Any]]:
+def pod_templates(documents: list[dict[str, Any]], namespace: str) -> dict[str, dict[str, Any]]:
     """Every pod template in `namespace`, keyed by its `app.kubernetes.io/name` label."""
     templates: dict[str, dict[str, Any]] = {}
     for owner in pod_owners(documents, namespace):
@@ -278,9 +266,7 @@ def containers_of(template: dict[str, Any]) -> list[dict[str, Any]]:
     for key in ("initContainers", "containers"):
         listed = spec.get(key, [])
         assert isinstance(listed, list), f"a pod template's {key} is not a list"
-        collected.extend(
-            container for container in listed if isinstance(container, dict)
-        )
+        collected.extend(container for container in listed if isinstance(container, dict))
     return collected
 
 
@@ -339,9 +325,7 @@ def rule_alerts(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
         assert isinstance(group, dict), f"{RULES_KEY} has a group that is not a mapping"
         rules = group.get("rules", [])
         assert isinstance(rules, list), f"{RULES_KEY}'s group declares no rules list"
-        alerts.extend(
-            rule for rule in rules if isinstance(rule, dict) and "alert" in rule
-        )
+        alerts.extend(rule for rule in rules if isinstance(rule, dict) and "alert" in rule)
     assert alerts, f"{RULES_KEY} declares no alerting rules"
     return alerts
 
@@ -357,14 +341,10 @@ def alertmanager_config(documents: list[dict[str, Any]]) -> dict[str, Any]:
 
 def policies(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Every built NetworkPolicy, in build order."""
-    return [
-        document for document in documents if document.get("kind") == NETWORK_POLICY
-    ]
+    return [document for document in documents if document.get("kind") == NETWORK_POLICY]
 
 
-def policy(
-    documents: list[dict[str, Any]], namespace: str, name: str
-) -> dict[str, Any]:
+def policy(documents: list[dict[str, Any]], namespace: str, name: str) -> dict[str, Any]:
     """The one NetworkPolicy `namespace/name`, asserting the build emits exactly one."""
     found = [
         document
@@ -372,9 +352,7 @@ def policy(
         if namespace_of(document) == namespace and name_of(document) == name
     ]
     emitted = sorted((str(namespace_of(p)), name_of(p)) for p in policies(documents))
-    assert len(found) == 1, (
-        f"expected one NetworkPolicy {namespace}/{name}, build has {emitted}"
-    )
+    assert len(found) == 1, f"expected one NetworkPolicy {namespace}/{name}, build has {emitted}"
     return found[0]
 
 
@@ -388,18 +366,14 @@ def spec_of(document: dict[str, Any]) -> dict[str, Any]:
 def pod_selector(document: dict[str, Any]) -> dict[str, Any]:
     """`spec.podSelector`, the set of pods a policy applies TO. `{}` means every pod."""
     selector = spec_of(document).get("podSelector")
-    assert isinstance(selector, dict), (
-        f"{name_of(document)} declares no spec.podSelector"
-    )
+    assert isinstance(selector, dict), f"{name_of(document)} declares no spec.podSelector"
     return selector
 
 
 def rules_of(document: dict[str, Any], direction: str) -> list[dict[str, Any]]:
     """`spec.ingress` or `spec.egress` as a list of rule mappings, empty when absent."""
     listed = spec_of(document).get(direction, [])
-    assert isinstance(listed, list), (
-        f"{name_of(document)}.spec.{direction} is not a list"
-    )
+    assert isinstance(listed, list), f"{name_of(document)}.spec.{direction} is not a list"
     return [rule for rule in listed if isinstance(rule, dict)]
 
 
@@ -423,9 +397,7 @@ def selector_matches(selector: dict[str, Any], labels: dict[str, str]) -> bool:
     for expression in expressions:
         assert isinstance(expression, dict)
         operator = str(expression.get("operator"))
-        assert operator == "In", (
-            f"this scan understands matchLabels and In, not {operator!r}"
-        )
+        assert operator == "In", f"this scan understands matchLabels and In, not {operator!r}"
         values = {str(value) for value in expression.get("values", [])}
         if labels.get(str(expression.get("key"))) not in values:
             return False
@@ -450,9 +422,7 @@ def peer_namespace(peer: dict[str, Any], default: str) -> str:
     if not isinstance(selector, dict):
         return default
     match_labels = selector.get("matchLabels", {})
-    assert isinstance(match_labels, dict), (
-        "a namespaceSelector with no matchLabels is ambiguous"
-    )
+    assert isinstance(match_labels, dict), "a namespaceSelector with no matchLabels is ambiguous"
     named = match_labels.get(NAMESPACE_NAME_LABEL)
     assert named is not None, (
         f"a namespaceSelector keys off {sorted(match_labels)}, not {NAMESPACE_NAME_LABEL}"
@@ -477,14 +447,10 @@ def peer_targets(
 def declared_ports(rule: dict[str, Any], label: str) -> list[tuple[str, object]]:
     """A rule's `(protocol, port-as-written)` entries, the port still a name OR a number."""
     listed = rule.get("ports", [])
-    assert isinstance(listed, list) and listed, (
-        f"{label} declares no ports, so it allows all"
-    )
+    assert isinstance(listed, list) and listed, f"{label} declares no ports, so it allows all"
     entries: list[tuple[str, object]] = []
     for entry in listed:
-        assert isinstance(entry, dict), (
-            f"{label} has a port entry that is not a mapping"
-        )
+        assert isinstance(entry, dict), f"{label} has a port entry that is not a mapping"
         entries.append((str(entry.get("protocol", "TCP")), entry.get("port")))
     return entries
 
@@ -493,16 +459,12 @@ def numeric_ports(rule: dict[str, Any], label: str) -> set[tuple[str, int]]:
     """A rule's ports as `(protocol, number)`, asserting every one is written as a NUMBER."""
     pairs: set[tuple[str, int]] = set()
     for protocol, port in declared_ports(rule, label):
-        assert isinstance(port, int), (
-            f"{label} names port {port!r}; this rule reads in numbers"
-        )
+        assert isinstance(port, int), f"{label} names port {port!r}; this rule reads in numbers"
         pairs.add((protocol, port))
     return pairs
 
 
-def ports_against(
-    rule: dict[str, Any], ports: dict[str, int], label: str
-) -> set[tuple[str, int]]:
+def ports_against(rule: dict[str, Any], ports: dict[str, int], label: str) -> set[tuple[str, int]]:
     """A rule's ports resolved against ONE pod's named container ports."""
     resolved: set[tuple[str, int]] = set()
     for protocol, port in declared_ports(rule, label):
@@ -510,9 +472,7 @@ def ports_against(
             resolved.add((protocol, port))
             continue
         number = ports.get(str(port))
-        assert number is not None, (
-            f"{label} names port {port!r}; that pod has {sorted(ports)}"
-        )
+        assert number is not None, f"{label} names port {port!r}; that pod has {sorted(ports)}"
         resolved.add((protocol, number))
     return resolved
 
@@ -537,9 +497,7 @@ def egress_destinations(
     destinations: set[tuple[str, int]] = set()
     for rule in rules_of(document, "egress"):
         peers = peers_of(rule, "to")
-        assert peers, (
-            f"{label} has an egress rule with no `to`, which allows every destination"
-        )
+        assert peers, f"{label} has an egress rule with no `to`, which allows every destination"
         for peer in peers:
             for target_namespace, workload in peer_targets(documents, peer, namespace):
                 if workload == ANY_POD:
@@ -598,9 +556,7 @@ def registered_metric_names() -> set[str]:
             f"{family.name} is a {family.type}, whose exposed series this helper cannot name"
         )
         accepted.add(family.name)
-        accepted.update(
-            f"{family.name}{suffix}" for suffix in FAMILY_SUFFIXES[family.type]
-        )
+        accepted.update(f"{family.name}{suffix}" for suffix in FAMILY_SUFFIXES[family.type])
     return accepted
 
 
@@ -639,9 +595,7 @@ def test_the_rules_file_is_mounted_and_every_expr_names_a_registered_family_or_a
         for static in entry.get("static_configs", []):
             assert isinstance(static, dict)
             targets |= {str(target) for target in static.get("targets", [])}
-    assert targets == {ALERTMANAGER_SERVICE_DNS}, (
-        f"alertmanagers targets are {sorted(targets)}"
-    )
+    assert targets == {ALERTMANAGER_SERVICE_DNS}, f"alertmanagers targets are {sorted(targets)}"
 
     registered = registered_metric_names()
     for rule in rule_alerts(built):
@@ -679,10 +633,7 @@ def test_nightly_eval_regression_reads_the_seven_day_median_and_not_the_average(
     the request's own wording, and the whole reason this row exists."""
     alerts = {str(rule.get("alert", "")): rule for rule in rule_alerts(built)}
     assert "NightlyEvalRegression" in alerts, sorted(alerts)
-    assert (
-        str(alerts["NightlyEvalRegression"].get("expr", ""))
-        == NIGHTLY_EVAL_REGRESSION_EXPR
-    )
+    assert str(alerts["NightlyEvalRegression"].get("expr", "")) == NIGHTLY_EVAL_REGRESSION_EXPR
 
 
 def test_alertmanager_fits_the_exact_remainder_23b_left_it(
@@ -700,22 +651,14 @@ def test_alertmanager_fits_the_exact_remainder_23b_left_it(
     for and 23a's envelope never sized for either.
     """
     templates = pod_templates(built, MONITORING)
-    assert ALERTMANAGER in templates, (
-        f"monitoring has pod templates {sorted(templates)}"
-    )
+    assert ALERTMANAGER in templates, f"monitoring has pod templates {sorted(templates)}"
     container = sole_container(templates[ALERTMANAGER], f"{MONITORING}/{ALERTMANAGER}")
     quantities = resource_quantities(container)
     assert quantities == ALERTMANAGER_RESOURCES, f"alertmanager declares {quantities}"
 
     volumes = templates[ALERTMANAGER]["spec"].get("volumes", [])
-    assert isinstance(volumes, list) and volumes, (
-        "alertmanager's pod template declares no volumes"
-    )
-    empty_dirs = [
-        volume
-        for volume in volumes
-        if isinstance(volume, dict) and "emptyDir" in volume
-    ]
+    assert isinstance(volumes, list) and volumes, "alertmanager's pod template declares no volumes"
+    empty_dirs = [volume for volume in volumes if isinstance(volume, dict) and "emptyDir" in volume]
     assert empty_dirs, f"alertmanager's pod template has no emptyDir volume: {volumes}"
     pvc_backed = [
         volume
@@ -724,9 +667,7 @@ def test_alertmanager_fits_the_exact_remainder_23b_left_it(
     ]
     assert pvc_backed == [], f"alertmanager's pod template mounts a PVC: {pvc_backed}"
 
-    pvcs = sorted(
-        name_of(pvc) for pvc in objects_of_kind(built, "PersistentVolumeClaim")
-    )
+    pvcs = sorted(name_of(pvc) for pvc in objects_of_kind(built, "PersistentVolumeClaim"))
     assert ALERTMANAGER not in pvcs, f"the build emits PersistentVolumeClaims {pvcs}"
 
 
@@ -750,9 +691,7 @@ def test_alertmanager_routes_every_alert_to_both_an_email_and_a_telegram_receive
     config = alertmanager_config(built)
     route = config.get("route", {})
     assert isinstance(route, dict) and route, "alertmanager.yml declares no route"
-    assert route.get("group_wait") == GROUP_WAIT, (
-        f"group_wait is {route.get('group_wait')!r}"
-    )
+    assert route.get("group_wait") == GROUP_WAIT, f"group_wait is {route.get('group_wait')!r}"
     assert route.get("group_interval") == GROUP_INTERVAL, (
         f"group_interval is {route.get('group_interval')!r}"
     )
@@ -763,17 +702,13 @@ def test_alertmanager_routes_every_alert_to_both_an_email_and_a_telegram_receive
     assert receiver_name, "the route names no receiver"
 
     receivers = config.get("receivers", [])
-    assert isinstance(receivers, list) and receivers, (
-        "alertmanager.yml declares no receivers"
-    )
+    assert isinstance(receivers, list) and receivers, "alertmanager.yml declares no receivers"
     matched = [
         entry
         for entry in receivers
         if isinstance(entry, dict) and entry.get("name") == receiver_name
     ]
-    assert len(matched) == 1, (
-        f"{len(matched)} receivers named {receiver_name!r}: {receivers}"
-    )
+    assert len(matched) == 1, f"{len(matched)} receivers named {receiver_name!r}: {receivers}"
     receiver = matched[0]
 
     emails = receiver.get("email_configs", [])
@@ -785,9 +720,7 @@ def test_alertmanager_routes_every_alert_to_both_an_email_and_a_telegram_receive
     for field, variable in EMAIL_FIELD_VARS.items():
         value = str(email.get(field, ""))
         match = ENV_PLACEHOLDER.fullmatch(value)
-        assert match is not None, (
-            f"email_configs.{field} is {value!r}, not an env placeholder"
-        )
+        assert match is not None, f"email_configs.{field} is {value!r}, not an env placeholder"
         assert match.group("name") == variable, (
             f"email_configs.{field} reads {match.group('name')!r}, not {variable!r}"
         )
@@ -801,9 +734,7 @@ def test_alertmanager_routes_every_alert_to_both_an_email_and_a_telegram_receive
     for field, variable in TELEGRAM_FIELD_VARS.items():
         value = str(telegram.get(field, ""))
         match = ENV_PLACEHOLDER.fullmatch(value)
-        assert match is not None, (
-            f"telegram_configs.{field} is {value!r}, not an env placeholder"
-        )
+        assert match is not None, f"telegram_configs.{field} is {value!r}, not an env placeholder"
         assert match.group("name") == variable, (
             f"telegram_configs.{field} reads {match.group('name')!r}, not {variable!r}"
         )
@@ -866,9 +797,7 @@ def test_alertmanager_is_the_second_and_last_pod_with_internet_egress(
         f"missing: {sorted(PUBLIC_EXCEPT - excepted)}"
     )
     ports = numeric_ports(rules[0], f"{MONITORING}/alertmanager-egress")
-    assert ports == PUBLIC_PORTS, (
-        f"alertmanager's public egress ports are {sorted(ports)}"
-    )
+    assert ports == PUBLIC_PORTS, f"alertmanager's public egress ports are {sorted(ports)}"
 
 
 def test_prometheus_can_reach_alertmanager_and_cert_manager_and_nothing_new_besides(
@@ -889,8 +818,8 @@ def test_prometheus_can_reach_alertmanager_and_cert_manager_and_nothing_new_besi
     Catches the alertmanager and cert-manager destinations grouped into ONE rule together, which
     would cross-multiply into `(alertmanager, 9402)` and `(cert-manager, 9093)` as well - two
     destinations nobody agreed to that plain destination-set equality in
-    `infra/tests/infra/test_k8s_monitoring.py`'s `PROMETHEUS_EGRESS_DESTINATIONS` already refuses, and
-    which this case additionally pins to the STRUCTURAL cause (one rule, one peer shape) rather
+    `infra/tests/infra/test_k8s_monitoring.py`'s `PROMETHEUS_EGRESS_DESTINATIONS` already refuses,
+    and which this case additionally pins to the STRUCTURAL cause (one rule, one peer shape) rather
     than only the symptom.
     """
     document = policy(built, MONITORING, "prometheus-egress")
@@ -909,9 +838,7 @@ def test_prometheus_can_reach_alertmanager_and_cert_manager_and_nothing_new_besi
         if peer_namespace(peer, MONITORING) == CERT_MANAGER
     ]
     assert cert_manager_peers, "prometheus-egress names no cert-manager peer"
-    with_pod_selector = [
-        peer for peer in cert_manager_peers if peer.get("podSelector") is not None
-    ]
+    with_pod_selector = [peer for peer in cert_manager_peers if peer.get("podSelector") is not None]
     assert with_pod_selector == [], (
         f"a cert-manager peer carries a podSelector, which this build has no pod template to "
         f"resolve it against: {with_pod_selector}"

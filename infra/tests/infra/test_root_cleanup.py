@@ -83,9 +83,7 @@ COMPOSE_NAMING_FILES = [
 
 #: A compose FILE path token. No space in the class, so the `docker compose` command (with a
 #: space) is never a hit; `"`, `$`, `{` and `}` are in it so `"$REPO_ROOT/x.yml` is one token.
-COMPOSE_PATH = re.compile(
-    r"[\w./$\"{}-]*(?:docker-compose[\w.-]*\.ya?ml|compose\.ya?ml)"
-)
+COMPOSE_PATH = re.compile(r"[\w./$\"{}-]*(?:docker-compose[\w.-]*\.ya?ml|compose\.ya?ml)")
 
 #: Prefixes stripped from a token before it is read as a path from the repo root.
 PATH_PREFIXES = ('"', "$REPO_ROOT/", "${REPO_ROOT}/", "./")
@@ -129,15 +127,15 @@ def test_load_overlay_lives_with_its_kit() -> None:
 
 
 def test_tradeoff_overlay_lives_with_its_kit() -> None:
-    """Catches a build that copies the tradeoff overlay to `infra/tradeoff/` but leaves the root copy."""
+    """Catches a build that copies the tradeoff overlay to `infra/tradeoff/` but leaves the root
+    copy."""
     assert TRADEOFF_OVERLAY.is_file(), f"{TRADEOFF_OVERLAY} is missing"
-    assert not OLD_TRADEOFF_OVERLAY.exists(), (
-        f"{OLD_TRADEOFF_OVERLAY} is still at the root"
-    )
+    assert not OLD_TRADEOFF_OVERLAY.exists(), f"{OLD_TRADEOFF_OVERLAY} is still at the root"
 
 
 def test_gateway_reads_backend_env_files() -> None:
-    """Catches a gateway still reading the root `.env`, the two files swapped, or either one required."""
+    """Catches a gateway still reading the root `.env`, the two files swapped, or either one
+    required."""
     gateway = (load_yaml(BASE_COMPOSE).get("services") or {}).get("gateway") or {}
     assert gateway.get("env_file") == GATEWAY_ENV_FILE
 
@@ -178,7 +176,8 @@ def test_compose_config_without_any_env(tmp_path: Path) -> None:
 
 
 def test_server_secrets_default_env_file() -> None:
-    """Catches a deploy script still defaulting to the root `.env`, or a second `env_file=` overriding the new default."""
+    """Catches a deploy script still defaulting to the root `.env`, or a second `env_file=`
+    overriding the new default."""
     lines = [
         line.strip()
         for line in SERVER_SECRETS.read_text(encoding="utf-8").splitlines()
@@ -189,9 +188,7 @@ def test_server_secrets_default_env_file() -> None:
 
 def _check_root(repo: Path) -> subprocess.CompletedProcess[str]:
     """Run the real root check against `repo`."""
-    env = {
-        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
-    }
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     env["CLAUDE_PROJECT_DIR"] = str(repo)
     return subprocess.run(
         [sys.executable, str(CHECK_ROOT)],
@@ -204,7 +201,8 @@ def _check_root(repo: Path) -> subprocess.CompletedProcess[str]:
 
 
 def test_root_check_refuses_root_env(tmp_path: Path) -> None:
-    """Catches a root check that still sees only git's file list, so a gitignored root `.env` passes."""
+    """Catches a root check that still sees only git's file list, so a gitignored root `.env`
+    passes."""
     repo = tmp_path / "repo"
     (repo / ".claude").mkdir(parents=True)
     shutil.copyfile(ROOT_ALLOWLIST, repo / ".claude" / "root-allowlist")
@@ -212,20 +210,17 @@ def test_root_check_refuses_root_env(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True)
 
     clean = _check_root(repo)
-    assert clean.returncode == 0, (
-        f"stray on a clean copy:\n{clean.stdout}{clean.stderr}"
-    )
+    assert clean.returncode == 0, f"stray on a clean copy:\n{clean.stdout}{clean.stderr}"
 
     (repo / ".env").write_text("PLACEHOLDER=1\n", encoding="utf-8")
     dirty = _check_root(repo)
-    assert dirty.returncode == 1, (
-        f"exit {dirty.returncode} with a root .env:\n{dirty.stdout}"
-    )
+    assert dirty.returncode == 1, f"exit {dirty.returncode} with a root .env:\n{dirty.stdout}"
     assert re.search(r"(^|[^\w.])\.env($|[^\w.])", dirty.stdout), dirty.stdout
 
 
 def test_allowlist_names_only_two_compose_files() -> None:
-    """Catches an allowlist still carrying the `docker-compose*.yml` glob that lets a new overlay land at the root."""
+    """Catches an allowlist still carrying the `docker-compose*.yml` glob that lets a new overlay
+    land at the root."""
     lines = [
         line.strip()
         for line in ROOT_ALLOWLIST.read_text(encoding="utf-8").splitlines()
@@ -252,11 +247,7 @@ def test_named_compose_paths_exist() -> None:
     for source in COMPOSE_NAMING_FILES:
         text = source.read_text(encoding="utf-8")
         for match in COMPOSE_PATH.finditer(text):
-            named.append(
-                (source.relative_to(REPO_ROOT).as_posix(), normalise(match.group(0)))
-            )
+            named.append((source.relative_to(REPO_ROOT).as_posix(), normalise(match.group(0))))
     assert named, "no compose file path found in any of the files"
-    missing = [
-        (source, path) for source, path in named if not (REPO_ROOT / path).is_file()
-    ]
+    missing = [(source, path) for source, path in named if not (REPO_ROOT / path).is_file()]
     assert missing == []

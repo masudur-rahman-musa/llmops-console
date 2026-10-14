@@ -272,9 +272,7 @@ FORBIDDEN_MIDDLEWARE = "basic-auth"
 #: the comparison `test_secrets.py` keeps for the other four.
 ADMIN_SECRET = "grafana-admin"
 ADMIN_EXAMPLE_FILENAME = f"{ADMIN_SECRET}.example.yaml"
-ADMIN_KEYS: frozenset[str] = frozenset(
-    {"GF_SECURITY_ADMIN_USER", "GF_SECURITY_ADMIN_PASSWORD"}
-)
+ADMIN_KEYS: frozenset[str] = frozenset({"GF_SECURITY_ADMIN_USER", "GF_SECURITY_ADMIN_PASSWORD"})
 
 #: Criterion 8: the literal placeholder every value in a contract template carries, the same one
 #: `test_secrets.py` pins for the other four - greppable, and never read as a credential.
@@ -304,9 +302,7 @@ KUBE_SYSTEM = "kube-system"
 #: Criterion 7: every destination `grafana-egress` may reach, as `(workload, resolved port)`.
 #: Prometheus alone, on the number 23a pinned - the DNS allow is NOT here, it lives in
 #: `allow-dns`, which selects every pod in `monitoring`.
-GRAFANA_EGRESS_DESTINATIONS: frozenset[tuple[str, int]] = frozenset(
-    {(PROMETHEUS, 9090)}
-)
+GRAFANA_EGRESS_DESTINATIONS: frozenset[tuple[str, int]] = frozenset({(PROMETHEUS, 9090)})
 
 #: Kubernetes auto-labels every namespace with its own name, which is how a cross-namespace peer
 #: names the namespace it means.
@@ -349,9 +345,7 @@ PROMQL_IDENTIFIER = re.compile(
 )
 
 #: PromQL's own words, which survive the grouping-clause strip and are not metric names.
-PROMQL_KEYWORDS = frozenset(
-    {"and", "or", "unless", "bool", "offset", "start", "end", "inf", "nan"}
-)
+PROMQL_KEYWORDS = frozenset({"and", "or", "unless", "bool", "offset", "start", "end", "inf", "nan"})
 
 #: The grouping clauses whose parenthesised contents are LABEL names, stripped whole before any
 #: identifier is read - `sum by (route)` names a label, not a family.
@@ -402,23 +396,15 @@ def objects_of_kind(documents: list[dict[str, Any]], kind: str) -> list[dict[str
     return [document for document in documents if document.get("kind") == kind]
 
 
-def object_named(
-    documents: list[dict[str, Any]], kind: str, name: str
-) -> dict[str, Any]:
+def object_named(documents: list[dict[str, Any]], kind: str, name: str) -> dict[str, Any]:
     """The one `kind` named `name`, asserting the build emits exactly one.
 
     Fails with a message listing what the build DID emit of that kind, so a module run before
     the manifests land is red on the missing object and not on an IndexError.
     """
-    found = [
-        document
-        for document in objects_of_kind(documents, kind)
-        if name_of(document) == name
-    ]
+    found = [document for document in objects_of_kind(documents, kind) if name_of(document) == name]
     emitted = sorted(name_of(document) for document in objects_of_kind(documents, kind))
-    assert len(found) == 1, (
-        f"expected one {kind}/{name}; the build has {kind}s {emitted}"
-    )
+    assert len(found) == 1, f"expected one {kind}/{name}; the build has {kind}s {emitted}"
     return found[0]
 
 
@@ -445,9 +431,7 @@ def template_labels(template: dict[str, Any]) -> dict[str, str]:
     return {str(key): str(value) for key, value in labels.items()}
 
 
-def pod_templates(
-    documents: list[dict[str, Any]], namespace: str
-) -> dict[str, dict[str, Any]]:
+def pod_templates(documents: list[dict[str, Any]], namespace: str) -> dict[str, dict[str, Any]]:
     """Every pod template in `namespace`, keyed by its `app.kubernetes.io/name` label."""
     templates: dict[str, dict[str, Any]] = {}
     for owner in pod_owners(documents, namespace):
@@ -468,9 +452,7 @@ def containers_of(template: dict[str, Any]) -> list[dict[str, Any]]:
     for key in ("initContainers", "containers"):
         listed = spec.get(key, [])
         assert isinstance(listed, list), f"a pod template's {key} is not a list"
-        collected.extend(
-            container for container in listed if isinstance(container, dict)
-        )
+        collected.extend(container for container in listed if isinstance(container, dict))
     return collected
 
 
@@ -594,9 +576,7 @@ def volume_named(template: dict[str, Any], name: str) -> dict[str, Any]:
         for volume in template["spec"].get("volumes", [])
         if isinstance(volume, dict) and str(volume.get("name")) == name
     ]
-    assert len(volumes) == 1, (
-        f"{len(volumes)} volumes named {name} on the grafana pod template"
-    )
+    assert len(volumes) == 1, f"{len(volumes)} volumes named {name} on the grafana pod template"
     return volumes[0]
 
 
@@ -661,16 +641,10 @@ def resolved_container_port(target: object, container: dict[str, Any]) -> int | 
                 return int(port["containerPort"])
         return None
     number = int(str(target))
-    return (
-        number
-        if any(int(port["containerPort"]) == number for port in declared)
-        else None
-    )
+    return number if any(int(port["containerPort"]) == number for port in declared) else None
 
 
-def service_target_port(
-    service: dict[str, Any], backend_port: dict[str, Any]
-) -> object:
+def service_target_port(service: dict[str, Any], backend_port: dict[str, Any]) -> object:
     """The `targetPort` of the one Service port an Ingress backend names, by name or by number.
 
     The chain matters: an Ingress names a SERVICE port, and the Service maps that to a
@@ -678,9 +652,7 @@ def service_target_port(
     `targetPort` points at nothing.
     """
     ports = service["spec"].get("ports", [])
-    assert isinstance(ports, list) and ports, (
-        f"Service/{name_of(service)} declares no ports"
-    )
+    assert isinstance(ports, list) and ports, f"Service/{name_of(service)} declares no ports"
     wanted_name = backend_port.get("name")
     wanted_number = backend_port.get("number")
     assert (wanted_name is None) != (wanted_number is None), (
@@ -712,12 +684,8 @@ def dashboard_documents(documents: list[dict[str, Any]]) -> dict[str, Any]:
     for key, text in config_map_data(documents, DASHBOARDS_CONFIGMAP).items():
         try:
             parsed[key] = json.loads(text)
-        except (
-            json.JSONDecodeError
-        ) as error:  # pragma: no cover - the message is the assertion
-            raise AssertionError(
-                f"{key} in {DASHBOARDS_CONFIGMAP} is not JSON: {error}"
-            ) from error
+        except json.JSONDecodeError as error:  # pragma: no cover - the message is the assertion
+            raise AssertionError(f"{key} in {DASHBOARDS_CONFIGMAP} is not JSON: {error}") from error
     return parsed
 
 
@@ -780,9 +748,7 @@ def registered_metric_names() -> set[str]:
             f"{family.name} is a {family.type}, whose exposed series this helper cannot name"
         )
         accepted.add(family.name)
-        accepted.update(
-            f"{family.name}{suffix}" for suffix in FAMILY_SUFFIXES[family.type]
-        )
+        accepted.update(f"{family.name}{suffix}" for suffix in FAMILY_SUFFIXES[family.type])
     return accepted
 
 
@@ -809,9 +775,7 @@ def readme_secret_keys(secret: str) -> frozenset[str]:
     """
     lines = read(K8S_README).splitlines()
     headers = [
-        index
-        for index, line in enumerate(lines)
-        if table_cells(line) == README_HEADER_CELLS
+        index for index, line in enumerate(lines) if table_cells(line) == README_HEADER_CELLS
     ]
     assert len(headers) == 1, (
         f"{len(headers)} rows in {K8S_README} read {' | '.join(README_HEADER_CELLS)}"
@@ -845,17 +809,13 @@ def contract_keys() -> frozenset[str]:
     """The key set the `grafana-admin` template contracts for, read off the one document it
     holds, across `data` and `stringData` alike."""
     documents = contract_documents()
-    assert len(documents) == 1, (
-        f"{ADMIN_EXAMPLE_FILENAME} holds {len(documents)} documents, not 1"
-    )
+    assert len(documents) == 1, f"{ADMIN_EXAMPLE_FILENAME} holds {len(documents)} documents, not 1"
     keys: set[str] = set()
     for mapping_key in ("data", "stringData"):
         mapping = documents[0].get(mapping_key)
         if mapping is None:
             continue
-        assert isinstance(mapping, dict), (
-            f"{ADMIN_EXAMPLE_FILENAME}'s `{mapping_key}` is not a map"
-        )
+        assert isinstance(mapping, dict), f"{ADMIN_EXAMPLE_FILENAME}'s `{mapping_key}` is not a map"
         keys.update(str(key) for key in mapping)
     return frozenset(keys)
 
@@ -886,14 +846,10 @@ def envfrom_secrets(container: dict[str, Any]) -> set[str]:
 
 def policies(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Every built NetworkPolicy, in build order."""
-    return [
-        document for document in documents if document.get("kind") == NETWORK_POLICY
-    ]
+    return [document for document in documents if document.get("kind") == NETWORK_POLICY]
 
 
-def policy(
-    documents: list[dict[str, Any]], namespace: str, name: str
-) -> dict[str, Any]:
+def policy(documents: list[dict[str, Any]], namespace: str, name: str) -> dict[str, Any]:
     """The one NetworkPolicy `namespace/name`, asserting the build emits exactly one."""
     found = [
         document
@@ -901,9 +857,7 @@ def policy(
         if namespace_of(document) == namespace and name_of(document) == name
     ]
     emitted = sorted((str(namespace_of(p)), name_of(p)) for p in policies(documents))
-    assert len(found) == 1, (
-        f"expected one NetworkPolicy {namespace}/{name}, build has {emitted}"
-    )
+    assert len(found) == 1, f"expected one NetworkPolicy {namespace}/{name}, build has {emitted}"
     return found[0]
 
 
@@ -917,18 +871,14 @@ def spec_of(document: dict[str, Any]) -> dict[str, Any]:
 def pod_selector(document: dict[str, Any]) -> dict[str, Any]:
     """`spec.podSelector`, the set of pods a policy applies TO. `{}` means every pod."""
     selector = spec_of(document).get("podSelector")
-    assert isinstance(selector, dict), (
-        f"{name_of(document)} declares no spec.podSelector"
-    )
+    assert isinstance(selector, dict), f"{name_of(document)} declares no spec.podSelector"
     return selector
 
 
 def rules_of(document: dict[str, Any], direction: str) -> list[dict[str, Any]]:
     """`spec.ingress` or `spec.egress` as a list of rule mappings, empty when absent."""
     listed = spec_of(document).get(direction, [])
-    assert isinstance(listed, list), (
-        f"{name_of(document)}.spec.{direction} is not a list"
-    )
+    assert isinstance(listed, list), f"{name_of(document)}.spec.{direction} is not a list"
     return [rule for rule in listed if isinstance(rule, dict)]
 
 
@@ -954,9 +904,7 @@ def selector_matches(selector: dict[str, Any], labels: dict[str, str]) -> bool:
     for expression in expressions:
         assert isinstance(expression, dict)
         operator = str(expression.get("operator"))
-        assert operator == "In", (
-            f"this scan understands matchLabels and In, not {operator!r}"
-        )
+        assert operator == "In", f"this scan understands matchLabels and In, not {operator!r}"
         values = {str(value) for value in expression.get("values", [])}
         if labels.get(str(expression.get("key"))) not in values:
             return False
@@ -981,9 +929,7 @@ def peer_namespace(peer: dict[str, Any], default: str) -> str:
     if not isinstance(selector, dict):
         return default
     match_labels = selector.get("matchLabels", {})
-    assert isinstance(match_labels, dict), (
-        "a namespaceSelector with no matchLabels is ambiguous"
-    )
+    assert isinstance(match_labels, dict), "a namespaceSelector with no matchLabels is ambiguous"
     named = match_labels.get(NAMESPACE_NAME_LABEL)
     assert named is not None, (
         f"a namespaceSelector keys off {sorted(match_labels)}, not {NAMESPACE_NAME_LABEL}"
@@ -1010,14 +956,10 @@ def declared_ports(rule: dict[str, Any], label: str) -> list[tuple[str, object]]
     """A rule's `(protocol, port-as-written)` entries, the port still a name OR a number. A rule
     with no `ports` key allows EVERY port, which neither policy here intends, so it asserts."""
     listed = rule.get("ports", [])
-    assert isinstance(listed, list) and listed, (
-        f"{label} declares no ports, so it allows all"
-    )
+    assert isinstance(listed, list) and listed, f"{label} declares no ports, so it allows all"
     entries: list[tuple[str, object]] = []
     for entry in listed:
-        assert isinstance(entry, dict), (
-            f"{label} has a port entry that is not a mapping"
-        )
+        assert isinstance(entry, dict), f"{label} has a port entry that is not a mapping"
         entries.append((str(entry.get("protocol", "TCP")), entry.get("port")))
     return entries
 
@@ -1026,16 +968,12 @@ def numeric_ports(rule: dict[str, Any], label: str) -> set[tuple[str, int]]:
     """A rule's ports as `(protocol, number)`, asserting every one is written as a NUMBER."""
     pairs: set[tuple[str, int]] = set()
     for protocol, port in declared_ports(rule, label):
-        assert isinstance(port, int), (
-            f"{label} names port {port!r}; this rule reads in numbers"
-        )
+        assert isinstance(port, int), f"{label} names port {port!r}; this rule reads in numbers"
         pairs.add((protocol, port))
     return pairs
 
 
-def ports_against(
-    rule: dict[str, Any], ports: dict[str, int], label: str
-) -> set[tuple[str, int]]:
+def ports_against(rule: dict[str, Any], ports: dict[str, int], label: str) -> set[tuple[str, int]]:
     """A rule's ports resolved against ONE pod's named container ports: a number passes through,
     a name resolves to that pod's own number, which is what Kubernetes does per target pod."""
     resolved: set[tuple[str, int]] = set()
@@ -1044,9 +982,7 @@ def ports_against(
             resolved.add((protocol, port))
             continue
         number = ports.get(str(port))
-        assert number is not None, (
-            f"{label} names port {port!r}; that pod has {sorted(ports)}"
-        )
+        assert number is not None, f"{label} names port {port!r}; that pod has {sorted(ports)}"
         resolved.add((protocol, number))
     return resolved
 
@@ -1083,9 +1019,7 @@ def egress_destinations(
     destinations: set[tuple[str, int]] = set()
     for rule in rules_of(document, "egress"):
         peers = peers_of(rule, "to")
-        assert peers, (
-            f"{label} has an egress rule with no `to`, which allows every destination"
-        )
+        assert peers, f"{label} has an egress rule with no `to`, which allows every destination"
         for peer in peers:
             for target_namespace, workload in peer_targets(documents, peer, namespace):
                 if workload == ANY_POD:
@@ -1149,9 +1083,7 @@ def test_the_monitoring_namespace_emits_grafana_and_nothing_else_new(
         f"missing: {sorted(map(str, MONITORING_OBJECTS - emitted))}"
     )
 
-    definitions = sorted(
-        name_of(document) for document in objects_of_kind(built, FORBIDDEN_KIND)
-    )
+    definitions = sorted(name_of(document) for document in objects_of_kind(built, FORBIDDEN_KIND))
     assert definitions == [], f"the build emits {FORBIDDEN_KIND}s: {definitions}"
 
     operator_documents = sorted(
@@ -1239,9 +1171,7 @@ def test_every_dashboard_target_names_the_provisioned_datasource_and_a_registere
     for key, dashboard in dashboard_documents(built).items():
         for panel in panels_of(dashboard):
             for target in panel.get("targets", []):
-                assert isinstance(target, dict), (
-                    f"{key} has a target that is not a mapping"
-                )
+                assert isinstance(target, dict), f"{key} has a target that is not a mapping"
                 seen += 1
                 uid = datasource_uid_of(target.get("datasource"))
                 assert uid == DATASOURCE_UID, (
@@ -1250,9 +1180,7 @@ def test_every_dashboard_target_names_the_provisioned_datasource_and_a_registere
                 )
                 expr = str(target.get("expr", ""))
                 assert expr, f"{key}/{panel.get('title')!r} has a target with no expr"
-                unknown = sorted(
-                    metric_names_in(expr) - accepted - CLUSTER_INFRA_METRIC_NAMES
-                )
+                unknown = sorted(metric_names_in(expr) - accepted - CLUSTER_INFRA_METRIC_NAMES)
                 assert unknown == [], (
                     f"{key}/{panel.get('title')!r} reads {unknown}, which is neither "
                     "registered by opsconsole.core.metrics nor a cluster-infra name"
@@ -1281,9 +1209,7 @@ def test_the_provisioning_files_point_at_prometheus_and_at_the_mounted_directory
     mount is resolved THROUGH the volume backed by that ConfigMap and not matched on the path.
     """
     datasources_data = config_map_data(built, DATASOURCES_CONFIGMAP)
-    assert len(datasources_data) == 1, (
-        f"{DATASOURCES_CONFIGMAP} holds {sorted(datasources_data)}"
-    )
+    assert len(datasources_data) == 1, f"{DATASOURCES_CONFIGMAP} holds {sorted(datasources_data)}"
     datasources_file = parsed_yaml_value(
         next(iter(datasources_data.values())), DATASOURCES_CONFIGMAP
     )
@@ -1307,12 +1233,8 @@ def test_the_provisioning_files_point_at_prometheus_and_at_the_mounted_directory
     )
 
     providers_data = config_map_data(built, PROVIDERS_CONFIGMAP)
-    assert len(providers_data) == 1, (
-        f"{PROVIDERS_CONFIGMAP} holds {sorted(providers_data)}"
-    )
-    providers_file = parsed_yaml_value(
-        next(iter(providers_data.values())), PROVIDERS_CONFIGMAP
-    )
+    assert len(providers_data) == 1, f"{PROVIDERS_CONFIGMAP} holds {sorted(providers_data)}"
+    providers_file = parsed_yaml_value(next(iter(providers_data.values())), PROVIDERS_CONFIGMAP)
     providers = providers_file.get("providers", [])
     assert isinstance(providers, list) and len(providers) == 1, (
         f"{PROVIDERS_CONFIGMAP} declares {providers}, not exactly one provider"
@@ -1364,9 +1286,7 @@ def test_grafana_fits_what_the_scrape_plane_left_and_leaves_alertmanager_its_row
         pods = pods_of(owner)
         for member in containers_of(owner["spec"]["template"]):
             declared = resource_quantities(member)
-            totals["requests.memory"] += pods * memory_bytes(
-                declared["requests.memory"]
-            )
+            totals["requests.memory"] += pods * memory_bytes(declared["requests.memory"])
             totals["requests.cpu"] += pods * cpu_millicores(declared["requests.cpu"])
             totals["limits.memory"] += pods * memory_bytes(declared["limits.memory"])
 
@@ -1382,9 +1302,7 @@ def test_grafana_fits_what_the_scrape_plane_left_and_leaves_alertmanager_its_row
     )
 
     hard = quota_hard(object_named(built, "ResourceQuota", "monitoring-envelope"))
-    assert hard == MONITORING_QUOTA, (
-        f"the monitoring quota reads {hard}, not {MONITORING_QUOTA}"
-    )
+    assert hard == MONITORING_QUOTA, f"the monitoring quota reads {hard}, not {MONITORING_QUOTA}"
 
     assert memory_bytes(hard["requests.memory"]) - totals["requests.memory"] == (
         HEADROOM_REQUEST_MEMORY_BYTES
@@ -1427,9 +1345,7 @@ def test_the_grafana_ingress_publishes_one_host_behind_two_middlewares_and_no_ba
     a second host on the router, since paths and hosts are compared by set equality.
     """
     ingress = object_named(built, "Ingress", GRAFANA)
-    assert namespace_of(ingress) == MONITORING, (
-        f"the grafana Ingress is in {namespace_of(ingress)}"
-    )
+    assert namespace_of(ingress) == MONITORING, f"the grafana Ingress is in {namespace_of(ingress)}"
 
     rules = ingress["spec"]["rules"]
     assert isinstance(rules, list), "the grafana Ingress declares no rules list"
@@ -1453,24 +1369,16 @@ def test_the_grafana_ingress_publishes_one_host_behind_two_middlewares_and_no_ba
                 f"the grafana Ingress routes to Service/{backend['name']}"
             )
             port = backend.get("port", {})
-            assert isinstance(port, dict), (
-                f"the grafana Ingress names backend port {port}"
-            )
-            resolved = resolved_container_port(
-                service_target_port(service, port), container
-            )
+            assert isinstance(port, dict), f"the grafana Ingress names backend port {port}"
+            resolved = resolved_container_port(service_target_port(service, port), container)
             assert resolved == declared_ports[GRAFANA_PORT_NAME], (
                 f"the grafana Ingress backend port {port} resolves to {resolved}, and the "
                 f"container publishes {declared_ports[GRAFANA_PORT_NAME]}"
             )
-    assert paths == {(GRAFANA_PATH, PATH_TYPE_PREFIX)}, (
-        f"the grafana Ingress serves {paths}"
-    )
+    assert paths == {(GRAFANA_PATH, PATH_TYPE_PREFIX)}, f"the grafana Ingress serves {paths}"
 
     tls = ingress["spec"]["tls"]
-    assert isinstance(tls, list) and len(tls) == 1, (
-        f"the grafana Ingress declares {tls} for TLS"
-    )
+    assert isinstance(tls, list) and len(tls) == 1, f"the grafana Ingress declares {tls} for TLS"
     assert [str(host) for host in tls[0]["hosts"]] == [GRAFANA_HOST], (
         f"the grafana tls block covers {tls[0]['hosts']}"
     )
@@ -1534,12 +1442,8 @@ def test_the_only_way_into_grafana_is_the_secret_this_repo_does_not_supply(
     )
 
     document = contract_documents()[0]
-    assert document.get("kind") == "Secret", (
-        f"{ADMIN_EXAMPLE_FILENAME} declares a non-Secret"
-    )
-    assert name_of(document) == ADMIN_SECRET, (
-        f"{ADMIN_EXAMPLE_FILENAME} names {name_of(document)}"
-    )
+    assert document.get("kind") == "Secret", f"{ADMIN_EXAMPLE_FILENAME} declares a non-Secret"
+    assert name_of(document) == ADMIN_SECRET, f"{ADMIN_EXAMPLE_FILENAME} names {name_of(document)}"
     assert namespace_of(document) == MONITORING, (
         f"{ADMIN_EXAMPLE_FILENAME} files the Secret into {namespace_of(document)}"
     )
@@ -1555,9 +1459,7 @@ def test_the_only_way_into_grafana_is_the_secret_this_repo_does_not_supply(
 
     declared = env_names(container) | set(keys)
     anonymous = sorted(name for name in declared if name.startswith(ANONYMOUS_PREFIX))
-    assert anonymous == [], (
-        f"grafana declares {anonymous}, which opens the UI to anyone"
-    )
+    assert anonymous == [], f"grafana declares {anonymous}, which opens the UI to anyone"
     assert LOGIN_FORM_VARIABLE not in declared, (
         f"grafana declares {LOGIN_FORM_VARIABLE}, which removes the login the credential is for"
     )
@@ -1593,9 +1495,7 @@ def test_grafana_is_reachable_only_from_the_router_and_reaches_only_prometheus(
         f"{GRAFANA_INGRESS_POLICY} selects "
         f"{sorted(matched_workloads(built, pod_selector(ingress), MONITORING))}"
     )
-    assert "egress" not in spec_of(ingress), (
-        f"{GRAFANA_INGRESS_POLICY} declares an egress block"
-    )
+    assert "egress" not in spec_of(ingress), f"{GRAFANA_INGRESS_POLICY} declares an egress block"
 
     serving_port = container_ports(grafana_template(built))[GRAFANA_PORT_NAME]
     expected_ports = {GRAFANA: {("TCP", serving_port)}}
@@ -1604,35 +1504,27 @@ def test_grafana_is_reachable_only_from_the_router_and_reaches_only_prometheus(
     peers: set[tuple[str, str]] = set()
     for rule in rules:
         listed = peers_of(rule, "from")
-        assert listed, (
-            f"{GRAFANA_INGRESS_POLICY} has a rule with no `from`, admitting everyone"
-        )
+        assert listed, f"{GRAFANA_INGRESS_POLICY} has a rule with no `from`, admitting everyone"
         for peer in listed:
             peers |= peer_targets(built, peer, MONITORING)
         assert resolved_ports(built, ingress, rule) == expected_ports, (
             f"{GRAFANA_INGRESS_POLICY} resolves to {resolved_ports(built, ingress, rule)}, "
             f"not {expected_ports}"
         )
-    assert peers == {(KUBE_SYSTEM, ANY_POD)}, (
-        f"{GRAFANA_INGRESS_POLICY} admits {sorted(peers)}"
-    )
+    assert peers == {(KUBE_SYSTEM, ANY_POD)}, f"{GRAFANA_INGRESS_POLICY} admits {sorted(peers)}"
 
     egress = policy(built, MONITORING, GRAFANA_EGRESS_POLICY)
     assert matched_workloads(built, pod_selector(egress), MONITORING) == {GRAFANA}, (
         f"{GRAFANA_EGRESS_POLICY} selects "
         f"{sorted(matched_workloads(built, pod_selector(egress), MONITORING))}"
     )
-    assert "ingress" not in spec_of(egress), (
-        f"{GRAFANA_EGRESS_POLICY} declares an ingress block"
-    )
+    assert "ingress" not in spec_of(egress), f"{GRAFANA_EGRESS_POLICY} declares an ingress block"
 
     # The `ipBlock` scan runs BEFORE the destination equality on purpose: a CIDR peer carries no
     # `namespaceSelector`, so `peer_targets` would read it as the policy's own namespace and the
     # destination set would report the CIDR as a pod peer. Asserting absence first is what makes
     # this claim red on its own line rather than through the equality next to it.
-    assert ip_blocks(egress) == [], (
-        f"{GRAFANA_EGRESS_POLICY} carries ipBlocks: {ip_blocks(egress)}"
-    )
+    assert ip_blocks(egress) == [], f"{GRAFANA_EGRESS_POLICY} carries ipBlocks: {ip_blocks(egress)}"
     assert ip_blocks(ingress) == [], (
         f"{GRAFANA_INGRESS_POLICY} carries ipBlocks: {ip_blocks(ingress)}"
     )

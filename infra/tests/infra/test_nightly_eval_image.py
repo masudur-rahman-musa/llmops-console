@@ -23,9 +23,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BACKEND_DOCKERFILE = REPO_ROOT / "backend" / "Dockerfile"
 GOLDEN_FILE = REPO_ROOT / "backend" / "evals" / "golden" / "example.jsonl"
-NIGHTLY_EVAL_CRONJOB = (
-    REPO_ROOT / "infra" / "k8s" / "evals" / "nightly-eval-cronjob.yaml"
-)
+NIGHTLY_EVAL_CRONJOB = REPO_ROOT / "infra" / "k8s" / "evals" / "nightly-eval-cronjob.yaml"
 
 #: The absolute in-image path the CronJob's `--set` must name after this plan: `/app` is the
 #: Dockerfile's WORKDIR, and the golden set is copied to `/app/evals/golden/`.
@@ -72,15 +70,10 @@ def test_the_image_ships_the_golden_set() -> None:
     the source file the COPY reads must really exist in the repo today, or the COPY copies
     nothing. Without this, the CronJob path case could pass while the image stays empty."""
     assert BACKEND_DOCKERFILE.is_file(), f"{BACKEND_DOCKERFILE} does not exist"
-    lines = [
-        line.strip()
-        for line in BACKEND_DOCKERFILE.read_text(encoding="utf-8").splitlines()
-    ]
+    lines = [line.strip() for line in BACKEND_DOCKERFILE.read_text(encoding="utf-8").splitlines()]
 
     copy_lines = [line for line in lines if line.startswith("COPY evals/golden/")]
-    assert copy_lines, (
-        "the Dockerfile has no `COPY evals/golden/` line, so the image ships no set"
-    )
+    assert copy_lines, "the Dockerfile has no `COPY evals/golden/` line, so the image ships no set"
     resolving = [
         line
         for line in copy_lines
@@ -90,9 +83,7 @@ def test_the_image_ships_the_golden_set() -> None:
         f"no `COPY evals/golden/` line names a destination under /app "
         f"({VALID_COPY_DESTINATIONS}): {copy_lines}"
     )
-    assert GOLDEN_FILE.is_file(), (
-        f"{GOLDEN_FILE} does not exist, so the COPY would copy nothing"
-    )
+    assert GOLDEN_FILE.is_file(), f"{GOLDEN_FILE} does not exist, so the COPY would copy nothing"
 
 
 def test_the_cronjob_reads_the_golden_set_from_the_image() -> None:
@@ -101,21 +92,13 @@ def test_the_cronjob_reads_the_golden_set_from_the_image() -> None:
     absolute in-image `/app/evals/golden/example.jsonl`, under `/app` and never `backend/`-
     relative. Read from the file directly, not the `built` fixture, so this case does not need
     kubectl to redden on a wrong path."""
-    documents = list(
-        yaml.safe_load_all(NIGHTLY_EVAL_CRONJOB.read_text(encoding="utf-8"))
-    )
+    documents = list(yaml.safe_load_all(NIGHTLY_EVAL_CRONJOB.read_text(encoding="utf-8")))
     documents = [document for document in documents if isinstance(document, dict)]
-    assert len(documents) == 1, (
-        f"{NIGHTLY_EVAL_CRONJOB} holds {len(documents)} documents, not one"
-    )
+    assert len(documents) == 1, f"{NIGHTLY_EVAL_CRONJOB} holds {len(documents)} documents, not one"
 
     command = [str(part) for part in sole_container(documents[0]).get("command", [])]
     set_value = value_after(command, "--set")
 
     assert set_value == IN_IMAGE_GOLDEN_PATH, f"--set reads {set_value!r}"
-    assert set_value.startswith("/app/"), (
-        f"--set is not an absolute in-image path: {set_value!r}"
-    )
-    assert not set_value.startswith("backend/"), (
-        f"--set is still repo-relative: {set_value!r}"
-    )
+    assert set_value.startswith("/app/"), f"--set is not an absolute in-image path: {set_value!r}"
+    assert not set_value.startswith("backend/"), f"--set is still repo-relative: {set_value!r}"

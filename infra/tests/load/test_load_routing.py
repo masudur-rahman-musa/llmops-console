@@ -39,9 +39,7 @@ def test_only_the_two_mock_backed_providers_are_enabled(policy: Policy) -> None:
 
 
 @pytest.mark.parametrize("provider", ["local", "local_embed"])
-def test_both_enabled_providers_point_at_the_mock(
-    policy: Policy, provider: str
-) -> None:
+def test_both_enabled_providers_point_at_the_mock(policy: Policy, provider: str) -> None:
     """Criterion 6: catches a provider still pointing at `llama` or `llama-embed`,
     which does not exist in the load stack."""
     assert policy.providers[provider].base_url == MOCK_BASE_URL

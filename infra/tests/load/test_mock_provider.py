@@ -130,9 +130,7 @@ def test_health_answers_ok(client: TestClient) -> None:
     assert response.json() == {"status": "ok"}
 
 
-@pytest.mark.parametrize(
-    "extra", [{}, {"stream": False}], ids=["stream-absent", "stream-false"]
-)
+@pytest.mark.parametrize("extra", [{}, {"stream": False}], ids=["stream-absent", "stream-false"])
 def test_non_streaming_chat_returns_one_choice_and_a_usage_block(
     client: TestClient, extra: dict[str, Any]
 ) -> None:
@@ -150,15 +148,10 @@ def test_non_streaming_chat_returns_one_choice_and_a_usage_block(
     choice = document["choices"][0]
     assert choice["index"] == 0
     assert choice["message"]["role"] == "assistant"
-    assert (
-        isinstance(choice["message"]["content"], str) and choice["message"]["content"]
-    )
+    assert isinstance(choice["message"]["content"], str) and choice["message"]["content"]
     assert choice["finish_reason"] == "stop"
     usage = document["usage"]
-    assert all(
-        is_int(usage[key])
-        for key in ("prompt_tokens", "completion_tokens", "total_tokens")
-    )
+    assert all(is_int(usage[key]) for key in ("prompt_tokens", "completion_tokens", "total_tokens"))
     assert usage["total_tokens"] == usage["prompt_tokens"] + usage["completion_tokens"]
 
 
@@ -190,19 +183,14 @@ def test_a_stream_is_ten_content_chunks_then_one_usage_chunk_then_done(
         assert len(chunk["choices"]) == 1
         choice = chunk["choices"][0]
         assert choice["index"] == 0
-        assert (
-            isinstance(choice["delta"]["content"], str) and choice["delta"]["content"]
-        )
+        assert isinstance(choice["delta"]["content"], str) and choice["delta"]["content"]
         expected_finish = "stop" if position == 9 else None
         assert choice["finish_reason"] == expected_finish, f"chunk {position}"
 
     usage_chunk = json.loads(events[10])
     assert usage_chunk["choices"] == []
     usage = usage_chunk["usage"]
-    assert all(
-        is_int(usage[key])
-        for key in ("prompt_tokens", "completion_tokens", "total_tokens")
-    )
+    assert all(is_int(usage[key]) for key in ("prompt_tokens", "completion_tokens", "total_tokens"))
     assert usage["total_tokens"] == usage["prompt_tokens"] + usage["completion_tokens"]
 
 
@@ -226,9 +214,7 @@ def test_embeddings_return_one_finite_384_wide_vector_per_input(
     """Criterion 4: catches a mock returning one vector for a list, indices out of
     order, the wrong width, a non-finite value, a hard-coded model, or no usage."""
     expected_count = 1 if isinstance(inputs, str) else len(inputs)
-    response = client.post(
-        "/v1/embeddings", json={"model": EMBED_BODY["model"], "input": inputs}
-    )
+    response = client.post("/v1/embeddings", json={"model": EMBED_BODY["model"], "input": inputs})
     assert response.status_code == 200
     document = response.json()
     assert document["object"] == "list"
@@ -238,9 +224,7 @@ def test_embeddings_return_one_finite_384_wide_vector_per_input(
         assert item["object"] == "embedding"
         vector = item["embedding"]
         assert len(vector) == 384
-        assert all(
-            isinstance(value, float) and math.isfinite(value) for value in vector
-        )
+        assert all(isinstance(value, float) and math.isfinite(value) for value in vector)
     assert is_int(document["usage"]["prompt_tokens"])
     assert is_int(document["usage"]["total_tokens"])
 
@@ -323,9 +307,7 @@ def dockerfile_instructions() -> list[str]:
 def test_the_mock_image_is_python_312_slim() -> None:
     """Criterion 1: catches a different or unpinned base image (every `FROM` is
     scanned, so a second stage cannot hide one)."""
-    froms = [
-        line for line in dockerfile_instructions() if line.upper().startswith("FROM ")
-    ]
+    froms = [line for line in dockerfile_instructions() if line.upper().startswith("FROM ")]
     assert froms, "the Dockerfile has no FROM"
     for line in froms:
         assert line.split()[1] == "python:3.12-slim", line

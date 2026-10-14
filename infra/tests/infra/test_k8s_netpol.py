@@ -206,9 +206,7 @@ ANY_POD = "*"
 
 def policies(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Every built NetworkPolicy, in build order."""
-    return [
-        document for document in documents if document.get("kind") == NETWORK_POLICY
-    ]
+    return [document for document in documents if document.get("kind") == NETWORK_POLICY]
 
 
 def name_of(document: dict[str, Any]) -> str:
@@ -226,9 +224,7 @@ def namespace_of(document: dict[str, Any]) -> str | None:
     return None if value is None else str(value)
 
 
-def policy(
-    documents: list[dict[str, Any]], namespace: str, name: str
-) -> dict[str, Any]:
+def policy(documents: list[dict[str, Any]], namespace: str, name: str) -> dict[str, Any]:
     """The one NetworkPolicy `namespace/name`, asserting the build emits exactly one.
 
     Fails with a readable message listing what the build DID emit, rather than raising, so a
@@ -240,9 +236,7 @@ def policy(
         if namespace_of(document) == namespace and name_of(document) == name
     ]
     emitted = sorted((str(namespace_of(p)), name_of(p)) for p in policies(documents))
-    assert len(found) == 1, (
-        f"expected one NetworkPolicy {namespace}/{name}, build has {emitted}"
-    )
+    assert len(found) == 1, f"expected one NetworkPolicy {namespace}/{name}, build has {emitted}"
     return found[0]
 
 
@@ -256,27 +250,21 @@ def spec_of(document: dict[str, Any]) -> dict[str, Any]:
 def policy_types(document: dict[str, Any]) -> list[str]:
     """`spec.policyTypes` as written, in order."""
     listed = spec_of(document).get("policyTypes", [])
-    assert isinstance(listed, list), (
-        f"{name_of(document)}.spec.policyTypes is not a list"
-    )
+    assert isinstance(listed, list), f"{name_of(document)}.spec.policyTypes is not a list"
     return [str(entry) for entry in listed]
 
 
 def pod_selector(document: dict[str, Any]) -> dict[str, Any]:
     """`spec.podSelector`, the set of pods a policy applies TO. `{}` means every pod."""
     selector = spec_of(document).get("podSelector")
-    assert isinstance(selector, dict), (
-        f"{name_of(document)} declares no spec.podSelector"
-    )
+    assert isinstance(selector, dict), f"{name_of(document)} declares no spec.podSelector"
     return selector
 
 
 def rules_of(document: dict[str, Any], direction: str) -> list[dict[str, Any]]:
     """`spec.ingress` or `spec.egress` as a list of rule mappings, empty when absent."""
     listed = spec_of(document).get(direction, [])
-    assert isinstance(listed, list), (
-        f"{name_of(document)}.spec.{direction} is not a list"
-    )
+    assert isinstance(listed, list), f"{name_of(document)}.spec.{direction} is not a list"
     return [rule for rule in listed if isinstance(rule, dict)]
 
 
@@ -288,9 +276,7 @@ def peers_of(rule: dict[str, Any], key: str) -> list[dict[str, Any]]:
     return [peer for peer in listed if isinstance(peer, dict)]
 
 
-def pod_templates(
-    documents: list[dict[str, Any]], namespace: str
-) -> dict[str, dict[str, Any]]:
+def pod_templates(documents: list[dict[str, Any]], namespace: str) -> dict[str, dict[str, Any]]:
     """Every pod template in `namespace`, keyed by its `app.kubernetes.io/name` label.
 
     Found by the PRESENCE of `spec.template.spec` rather than by a list of kinds, so a Job or a
@@ -306,9 +292,7 @@ def pod_templates(
             continue
         metadata = template.get("metadata", {})
         labels = metadata.get("labels", {}) if isinstance(metadata, dict) else {}
-        assert isinstance(labels, dict), (
-            f"{name_of(document)}'s pod template has no labels"
-        )
+        assert isinstance(labels, dict), f"{name_of(document)}'s pod template has no labels"
         workload = str(labels.get(NAME_LABEL, ""))
         assert workload, f"{name_of(document)}'s pod template carries no {NAME_LABEL}"
         templates[workload] = template
@@ -361,9 +345,7 @@ def selector_matches(selector: dict[str, Any], labels: dict[str, str]) -> bool:
     for expression in expressions:
         assert isinstance(expression, dict)
         operator = str(expression.get("operator"))
-        assert operator == "In", (
-            f"this scan understands matchLabels and In, not {operator!r}"
-        )
+        assert operator == "In", f"this scan understands matchLabels and In, not {operator!r}"
         values = {str(value) for value in expression.get("values", [])}
         if labels.get(str(expression.get("key"))) not in values:
             return False
@@ -389,9 +371,7 @@ def peer_namespace(peer: dict[str, Any], default: str) -> str:
     if not isinstance(selector, dict):
         return default
     match_labels = selector.get("matchLabels", {})
-    assert isinstance(match_labels, dict), (
-        "a namespaceSelector with no matchLabels is ambiguous"
-    )
+    assert isinstance(match_labels, dict), "a namespaceSelector with no matchLabels is ambiguous"
     named = match_labels.get(NAMESPACE_NAME_LABEL)
     assert named is not None, (
         f"a namespaceSelector keys off {sorted(match_labels)}, not {NAMESPACE_NAME_LABEL}"
@@ -420,14 +400,10 @@ def declared_ports(rule: dict[str, Any], label: str) -> list[tuple[str, object]]
     A rule with no `ports` key allows EVERY port, which no policy here intends, so it asserts.
     """
     listed = rule.get("ports", [])
-    assert isinstance(listed, list) and listed, (
-        f"{label} declares no ports, so it allows all"
-    )
+    assert isinstance(listed, list) and listed, f"{label} declares no ports, so it allows all"
     entries: list[tuple[str, object]] = []
     for entry in listed:
-        assert isinstance(entry, dict), (
-            f"{label} has a port entry that is not a mapping"
-        )
+        assert isinstance(entry, dict), f"{label} has a port entry that is not a mapping"
         entries.append((str(entry.get("protocol", "TCP")), entry.get("port")))
     return entries
 
@@ -436,16 +412,12 @@ def numeric_ports(rule: dict[str, Any], label: str) -> set[tuple[str, int]]:
     """A rule's ports as `(protocol, number)`, asserting every one is written as a NUMBER."""
     pairs: set[tuple[str, int]] = set()
     for protocol, port in declared_ports(rule, label):
-        assert isinstance(port, int), (
-            f"{label} names port {port!r}; this rule reads in numbers"
-        )
+        assert isinstance(port, int), f"{label} names port {port!r}; this rule reads in numbers"
         pairs.add((protocol, port))
     return pairs
 
 
-def ports_against(
-    rule: dict[str, Any], ports: dict[str, int], label: str
-) -> set[tuple[str, int]]:
+def ports_against(rule: dict[str, Any], ports: dict[str, int], label: str) -> set[tuple[str, int]]:
     """A rule's ports resolved against ONE pod's named container ports: a number passes through,
     a name resolves to that pod's own number, which is what Kubernetes does per target pod."""
     resolved: set[tuple[str, int]] = set()
@@ -454,9 +426,7 @@ def ports_against(
             resolved.add((protocol, port))
             continue
         number = ports.get(str(port))
-        assert number is not None, (
-            f"{label} names port {port!r}; that pod has {sorted(ports)}"
-        )
+        assert number is not None, f"{label} names port {port!r}; that pod has {sorted(ports)}"
         resolved.add((protocol, number))
     return resolved
 
@@ -497,9 +467,7 @@ def egress_destinations(
     destinations: set[tuple[str, int]] = set()
     for rule in rules_of(document, "egress"):
         peers = peers_of(rule, "to")
-        assert peers, (
-            f"{label} has an egress rule with no `to`, which allows every destination"
-        )
+        assert peers, f"{label} has an egress rule with no `to`, which allows every destination"
         for peer in peers:
             for target_namespace, workload in peer_targets(documents, peer, namespace):
                 if workload == ANY_POD:
@@ -585,9 +553,7 @@ def test_each_namespace_emits_exactly_the_policies_the_plan_names(
     wrong one leaves its real target open. Catches an extra policy nobody agreed to, which
     equality makes as red as a missing one because Kubernetes unions allows."""
     emitted = {
-        name_of(document)
-        for document in policies(built)
-        if namespace_of(document) == namespace
+        name_of(document) for document in policies(built) if namespace_of(document) == namespace
     }
     assert emitted == expected, (
         f"unexpected: {sorted(emitted - expected)}; missing: {sorted(expected - emitted)}"
@@ -602,9 +568,7 @@ def test_the_whole_build_emits_exactly_the_twenty_one_policies_and_nowhere_else(
     filters to its own namespace first; and catches a policy emitted with no
     `metadata.namespace` at all, which the API server would file into whatever namespace the
     apply ran against rather than the one the plan names."""
-    emitted = {
-        (str(namespace_of(document)), name_of(document)) for document in policies(built)
-    }
+    emitted = {(str(namespace_of(document)), name_of(document)) for document in policies(built)}
     assert emitted == POLICY_NAMES, (
         f"unexpected: {sorted(emitted - POLICY_NAMES)}; missing: {sorted(POLICY_NAMES - emitted)}"
     )
@@ -621,19 +585,13 @@ def test_the_default_deny_policies_close_the_directions_the_plan_names(
     policy that declares an `egress` block or an `Egress` policyType, which would deny every
     outbound connection Postgres, Redis and Qdrant make the moment it is applied."""
     apps_default_deny = policy(built, APPS, "default-deny")
-    assert pod_selector(apps_default_deny) == {}, (
-        "apps/default-deny must select every pod"
-    )
+    assert pod_selector(apps_default_deny) == {}, "apps/default-deny must select every pod"
     assert set(policy_types(apps_default_deny)) == APPS_DEFAULT_DENY_POLICY_TYPES
     assert len(policy_types(apps_default_deny)) == 2, "policyTypes repeats an entry"
 
     platform_default_deny = policy(built, PLATFORM, "default-deny-ingress")
-    assert pod_selector(platform_default_deny) == {}, (
-        "platform's catch-all must select every pod"
-    )
-    assert (
-        set(policy_types(platform_default_deny)) == PLATFORM_DEFAULT_DENY_POLICY_TYPES
-    )
+    assert pod_selector(platform_default_deny) == {}, "platform's catch-all must select every pod"
+    assert set(policy_types(platform_default_deny)) == PLATFORM_DEFAULT_DENY_POLICY_TYPES
     assert len(policy_types(platform_default_deny)) == 1, "policyTypes repeats an entry"
 
     with_egress = sorted(
@@ -661,9 +619,7 @@ def test_the_dns_policy_opens_both_protocols_on_53_for_every_pod_in_apps(
     opened: set[tuple[str, int]] = set()
     for rule in rules:
         opened |= numeric_ports(rule, f"{APPS}/allow-dns")
-    assert opened == DNS_PORTS, (
-        f"DNS ports are {sorted(opened)}, not {sorted(DNS_PORTS)}"
-    )
+    assert opened == DNS_PORTS, f"DNS ports are {sorted(opened)}, not {sorted(DNS_PORTS)}"
 
 
 def test_the_gateway_and_alertmanager_are_the_only_pods_with_a_route_to_the_public_internet(
@@ -694,9 +650,7 @@ def test_the_gateway_and_alertmanager_are_the_only_pods_with_a_route_to_the_publ
     gateway_egress = policy(built, APPS, "gateway-egress")
     assert pod_selector(gateway_egress) == {"matchLabels": {NAME_LABEL: GATEWAY}}
     alertmanager_egress = policy(built, MONITORING, "alertmanager-egress")
-    assert pod_selector(alertmanager_egress) == {
-        "matchLabels": {NAME_LABEL: ALERTMANAGER}
-    }
+    assert pod_selector(alertmanager_egress) == {"matchLabels": {NAME_LABEL: ALERTMANAGER}}
 
     for label, document in (
         (f"{APPS}/gateway-egress", gateway_egress),
@@ -715,9 +669,7 @@ def test_the_gateway_and_alertmanager_are_the_only_pods_with_a_route_to_the_publ
             f"missing: {sorted(PUBLIC_EXCEPT - excepted)}"
         )
         ports = numeric_ports(rules[0], label)
-        assert ports == PUBLIC_PORTS, (
-            f"{label}: public egress ports are {sorted(ports)}"
-        )
+        assert ports == PUBLIC_PORTS, f"{label}: public egress ports are {sorted(ports)}"
 
 
 def test_the_helpdesk_may_reach_exactly_six_destinations_and_no_ip_block(
@@ -740,9 +692,7 @@ def test_the_helpdesk_may_reach_exactly_six_destinations_and_no_ip_block(
         f"{namespace_of(document)}/{name_of(document)}"
         for document in policies(built)
         if namespace_of(document) is not None
-        and matched_workloads(
-            built, pod_selector(document), str(namespace_of(document))
-        )
+        and matched_workloads(built, pod_selector(document), str(namespace_of(document)))
         & HELPDESK_WORKLOADS
         and ip_blocks(document)
     )
@@ -795,9 +745,7 @@ def test_each_ingress_policy_admits_exactly_its_named_sources_on_its_own_port(
     peers: set[tuple[str, str]] = set()
     for rule in rules:
         listed = peers_of(rule, "from")
-        assert listed, (
-            f"{APPS}/{name} has an ingress rule with no `from`, which admits everyone"
-        )
+        assert listed, f"{APPS}/{name} has an ingress rule with no `from`, which admits everyone"
         for peer in listed:
             peers |= peer_targets(built, peer, APPS)
         assert resolved_ports(built, document, rule) == expected_ports, (
@@ -830,12 +778,8 @@ def test_the_data_namespace_admits_apps_on_exactly_the_three_data_ports(
             peers |= peer_targets(built, peer, PLATFORM)
         pairs |= numeric_ports(rule, f"{PLATFORM}/data-ingress-from-apps")
     assert peers == {(APPS, ANY_POD)}, f"admitted sources are {sorted(peers)}"
-    assert {port for _, port in pairs} == DATA_PORTS, (
-        f"admitted ports are {sorted(pairs)}"
-    )
-    assert {protocol for protocol, _ in pairs} == {"TCP"}, (
-        f"admitted protocols: {sorted(pairs)}"
-    )
+    assert {port for _, port in pairs} == DATA_PORTS, f"admitted ports are {sorted(pairs)}"
+    assert {protocol for protocol, _ in pairs} == {"TCP"}, f"admitted protocols: {sorted(pairs)}"
 
 
 def test_every_selector_in_the_build_matches_a_pod_that_exists(
@@ -857,21 +801,13 @@ def test_every_selector_in_the_build_matches_a_pod_that_exists(
             # kube-system carries k3s's own Traefik and kube-dns; this build emits no pod
             # template in it, so there is nothing here to resolve a selector against.
             if namespace not in NAMESPACES_WITH_POD_TEMPLATES:
-                assert namespace == KUBE_SYSTEM, (
-                    f"{label} names unknown namespace {namespace}"
-                )
+                assert namespace == KUBE_SYSTEM, f"{label} names unknown namespace {namespace}"
                 continue
             templates = pod_templates(built, namespace)
             if selector == {}:
-                assert templates, (
-                    f"{label} is empty and {namespace} has no pod template"
-                )
+                assert templates, f"{label} is empty and {namespace} has no pod template"
                 empty_checked.append(label)
                 continue
             matched = matched_workloads(built, selector, namespace)
-            assert matched, (
-                f"{label} matches no pod in {namespace}: {sorted(templates)}"
-            )
-    assert empty_checked, (
-        "no empty podSelector was scanned; default-deny should have one"
-    )
+            assert matched, f"{label} matches no pod in {namespace}: {sorted(templates)}"
+    assert empty_checked, "no empty podSelector was scanned; default-deny should have one"

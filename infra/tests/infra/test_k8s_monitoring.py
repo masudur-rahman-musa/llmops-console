@@ -249,23 +249,15 @@ def objects_of_kind(documents: list[dict[str, Any]], kind: str) -> list[dict[str
     return [document for document in documents if document.get("kind") == kind]
 
 
-def object_named(
-    documents: list[dict[str, Any]], kind: str, name: str
-) -> dict[str, Any]:
+def object_named(documents: list[dict[str, Any]], kind: str, name: str) -> dict[str, Any]:
     """The one `kind` named `name`, asserting the build emits exactly one.
 
     Fails with a message listing what the build DID emit of that kind, so a module run before
     the manifests land is red on the missing object and not on an IndexError.
     """
-    found = [
-        document
-        for document in objects_of_kind(documents, kind)
-        if name_of(document) == name
-    ]
+    found = [document for document in objects_of_kind(documents, kind) if name_of(document) == name]
     emitted = sorted(name_of(document) for document in objects_of_kind(documents, kind))
-    assert len(found) == 1, (
-        f"expected one {kind}/{name}; the build has {kind}s {emitted}"
-    )
+    assert len(found) == 1, f"expected one {kind}/{name}; the build has {kind}s {emitted}"
     return found[0]
 
 
@@ -284,9 +276,7 @@ def pod_owners(documents: list[dict[str, Any]], namespace: str) -> list[dict[str
     return owners
 
 
-def pod_templates(
-    documents: list[dict[str, Any]], namespace: str
-) -> dict[str, dict[str, Any]]:
+def pod_templates(documents: list[dict[str, Any]], namespace: str) -> dict[str, dict[str, Any]]:
     """Every pod template in `namespace`, keyed by its `app.kubernetes.io/name` label."""
     templates: dict[str, dict[str, Any]] = {}
     for owner in pod_owners(documents, namespace):
@@ -315,9 +305,7 @@ def containers_of(template: dict[str, Any]) -> list[dict[str, Any]]:
     for key in ("initContainers", "containers"):
         listed = spec.get(key, [])
         assert isinstance(listed, list), f"a pod template's {key} is not a list"
-        collected.extend(
-            container for container in listed if isinstance(container, dict)
-        )
+        collected.extend(container for container in listed if isinstance(container, dict))
     return collected
 
 
@@ -408,14 +396,10 @@ def every_key(value: object) -> list[str]:
 
 def policies(documents: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Every built NetworkPolicy, in build order."""
-    return [
-        document for document in documents if document.get("kind") == NETWORK_POLICY
-    ]
+    return [document for document in documents if document.get("kind") == NETWORK_POLICY]
 
 
-def policy(
-    documents: list[dict[str, Any]], namespace: str, name: str
-) -> dict[str, Any]:
+def policy(documents: list[dict[str, Any]], namespace: str, name: str) -> dict[str, Any]:
     """The one NetworkPolicy `namespace/name`, asserting the build emits exactly one."""
     found = [
         document
@@ -423,9 +407,7 @@ def policy(
         if namespace_of(document) == namespace and name_of(document) == name
     ]
     emitted = sorted((str(namespace_of(p)), name_of(p)) for p in policies(documents))
-    assert len(found) == 1, (
-        f"expected one NetworkPolicy {namespace}/{name}, build has {emitted}"
-    )
+    assert len(found) == 1, f"expected one NetworkPolicy {namespace}/{name}, build has {emitted}"
     return found[0]
 
 
@@ -439,27 +421,21 @@ def spec_of(document: dict[str, Any]) -> dict[str, Any]:
 def policy_types(document: dict[str, Any]) -> list[str]:
     """`spec.policyTypes` as written, in order."""
     listed = spec_of(document).get("policyTypes", [])
-    assert isinstance(listed, list), (
-        f"{name_of(document)}.spec.policyTypes is not a list"
-    )
+    assert isinstance(listed, list), f"{name_of(document)}.spec.policyTypes is not a list"
     return [str(entry) for entry in listed]
 
 
 def pod_selector(document: dict[str, Any]) -> dict[str, Any]:
     """`spec.podSelector`, the set of pods a policy applies TO. `{}` means every pod."""
     selector = spec_of(document).get("podSelector")
-    assert isinstance(selector, dict), (
-        f"{name_of(document)} declares no spec.podSelector"
-    )
+    assert isinstance(selector, dict), f"{name_of(document)} declares no spec.podSelector"
     return selector
 
 
 def rules_of(document: dict[str, Any], direction: str) -> list[dict[str, Any]]:
     """`spec.ingress` or `spec.egress` as a list of rule mappings, empty when absent."""
     listed = spec_of(document).get(direction, [])
-    assert isinstance(listed, list), (
-        f"{name_of(document)}.spec.{direction} is not a list"
-    )
+    assert isinstance(listed, list), f"{name_of(document)}.spec.{direction} is not a list"
     return [rule for rule in listed if isinstance(rule, dict)]
 
 
@@ -487,9 +463,7 @@ def selector_matches(selector: dict[str, Any], labels: dict[str, str]) -> bool:
     for expression in expressions:
         assert isinstance(expression, dict)
         operator = str(expression.get("operator"))
-        assert operator == "In", (
-            f"this scan understands matchLabels and In, not {operator!r}"
-        )
+        assert operator == "In", f"this scan understands matchLabels and In, not {operator!r}"
         values = {str(value) for value in expression.get("values", [])}
         if labels.get(str(expression.get("key"))) not in values:
             return False
@@ -514,9 +488,7 @@ def peer_namespace(peer: dict[str, Any], default: str) -> str:
     if not isinstance(selector, dict):
         return default
     match_labels = selector.get("matchLabels", {})
-    assert isinstance(match_labels, dict), (
-        "a namespaceSelector with no matchLabels is ambiguous"
-    )
+    assert isinstance(match_labels, dict), "a namespaceSelector with no matchLabels is ambiguous"
     named = match_labels.get(NAMESPACE_NAME_LABEL)
     assert named is not None, (
         f"a namespaceSelector keys off {sorted(match_labels)}, not {NAMESPACE_NAME_LABEL}"
@@ -545,14 +517,10 @@ def declared_ports(rule: dict[str, Any], label: str) -> list[tuple[str, object]]
     A rule with no `ports` key allows EVERY port, which no policy here intends, so it asserts.
     """
     listed = rule.get("ports", [])
-    assert isinstance(listed, list) and listed, (
-        f"{label} declares no ports, so it allows all"
-    )
+    assert isinstance(listed, list) and listed, f"{label} declares no ports, so it allows all"
     entries: list[tuple[str, object]] = []
     for entry in listed:
-        assert isinstance(entry, dict), (
-            f"{label} has a port entry that is not a mapping"
-        )
+        assert isinstance(entry, dict), f"{label} has a port entry that is not a mapping"
         entries.append((str(entry.get("protocol", "TCP")), entry.get("port")))
     return entries
 
@@ -561,16 +529,12 @@ def numeric_ports(rule: dict[str, Any], label: str) -> set[tuple[str, int]]:
     """A rule's ports as `(protocol, number)`, asserting every one is written as a NUMBER."""
     pairs: set[tuple[str, int]] = set()
     for protocol, port in declared_ports(rule, label):
-        assert isinstance(port, int), (
-            f"{label} names port {port!r}; this rule reads in numbers"
-        )
+        assert isinstance(port, int), f"{label} names port {port!r}; this rule reads in numbers"
         pairs.add((protocol, port))
     return pairs
 
 
-def ports_against(
-    rule: dict[str, Any], ports: dict[str, int], label: str
-) -> set[tuple[str, int]]:
+def ports_against(rule: dict[str, Any], ports: dict[str, int], label: str) -> set[tuple[str, int]]:
     """A rule's ports resolved against ONE pod's named container ports: a number passes through,
     a name resolves to that pod's own number, which is what Kubernetes does per target pod."""
     resolved: set[tuple[str, int]] = set()
@@ -579,9 +543,7 @@ def ports_against(
             resolved.add((protocol, port))
             continue
         number = ports.get(str(port))
-        assert number is not None, (
-            f"{label} names port {port!r}; that pod has {sorted(ports)}"
-        )
+        assert number is not None, f"{label} names port {port!r}; that pod has {sorted(ports)}"
         resolved.add((protocol, number))
     return resolved
 
@@ -614,9 +576,7 @@ def unreachable_workloads(
     unreachable: set[str] = set()
     for workload, template in selected_workloads(documents, document).items():
         ports = container_ports(template)
-        names = {
-            port for _, port in declared_ports(rule, workload) if isinstance(port, str)
-        }
+        names = {port for _, port in declared_ports(rule, workload) if isinstance(port, str)}
         if names and not names & set(ports):
             unreachable.add(workload)
     return unreachable
@@ -656,9 +616,7 @@ def egress_destinations(
     destinations: set[tuple[str, int]] = set()
     for rule in rules_of(document, "egress"):
         peers = peers_of(rule, "to")
-        assert peers, (
-            f"{label} has an egress rule with no `to`, which allows every destination"
-        )
+        assert peers, f"{label} has an egress rule with no `to`, which allows every destination"
         for peer in peers:
             for target_namespace, workload in peer_targets(documents, peer, namespace):
                 if workload == ANY_POD:
@@ -707,9 +665,7 @@ def test_the_monitoring_namespace_emits_exactly_the_objects_the_two_plans_name(
     that would skip them. Catches such a document landing in ANY namespace, not only this one,
     which is the scope the claim is made at and which no per-namespace inventory can see.
     """
-    definitions = sorted(
-        name_of(document) for document in objects_of_kind(built, FORBIDDEN_KIND)
-    )
+    definitions = sorted(name_of(document) for document in objects_of_kind(built, FORBIDDEN_KIND))
     assert definitions == [], f"the build emits {FORBIDDEN_KIND}s: {definitions}"
 
     operator_documents = sorted(
@@ -754,9 +710,7 @@ def test_every_scraped_container_port_is_named_metrics_on_its_agreed_number(
         f"monitoring has pod templates {sorted(templates)}"
     )
 
-    names = {
-        name for workload in scraped for name, _ in port_entries(templates[workload])
-    }
+    names = {name for workload in scraped for name, _ in port_entries(templates[workload])}
     # An unnamed port reads as None here rather than being dropped, so it is printed as `None`
     # and the set comparison sees it.
     printable = sorted(str(name) for name in names)
@@ -814,9 +768,7 @@ def test_the_scrape_config_carries_exactly_the_seven_static_targets(
             f"{job_name} declares {statics}, not exactly one static_configs entry"
         )
         entry = statics[0]
-        assert isinstance(entry, dict), (
-            f"{job_name}'s static_configs entry is not a mapping"
-        )
+        assert isinstance(entry, dict), f"{job_name}'s static_configs entry is not a mapping"
         listed = entry.get("targets", [])
         assert isinstance(listed, list), f"{job_name} declares no targets list"
         targets |= {str(target) for target in listed}
@@ -828,9 +780,7 @@ def test_the_scrape_config_carries_exactly_the_seven_static_targets(
     )
     assert paths == dict.fromkeys(paths, METRICS_PATH), f"metrics paths are {paths}"
 
-    discovery = sorted(
-        {key for key in every_key(parsed) if key.endswith(DISCOVERY_KEY_SUFFIX)}
-    )
+    discovery = sorted({key for key in every_key(parsed) if key.endswith(DISCOVERY_KEY_SUFFIX)})
     assert discovery == [], f"prometheus.yml declares service discovery: {discovery}"
 
 
@@ -864,22 +814,12 @@ def test_the_retention_window_the_scrape_interval_and_the_volume_are_the_agreed_
     )
 
     deployment = object_named(built, "Deployment", PROMETHEUS)
-    container = sole_container(
-        deployment["spec"]["template"], f"{MONITORING}/{PROMETHEUS}"
-    )
+    container = sole_container(deployment["spec"]["template"], f"{MONITORING}/{PROMETHEUS}")
     args = [str(argument) for argument in container.get("args", [])]
-    retention = [
-        argument for argument in args if argument.startswith(f"{RETENTION_FLAG}=")
-    ]
-    assert retention == [RETENTION_ARG], (
-        f"retention arguments are {retention}; args are {args}"
-    )
-    size = [
-        argument for argument in args if argument.startswith(f"{RETENTION_SIZE_FLAG}=")
-    ]
-    assert size == [RETENTION_SIZE_ARG], (
-        f"retention size arguments are {size}; args are {args}"
-    )
+    retention = [argument for argument in args if argument.startswith(f"{RETENTION_FLAG}=")]
+    assert retention == [RETENTION_ARG], f"retention arguments are {retention}; args are {args}"
+    size = [argument for argument in args if argument.startswith(f"{RETENTION_SIZE_FLAG}=")]
+    assert size == [RETENTION_SIZE_ARG], f"retention size arguments are {size}; args are {args}"
 
     claim = object_named(built, "PersistentVolumeClaim", "prometheus-data")
     requests = claim["spec"].get("resources", {}).get("requests", {})
@@ -914,9 +854,7 @@ def test_each_scrape_workload_declares_the_quantities_the_budget_prices(
         assert workload in templates, f"monitoring has no pod template for {workload}"
         container = sole_container(templates[workload], f"{MONITORING}/{workload}")
         quantities = resource_quantities(container)
-        assert quantities == expected, (
-            f"{workload} declares {quantities}, not {expected}"
-        )
+        assert quantities == expected, f"{workload} declares {quantities}, not {expected}"
 
 
 def test_kube_state_metrics_is_the_only_subject_with_rbac_and_reads_only(
@@ -949,9 +887,7 @@ def test_kube_state_metrics_is_the_only_subject_with_rbac_and_reads_only(
     )
 
     subjects = bindings[0].get("subjects", [])
-    assert isinstance(subjects, list) and len(subjects) == 1, (
-        f"the binding names {subjects}"
-    )
+    assert isinstance(subjects, list) and len(subjects) == 1, f"the binding names {subjects}"
     bound = {
         (
             str(subject.get("kind")),
@@ -978,13 +914,9 @@ def test_kube_state_metrics_is_the_only_subject_with_rbac_and_reads_only(
         verbs = rule.get("verbs", [])
         assert isinstance(verbs, list) and verbs, f"a rule declares no verbs: {rule}"
         granted |= {str(verb) for verb in verbs}
-    assert granted <= READ_ONLY_VERBS, (
-        f"the ClusterRole grants {sorted(granted - READ_ONLY_VERBS)}"
-    )
+    assert granted <= READ_ONLY_VERBS, f"the ClusterRole grants {sorted(granted - READ_ONLY_VERBS)}"
 
-    prometheus_spec = object_named(built, "Deployment", PROMETHEUS)["spec"]["template"][
-        "spec"
-    ]
+    prometheus_spec = object_named(built, "Deployment", PROMETHEUS)["spec"]["template"]["spec"]
     assert "serviceAccountName" not in prometheus_spec, (
         f"the Prometheus pod names a ServiceAccount: {prometheus_spec.get('serviceAccountName')!r}"
     )
@@ -1043,9 +975,7 @@ def test_prometheus_egress_reaches_exactly_the_seven_agreed_destinations_and_not
     )
 
     default_deny = policy(built, MONITORING, "default-deny")
-    assert pod_selector(default_deny) == {}, (
-        "monitoring/default-deny must select every pod"
-    )
+    assert pod_selector(default_deny) == {}, "monitoring/default-deny must select every pod"
     assert policy_types(default_deny) == ["Ingress", "Egress"], (
         f"monitoring/default-deny declares {policy_types(default_deny)}"
     )
@@ -1120,9 +1050,7 @@ def test_each_metrics_ingress_policy_admits_monitoring_on_exactly_its_own_scrape
     """
     document = policy(built, namespace, "metrics-ingress-from-monitoring")
     rules = rules_of(document, "ingress")
-    assert rules, (
-        f"{namespace}/metrics-ingress-from-monitoring declares no ingress rule"
-    )
+    assert rules, f"{namespace}/metrics-ingress-from-monitoring declares no ingress rule"
     assert "egress" not in spec_of(document), (
         f"{namespace}/metrics-ingress-from-monitoring declares an egress block"
     )
@@ -1130,9 +1058,7 @@ def test_each_metrics_ingress_policy_admits_monitoring_on_exactly_its_own_scrape
     peers: set[tuple[str, str]] = set()
     for rule in rules:
         listed = peers_of(rule, "from")
-        assert listed, (
-            f"{namespace}/metrics-ingress has a rule with no `from`, admitting everyone"
-        )
+        assert listed, f"{namespace}/metrics-ingress has a rule with no `from`, admitting everyone"
         for peer in listed:
             peers |= peer_targets(built, peer, namespace)
         unreachable = unreachable_workloads(built, document, rule)

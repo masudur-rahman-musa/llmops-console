@@ -259,21 +259,15 @@ def namespace_of(document: dict[str, Any]) -> str | None:
     return None if value is None else str(value)
 
 
-def one_per_namespace(
-    documents: list[dict[str, Any]], kind: str
-) -> dict[str, dict[str, Any]]:
+def one_per_namespace(documents: list[dict[str, Any]], kind: str) -> dict[str, dict[str, Any]]:
     """The single object of `kind` in each namespace, asserting there is exactly one each."""
     found: dict[str, list[dict[str, Any]]] = {namespace: [] for namespace in NAMESPACES}
     for document in objects_of_kind(documents, kind):
         namespace = namespace_of(document)
-        assert namespace in found, (
-            f"{kind}/{name_of(document)} is in namespace {namespace!r}"
-        )
+        assert namespace in found, f"{kind}/{name_of(document)} is in namespace {namespace!r}"
         found[str(namespace)].append(document)
     counts = {namespace: len(objects) for namespace, objects in found.items()}
-    assert all(count == 1 for count in counts.values()), (
-        f"{kind} per namespace: {counts}"
-    )
+    assert all(count == 1 for count in counts.values()), f"{kind} per namespace: {counts}"
     return {namespace: objects[0] for namespace, objects in found.items()}
 
 
@@ -352,14 +346,8 @@ def test_the_memory_requests_total_six_gibibytes_and_the_cpu_requests_total_thre
     cpu = [quota_hard(quota)["requests.cpu"] for quota in quotas.values()]
 
     assert len(memory) == len(NAMESPACES) and len(cpu) == len(NAMESPACES)
-    assert (
-        sum(memory_bytes(quantity) for quantity in memory)
-        == EXPECTED_MEMORY_REQUEST_BYTES
-    )
-    assert (
-        sum(cpu_millicores(quantity) for quantity in cpu)
-        == EXPECTED_CPU_REQUEST_MILLICORES
-    )
+    assert sum(memory_bytes(quantity) for quantity in memory) == EXPECTED_MEMORY_REQUEST_BYTES
+    assert sum(cpu_millicores(quantity) for quantity in cpu) == EXPECTED_CPU_REQUEST_MILLICORES
 
 
 @pytest.mark.parametrize("namespace", NAMESPACES)
@@ -379,22 +367,16 @@ def test_each_namespace_has_one_limit_range_with_the_agreed_defaults(
     spec = limit_range.get("spec", {})
     assert isinstance(spec, dict), f"{namespace} LimitRange has no spec"
     entries = spec.get("limits", [])
-    assert isinstance(entries, list) and len(entries) == 1, (
-        f"{namespace} limits: {entries}"
-    )
+    assert isinstance(entries, list) and len(entries) == 1, f"{namespace} limits: {entries}"
     entry = entries[0]
     assert isinstance(entry, dict)
 
-    assert entry.get("type") == LIMIT_RANGE_TYPE, (
-        f"{namespace} limit type {entry.get('type')}"
-    )
+    assert entry.get("type") == LIMIT_RANGE_TYPE, f"{namespace} limit type {entry.get('type')}"
     assert entry.get("defaultRequest") == LIMIT_RANGE_DEFAULT_REQUEST
     assert entry.get("default") == LIMIT_RANGE_DEFAULT
 
 
-def test_infra_check_runs_the_kustomize_half_for_real_now_that_the_file_exists() -> (
-    None
-):
+def test_infra_check_runs_the_kustomize_half_for_real_now_that_the_file_exists() -> None:
     """Criterion 6's Makefile half, across BOTH recipes, plus §5's flags. The conditional stays
     inside `infra-check` - it is a skip-when-absent, and deleting it would turn a missing file
     into a target failure rather than a skip - so what this pins is that the guard is now
@@ -411,15 +393,9 @@ def test_infra_check_runs_the_kustomize_half_for_real_now_that_the_file_exists()
     guarded = recipe(makefile, "infra-check")
 
     guards = [line for line in guarded if KUSTOMIZE_GUARD in line]
-    assert len(guards) == 1, (
-        f"`{KUSTOMIZE_GUARD}` appears {len(guards)} times in infra-check"
-    )
-    assert GUARD_DELEGATION in guards[0], (
-        f"the guard reaches no `{K8S_CHECK_TARGET}`: {guards[0]}"
-    )
-    assert ROOT_KUSTOMIZATION.is_file(), (
-        f"{ROOT_KUSTOMIZATION} does not exist, so the half skips"
-    )
+    assert len(guards) == 1, f"`{KUSTOMIZE_GUARD}` appears {len(guards)} times in infra-check"
+    assert GUARD_DELEGATION in guards[0], f"the guard reaches no `{K8S_CHECK_TARGET}`: {guards[0]}"
+    assert ROOT_KUSTOMIZATION.is_file(), f"{ROOT_KUSTOMIZATION} does not exist, so the half skips"
 
     # Selected by fragment, with the `echo` printer of the skip branch excluded: it repeats
     # the words "kustomize build" in its message, and counting it as the real invocation
@@ -429,9 +405,7 @@ def test_infra_check_runs_the_kustomize_half_for_real_now_that_the_file_exists()
         for line in recipe(makefile, K8S_CHECK_TARGET)
         if "kustomize build infra/k8s" in line and "echo" not in line
     ]
-    assert len(invocations) == 1, (
-        f"{len(invocations)} real kustomize invocations: {invocations}"
-    )
+    assert len(invocations) == 1, f"{len(invocations)} real kustomize invocations: {invocations}"
     invocation = invocations[0]
 
     assert "kubeconform" in invocation, f"nothing validates the build: {invocation}"
@@ -462,14 +436,10 @@ def test_the_k8s_job_builds_and_validates_on_every_pull_request() -> None:
     job = jobs["k8s"]
     assert isinstance(job, dict)
 
-    assert not SECRET_CONDITION.search(str(job.get("if", ""))), (
-        f"the k8s job is gated: {job['if']}"
-    )
+    assert not SECRET_CONDITION.search(str(job.get("if", ""))), f"the k8s job is gated: {job['if']}"
 
     running = steps_running(job, SHARED_INFRA_COMMAND)
-    assert len(running) == 1, (
-        f"{len(running)} steps run `{SHARED_INFRA_COMMAND}` in the k8s job"
-    )
+    assert len(running) == 1, f"{len(running)} steps run `{SHARED_INFRA_COMMAND}` in the k8s job"
     condition = str(running[0].get("if", ""))
     assert not SECRET_CONDITION.search(condition), (
         f"the build step is gated on a secret: {condition}"

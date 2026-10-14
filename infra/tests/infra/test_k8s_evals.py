@@ -2,9 +2,9 @@ r"""`infra/k8s/evals/`: the Pushgateway and the nightly-eval CronJob an earlier 
 
 The stream comes from the session-scoped `built` fixture in `infra/tests/infra/conftest.py`: one
 `kubectl kustomize infra/k8s` for the whole session, shared with every other
-`infra/tests/infra/test_k8s_*.py` module. `infra/k8s/evals/` does not exist yet, so the fixture still
-builds (the root `resources:` list has not been asked to include it), and every case below that
-reads FOR the new objects therefore fails on "found none" rather than on a build error - the
+`infra/tests/infra/test_k8s_*.py` module. `infra/k8s/evals/` does not exist yet, so the fixture
+still builds (the root `resources:` list has not been asked to include it), and every case below
+that reads FOR the new objects therefore fails on "found none" rather than on a build error - the
 distinction the project notes's rule 10 asks the test-writer to confirm.
 
 The parsing helpers (`read`, `objects_of_kind`, `name_of`, `namespace_of`, `memory_bytes`,
@@ -178,9 +178,7 @@ def all_containers(owner: dict[str, Any]) -> list[dict[str, Any]]:
     for key in ("initContainers", "containers"):
         listed = spec.get(key, [])
         assert isinstance(listed, list), f"{name_of(owner)}.{key} is not a list"
-        collected.extend(
-            container for container in listed if isinstance(container, dict)
-        )
+        collected.extend(container for container in listed if isinstance(container, dict))
     return collected
 
 
@@ -224,9 +222,7 @@ def evals_object(built: list[dict[str, Any]], kind: str, name: str) -> dict[str,
         for document in objects_of_kind(built, kind)
         if namespace_of(document) == EVALS
     )
-    assert len(found) == 1, (
-        f"expected one evals/{kind}/{name}; evals has {kind}s {emitted}"
-    )
+    assert len(found) == 1, f"expected one evals/{kind}/{name}; evals has {kind}s {emitted}"
     return found[0]
 
 
@@ -249,8 +245,7 @@ def test_the_evals_directory_emits_exactly_the_objects_the_plan_names(
     present = {
         (str(document.get("kind")), name_of(document))
         for document in built
-        if namespace_of(document) == EVALS
-        and str(document.get("kind")) not in BASE_KINDS
+        if namespace_of(document) == EVALS and str(document.get("kind")) not in BASE_KINDS
     }
     assert present == EVALS_OBJECTS, (
         f"unexpected: {sorted(present - EVALS_OBJECTS)}; missing: {sorted(EVALS_OBJECTS - present)}"
@@ -305,9 +300,7 @@ def test_the_cronjob_envfrom_names_only_the_evals_secret_and_no_literal_secret_i
             f"{sorted(secret_refs - {EVALS_SECRETS})}, which nothing supplies"
         )
 
-    assert EVALS_DIR.is_dir(), (
-        f"{EVALS_DIR} does not exist, so this scan reads no files"
-    )
+    assert EVALS_DIR.is_dir(), f"{EVALS_DIR} does not exist, so this scan reads no files"
     files = sorted(EVALS_DIR.glob("*.yaml"))
     assert files, f"{EVALS_DIR} holds no YAML at all"
     offenders: list[str] = []
@@ -319,13 +312,9 @@ def test_the_cronjob_envfrom_names_only_the_evals_secret_and_no_literal_secret_i
                 continue
             if not CREDENTIAL_ENV_NAME.match(line):
                 continue
-            for offset, following in enumerate(
-                lines[index + 1 : index + 1 + ENV_VALUE_LOOKAHEAD]
-            ):
+            for offset, following in enumerate(lines[index + 1 : index + 1 + ENV_VALUE_LOOKAHEAD]):
                 if ENV_VALUE.match(following):
-                    offenders.append(
-                        f"{path.name}:{index + offset + 2}: {line.strip()}"
-                    )
+                    offenders.append(f"{path.name}:{index + offset + 2}: {line.strip()}")
                     break
     assert offenders == [], f"inline credentials under {EVALS_DIR.name}/: {offenders}"
 
@@ -354,9 +343,7 @@ def test_every_container_in_evals_declares_requests_and_a_memory_limit(
             quantities = resource_quantities(container)
             where = f"{label}:{container.get('name')}"
             missing.extend(
-                f"{where} has no {key}"
-                for key in REQUIRED_CONTAINER_KEYS
-                if key not in quantities
+                f"{where} has no {key}" for key in REQUIRED_CONTAINER_KEYS if key not in quantities
             )
     assert missing == [], f"containers missing resources: {missing}"
 
@@ -379,9 +366,7 @@ def test_the_evals_subtotals_fit_inside_the_namespace_quota(
     envelope, which is the failure mode `platform/`'s equivalent case exists to catch and
     `evals/` inherits unchanged."""
     quotas = [
-        quota
-        for quota in objects_of_kind(built, "ResourceQuota")
-        if namespace_of(quota) == EVALS
+        quota for quota in objects_of_kind(built, "ResourceQuota") if namespace_of(quota) == EVALS
     ]
     assert len(quotas) == 1, f"{len(quotas)} ResourceQuotas in {EVALS}"
     hard = quota_hard(quotas[0])
@@ -394,15 +379,9 @@ def test_the_evals_subtotals_fit_inside_the_namespace_quota(
         replicas = replicas_of(owner)
         for container in all_containers(owner):
             quantities = resource_quantities(container)
-            totals["requests.memory"] += replicas * memory_bytes(
-                quantities["requests.memory"]
-            )
-            totals["requests.cpu"] += replicas * cpu_millicores(
-                quantities["requests.cpu"]
-            )
-            totals["limits.memory"] += replicas * memory_bytes(
-                quantities["limits.memory"]
-            )
+            totals["requests.memory"] += replicas * memory_bytes(quantities["requests.memory"])
+            totals["requests.cpu"] += replicas * cpu_millicores(quantities["requests.cpu"])
+            totals["limits.memory"] += replicas * memory_bytes(quantities["limits.memory"])
 
     assert totals["requests.memory"] <= memory_bytes(hard["requests.memory"]), (
         f"evals requests {totals['requests.memory']} bytes against {hard['requests.memory']}"

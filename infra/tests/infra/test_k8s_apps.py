@@ -477,9 +477,7 @@ LLAMA_EMBED_RESOURCES: dict[str, str] = {
 #: values required to agree. Neither pattern can match the chat server's
 #: `LLAMA_MODEL_FILE` lines and neither of those can match these: `${LLAMA_MODEL_FILE` is not a
 #: substring of `${LLAMA_EMBED_MODEL_FILE`, and the `.env.example` pattern is anchored whole.
-COMPOSE_EMBED_MODEL_DEFAULT = re.compile(
-    r"\$\{LLAMA_EMBED_MODEL_FILE:-(?P<file>[^}]+)\}"
-)
+COMPOSE_EMBED_MODEL_DEFAULT = re.compile(r"\$\{LLAMA_EMBED_MODEL_FILE:-(?P<file>[^}]+)\}")
 ENV_EMBED_MODEL_DEFAULT = re.compile(r"^LLAMA_EMBED_MODEL_FILE=(?P<file>\S+)$")
 
 #: Decision F, by value: two replicas at rest, an HPA from 2 to 3 on 70% CPU, and a PDB that
@@ -606,9 +604,7 @@ INGRESS_TLS_SECRETS: dict[str, str] = {
 #: The two routers the design exempts from basic auth, one per host. Named rather than derived
 #: from a `-healthz` suffix: a router called `helpdesk-healthz-web` would pass a suffix test
 #: while being neither of these.
-HEALTHZ_INGRESSES = frozenset(
-    {HEALTHZ_INGRESS, HELPDESK_HEALTHZ_INGRESS, CONSOLE_HEALTHZ_INGRESS}
-)
+HEALTHZ_INGRESSES = frozenset({HEALTHZ_INGRESS, HELPDESK_HEALTHZ_INGRESS, CONSOLE_HEALTHZ_INGRESS})
 
 #: The routers whose one path is `Exact`: the three `/healthz` routers, and an earlier change's
 #: `console-login`, whose `/api/login` must not also match `/api/login/...` under its stricter
@@ -657,9 +653,7 @@ INGRESS_MIDDLEWARES: dict[str, frozenset[str]] = {
     HELPDESK_HEALTHZ_INGRESS: frozenset({"rate-limit", "security-headers"}),
     CONSOLE_INGRESS: frozenset({"basic-auth", "rate-limit", "security-headers"}),
     CONSOLE_HEALTHZ_INGRESS: frozenset({"rate-limit", "security-headers"}),
-    CONSOLE_LOGIN_INGRESS: frozenset(
-        {"basic-auth", CONSOLE_LOGIN_RATE_LIMIT, "security-headers"}
-    ),
+    CONSOLE_LOGIN_INGRESS: frozenset({"basic-auth", CONSOLE_LOGIN_RATE_LIMIT, "security-headers"}),
 }
 
 #: Decision B's three copies, by name. Their VALUES are never written here: the equality case
@@ -821,9 +815,7 @@ HELPDESK_ENV_FROM_SOURCES: dict[str, str] = {
 #: pointing two workloads at one image is visible. That repo tags every image with the full
 #: commit SHA and publishes no `latest`, so the tag is 40 hex characters or there is nothing to
 #: pull; `HELPDESK_IMAGE_TAG` is its `main` head, and a deploy bumps it.
-HELPDESK_IMAGE_REPOSITORY_PREFIX = (
-    "ghcr.io/masudur-rahman-musa/ai-help-desk-governed-access"
-)
+HELPDESK_IMAGE_REPOSITORY_PREFIX = "ghcr.io/masudur-rahman-musa/ai-help-desk-governed-access"
 HELPDESK_IMAGE_TAG = "29a61ef774e7ebf4fe8cc173de44c2352555a66e"
 
 #: The shape that tag must keep: a full commit SHA, never an abbreviation and never a name. An
@@ -914,9 +906,7 @@ HELPDESK_SOURCES = frozenset({HELPDESK_CONFIG_MAP, HELPDESK_SECRET})
 #: `metadata.labels`. Its `labels:` block carries `includeSelectors: false`, so neither may
 #: reach a `matchLabels` or a Service selector - a label that reaches a selector is immutable
 #: after the first apply, and changing one then means deleting the Deployment.
-KUSTOMIZE_WIDE_LABELS = frozenset(
-    {"app.kubernetes.io/part-of", "app.kubernetes.io/managed-by"}
-)
+KUSTOMIZE_WIDE_LABELS = frozenset({"app.kubernetes.io/part-of", "app.kubernetes.io/managed-by"})
 
 #: Decision E and row 20f criterion 10: the only Secret names anything in the build may
 #: reference. Row 21c contracts each of them in `infra/secrets/*.example.yaml` -
@@ -996,9 +986,7 @@ IMAGE_WORKDIR = "/app"
 #: runtime stage's `ENV` block - the block is written as backslash-continued lines, so the scan
 #: is per line rather than per instruction.
 DOCKERFILE_COPY = re.compile(r"^\s*COPY\s+(?P<files>[^\n]*?)\s+\./\s*$")
-DOCKERFILE_ENV_ASSIGNMENT = re.compile(
-    r"(?P<name>OPSCONSOLE_[A-Z0-9_]+)=(?P<value>\S+)"
-)
+DOCKERFILE_ENV_ASSIGNMENT = re.compile(r"(?P<name>OPSCONSOLE_[A-Z0-9_]+)=(?P<value>\S+)")
 
 
 def read(path: Path) -> str:
@@ -1086,9 +1074,7 @@ def pod_spec(owner: dict[str, Any]) -> dict[str, Any]:
 def template_labels(owner: dict[str, Any]) -> dict[str, str]:
     """`spec.template.metadata.labels`, the labels a selector has to match."""
     metadata = owner["spec"]["template"].get("metadata", {})
-    assert isinstance(metadata, dict), (
-        f"{name_of(owner)}'s pod template has no metadata"
-    )
+    assert isinstance(metadata, dict), f"{name_of(owner)}'s pod template has no metadata"
     labels = metadata.get("labels", {})
     assert isinstance(labels, dict), f"{name_of(owner)}'s pod template has no labels"
     return {str(key): str(value) for key, value in labels.items()}
@@ -1102,9 +1088,7 @@ def all_containers(owner: dict[str, Any]) -> list[dict[str, Any]]:
     for key in ("initContainers", "containers"):
         listed = spec.get(key, [])
         assert isinstance(listed, list), f"{name_of(owner)}.{key} is not a list"
-        collected.extend(
-            container for container in listed if isinstance(container, dict)
-        )
+        collected.extend(container for container in listed if isinstance(container, dict))
     return collected
 
 
@@ -1191,9 +1175,7 @@ def inline_credentials(label: str, lines: list[str]) -> list[str]:
             continue
         if not CREDENTIAL_ENV_NAME.match(line):
             continue
-        for offset, following in enumerate(
-            lines[index + 1 : index + 1 + ENV_VALUE_LOOKAHEAD]
-        ):
+        for offset, following in enumerate(lines[index + 1 : index + 1 + ENV_VALUE_LOOKAHEAD]):
             if ENV_VALUE.match(following):
                 offenders.append(
                     f"{label}:{index + offset + 2}: {line.strip()} -> {following.strip()}"
@@ -1211,9 +1193,7 @@ def in_apps(documents: list[dict[str, Any]], kind: str) -> dict[str, dict[str, A
     }
 
 
-def sole_object(
-    documents: list[dict[str, Any]], kind: str, name: str
-) -> dict[str, Any]:
+def sole_object(documents: list[dict[str, Any]], kind: str, name: str) -> dict[str, Any]:
     """The single `kind` named `name` in namespace `apps`, failing loudly when it is absent -
     which is what every case owes while `apps/` does not exist yet."""
     found = in_apps(documents, kind)
@@ -1293,9 +1273,7 @@ def gateway_routers(documents: list[dict[str, Any]]) -> list[tuple[str, str, str
                 backend = path["backend"]["service"]
                 if str(backend["name"]) != GATEWAY:
                     continue
-                routers.append(
-                    (ingress_name, str(path["path"]), str(path.get("pathType")))
-                )
+                routers.append((ingress_name, str(path["path"]), str(path.get("pathType"))))
     return routers
 
 
@@ -1358,9 +1336,7 @@ def reserve_totals() -> dict[str, int]:
     totals = {"requests.memory": 0, "requests.cpu": 0, "limits.memory": 0}
     for reserve in RESERVES:
         pods = int(str(reserve["pods"]))
-        totals["requests.memory"] += pods * memory_bytes(
-            str(reserve["requests.memory"])
-        )
+        totals["requests.memory"] += pods * memory_bytes(str(reserve["requests.memory"]))
         totals["requests.cpu"] += pods * cpu_millicores(str(reserve["requests.cpu"]))
         totals["limits.memory"] += pods * memory_bytes(str(reserve["limits.memory"]))
     return totals
@@ -1389,9 +1365,7 @@ def dockerfile_copied_files(text: str) -> set[str]:
         match = DOCKERFILE_COPY.match(line)
         if match is None:
             continue
-        copied.update(
-            part for part in match.group("files").split() if not part.startswith("--")
-        )
+        copied.update(part for part in match.group("files").split() if not part.startswith("--"))
     return copied
 
 
@@ -1401,9 +1375,7 @@ def dockerfile_environment(text: str) -> dict[str, str]:
     assignments: dict[str, str] = {}
     for line in text.splitlines():
         for match in DOCKERFILE_ENV_ASSIGNMENT.finditer(line):
-            assignments[match.group("name")] = (
-                match.group("value").rstrip("\\").strip("\"'")
-            )
+            assignments[match.group("name")] = match.group("value").rstrip("\\").strip("\"'")
     return assignments
 
 
@@ -1425,9 +1397,7 @@ def local_base_url() -> SplitResult:
         f"{ROUTING_POLICY.name} names no `{LOCAL_PROVIDER}` provider"
     )
     declared = providers[LOCAL_PROVIDER].get("base_url", "")
-    assert declared, (
-        f"{ROUTING_POLICY.name}'s `{LOCAL_PROVIDER}` provider declares no base_url"
-    )
+    assert declared, f"{ROUTING_POLICY.name}'s `{LOCAL_PROVIDER}` provider declares no base_url"
     return urlsplit(str(declared))
 
 
@@ -1470,9 +1440,7 @@ def mount_at(container: dict[str, Any], path: str) -> dict[str, Any]:
         for mount in container.get("volumeMounts", [])
         if isinstance(mount, dict) and str(mount.get("mountPath")) == path
     ]
-    assert len(mounts) == 1, (
-        f"{len(mounts)} mounts at {path}: {container.get('volumeMounts')}"
-    )
+    assert len(mounts) == 1, f"{len(mounts)} mounts at {path}: {container.get('volumeMounts')}"
     return mounts[0]
 
 
@@ -1501,29 +1469,21 @@ def resolved_container_port(target: object, container: dict[str, Any]) -> int | 
                 return int(port["containerPort"])
         return None
     number = int(str(target))
-    return (
-        number
-        if any(int(port["containerPort"]) == number for port in declared)
-        else None
-    )
+    return number if any(int(port["containerPort"]) == number for port in declared) else None
 
 
 def model_id_from(file_name: str) -> str:
     """The model id inside a GGUF file name: `qwen2.5-3b-instruct-q4_k_m.gguf` is
     `qwen2.5-3b-instruct`. The suffix is asserted rather than stripped conditionally, so a file
     in another quantisation is a named failure and not an id with a tail on it."""
-    assert file_name.endswith(GGUF_SUFFIX), (
-        f"{file_name} is not a {GGUF_SUFFIX} artefact"
-    )
+    assert file_name.endswith(GGUF_SUFFIX), f"{file_name} is not a {GGUF_SUFFIX} artefact"
     return file_name[: -len(GGUF_SUFFIX)]
 
 
 def compose_model_files() -> set[str]:
     """Every GGUF file name a `${LLAMA_MODEL_FILE:-...}` default in `docker-compose.yml` falls
     back to. All matching lines, never the first."""
-    return {
-        match.group("file") for match in COMPOSE_MODEL_DEFAULT.finditer(read(COMPOSE))
-    }
+    return {match.group("file") for match in COMPOSE_MODEL_DEFAULT.finditer(read(COMPOSE))}
 
 
 def env_example_model_files() -> set[str]:
@@ -1545,9 +1505,7 @@ def priced_keys() -> dict[str, Any]:
     return prices
 
 
-def helpdesk_pod_owner(
-    documents: list[dict[str, Any]], workload_name: str
-) -> dict[str, Any]:
+def helpdesk_pod_owner(documents: list[dict[str, Any]], workload_name: str) -> dict[str, Any]:
     """The Helpdesk Deployment named `workload_name`, selected by name and namespace and
     asserted to own a pod - four near-identical workloads are exactly where one file copied
     from another loses its `spec.template`."""
@@ -1595,10 +1553,7 @@ def env_from_names(pod: dict[str, Any]) -> set[str]:
                     continue
                 for reference_key in ("configMapRef", "secretRef"):
                     reference = source.get(reference_key)
-                    if (
-                        isinstance(reference, dict)
-                        and reference.get("name") is not None
-                    ):
+                    if isinstance(reference, dict) and reference.get("name") is not None:
                         names.add(str(reference["name"]))
     return names
 
@@ -1620,11 +1575,7 @@ def scanned_files(roots: tuple[Path, ...]) -> list[Path]:
         check=True,
     ).stdout
     return sorted(
-        {
-            REPO_ROOT / name
-            for name in listed.split("\0")
-            if name and (REPO_ROOT / name).is_file()
-        }
+        {REPO_ROOT / name for name in listed.split("\0") if name and (REPO_ROOT / name).is_file()}
     )
 
 
@@ -1647,12 +1598,8 @@ def container_image_parts(container: dict[str, Any], label: str) -> tuple[str, s
     first half of it."""
     image = str(container.get("image", ""))
     assert image, f"{label} declares no image"
-    assert "@" not in image, (
-        f"{label} is pinned by digest ({image}); decision D names a tag"
-    )
-    assert ":" in image.rsplit("/", 1)[-1], (
-        f"{label}'s image `{image}` carries no tag at all"
-    )
+    assert "@" not in image, f"{label} is pinned by digest ({image}); decision D names a tag"
+    assert ":" in image.rsplit("/", 1)[-1], f"{label}'s image `{image}` carries no tag at all"
     repository, _, tag = image.rpartition(":")
     return repository, tag
 
@@ -1732,10 +1679,7 @@ def embed_model_id_from(file_name: str) -> str:
 def compose_embed_model_files() -> set[str]:
     """Every GGUF file name a `${LLAMA_EMBED_MODEL_FILE:-...}` default in `docker-compose.yml`
     falls back to. All matching lines, never the first."""
-    return {
-        match.group("file")
-        for match in COMPOSE_EMBED_MODEL_DEFAULT.finditer(read(COMPOSE))
-    }
+    return {match.group("file") for match in COMPOSE_EMBED_MODEL_DEFAULT.finditer(read(COMPOSE))}
 
 
 def env_example_embed_model_files() -> set[str]:
@@ -1766,8 +1710,7 @@ def test_the_apps_directory_emits_the_objects_the_plan_names(
     added = {
         (str(document.get("kind")), name_of(document), APPS)
         for document in built
-        if namespace_of(document) == APPS
-        and str(document.get("kind")) not in BASE_KINDS
+        if namespace_of(document) == APPS and str(document.get("kind")) not in BASE_KINDS
     }
     assert added == APPS_OBJECTS, (
         f"unexpected: {sorted(added - APPS_OBJECTS)}; missing: {sorted(APPS_OBJECTS - added)}"
@@ -1776,8 +1719,7 @@ def test_the_apps_directory_emits_the_objects_the_plan_names(
     cluster_scoped = {
         (str(document.get("kind")), name_of(document))
         for document in built
-        if namespace_of(document) is None
-        and str(document.get("kind")) not in BASE_KINDS
+        if namespace_of(document) is None and str(document.get("kind")) not in BASE_KINDS
     }
     assert cluster_scoped == CLUSTER_SCOPED_OBJECTS, (
         f"cluster-scoped objects changed: {sorted(cluster_scoped ^ CLUSTER_SCOPED_OBJECTS)}"
@@ -1799,12 +1741,8 @@ def test_the_gateway_image_is_pinned_and_not_a_floating_tag(
     inside the runner, committing nothing back (its ADR is 0014)."""
     image = str(sole_container(gateway_pod_owner(built)).get("image", ""))
     assert image, f"{GATEWAY} declares no image"
-    assert "@" not in image, (
-        f"{GATEWAY} is pinned by digest ({image}); decision D names a tag"
-    )
-    assert ":" in image.rsplit("/", 1)[-1], (
-        f"{GATEWAY} image `{image}` carries no tag at all"
-    )
+    assert "@" not in image, f"{GATEWAY} is pinned by digest ({image}); decision D names a tag"
+    assert ":" in image.rsplit("/", 1)[-1], f"{GATEWAY} image `{image}` carries no tag at all"
 
     repository, _, tag = image.rpartition(":")
     assert repository == GATEWAY_IMAGE_REPOSITORY, f"{GATEWAY} runs from `{repository}`"
@@ -1836,9 +1774,7 @@ def test_the_gateway_carries_both_probes_and_a_service_that_resolves(
     owner = gateway_pod_owner(built)
     container = sole_container(owner)
 
-    assert replicas_of(owner) == GATEWAY_REPLICAS, (
-        f"{GATEWAY} runs {replicas_of(owner)} replicas"
-    )
+    assert replicas_of(owner) == GATEWAY_REPLICAS, f"{GATEWAY} runs {replicas_of(owner)} replicas"
     assert container["readinessProbe"]["httpGet"]["path"] == READINESS_PATH
     assert container["livenessProbe"]["httpGet"]["path"] == LIVENESS_PATH
 
@@ -1848,37 +1784,25 @@ def test_the_gateway_carries_both_probes_and_a_service_that_resolves(
         for key in entry
         if isinstance(entry.get(key), dict)
     }
-    assert sources == ENV_FROM_SOURCES, (
-        f"{GATEWAY} takes its environment from {sources}"
-    )
+    assert sources == ENV_FROM_SOURCES, f"{GATEWAY} takes its environment from {sources}"
 
     labels = template_labels(owner)
-    assert labels.get(SELECTOR_LABEL) == GATEWAY, (
-        f"the pod template is labelled {labels}"
-    )
+    assert labels.get(SELECTOR_LABEL) == GATEWAY, f"the pod template is labelled {labels}"
     match_labels = owner["spec"]["selector"]["matchLabels"]
     assert isinstance(match_labels, dict) and match_labels, f"{GATEWAY} selects nothing"
-    unmatched = {
-        key: value for key, value in match_labels.items() if labels.get(key) != value
-    }
+    unmatched = {key: value for key, value in match_labels.items() if labels.get(key) != value}
     assert unmatched == {}, f"{GATEWAY}'s selector {unmatched} matches no pod: {labels}"
 
     declared = container.get("ports", [])
-    assert isinstance(declared, list) and declared, (
-        f"{GATEWAY} declares no container ports"
-    )
-    numbers = {
-        int(port["containerPort"]) for port in declared if "containerPort" in port
-    }
+    assert isinstance(declared, list) and declared, f"{GATEWAY} declares no container ports"
+    numbers = {int(port["containerPort"]) for port in declared if "containerPort" in port}
     names = {str(port["name"]) for port in declared if port.get("name")}
     assert CONTAINER_PORT in numbers, f"{GATEWAY} listens on {sorted(numbers)}"
     assert CONTAINER_PORT_NAME in names, f"{GATEWAY}'s ports are named {sorted(names)}"
 
     service_spec = sole_object(built, "Service", GATEWAY)["spec"]
     selector = service_spec.get("selector", {})
-    assert isinstance(selector, dict) and selector, (
-        f"{GATEWAY}'s Service selects nothing"
-    )
+    assert isinstance(selector, dict) and selector, f"{GATEWAY}'s Service selects nothing"
     stray = {key: value for key, value in selector.items() if labels.get(key) != value}
     assert stray == {}, f"{GATEWAY}'s Service selector {stray} matches no pod: {labels}"
 
@@ -1909,12 +1833,8 @@ def test_the_gateway_carries_both_probes_and_a_service_that_resolves(
     budget = sole_object(built, "PodDisruptionBudget", GATEWAY)
     assert budget["spec"].get("minAvailable") == PDB_MIN_AVAILABLE
     budget_selector = budget["spec"]["selector"]["matchLabels"]
-    assert isinstance(budget_selector, dict) and budget_selector, (
-        "the PDB selects nothing"
-    )
-    missed = {
-        key: value for key, value in budget_selector.items() if labels.get(key) != value
-    }
+    assert isinstance(budget_selector, dict) and budget_selector, "the PDB selects nothing"
+    missed = {key: value for key, value in budget_selector.items() if labels.get(key) != value}
     assert missed == {}, f"the PDB's selector {missed} matches no gateway pod: {labels}"
 
 
@@ -1947,9 +1867,7 @@ def test_the_apps_subtotals_fit_inside_the_namespace_quota(
     `<=`: the reserve is a floor on what row 27 may take, and the headroom above it is
     deliberate."""
     quotas = [
-        quota
-        for quota in objects_of_kind(built, "ResourceQuota")
-        if namespace_of(quota) == APPS
+        quota for quota in objects_of_kind(built, "ResourceQuota") if namespace_of(quota) == APPS
     ]
     assert len(quotas) == 1, f"{len(quotas)} ResourceQuotas in {APPS}"
     hard = quota_hard(quotas[0])
@@ -1968,9 +1886,7 @@ def test_the_apps_subtotals_fit_inside_the_namespace_quota(
         pods = ceilings.get(key, replicas_of(owner))
         for container in all_containers(owner):
             quantities = resource_quantities(container)
-            totals["requests.memory"] += pods * memory_bytes(
-                quantities["requests.memory"]
-            )
+            totals["requests.memory"] += pods * memory_bytes(quantities["requests.memory"])
             totals["requests.cpu"] += pods * cpu_millicores(quantities["requests.cpu"])
             totals["limits.memory"] += pods * memory_bytes(quantities["limits.memory"])
 
@@ -2014,14 +1930,10 @@ def test_the_apps_quota_row_reads_seven_gibibytes_of_limits(
     other rows and its prose, so a per-value scan would pass on a table with no `apps` row at
     all, and every matching line is counted rather than the first one taken."""
     quotas = [
-        quota
-        for quota in objects_of_kind(built, "ResourceQuota")
-        if namespace_of(quota) == APPS
+        quota for quota in objects_of_kind(built, "ResourceQuota") if namespace_of(quota) == APPS
     ]
     assert len(quotas) == 1, f"{len(quotas)} ResourceQuotas in {APPS}"
-    assert quota_hard(quotas[0]) == APPS_QUOTA, (
-        f"the {APPS} quota reads {quota_hard(quotas[0])}"
-    )
+    assert quota_hard(quotas[0]) == APPS_QUOTA, f"the {APPS} quota reads {quota_hard(quotas[0])}"
 
     rows = [
         line
@@ -2063,13 +1975,9 @@ def test_every_ingress_publishes_its_own_host_with_tls_and_the_production_issuer
         )
 
         tls = ingress["spec"]["tls"]
-        assert isinstance(tls, list) and len(tls) == 1, (
-            f"{ingress_name} declares {tls} for TLS"
-        )
+        assert isinstance(tls, list) and len(tls) == 1, f"{ingress_name} declares {tls} for TLS"
         assert [str(host) for host in tls[0]["hosts"]] == [expected_host]
-        assert str(tls[0].get("secretName", "")), (
-            f"{ingress_name}'s tls block names no secret"
-        )
+        assert str(tls[0].get("secretName", "")), f"{ingress_name}'s tls block names no secret"
 
 
 def test_only_the_healthz_ingresses_are_exempt_from_basic_auth(
@@ -2140,9 +2048,7 @@ def test_every_tls_secret_name_is_distinct_and_supplied_by_nobody(
     assert len(issued) == len(INGRESS_TLS_SECRETS), (
         f"the build emits {len(issued)} Ingress TLS blocks, not {len(INGRESS_TLS_SECRETS)}"
     )
-    assert len(set(issued)) == len(issued), (
-        f"two Ingresses claim one certificate: {sorted(issued)}"
-    )
+    assert len(set(issued)) == len(issued), f"two Ingresses claim one certificate: {sorted(issued)}"
     assert tls_secret_names(built).isdisjoint(PINNED_SECRET_NAMES), (
         "cert-manager is told to write a certificate into "
         f"{sorted(tls_secret_names(built) & PINNED_SECRET_NAMES)}, which this repo supplies"
@@ -2206,9 +2112,7 @@ def test_each_apps_middleware_matches_its_platform_original(
         if namespace_of(document) == PLATFORM
     }
     assert set(copies) == MIDDLEWARE_NAMES, f"{APPS} holds middlewares {sorted(copies)}"
-    assert set(originals) == MIDDLEWARE_NAMES, (
-        f"{PLATFORM} holds middlewares {sorted(originals)}"
-    )
+    assert set(originals) == MIDDLEWARE_NAMES, f"{PLATFORM} holds middlewares {sorted(originals)}"
 
     for name in sorted(MIDDLEWARE_NAMES):
         assert copies[name]["apiVersion"] == originals[name]["apiVersion"], (
@@ -2242,9 +2146,7 @@ def test_no_secret_is_emitted_and_no_credential_is_written_inline_under_apps(
     `api_key: sk-...` on one line, and the `- name: OPENAI_API_KEY` / `value: sk-...` env pair
     a Kubernetes manifest actually uses, which a key-anchored pattern alone walks past."""
     emitted = objects_of_kind(built, "Secret")
-    assert emitted == [], (
-        f"the build emits Secrets: {[name_of(document) for document in emitted]}"
-    )
+    assert emitted == [], f"the build emits Secrets: {[name_of(document) for document in emitted]}"
 
     issued = tls_secret_names(built)
     assert issued, "no Ingress in the build names a tls secret for cert-manager to fill"
@@ -2283,9 +2185,7 @@ def test_the_image_carries_the_price_table_it_loads_at_startup() -> None:
     environment = dockerfile_environment(text)
 
     for data_file, variable in DOCKERFILE_DATA_FILES.items():
-        assert data_file in copied, (
-            f"the image copies {sorted(copied)}, not {data_file}"
-        )
+        assert data_file in copied, f"the image copies {sorted(copied)}, not {data_file}"
         assert environment.get(variable) == f"{IMAGE_WORKDIR}/{data_file}", (
             f"{variable} reads {environment.get(variable)}"
         )
@@ -2357,23 +2257,17 @@ def test_the_llama_service_is_where_the_shipped_routing_policy_expects_it(
     host = url.hostname
     assert host, f"{ROUTING_POLICY.name}'s local base_url {url.geturl()} names no host"
     assert url.port is not None, f"local base_url {url.geturl()} names no port"
-    assert url.path == LOCAL_BASE_PATH, (
-        f"local base_url {url.geturl()} is rooted at {url.path}"
-    )
+    assert url.path == LOCAL_BASE_PATH, f"local base_url {url.geturl()} is rooted at {url.path}"
 
     services = in_apps(built, "Service")
-    assert host in services, (
-        f"the build emits no Service/{host} in {APPS}: {sorted(services)}"
-    )
+    assert host in services, f"the build emits no Service/{host} in {APPS}: {sorted(services)}"
     service = services[host]
     assert name_of(service) == host
     assert service["spec"].get("type", "ClusterIP") == "ClusterIP", (
         f"Service/{host} is a {service['spec'].get('type')}, reachable from outside the cluster"
     )
 
-    published = [
-        port for port in service["spec"]["ports"] if int(port["port"]) == url.port
-    ]
+    published = [port for port in service["spec"]["ports"] if int(port["port"]) == url.port]
     assert len(published) == 1, (
         f"Service/{host} publishes {[port.get('port') for port in service['spec']['ports']]}, "
         f"and the shipped policy dials {url.port}"
@@ -2421,19 +2315,15 @@ def test_llama_serves_one_model_from_a_read_only_volume(
     pod that starts, finds no weights, and fails its startup probe with the claim bound to
     nothing - because the mount's NAME is resolved against the template's `volumes`."""
     owner = llama_pod_owner(built)
-    assert replicas_of(owner) == LLAMA_REPLICAS, (
-        f"{LLAMA} runs {replicas_of(owner)} replicas"
-    )
+    assert replicas_of(owner) == LLAMA_REPLICAS, f"{LLAMA} runs {replicas_of(owner)} replicas"
     strategy = owner["spec"].get("strategy", {})
     assert strategy.get("type") == LLAMA_STRATEGY, f"{LLAMA} updates with {strategy}"
 
     claim = sole_object(built, "PersistentVolumeClaim", LLAMA_PVC)
-    assert [
-        str(mode) for mode in claim["spec"]["accessModes"]
-    ] == LLAMA_PVC_ACCESS_MODES
-    assert (
-        str(claim["spec"]["resources"]["requests"]["storage"]) == LLAMA_PVC_STORAGE
-    ), f"{LLAMA_PVC} claims {claim['spec']['resources']['requests']['storage']}"
+    assert [str(mode) for mode in claim["spec"]["accessModes"]] == LLAMA_PVC_ACCESS_MODES
+    assert str(claim["spec"]["resources"]["requests"]["storage"]) == LLAMA_PVC_STORAGE, (
+        f"{LLAMA_PVC} claims {claim['spec']['resources']['requests']['storage']}"
+    )
     assert "storageClassName" not in claim["spec"], (
         f"{LLAMA_PVC} names storage class {claim['spec']['storageClassName']!r}; the cluster's "
         "default provisioner is what binds it"
@@ -2535,14 +2425,10 @@ def test_the_local_model_id_reads_the_same_in_every_file_that_names_it(
 
     prices = priced_keys()
     key = f"{LOCAL_PROVIDER}/{model_id}"
-    assert key in prices, (
-        f"{PRICES.name} prices {sorted(prices)}, and the pod serves {key}"
-    )
+    assert key in prices, f"{PRICES.name} prices {sorted(prices)}, and the pod serves {key}"
     entries = prices[key]
     assert isinstance(entries, list) and entries, f"{key} carries no price entries"
-    assert all(entry.get("effective_from") for entry in entries), (
-        f"{key} reads {entries}"
-    )
+    assert all(entry.get("effective_from") for entry in entries), f"{key} reads {entries}"
     assert f"{LOCAL_PROVIDER}/{PREVIOUS_LOCAL_MODEL}" in prices, (
         f"{PRICES.name} dropped the {PREVIOUS_LOCAL_MODEL} row that prices already-booked rows"
     )
@@ -2552,9 +2438,7 @@ def test_the_local_model_id_reads_the_same_in_every_file_that_names_it(
         ENV_EXAMPLE.name: env_example_model_files(),
     }
     for source, written in defaults.items():
-        assert written == {file_name}, (
-            f"{source} defaults the weights file to {sorted(written)}"
-        )
+        assert written == {file_name}, f"{source} defaults the weights file to {sorted(written)}"
 
 
 def test_the_llama_image_is_pinned_and_not_a_floating_tag(
@@ -2573,12 +2457,8 @@ def test_the_llama_image_is_pinned_and_not_a_floating_tag(
     because the pinned tag IS the claim - a refusal list alone passes for any tag at all."""
     image = str(sole_container(llama_pod_owner(built)).get("image", ""))
     assert image, f"{LLAMA} declares no image"
-    assert "@" not in image, (
-        f"{LLAMA} is pinned by digest ({image}); decision C names a tag"
-    )
-    assert ":" in image.rsplit("/", 1)[-1], (
-        f"{LLAMA} image `{image}` carries no tag at all"
-    )
+    assert "@" not in image, f"{LLAMA} is pinned by digest ({image}); decision C names a tag"
+    assert ":" in image.rsplit("/", 1)[-1], f"{LLAMA} image `{image}` carries no tag at all"
 
     repository, _, tag = image.rpartition(":")
     assert repository == LLAMA_IMAGE_REPOSITORY, f"{LLAMA} runs from `{repository}`"
@@ -2605,28 +2485,20 @@ def test_the_embedding_service_is_where_the_shipped_routing_policy_expects_it(
     the missing Service rather than resolving against it."""
     url = llama_embed_base_url()
     host = url.hostname
-    assert host, (
-        f"{ROUTING_POLICY.name}'s {LOCAL_EMBED_PROVIDER} base_url names no host"
-    )
-    assert url.port is not None, (
-        f"{LOCAL_EMBED_PROVIDER} base_url {url.geturl()} names no port"
-    )
+    assert host, f"{ROUTING_POLICY.name}'s {LOCAL_EMBED_PROVIDER} base_url names no host"
+    assert url.port is not None, f"{LOCAL_EMBED_PROVIDER} base_url {url.geturl()} names no port"
     assert url.path == LOCAL_BASE_PATH, (
         f"{LOCAL_EMBED_PROVIDER} base_url {url.geturl()} is rooted at {url.path}"
     )
 
     services = in_apps(built, "Service")
-    assert host in services, (
-        f"the build emits no Service/{host} in {APPS}: {sorted(services)}"
-    )
+    assert host in services, f"the build emits no Service/{host} in {APPS}: {sorted(services)}"
     service = services[host]
     assert service["spec"].get("type", "ClusterIP") == "ClusterIP", (
         f"Service/{host} is a {service['spec'].get('type')}, reachable from outside the cluster"
     )
 
-    published = [
-        port for port in service["spec"]["ports"] if int(port["port"]) == url.port
-    ]
+    published = [port for port in service["spec"]["ports"] if int(port["port"]) == url.port]
     assert len(published) == 1, (
         f"Service/{host} publishes {[port.get('port') for port in service['spec']['ports']]}, "
         f"and the shipped policy dials {url.port}"
@@ -2641,9 +2513,7 @@ def test_the_embedding_service_is_where_the_shipped_routing_policy_expects_it(
     )
 
 
-def test_the_embed_alias_resolves_to_the_embedding_server_and_not_the_chat_one() -> (
-    None
-):
+def test_the_embed_alias_resolves_to_the_embedding_server_and_not_the_chat_one() -> None:
     """Criterion 4, off the shipped policy alone - no build is involved, so this is the case
     that still speaks when `kubectl` is absent. Catches the split half-done in either
     direction: the `local_embed` provider row added and the `embed` alias left pointing at
@@ -2709,18 +2579,13 @@ def test_the_embedding_pod_serves_one_model_from_a_read_only_volume(
         f"{LLAMA_EMBED} runs {replicas_of(owner)} replicas"
     )
     strategy = owner["spec"].get("strategy", {})
-    assert strategy.get("type") == LLAMA_EMBED_STRATEGY, (
-        f"{LLAMA_EMBED} updates with {strategy}"
-    )
+    assert strategy.get("type") == LLAMA_EMBED_STRATEGY, f"{LLAMA_EMBED} updates with {strategy}"
 
     claim = sole_object(built, "PersistentVolumeClaim", LLAMA_EMBED_PVC)
-    assert [
-        str(mode) for mode in claim["spec"]["accessModes"]
-    ] == LLAMA_EMBED_PVC_ACCESS_MODES
-    assert (
-        str(claim["spec"]["resources"]["requests"]["storage"])
-        == LLAMA_EMBED_PVC_STORAGE
-    ), f"{LLAMA_EMBED_PVC} claims {claim['spec']['resources']['requests']['storage']}"
+    assert [str(mode) for mode in claim["spec"]["accessModes"]] == LLAMA_EMBED_PVC_ACCESS_MODES
+    assert str(claim["spec"]["resources"]["requests"]["storage"]) == LLAMA_EMBED_PVC_STORAGE, (
+        f"{LLAMA_EMBED_PVC} claims {claim['spec']['resources']['requests']['storage']}"
+    )
     assert "storageClassName" not in claim["spec"], (
         f"{LLAMA_EMBED_PVC} names storage class {claim['spec']['storageClassName']!r}; the "
         "cluster's default provisioner is what binds it"
@@ -2729,9 +2594,9 @@ def test_the_embedding_pod_serves_one_model_from_a_read_only_volume(
     mount = mount_at(sole_container(owner), LLAMA_MOUNT_PATH)
     assert mount.get("readOnly") is True, f"{LLAMA_MOUNT_PATH} is mounted {mount}"
     volume = volume_named(owner, str(mount["name"]))
-    assert (
-        volume.get("persistentVolumeClaim", {}).get("claimName") == LLAMA_EMBED_PVC
-    ), f"{LLAMA_MOUNT_PATH} is backed by {volume}"
+    assert volume.get("persistentVolumeClaim", {}).get("claimName") == LLAMA_EMBED_PVC, (
+        f"{LLAMA_MOUNT_PATH} is backed by {volume}"
+    )
 
 
 def test_the_embedding_server_runs_with_the_flags_a_bert_encoder_needs(
@@ -2751,9 +2616,7 @@ def test_the_embedding_server_runs_with_the_flags_a_bert_encoder_needs(
     address the policy dials; and catches `-m` naming a file this claim does not hold. Order is
     part of the assertion: a value orphaned from its flag by an insertion is a different command
     line, and only equality sees it."""
-    args = [
-        str(arg) for arg in sole_container(llama_embed_pod_owner(built)).get("args", [])
-    ]
+    args = [str(arg) for arg in sole_container(llama_embed_pod_owner(built)).get("args", [])]
     assert args == LLAMA_EMBED_ARGS, f"{LLAMA_EMBED} runs with {args}"
 
 
@@ -2812,9 +2675,7 @@ def test_the_embedding_image_is_the_same_pinned_build_the_chat_server_runs(
     image = str(sole_container(llama_embed_pod_owner(built)).get("image", ""))
     chat_image = str(sole_container(llama_pod_owner(built)).get("image", ""))
     assert image, f"{LLAMA_EMBED} declares no image"
-    assert ":" in image.rsplit("/", 1)[-1], (
-        f"{LLAMA_EMBED} image `{image}` carries no tag"
-    )
+    assert ":" in image.rsplit("/", 1)[-1], f"{LLAMA_EMBED} image `{image}` carries no tag"
     assert image == chat_image, (
         f"{LLAMA_EMBED} runs `{image}` while {LLAMA} runs `{chat_image}`; decision C says one "
         "build serves both"
@@ -2840,9 +2701,7 @@ def test_the_embedding_model_file_reads_the_same_in_every_file_that_names_it(
     priced against the entry it was charged with, so the old key is KEPT beside the new one and
     never edited into it. The compose and `.env.example` scans read EVERY matching line - both files name `llama` and `models` on several - and neither pattern
     can match the chat server's `LLAMA_MODEL_FILE` lines."""
-    file_name = Path(
-        sole_arg_value(sole_container(llama_embed_pod_owner(built)), "-m")
-    ).name
+    file_name = Path(sole_arg_value(sole_container(llama_embed_pod_owner(built)), "-m")).name
     model_id = embed_model_id_from(file_name)
 
     defaults = {
@@ -2850,20 +2709,14 @@ def test_the_embedding_model_file_reads_the_same_in_every_file_that_names_it(
         ENV_EXAMPLE.name: env_example_embed_model_files(),
     }
     for source, written in defaults.items():
-        assert written == {file_name}, (
-            f"{source} defaults the weights file to {sorted(written)}"
-        )
+        assert written == {file_name}, f"{source} defaults the weights file to {sorted(written)}"
 
     prices = priced_keys()
     key = f"{LOCAL_EMBED_PROVIDER}/{model_id}"
-    assert key in prices, (
-        f"{PRICES.name} prices {sorted(prices)}, and the pod serves {key}"
-    )
+    assert key in prices, f"{PRICES.name} prices {sorted(prices)}, and the pod serves {key}"
     entries = prices[key]
     assert isinstance(entries, list) and entries, f"{key} carries no price entries"
-    assert all(entry.get("effective_from") for entry in entries), (
-        f"{key} reads {entries}"
-    )
+    assert all(entry.get("effective_from") for entry in entries), f"{key} reads {entries}"
     assert f"{LOCAL_PROVIDER}/{model_id}" in prices, (
         f"{PRICES.name} dropped the {LOCAL_PROVIDER}/{model_id} row that prices rows already "
         "booked under the provider name before the split"
@@ -2887,8 +2740,7 @@ def test_the_build_emits_every_helpdesk_object_the_plan_names(
     `test_the_apps_directory_emits_the_objects_the_plan_names`, which is the case that owns
     the `apps` set equality, so what is this case's own is the ports and the types."""
     emitted = {
-        (str(document.get("kind")), name_of(document), namespace_of(document))
-        for document in built
+        (str(document.get("kind")), name_of(document), namespace_of(document)) for document in built
     }
     missing = sorted(HELPDESK_OBJECTS - emitted)
     assert missing == [], f"the build emits no {missing}"
@@ -2916,8 +2768,7 @@ def test_the_build_emits_every_helpdesk_object_the_plan_names(
     cluster_scoped = {
         (str(document.get("kind")), name_of(document))
         for document in built
-        if namespace_of(document) is None
-        and str(document.get("kind")) not in BASE_KINDS
+        if namespace_of(document) is None and str(document.get("kind")) not in BASE_KINDS
     }
     assert cluster_scoped == CLUSTER_SCOPED_OBJECTS, (
         f"cluster-scoped objects changed: {sorted(cluster_scoped ^ CLUSTER_SCOPED_OBJECTS)}"
@@ -2941,9 +2792,7 @@ def test_the_scheduler_has_no_service(built: list[dict[str, Any]]) -> None:
     )
 
 
-@pytest.mark.parametrize(
-    ("workload_name", "expected"), sorted(HELPDESK_RESOURCES.items())
-)
+@pytest.mark.parametrize(("workload_name", "expected"), sorted(HELPDESK_RESOURCES.items()))
 def test_each_helpdesk_workload_declares_the_quantities_the_budget_prices(
     workload_name: str, expected: dict[str, str], built: list[dict[str, Any]]
 ) -> None:
@@ -2955,9 +2804,7 @@ def test_each_helpdesk_workload_declares_the_quantities_the_budget_prices(
     in one file invite. Catches `limits.cpu` appearing on any of the four: equality on the whole
     flattened mapping is what keeps it absent, and a CPU limit throttles the agent-api's tail
     latency rather than protecting the node."""
-    quantities = resource_quantities(
-        sole_container(helpdesk_pod_owner(built, workload_name))
-    )
+    quantities = resource_quantities(sole_container(helpdesk_pod_owner(built, workload_name)))
     assert quantities == expected, f"{workload_name} declares {quantities}"
 
 
@@ -2974,13 +2821,9 @@ def test_the_four_helpdesk_pods_fit_the_envelope_the_reserve_held(
     four would make this sum a floor rather than the cost, so the absence of one is asserted
     here: the quota admits pods at their ceiling, not at `spec.replicas`."""
     scaled = [
-        key
-        for key in scale_targets(built)
-        if key[1] in HELPDESK_WORKLOADS and key[2] == APPS
+        key for key in scale_targets(built) if key[1] in HELPDESK_WORKLOADS and key[2] == APPS
     ]
-    assert scaled == [], (
-        f"an HPA scales {scaled}, so these four cost more than one pod each"
-    )
+    assert scaled == [], f"an HPA scales {scaled}, so these four cost more than one pod each"
 
     totals = {"requests.memory": 0, "requests.cpu": 0, "limits.memory": 0}
     for workload_name in HELPDESK_WORKLOADS:
@@ -2988,9 +2831,7 @@ def test_the_four_helpdesk_pods_fit_the_envelope_the_reserve_held(
         pods = replicas_of(owner)
         for container in all_containers(owner):
             quantities = resource_quantities(container)
-            totals["requests.memory"] += pods * memory_bytes(
-                quantities["requests.memory"]
-            )
+            totals["requests.memory"] += pods * memory_bytes(quantities["requests.memory"])
             totals["requests.cpu"] += pods * cpu_millicores(quantities["requests.cpu"])
             totals["limits.memory"] += pods * memory_bytes(quantities["limits.memory"])
 
@@ -3018,19 +2859,11 @@ def test_each_serving_helpdesk_workload_probes_readyz_and_healthz(
         container = sole_container(helpdesk_pod_owner(built, workload_name))
         expected_port = HELPDESK_CONTAINER_PORTS[workload_name]
         declared = container.get("ports", [])
-        assert isinstance(declared, list) and declared, (
-            f"{workload_name} declares no ports"
-        )
-        numbers = {
-            int(port["containerPort"]) for port in declared if "containerPort" in port
-        }
+        assert isinstance(declared, list) and declared, f"{workload_name} declares no ports"
+        numbers = {int(port["containerPort"]) for port in declared if "containerPort" in port}
         names = {str(port["name"]) for port in declared if port.get("name")}
-        assert numbers == {expected_port}, (
-            f"{workload_name} listens on {sorted(numbers)}"
-        )
-        assert CONTAINER_PORT_NAME in names, (
-            f"{workload_name}'s ports are named {sorted(names)}"
-        )
+        assert numbers == {expected_port}, f"{workload_name} listens on {sorted(numbers)}"
+        assert CONTAINER_PORT_NAME in names, f"{workload_name}'s ports are named {sorted(names)}"
 
         for probe_key, path in (
             ("readinessProbe", READINESS_PATH),
@@ -3039,9 +2872,7 @@ def test_each_serving_helpdesk_workload_probes_readyz_and_healthz(
             probe = container.get(probe_key)
             assert isinstance(probe, dict), f"{workload_name} declares no {probe_key}"
             request = probe.get("httpGet", {})
-            assert isinstance(request, dict), (
-                f"{workload_name}'s {probe_key} is {probe}"
-            )
+            assert isinstance(request, dict), f"{workload_name}'s {probe_key} is {probe}"
             assert str(request.get("path")) == path, (
                 f"{workload_name}'s {probe_key} polls {request.get('path')}"
             )
@@ -3069,21 +2900,15 @@ def test_the_scheduler_runs_one_replica_recreate_with_no_ports_and_no_probes(
         f"{HELPDESK_SCHEDULER} runs {replicas_of(owner)} replicas"
     )
     strategy = owner["spec"].get("strategy", {})
-    assert isinstance(strategy, dict), (
-        f"{HELPDESK_SCHEDULER} declares strategy {strategy}"
-    )
+    assert isinstance(strategy, dict), f"{HELPDESK_SCHEDULER} declares strategy {strategy}"
     assert str(strategy.get("type")) == HELPDESK_SCHEDULER_STRATEGY, (
         f"{HELPDESK_SCHEDULER} rolls out with {strategy.get('type')}"
     )
 
     container = sole_container(owner)
-    assert container.get("ports", []) == [], (
-        f"{HELPDESK_SCHEDULER} declares {container['ports']}"
-    )
+    assert container.get("ports", []) == [], f"{HELPDESK_SCHEDULER} declares {container['ports']}"
     probes = [key for key in PROBE_KEYS if key in container]
-    assert probes == [], (
-        f"{HELPDESK_SCHEDULER} declares {probes} against a process with no port"
-    )
+    assert probes == [], f"{HELPDESK_SCHEDULER} declares {probes} against a process with no port"
 
 
 def test_the_helpdesk_config_carries_only_fully_qualified_in_cluster_addresses(
@@ -3119,9 +2944,7 @@ def test_the_helpdesk_config_carries_only_fully_qualified_in_cluster_addresses(
         f"{HELPDESK_CONFIG_MAP} names addresses no pod in {APPS} resolves: {external}"
     )
 
-    assert (
-        urlsplit(data[HELPDESK_REDIS_URL_KEY]).path == HELPDESK_REDIS_DATABASE_PATH
-    ), (
+    assert urlsplit(data[HELPDESK_REDIS_URL_KEY]).path == HELPDESK_REDIS_DATABASE_PATH, (
         f"the Helpdesk reads Redis database {urlsplit(data[HELPDESK_REDIS_URL_KEY]).path}"
     )
     gateway_raw = sole_object(built, "ConfigMap", GATEWAY_CONFIG_MAP).get("data", {})
@@ -3160,9 +2983,9 @@ def test_each_helpdesk_workload_carries_its_own_trace_service_name(
         assert HELPDESK_TRACE_NAME_KEY in environment, (
             f"{workload_name} sets {sorted(environment)} and not {HELPDESK_TRACE_NAME_KEY}"
         )
-        assert (
-            environment[HELPDESK_TRACE_NAME_KEY] == HELPDESK_TRACE_NAMES[workload_name]
-        ), f"{workload_name} traces as {environment[HELPDESK_TRACE_NAME_KEY]}"
+        assert environment[HELPDESK_TRACE_NAME_KEY] == HELPDESK_TRACE_NAMES[workload_name], (
+            f"{workload_name} traces as {environment[HELPDESK_TRACE_NAME_KEY]}"
+        )
         names[workload_name] = environment[HELPDESK_TRACE_NAME_KEY]
 
     gateway_raw = sole_object(built, "ConfigMap", GATEWAY_CONFIG_MAP).get("data", {})
@@ -3276,9 +3099,7 @@ def test_only_the_helpdesk_workloads_carry_an_image_pull_secret(
     `apps` default ServiceAccount leaves NO pod spec carrying it, so the four expected carriers
     are missing and the set is red rather than vacuously clean."""
     specs = [(document, any_pod_spec(document)) for document in built]
-    assert any(pod is not None for _, pod in specs), (
-        "the build emits no pod specs at all"
-    )
+    assert any(pod is not None for _, pod in specs), "the build emits no pod specs at all"
     carriers = {
         (str(document.get("kind")), name_of(document), namespace_of(document))
         for document, pod in specs
@@ -3301,14 +3122,10 @@ def test_the_console_repo_images_keep_their_own_paths() -> None:
     document = yaml.safe_load(read(APPS_KUSTOMIZATION))
     assert isinstance(document, dict), f"{APPS_KUSTOMIZATION} is not a YAML mapping"
     images = document.get("images")
-    assert isinstance(images, list) and images, (
-        f"{APPS_KUSTOMIZATION} declares no images"
-    )
+    assert isinstance(images, list) and images, f"{APPS_KUSTOMIZATION} declares no images"
     entries: dict[str, list[dict[str, str]]] = {}
     for entry in images:
-        assert isinstance(entry, dict), (
-            f"{APPS_KUSTOMIZATION} has an image entry {entry!r}"
-        )
+        assert isinstance(entry, dict), f"{APPS_KUSTOMIZATION} has an image entry {entry!r}"
         entries.setdefault(str(entry.get("name")), []).append(
             {str(key): str(value) for key, value in entry.items()}
         )
@@ -3339,9 +3156,7 @@ def test_the_helpdesk_urls_name_the_real_service_ports_and_the_public_host(
 
     for key, service_name in sorted(HELPDESK_SERVICE_URL_KEYS.items()):
         ports = sole_object(built, "Service", service_name)["spec"].get("ports", [])
-        assert isinstance(ports, list) and len(ports) == 1, (
-            f"{service_name} publishes {ports}"
-        )
+        assert isinstance(ports, list) and len(ports) == 1, f"{service_name} publishes {ports}"
         address = urlsplit(data[key])
         assert address.hostname == f"{service_name}.{APPS}{IN_CLUSTER_SUFFIX}", (
             f"{key} dials {address.hostname}, not Service/{service_name}"
@@ -3352,9 +3167,7 @@ def test_the_helpdesk_urls_name_the_real_service_ports_and_the_public_host(
 
     rules = sole_object(built, "Ingress", HELPDESK_INGRESS)["spec"].get("rules", [])
     hosts = {str(rule.get("host")) for rule in rules if isinstance(rule, dict)}
-    assert len(hosts) == 1, (
-        f"Ingress/{HELPDESK_INGRESS} serves {sorted(hosts)}, not one host"
-    )
+    assert len(hosts) == 1, f"Ingress/{HELPDESK_INGRESS} serves {sorted(hosts)}, not one host"
     (host,) = hosts
     assert data[WEB_ORIGIN_KEY] == f"{WEB_ORIGIN_SCHEME}://{host}", (
         f"{WEB_ORIGIN_KEY} is {data[WEB_ORIGIN_KEY]!r}; Ingress/{HELPDESK_INGRESS} serves "
@@ -3365,9 +3178,7 @@ def test_the_helpdesk_urls_name_the_real_service_ports_and_the_public_host(
 @pytest.mark.parametrize(
     ("roots", "pattern"),
     [
-        pytest.param(
-            (INFRA_DIR,), re.compile(re.escape(OLD_ENV_PREFIX)), id="infra-old-prefix"
-        ),
+        pytest.param((INFRA_DIR,), re.compile(re.escape(OLD_ENV_PREFIX)), id="infra-old-prefix"),
         pytest.param((TESTS_INFRA_DIR,), OLD_ENV_NAME, id="tests-infra-old-env-names"),
         pytest.param(
             (INFRA_DIR, TESTS_INFRA_DIR),
@@ -3387,9 +3198,7 @@ def test_no_old_helpdesk_env_name_or_image_path_survives(
     so a leftover is never a harmless alias. The banned values are assembled from pieces above, and the ten-name row matches WHOLE identifiers, so this file's
     Python constants sharing the prefix are not hits."""
     files = scanned_files(roots)
-    assert files, (
-        f"{[str(root) for root in roots]} holds no files, so this scan read nothing"
-    )
+    assert files, f"{[str(root) for root in roots]} holds no files, so this scan read nothing"
     hits = [
         f"{path.relative_to(REPO_ROOT)}:{number}: {line.strip()[:120]}"
         for path in files
@@ -3398,9 +3207,7 @@ def test_no_old_helpdesk_env_name_or_image_path_survives(
         )
         if pattern.search(line)
     ]
-    assert hits == [], (
-        f"{len(hits)} lines still carry `{pattern.pattern}`:\n" + "\n".join(hits)
-    )
+    assert hits == [], f"{len(hits)} lines still carry `{pattern.pattern}`:\n" + "\n".join(hits)
 
 
 def test_the_mcp_server_alone_mounts_the_policy_corpus_read_only_where_policy_dir_points(
@@ -3426,9 +3233,7 @@ def test_the_mcp_server_alone_mounts_the_policy_corpus_read_only_where_policy_di
     ), f"{HELPDESK_POLICIES_PVC} declares {claim['spec']['accessModes']}"
     assert str(claim["spec"]["resources"]["requests"]["storage"]) == (
         HELPDESK_POLICIES_PVC_STORAGE
-    ), (
-        f"{HELPDESK_POLICIES_PVC} claims {claim['spec']['resources']['requests']['storage']}"
-    )
+    ), f"{HELPDESK_POLICIES_PVC} claims {claim['spec']['resources']['requests']['storage']}"
     assert "storageClassName" not in claim["spec"], (
         f"{HELPDESK_POLICIES_PVC} names storage class {claim['spec']['storageClassName']!r}; the "
         "cluster's default provisioner is what binds it"
@@ -3438,27 +3243,21 @@ def test_the_mcp_server_alone_mounts_the_policy_corpus_read_only_where_policy_di
     mount = mount_at(sole_container(owner), corpus_path)
     assert mount.get("readOnly") is True, f"{corpus_path} is mounted {mount}"
     volume = volume_named(owner, str(mount["name"]))
-    assert (
-        volume.get("persistentVolumeClaim", {}).get("claimName")
-        == HELPDESK_POLICIES_PVC
-    ), f"{corpus_path} is backed by {volume}"
+    assert volume.get("persistentVolumeClaim", {}).get("claimName") == HELPDESK_POLICIES_PVC, (
+        f"{corpus_path} is backed by {volume}"
+    )
 
     others = sorted(
         workload_name
         for workload_name in HELPDESK_WORKLOADS
         if workload_name != HELPDESK_MCP_SERVER
         and any(
-            volume.get("persistentVolumeClaim", {}).get("claimName")
-            == HELPDESK_POLICIES_PVC
-            for volume in pod_spec(helpdesk_pod_owner(built, workload_name)).get(
-                "volumes", []
-            )
+            volume.get("persistentVolumeClaim", {}).get("claimName") == HELPDESK_POLICIES_PVC
+            for volume in pod_spec(helpdesk_pod_owner(built, workload_name)).get("volumes", [])
             if isinstance(volume, dict)
         )
     )
-    assert others == [], (
-        f"{others} also mount {HELPDESK_POLICIES_PVC}, which none of them reads"
-    )
+    assert others == [], f"{others} also mount {HELPDESK_POLICIES_PVC}, which none of them reads"
 
 
 def test_only_helpdesk_workloads_mount_the_helpdesk_sources(
@@ -3474,8 +3273,7 @@ def test_only_helpdesk_workloads_mount_the_helpdesk_sources(
     mounting = {
         (str(document.get("kind")), name_of(document), namespace_of(document))
         for document in built
-        if (pod := any_pod_spec(document)) is not None
-        and env_from_names(pod) & HELPDESK_SOURCES
+        if (pod := any_pod_spec(document)) is not None and env_from_names(pod) & HELPDESK_SOURCES
     }
     expected = {("Deployment", name, APPS) for name in HELPDESK_WORKLOADS}
     assert mounting == expected, (
@@ -3500,14 +3298,10 @@ def test_no_helpdesk_selector_carries_a_kustomize_wide_label(
     for workload_name in HELPDESK_WORKLOADS:
         owner = helpdesk_pod_owner(built, workload_name)
         declared = owner["spec"]["selector"]["matchLabels"]
-        assert isinstance(declared, dict) and declared, (
-            f"{workload_name} selects nothing"
-        )
+        assert isinstance(declared, dict) and declared, f"{workload_name} selects nothing"
         match_labels = {str(key): str(value) for key, value in declared.items()}
         reached = sorted(KUSTOMIZE_WIDE_LABELS & set(match_labels))
-        assert reached == [], (
-            f"{workload_name}'s selector carries {reached}, immutable on apply"
-        )
+        assert reached == [], f"{workload_name}'s selector carries {reached}, immutable on apply"
         assert match_labels == {SELECTOR_LABEL: workload_name}, (
             f"{workload_name} selects {match_labels}"
         )
@@ -3517,12 +3311,8 @@ def test_no_helpdesk_selector_carries_a_kustomize_wide_label(
         )
 
     for workload_name in HELPDESK_SERVING:
-        declared = sole_object(built, "Service", workload_name)["spec"].get(
-            "selector", {}
-        )
-        assert isinstance(declared, dict) and declared, (
-            f"{workload_name}'s Service selects nothing"
-        )
+        declared = sole_object(built, "Service", workload_name)["spec"].get("selector", {})
+        assert isinstance(declared, dict) and declared, f"{workload_name}'s Service selects nothing"
         selector = {str(key): str(value) for key, value in declared.items()}
         reached = sorted(KUSTOMIZE_WIDE_LABELS & set(selector))
         assert reached == [], f"{workload_name}'s Service selector carries {reached}"
@@ -3557,9 +3347,7 @@ def test_no_helpdesk_workload_has_a_disruption_budget(
             labels = template_labels(owner)
             if all(labels.get(key) == value for key, value in match_labels.items()):
                 selecting.append(f"{budget_name} selects {workload_name}")
-    assert selecting == [], (
-        f"disruption budgets over single-replica Helpdesk pods: {selecting}"
-    )
+    assert selecting == [], f"disruption budgets over single-replica Helpdesk pods: {selecting}"
 
 
 def test_the_gateway_router_serves_only_the_versioned_api(
@@ -3591,9 +3379,7 @@ def test_the_gateway_router_serves_only_the_versioned_api(
                 f"{ROOT_INGRESS} routes {path['path']} to Service/{backend['name']}"
             )
             port = backend.get("port", {})
-            assert (
-                isinstance(port, dict) and str(port.get("name")) == CONTAINER_PORT_NAME
-            ), (
+            assert isinstance(port, dict) and str(port.get("name")) == CONTAINER_PORT_NAME, (
                 f"{ROOT_INGRESS} names backend port {port} and not `{CONTAINER_PORT_NAME}`"
             )
     assert paths == {VERSIONED_PREFIX}, f"{ROOT_INGRESS} routes {sorted(paths)}"
@@ -3693,9 +3479,7 @@ def test_every_served_versioned_path_is_still_publicly_routable(
 
     for path in served:
         matched = routers_matching(built, path)
-        assert len(matched) == 1, (
-            f"{path} is matched by {len(matched)} routers: {matched}"
-        )
+        assert len(matched) == 1, f"{path} is matched by {len(matched)} routers: {matched}"
 
 
 def test_readyz_is_reachable_only_in_cluster(built: list[dict[str, Any]]) -> None:
@@ -3737,9 +3521,7 @@ def test_every_admin_path_the_app_mounts_is_under_the_prefix_the_build_closes(
         for path in CLOSED_PUBLIC_PATHS
         if path.startswith("/admin") and path not in admin_paths
     )
-    assert missing == [], (
-        f"the app mounts {admin_paths}, which does not include {missing}"
-    )
+    assert missing == [], f"the app mounts {admin_paths}, which does not include {missing}"
 
     outside = [path for path in admin_paths if not path.startswith(ADMIN_PREFIX)]
     assert outside == [], f"admin routes outside `{ADMIN_PREFIX}`: {outside}"
