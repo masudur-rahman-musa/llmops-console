@@ -76,8 +76,8 @@ jobs:
       - name: Build and push the gateway image
         uses: docker/build-push-action@v6
         with:
-          context: .
-          file: Dockerfile
+          context: backend
+          file: backend/Dockerfile
           platforms: linux/amd64
           push: true
           tags: ghcr.io/masudur-rahman-musa/ai-operations-console/gateway:${{ github.sha }}

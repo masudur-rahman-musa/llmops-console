@@ -23,7 +23,7 @@
 # distinction `/healthz` and `/readyz` draw inside the process.
 services:
   gateway:
-    build: .
+    build: backend
     # Optional, so `docker compose config` and a stack brought up for the
     # backing services alone work on a checkout with no `.env` yet. A gateway
     # that needs to reach a provider still needs one: `.env.example` is the

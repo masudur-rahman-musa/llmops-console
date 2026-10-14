@@ -8,38 +8,46 @@ define console
 @if [ -d services/console ]; then pnpm -C services/console $(1); \
 else echo "skip: no services/console yet - $(1)"; fi
 endef
+# The Python project lives in `backend/` (its `pyproject.toml`, venv and tests).
+# `UV_ROOT` keeps the shell in the repo root - for targets that also name root
+# paths like `project-evals/`, `scripts/` or `tests/infra/` - while using
+# backend's project and venv. `UV_BK` moves the shell into `backend/` for the
+# tools whose config is read relative to the working directory (ruff's `.`,
+# mypy's `files`, pytest's `testpaths`).
+UV_ROOT = uv run --project backend
+UV_BK = uv run --directory backend
 help:       ## Show all targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 setup:      ## Install dependencies and pre-commit hooks
-	uv sync && uv run pre-commit install
+	uv sync --project backend && $(UV_ROOT) pre-commit install
 	$(call console,install)
 run:        ## Run the project locally
-	docker compose up -d && uv run python -c 'from services.gateway.main import serve; serve(reload=True)'
+	docker compose up -d && $(UV_ROOT) python -c 'from app.main import serve; serve(reload=True)'
 # The packages that carry a guarantee rather than a feature. They are gated at
 # 100% on top of the 80% the whole tree has to clear. This reads the coverage
 # data pytest just wrote instead of re-running with `--cov=<path>`, because that
 # flag overrides `[tool.coverage.run] source` and would silently unmeasure
 # everything outside the path.
-COVERED_100 = packages/opsconsole/opsconsole/routing/*
+COVERED_100 = backend/app/routing/*
 # The per-test coverage map the adjacent check selects from. Written by the
 # same run that proves the suite green, so it can never be staler than it.
 COV_DB = .coverage-baseline
 test:       ## Run tests with the coverage gate
-	COVERAGE_FILE=$(COV_DB) uv run pytest -q --cov --cov-context=test --cov-fail-under=80
-	COVERAGE_FILE=$(COV_DB) uv run coverage report --include='$(COVERED_100)' --fail-under=100
+	COVERAGE_FILE=$(COV_DB) $(UV_ROOT) pytest -q backend/tests --cov --cov-context=test --cov-fail-under=80
+	COVERAGE_FILE=$(COV_DB) $(UV_ROOT) coverage report --include='$(COVERED_100)' --fail-under=100
 	$(call console,test)
 select-tests: ## Print the tests whose recorded coverage touches this change
-	@uv run python scripts/select_tests.py --explain
+	@$(UV_ROOT) python scripts/select_tests.py --explain
 test-adjacent: ## Run only the tests whose coverage touches this change
-	@uv run python scripts/select_tests.py | tr ' ' '\n' | xargs uv run pytest -q
+	@$(UV_ROOT) python scripts/select_tests.py | tr ' ' '\n' | xargs $(UV_ROOT) pytest -q
 lint:       ## Lint
-	uv run ruff check .
+	$(UV_BK) ruff check .
 	$(call console,lint)
 typecheck:  ## Static types
-	uv run mypy
+	$(UV_BK) mypy
 	$(call console,typecheck)
 format:     ## Auto-format
-	uv run ruff format .
+	$(UV_BK) ruff format .
 verify: format lint typecheck test   ## The full gate, in order
 # The ledger's schema is applied by a deploy STEP, never on app start: replicas
 # coming up together would otherwise race each other over the same DDL, and
@@ -47,13 +55,13 @@ verify: format lint typecheck test   ## The full gate, in order
 # non-zero code when OPSCONSOLE_DATABASE_URL is unset, so a pipeline cannot
 # mistake "nothing was configured" for "nothing needed doing".
 migrate:    ## Apply the ledger migrations (safe to run twice)
-	uv run ops-migrate
+	$(UV_ROOT) ops-migrate
 purge-residency: ## Drop residency log partitions past the retention
-	uv run ops-purge-residency
+	$(UV_ROOT) ops-purge-residency
 refresh-rollup: ## Refresh the daily cost rollup the console reads
-	uv run ops-refresh-rollup
-eval:       ## Project evals: golden set vs project-evals/baseline.json
-	uv run ops-eval run --target http://localhost:8080 --set "$$GOLDEN_SET" --tenant evals --out project-evals/reports/local
+	$(UV_ROOT) ops-refresh-rollup
+eval:       ## Project evals: golden set vs backend/evals/baseline.json
+	$(UV_ROOT) ops-eval run --target http://localhost:8080 --set "$$GOLDEN_SET" --tenant evals --out project-evals/reports/local
 # The published comparison (the design). Pure: it reads a manifest and the
 # report.json each option names, so it needs no stack and no key. MANIFEST and
 # OUT are overridable because the measured run builds its table from its own
@@ -61,7 +69,7 @@ eval:       ## Project evals: golden set vs project-evals/baseline.json
 MANIFEST ?= project-evals/tradeoff.json
 OUT ?= docs
 tradeoff:   ## Build docs/tradeoff.md and docs/tradeoff.json from a manifest of runs
-	uv run ops-eval tradeoff --manifest $(MANIFEST) --out $(OUT)
+	$(UV_ROOT) ops-eval tradeoff --manifest $(MANIFEST) --out $(OUT)
 # The three measurement steps behind that table, each a thin call into
 # `scripts/tradeoff_run.sh`. No `||` in any recipe: a measurement run that failed
 # must fail its target, or the table is built from whatever the last run left on
@@ -210,4 +218,4 @@ secrets-decrypt: ## Decrypt every infra/secrets/*.enc.yaml to its *.dec.yaml
 # `git ls-files` and on the kustomize build, so it is the one secrets target that
 # runs on any machine and in CI.
 secrets-check: ## Check the secrets policy and contracts (no sops, no age needed)
-	uv run pytest -q tests/infra/test_secrets.py
+	$(UV_ROOT) pytest -q tests/infra/test_secrets.py

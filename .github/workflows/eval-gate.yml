@@ -42,12 +42,12 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - run: uv sync --locked
+      - run: uv sync --locked --project backend
       # The rule itself is a pure module (`evals/baseline_guard.py`) behind this
       # one line, so every way of bypassing it is a test row rather than a pull
       # request somebody has to open.
       - run: |
-          uv run ops-eval baseline-guard \
+          uv run --project backend ops-eval baseline-guard \
             --base="${{ github.event.pull_request.base.sha }}" \
             --head="${{ github.event.pull_request.head.sha }}"
 
@@ -64,18 +64,18 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - run: uv sync --locked
-      # The $2 cap for the length of this run. `project-evals/ci/routing.ci.yaml`
+      - run: uv sync --locked --project backend
+      # The $2 cap for the length of this run. `backend/config/routing.ci.yaml`
       # is a partial document merged over the shipped policy, so the prod `10.00`
-      # in `routing.yaml` is never edited and the two cannot drift apart.
+      # in `backend/config/routing.yaml` is never edited and the two cannot drift apart.
       - name: Merge the CI budget overlay over routing.yaml
         run: |
-          uv run python - <<'PY'
+          uv run --project backend python - <<'PY'
           import yaml
           from pathlib import Path
 
-          policy = yaml.safe_load(Path("routing.yaml").read_text(encoding="utf-8"))
-          overlay = yaml.safe_load(Path("project-evals/ci/routing.ci.yaml").read_text(encoding="utf-8"))
+          policy = yaml.safe_load(Path("backend/config/routing.yaml").read_text(encoding="utf-8"))
+          overlay = yaml.safe_load(Path("backend/config/routing.ci.yaml").read_text(encoding="utf-8"))
           for tenant, fields in overlay["tenants"].items():
               policy["tenants"][tenant].update(fields)
           Path("routing.ci.effective.yaml").write_text(yaml.safe_dump(policy), encoding="utf-8")
@@ -89,9 +89,9 @@ jobs:
       - name: Run the golden set
         continue-on-error: true
         run: |
-          uv run ops-eval run \
+          uv run --project backend ops-eval run \
             --target "${{ vars.EVAL_TARGET_URL }}" \
-            --set project-evals/golden/example.jsonl \
+            --set backend/evals/golden/example.jsonl \
             --tenant evals \
             --policy routing.ci.effective.yaml \
             --judge-url http://127.0.0.1:8080 \
@@ -99,9 +99,9 @@ jobs:
             --out reports
       - name: Compare the run against the baseline
         run: |
-          uv run ops-eval gate \
+          uv run --project backend ops-eval gate \
             --report reports/report.json \
-            --baseline project-evals/baseline.json \
+            --baseline backend/evals/baseline.json \
             --comment reports/comment.md
       # `always()`, because a FAILED gate is exactly when somebody opens the
       # report. Deliberately not guarded on the fork condition below: the evidence

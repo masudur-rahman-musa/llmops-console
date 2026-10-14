@@ -29,7 +29,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   eval-target-stub:
-    build: project-evals/ci/eval-target-stub
+    build: backend/evals/target-stub
     profiles: [tradeoff]
     # 8090 because the six ports `docker-compose.yml` publishes are taken, and a
     # clash is found at `up` after the GPU instance is already billing (standing

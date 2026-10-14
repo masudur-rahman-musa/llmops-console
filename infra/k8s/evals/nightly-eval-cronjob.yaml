@@ -17,7 +17,7 @@
 # (`pyproject.toml`), so no second image exists for this job to run. This manifest is
 # honest about being currently inert beyond that: no image has been published under this
 # path yet, and the gateway image's own `Dockerfile`
-# does not `COPY` `project-evals/`, so `--set` names a path nothing in the container
+# does not `COPY` `backend/evals/`, so `--set` names a path nothing in the container
 # actually carries until a later plan closes that gap too - the same "ships correct but
 # inert" shape `eval-gate.yml` and `deploy.yml` already carry.
 apiVersion: batch/v1
@@ -52,7 +52,7 @@ spec:
                 - --target
                 - http://gateway.apps.svc.cluster.local
                 - --set
-                - project-evals/golden/example.jsonl
+                - backend/evals/golden/example.jsonl
                 - --tenant
                 - evals
                 - --run-kind

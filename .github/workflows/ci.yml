@@ -42,7 +42,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - run: uv sync --locked
+      - run: uv sync --locked --project backend
       # `make lint`, `typecheck` and `test` also run the console's scripts now
       # that services/console exists, so this job needs pnpm and its install too.
       - uses: pnpm/action-setup@v4
@@ -55,10 +55,10 @@ jobs:
           cache-dependency-path: services/console/pnpm-lock.yaml
       - run: pnpm -C services/console install --frozen-lockfile
       # Same checks as the local pre-commit hooks, and unskippable here.
-      - run: uv run pre-commit run --all-files
+      - run: uv run --project backend pre-commit run --all-files
       # Mirrors the Makefile gate. `format` runs as a check with the locked ruff,
-      # not only through the pre-commit-pinned one.
-      - run: uv run ruff format --check .
+      # not only through the pre-commit-pinned one, over the `backend/` tree.
+      - run: uv run --project backend ruff format --check backend
       - run: make lint
       - run: make typecheck
       - run: make test

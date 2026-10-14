@@ -32,10 +32,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build the gateway image
-        run: docker build -t gateway:e2e-kind .
+        run: docker build -t gateway:e2e-kind backend
 
       - name: Build the eval-target-stub image
-        run: docker build -t eval-target-stub:e2e-kind project-evals/ci/eval-target-stub
+        run: docker build -t eval-target-stub:e2e-kind backend/evals/target-stub
 
       - name: Create the kind cluster
         uses: helm/kind-action@v1.15.0
@@ -67,7 +67,7 @@ jobs:
       # run checks the gateway's model-free paths instead, through a port-forward
       # to the gateway itself - still never a NodePort or a public address.
       # When the local model returns, restore the stub port-forward, `uv sync`
-      # and the `ops-eval run --set project-evals/golden/e2e-kind.jsonl` step.
+      # and the `ops-eval run --set backend/evals/golden/e2e-kind.jsonl` step.
       - name: Port-forward the gateway
         run: |
           kubectl -n apps port-forward svc/gateway 18080:8080 &

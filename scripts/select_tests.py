@@ -55,7 +55,7 @@ BASELINE = REPO_ROOT / ".coverage-baseline"
 def _pyproject() -> dict[str, object]:
     import tomllib
 
-    path = REPO_ROOT / "pyproject.toml"
+    path = REPO_ROOT / "backend" / "pyproject.toml"
     try:
         return tomllib.loads(path.read_text())
     except (OSError, tomllib.TOMLDecodeError):
@@ -85,8 +85,12 @@ def _string_list(value: object) -> tuple[str, ...]:
     return tuple(item for item in value if isinstance(item, str))
 
 
-TEST_ROOTS: tuple[str, ...] = _string_list(
-    _table(_CONFIG, "tool", "pytest", "ini_options", "testpaths")
+# `testpaths` is read from `backend/pyproject.toml` and is relative to that
+# file (`tests`), but every path downstream is repo-relative and the suite is
+# invoked as `pytest backend/tests`, so the roots carry the `backend/` prefix.
+TEST_ROOTS: tuple[str, ...] = tuple(
+    f"backend/{root}"
+    for root in _string_list(_table(_CONFIG, "tool", "pytest", "ini_options", "testpaths"))
 )
 """Where the tests live, read from `[tool.pytest.ini_options] testpaths`.
 
