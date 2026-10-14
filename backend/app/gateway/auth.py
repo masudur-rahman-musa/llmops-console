@@ -21,7 +21,7 @@ import hmac
 import re
 from typing import Protocol
 
-from app.routing.resolver import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
+from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
 
 MAX_KEY_LENGTH = 256
 """Longest bearer key the gateway will hash. The value is pinned by

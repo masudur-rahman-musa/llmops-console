@@ -23,8 +23,8 @@ from typing import Final
 
 from pydantic import BaseModel, ConfigDict
 
-from app.routing.errors import IdentifierInvalid
-from app.routing.policy import DataClass, Policy
+from app.model_routing.errors import IdentifierInvalid
+from app.model_routing.policy import DataClass, Policy
 
 EVAL_DATA_CLASS: Final[DataClass] = DataClass.INTERNAL
 """The data class an eval turn runs under.

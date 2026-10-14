@@ -76,7 +76,7 @@ from fastapi.testclient import TestClient
 from httpx import Response
 
 from app.cache import InProcessResponseCache, InProcessSemanticCache
-from app.core.settings import Settings
+from app.core.config import Settings
 from app.gateway.app import close_adapters, create_app
 from app.gateway.routes.chat import (
     CACHE_STATUS_HIT,
@@ -92,8 +92,8 @@ from app.limits.ratelimit import (
     RedisRateLimitStore,
     Taken,
 )
+from app.model_routing.policy import Policy
 from app.providers.base import Adapter
-from app.routing.policy import Policy
 
 from .conftest import (
     API_KEYS,

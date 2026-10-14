@@ -66,9 +66,9 @@ from app.cache import (
     InProcessSemanticCache,
     QdrantSemanticCache,
 )
+from app.core.config import Settings
 from app.core.errors import ProviderError
 from app.core.metrics import SEMANTIC_CACHE_KIND
-from app.core.settings import Settings
 from app.gateway.app import build_qdrant_data_client, close_adapters, create_app
 from app.gateway.probes import PROBE_TIMEOUT_SECONDS
 from app.gateway.routes.chat import (

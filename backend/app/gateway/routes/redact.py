@@ -48,6 +48,8 @@ from app.core.errors import ProviderError
 from app.core.metrics import record_redactions
 from app.core.tracing import SpanAttributes, annotate, stage_span
 from app.gateway.context import Context
+from app.model_routing.errors import IdentifierInvalid
+from app.model_routing.policy import DataClass, Policy
 from app.redaction import (
     MAX_REDACTION_INPUT_CHARS,
     DirectoryStore,
@@ -60,8 +62,6 @@ from app.redaction import (
     redact,
     taken_placeholders,
 )
-from app.routing.errors import IdentifierInvalid
-from app.routing.policy import DataClass, Policy
 
 REDACT = "/v1/redact"
 """The published route path. Pinned against the mounted route by

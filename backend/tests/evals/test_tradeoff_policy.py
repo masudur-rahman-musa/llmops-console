@@ -9,7 +9,7 @@ mention; a merge that EXTENDS lists would leave the shipped three candidates in 
 option would measure whichever provider answers first. So the merge is exercised twice: once as
 a pure function over synthetic mappings whose siblings are all observable, and once end to end
 over the real `routing.yaml` and the four real overlays, each result loaded through
-`app.routing.policy.load_policy`.
+`app.model_routing.policy.load_policy`.
 
 The pre-check. The option id names the overlay file AND the evidence directory, so it is a
 store-shaping input and is checked with `re.fullmatch` against
@@ -40,7 +40,7 @@ import yaml
 from infra.test_hetzner_module import ASSIGNMENT, SECRETISH_NAME, TOKEN_LITERAL, read
 
 from app.evals.tradeoff import OPTION_ID_PATTERN
-from app.routing.policy import load_policy
+from app.model_routing.policy import load_policy
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "tradeoff_policy.py"

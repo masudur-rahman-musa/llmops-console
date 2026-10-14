@@ -65,9 +65,9 @@ from app.cache.vectors import (
     QdrantSemanticCache,
     SemanticCache,
 )
+from app.core.validation import MAX_IDENTIFIER_LENGTH
+from app.model_routing.errors import IdentifierInvalid
 from app.providers.base import ChatResponse
-from app.routing.errors import IdentifierInvalid
-from app.routing.resolver import MAX_IDENTIFIER_LENGTH
 
 from .conftest import OTHER_TENANT, TENANT, cached_answer
 

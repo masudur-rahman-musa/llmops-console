@@ -21,8 +21,8 @@ from __future__ import annotations
 import pytest
 from hypothesis import HealthCheck, given, settings
 
-from app.routing.errors import ResidencyUnavailable
-from app.routing.policy import (
+from app.model_routing.errors import ResidencyUnavailable
+from app.model_routing.policy import (
     Alias,
     Candidate,
     DataClass,
@@ -33,7 +33,7 @@ from app.routing.policy import (
     ResidencyMode,
     load_policy,
 )
-from app.routing.resolver import RELAXED_REGIONS, Resolved, resolve
+from app.model_routing.resolver import RELAXED_REGIONS, Resolved, resolve
 
 from .conftest import SHIPPED_POLICY_PATH, make_policy, make_tenant
 from .test_residency_property import TENANT_NAME, Case, cases

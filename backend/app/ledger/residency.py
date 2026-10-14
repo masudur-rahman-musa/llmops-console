@@ -41,10 +41,10 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, ConfigDict
 
 from app.core.metrics import record_residency_violation
+from app.core.validation import checked_identifier
 from app.ledger.db import DEFAULT_SCHEMA, checked_schema
-from app.routing.errors import IdentifierInvalid
-from app.routing.policy import DataClass, Policy, Residency
-from app.routing.resolver import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH, Resolved
+from app.model_routing.policy import DataClass, Policy, Residency
+from app.model_routing.resolver import Resolved
 
 logger = logging.getLogger(__name__)
 
@@ -203,10 +203,10 @@ class PostgresResidencyLogWriter:
 
     def write(self, row: ResidencyLogRow) -> None:
         """Ensure the day's partition, then write the row. Raises only on a bad identifier."""
-        _checked_identifier(row.tenant, "tenant")
-        _checked_identifier(row.alias, "alias")
-        _checked_identifier(row.provider, "provider")
-        _checked_identifier(row.region, "region")
+        checked_identifier(row.tenant, "tenant")
+        checked_identifier(row.alias, "alias")
+        checked_identifier(row.provider, "provider")
+        checked_identifier(row.region, "region")
 
         self._ensure_partition(row.ts.astimezone(UTC).date())
         with self._pool.connection() as conn:
@@ -260,22 +260,6 @@ class PostgresResidencyLogWriter:
                 )
         except Exception:
             logger.exception("residency log partition %s could not be created", name)
-
-
-def _checked_identifier(value: str, field: str) -> str:
-    """One value that reaches the audit trail, or `IdentifierInvalid` before any SQL.
-
-    The same cap and the same pattern the resolver applies, imported from it
-    rather than restated: these strings arrive from a request that the resolver
-    already accepted, so a second, looser rule here would be a way into the table
-    that the routing layer has no idea exists. `re.fullmatch`, so a trailing
-    newline is refused.
-    """
-    if len(value) > MAX_IDENTIFIER_LENGTH:
-        raise IdentifierInvalid(f"{field}: longer than {MAX_IDENTIFIER_LENGTH} characters")
-    if IDENTIFIER_PATTERN.fullmatch(value) is None:
-        raise IdentifierInvalid(f"{field}: not a lowercase slug")
-    return value
 
 
 def _utcnow() -> datetime:

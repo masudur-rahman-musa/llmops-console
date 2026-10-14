@@ -44,7 +44,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.core.errors import ErrorCode, GatewayError
 from app.core.metrics import record_failure
 from app.core.tracing import record_error_code
-from app.routing.errors import IdentifierInvalid
+from app.model_routing.errors import IdentifierInvalid
 
 logger = logging.getLogger(__name__)
 

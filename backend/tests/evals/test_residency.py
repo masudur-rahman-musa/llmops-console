@@ -37,8 +37,8 @@ from app.evals.residency import (
     check_residency,
     checked_data_class,
 )
-from app.routing.errors import IdentifierInvalid
-from app.routing.policy import (
+from app.model_routing.errors import IdentifierInvalid
+from app.model_routing.policy import (
     DataClass,
     DataClassRule,
     Policy,

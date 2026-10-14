@@ -9,7 +9,7 @@ from __future__ import annotations
 import uvicorn
 from fastapi import FastAPI
 
-from app.core.settings import Settings
+from app.core.config import Settings
 from app.gateway.app import create_app
 
 app: FastAPI = create_app()

@@ -75,6 +75,7 @@ from app.cache import (
     system_hash,
     tools_hash,
 )
+from app.core.config import Settings
 from app.core.errors import BudgetExceeded, GatewayError, ProviderError, RateLimited
 from app.core.metrics import (
     EXACT_CACHE_KIND,
@@ -88,7 +89,6 @@ from app.core.metrics import (
     record_redactions,
     record_tokens,
 )
-from app.core.settings import Settings
 from app.core.tracing import SpanAttributes, annotate, stage_span
 from app.gateway.context import Context, RequestContext
 from app.gateway.errors import error_body
@@ -123,6 +123,9 @@ from app.limits.ratelimit import (
     RateDimension,
     RateLimitStore,
 )
+from app.model_routing.errors import AllProvidersUnavailable, IdentifierInvalid
+from app.model_routing.policy import DataClass, Policy, PolicyStore, ResidencyMode
+from app.model_routing.resolver import Resolved, resolve
 from app.providers.base import (
     Adapter,
     ChatMessage,
@@ -151,9 +154,6 @@ from app.redaction import (
     StreamRehydrator,
     rehydrate,
 )
-from app.routing.errors import AllProvidersUnavailable, IdentifierInvalid
-from app.routing.policy import DataClass, Policy, PolicyStore, ResidencyMode
-from app.routing.resolver import Resolved, resolve
 
 COMPLETION_ID_PREFIX = "chatcmpl-"
 """What every completion id starts with, as OpenAI publishes it. Pinned by

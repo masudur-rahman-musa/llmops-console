@@ -13,8 +13,8 @@ import re
 import pytest
 from fastapi.testclient import TestClient
 
-from app.routing.policy import DataClass
-from app.routing.resolver import MAX_IDENTIFIER_LENGTH
+from app.core.validation import MAX_IDENTIFIER_LENGTH
+from app.model_routing.policy import DataClass
 
 from .conftest import MAX_TENANT, TEST_KEYS, assert_error_body, auth_headers
 

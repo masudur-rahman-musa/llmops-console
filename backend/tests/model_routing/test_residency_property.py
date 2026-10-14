@@ -18,8 +18,8 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from hypothesis.strategies import DrawFn
 
-from app.routing.errors import ResidencyUnavailable
-from app.routing.policy import (
+from app.model_routing.errors import ResidencyUnavailable
+from app.model_routing.policy import (
     Alias,
     Candidate,
     DataClass,
@@ -31,7 +31,7 @@ from app.routing.policy import (
     Residency,
     Tenant,
 )
-from app.routing.resolver import resolve
+from app.model_routing.resolver import resolve
 
 # The pool the policy's `eu_regions` is drawn from, and the wider pool provider
 # regions and `allow_regions` are drawn from. The two non-EU entries are what

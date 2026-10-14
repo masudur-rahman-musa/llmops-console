@@ -21,10 +21,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.core.settings import Settings
+from app.core.config import Settings
 from app.gateway.app import create_app
 from app.gateway.health import ProbeRegistry
-from app.routing.policy import ResidencyMode
+from app.model_routing.policy import ResidencyMode
 
 
 def passing() -> bool:

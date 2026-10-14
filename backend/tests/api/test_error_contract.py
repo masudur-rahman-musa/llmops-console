@@ -17,10 +17,10 @@ from fastapi.testclient import TestClient
 # class lives in a module nobody imported would otherwise look missing.
 import app.gateway.auth
 import app.gateway.errors
-import app.routing.errors  # noqa: F401
+import app.model_routing.errors  # noqa: F401
 from app.core.errors import ErrorCode, GatewayError
 from app.gateway.errors import GENERIC_FAILURE_MESSAGE, error_type
-from app.routing.errors import (
+from app.model_routing.errors import (
     AliasUnknown,
     AllProvidersUnavailable,
     IdentifierInvalid,

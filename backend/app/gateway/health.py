@@ -34,7 +34,7 @@ from collections.abc import Callable, Iterator
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 
-from app.routing.policy import ResidencyMode
+from app.model_routing.policy import ResidencyMode
 
 logger = logging.getLogger(__name__)
 

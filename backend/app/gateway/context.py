@@ -52,10 +52,10 @@ from app.core.tracing import (
     request_trace,
     stage_span,
 )
+from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
 from app.gateway.auth import KeyStore, bearer_key
-from app.routing.errors import IdentifierInvalid
-from app.routing.policy import DataClass
-from app.routing.resolver import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
+from app.model_routing.errors import IdentifierInvalid
+from app.model_routing.policy import DataClass
 
 DEFAULT_DATA_CLASS = DataClass.CONFIDENTIAL
 """What a request with no `X-Data-Class` is treated as. Pinned by

@@ -13,7 +13,7 @@ The contract these tests are written against, before it exists:
   whose field set is exactly the ten names in `ALLOWED_ATTRIBUTE_KEYS`.
 * `app.core.tracing.build_exporter(settings)` - the OTLP/HTTP exporter
   switch: `None` when no endpoint is configured (decision D).
-* `app.core.settings.Settings.otlp_endpoint` - optional, absent by
+* `app.core.config.Settings.otlp_endpoint` - optional, absent by
   default, `OPSCONSOLE_OTLP_ENDPOINT` in the environment.
 
 Two things are deliberately NOT pinned here. The root span's NAME: the plan
@@ -44,8 +44,8 @@ from opentelemetry.trace import SpanContext, StatusCode
 from pydantic import ValidationError
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from app.core.config import Settings
 from app.core.errors import ProviderError
-from app.core.settings import Settings
 from app.core.tracing import (
     SpanAttributes,
     annotate,
@@ -59,6 +59,7 @@ from app.core.tracing import (
 from app.gateway.app import create_app
 from app.gateway.context import emitted_trace_id
 from app.gateway.routes.redact import REDACT
+from app.model_routing.errors import ResidencyUnavailable
 from app.providers.base import (
     ChatRequest,
     ChatResponse,
@@ -68,7 +69,6 @@ from app.providers.base import (
     TextDelta,
     UsageTotal,
 )
-from app.routing.errors import ResidencyUnavailable
 
 from .conftest import (
     API_KEYS,

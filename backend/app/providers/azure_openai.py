@@ -39,8 +39,8 @@ from collections.abc import Callable
 
 import httpx
 
+from app.model_routing.errors import IdentifierInvalid
 from app.providers.openai_compatible import OpenAICompatibleAdapter
-from app.routing.errors import IdentifierInvalid
 
 AZURE_API_VERSION = "2024-10-21"
 """The api-version every request carries, pinned exactly rather than tracked.

@@ -31,10 +31,10 @@ import json
 from fastapi.testclient import TestClient
 from httpx import Response
 
+from app.model_routing.policy import DataClass, load_policy
+from app.model_routing.resolver import resolve
 from app.providers.breaker import MAX_FAILURES as BREAKER_MAX_FAILURES
 from app.providers.breaker import CircuitBreaker, CircuitState
-from app.routing.policy import DataClass, load_policy
-from app.routing.resolver import resolve
 
 from .conftest import (
     EU_ALLOWED_REGIONS,

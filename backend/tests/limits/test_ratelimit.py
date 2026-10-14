@@ -69,6 +69,7 @@ from enum import StrEnum
 
 import pytest
 
+from app.core.validation import MAX_IDENTIFIER_LENGTH
 from app.limits.ratelimit import (
     MIN_RETRY_AFTER_SECONDS,
     RATE_LIMIT_KEY_PREFIX,
@@ -81,8 +82,7 @@ from app.limits.ratelimit import (
     refill,
     retry_after,
 )
-from app.routing.errors import IdentifierInvalid
-from app.routing.resolver import MAX_IDENTIFIER_LENGTH
+from app.model_routing.errors import IdentifierInvalid
 
 TENANT = "evals"
 OTHER_TENANT = "cuan"

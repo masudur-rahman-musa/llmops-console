@@ -52,8 +52,8 @@ from typing import Any, Final
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
-from app.routing.errors import IdentifierInvalid
-from app.routing.resolver import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
+from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH, checked_identifier
+from app.model_routing.errors import IdentifierInvalid
 
 MAX_PRINCIPAL_LENGTH: Final[int] = 128
 """The longest `principal_user` a golden line may name.
@@ -160,21 +160,12 @@ class ExpectedOutcome(BaseModel):
         return [_checked_tool_name(name, "forbidden_tools") for name in value]
 
 
-def _checked_identifier(value: str, field: str) -> str:
-    """Validate an id or a tenant against the gateway's own identifier vocabulary."""
-    if len(value) > MAX_IDENTIFIER_LENGTH:
-        raise IdentifierInvalid(f"{field}: longer than {MAX_IDENTIFIER_LENGTH} characters")
-    if IDENTIFIER_PATTERN.fullmatch(value) is None:
-        raise IdentifierInvalid(f"{field}: not a lowercase slug")
-    return value
-
-
 def _checked_tool_name(value: str, field: str) -> str:
     """Validate a tool name against the gateway's own identifier vocabulary.
 
     Shared by `ExpectedToolCall.name` and every `forbidden_tools` entry (an earlier change
     decision C), so the two tool-name fields cannot drift into two vocabularies.
-    Same constants and the same `re.fullmatch` as `_checked_identifier`: a name
+    Same constants and the same `re.fullmatch` as `checked_identifier`: a name
     ending in a newline would otherwise reach `report.json` and an `eval_cases`
     row through an anchored `.match`. The inclusive boundary is
     pinned by `test_the_tool_name_length_boundary_is_inclusive`.
@@ -230,12 +221,12 @@ class EvalCase(BaseModel):
     @field_validator("id")
     @classmethod
     def _check_id(cls, value: str) -> str:
-        return _checked_identifier(value, "id")
+        return checked_identifier(value, "id")
 
     @field_validator("tenant")
     @classmethod
     def _check_tenant(cls, value: str) -> str:
-        return _checked_identifier(value, "tenant")
+        return checked_identifier(value, "tenant")
 
     @field_validator("principal_user")
     @classmethod

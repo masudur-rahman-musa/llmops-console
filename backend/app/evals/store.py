@@ -71,11 +71,11 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, ConfigDict
 
+from app.core.validation import checked_identifier
 from app.evals.cases import EvalCategory
 from app.evals.report import SET_SHA_PATTERN, CaseReport, RunKind, RunReport
 from app.ledger.db import DEFAULT_SCHEMA, checked_schema
-from app.routing.errors import IdentifierInvalid
-from app.routing.resolver import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
+from app.model_routing.errors import IdentifierInvalid
 
 EVAL_RUNS: Final[str] = "eval_runs"
 """The run table `migrations/003_eval_runs.sql` creates."""
@@ -365,7 +365,7 @@ def _check_run_row(row: EvalRunRow) -> None:
     _checked_length(row.set_name, "set_name", MAX_SET_NAME_LENGTH)
     _checked_length(row.report_path, "report_path", MAX_REPORT_PATH_LENGTH)
     _checked_length(row.target, "target", MAX_TARGET_LENGTH)
-    _checked_identifier(row.tenant, "tenant")
+    checked_identifier(row.tenant, "tenant")
     _checked_git_sha(row.git_sha)
     _checked_run_kind(row.run_kind)
 
@@ -378,12 +378,12 @@ def _check_case_row(row: EvalCaseRow) -> None:
     unconditional check would refuse exactly the rows a failing target produces
     (`test_a_case_that_measured_nothing_is_written_rather_than_refused`).
     """
-    _checked_identifier(row.case_id, "case_id")
+    checked_identifier(row.case_id, "case_id")
     _checked_category(row.category)
     if row.provider is not None:
-        _checked_identifier(row.provider, "provider")
+        checked_identifier(row.provider, "provider")
     if row.region is not None:
-        _checked_identifier(row.region, "region")
+        checked_identifier(row.region, "region")
 
 
 def _checked_length(value: str, field: str, cap: int) -> str:
@@ -395,20 +395,6 @@ def _checked_length(value: str, field: str, cap: int) -> str:
     """
     if len(value) > cap:
         raise IdentifierInvalid(f"{field}: longer than {cap} characters")
-    return value
-
-
-def _checked_identifier(value: str, field: str) -> str:
-    """One slug-shaped value, against the resolver's own rule.
-
-    Imported rather than restated, so a tenant the running gateway serves cannot
-    be one the harness refuses to store. `re.fullmatch`, so a trailing newline is
-    refused.
-    """
-    if len(value) > MAX_IDENTIFIER_LENGTH:
-        raise IdentifierInvalid(f"{field}: longer than {MAX_IDENTIFIER_LENGTH} characters")
-    if IDENTIFIER_PATTERN.fullmatch(value) is None:
-        raise IdentifierInvalid(f"{field}: not a lowercase slug")
     return value
 
 

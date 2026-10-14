@@ -56,7 +56,7 @@ from opentelemetry.trace import (
 from pydantic import BaseModel, ConfigDict
 from starlette.types import Scope
 
-from app.core.settings import Settings
+from app.core.config import Settings
 
 TRACER_NAME = "app.gateway"
 """The instrumentation scope every span here is created under."""

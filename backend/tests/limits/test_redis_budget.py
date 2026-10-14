@@ -56,6 +56,7 @@ from typing import cast
 import pytest
 import redis
 
+from app.core.validation import MAX_IDENTIFIER_LENGTH
 from app.limits.budget import (
     BUDGET_KEY_PREFIX,
     BUDGET_KEY_TTL_SECONDS,
@@ -64,8 +65,7 @@ from app.limits.budget import (
     RedisBudgetStore,
     month_key,
 )
-from app.routing.errors import IdentifierInvalid
-from app.routing.resolver import MAX_IDENTIFIER_LENGTH
+from app.model_routing.errors import IdentifierInvalid
 
 REDIS_URL_VAR = "OPSCONSOLE_TEST_REDIS_URL"
 REDIS_URL = os.environ.get(REDIS_URL_VAR)

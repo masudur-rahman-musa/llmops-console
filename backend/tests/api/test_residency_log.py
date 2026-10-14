@@ -34,7 +34,7 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx import Response
 
-from app.core.settings import Settings
+from app.core.config import Settings
 from app.gateway.app import create_app
 from app.ledger import (
     InMemoryResidencyLogWriter,
@@ -43,8 +43,8 @@ from app.ledger import (
     record_residency,
     region_allowed,
 )
-from app.routing.policy import DataClass, Policy, load_policy
-from app.routing.resolver import Resolved
+from app.model_routing.policy import DataClass, Policy, load_policy
+from app.model_routing.resolver import Resolved
 
 from .conftest import (
     EU_ALLOWED_REGIONS,

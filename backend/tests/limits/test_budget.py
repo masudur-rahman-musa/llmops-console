@@ -46,6 +46,7 @@ from decimal import Decimal
 
 import pytest
 
+from app.core.validation import MAX_IDENTIFIER_LENGTH
 from app.limits.budget import (
     BUDGET_KEY_PREFIX,
     BUDGET_KEY_TTL_SECONDS,
@@ -64,8 +65,7 @@ from app.limits.budget import (
     verify_override,
 )
 from app.limits.cost import COST_QUANTUM
-from app.routing.errors import IdentifierInvalid
-from app.routing.resolver import MAX_IDENTIFIER_LENGTH
+from app.model_routing.errors import IdentifierInvalid
 
 TENANT = "evals"
 OTHER_TENANT = "cuan"

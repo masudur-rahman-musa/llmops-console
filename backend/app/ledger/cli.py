@@ -32,7 +32,7 @@ from psycopg import Connection, sql
 from psycopg.rows import TupleRow
 from psycopg_pool import ConnectionPool
 
-from app.core.settings import Settings
+from app.core.config import Settings
 from app.ledger.cost_ledger import COST_LEDGER_DAILY
 from app.ledger.db import DEFAULT_SCHEMA, apply_migrations, build_pool, checked_schema
 from app.ledger.residency import (

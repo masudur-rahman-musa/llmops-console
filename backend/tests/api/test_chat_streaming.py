@@ -34,8 +34,8 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx import Response
 
+from app.core.config import Settings
 from app.core.errors import ProviderError
-from app.core.settings import Settings
 from app.gateway.routes.chat import (
     CHUNK_OBJECT,
     COMPLETION_ID_PREFIX,

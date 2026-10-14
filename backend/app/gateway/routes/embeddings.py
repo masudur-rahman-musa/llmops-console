@@ -87,11 +87,11 @@ from app.gateway.routes.redact import (
     tenant_directory,
 )
 from app.limits.budget import BUDGET_OVERRIDE_HEADER
+from app.model_routing.errors import AllProvidersUnavailable
+from app.model_routing.policy import PolicyStore, ResidencyMode
+from app.model_routing.resolver import resolve
 from app.providers.base import Adapter, EmbeddingAdapter, EmbeddingRequest, Usage
 from app.providers.breaker import CircuitBreaker
-from app.routing.errors import AllProvidersUnavailable
-from app.routing.policy import PolicyStore, ResidencyMode
-from app.routing.resolver import resolve
 
 EMBEDDINGS = "/v1/embeddings"
 """The published route path, spelled as an OpenAI SDK posts it. Pinned by

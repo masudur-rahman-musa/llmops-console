@@ -70,7 +70,7 @@ from app.ledger.console_events import (
     checked_title,
     checked_url,
 )
-from app.routing.errors import IdentifierInvalid
+from app.model_routing.errors import IdentifierInvalid
 
 STARTED = datetime(2026, 9, 7, 22, 45, 13, tzinfo=UTC)
 RESOLVED = datetime(2026, 9, 8, 1, 30, 0, tzinfo=UTC)

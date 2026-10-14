@@ -79,6 +79,7 @@ from psycopg.rows import TupleRow
 from psycopg.types.json import Jsonb, JsonbBinaryDumper
 from psycopg_pool import ConnectionPool
 
+from app.core.validation import MAX_IDENTIFIER_LENGTH
 from app.evals.assertions import AssertionResult, AssertionStatus, CaseAssertions
 from app.evals.cases import EvalCategory
 from app.evals.cli import RUN_KINDS
@@ -97,8 +98,7 @@ from app.evals.store import (
     rows_from_report,
 )
 from app.evals.target import TurnFailureKind
-from app.routing.errors import IdentifierInvalid
-from app.routing.resolver import MAX_IDENTIFIER_LENGTH
+from app.model_routing.errors import IdentifierInvalid
 
 Pool = ConnectionPool[Connection[TupleRow]]
 

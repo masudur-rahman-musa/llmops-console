@@ -48,9 +48,9 @@ import redis
 from pydantic import ValidationError
 
 from app.cache.key import CACHE_ID_PATTERN, CACHE_KEY_PREFIX
+from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
+from app.model_routing.errors import IdentifierInvalid
 from app.providers.base import ChatResponse
-from app.routing.errors import IdentifierInvalid
-from app.routing.resolver import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
 
 RESPONSE_CACHE_TTL_SECONDS: Final[int] = 86400
 """How long an exact-match answer stays readable, in seconds (#22's twenty-four hours).

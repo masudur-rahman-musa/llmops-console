@@ -30,7 +30,6 @@ from typing import Any
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-
 from gateway.test_console_routes import (
     ERROR,
     FALLBACKS_PREFIX,
@@ -43,7 +42,8 @@ from gateway.test_console_routes import (
     Wired,
     error_records,
 )
-from app.core.settings import Settings
+
+from app.core.config import Settings
 from app.gateway import prometheus
 from app.gateway.app import create_app
 from app.gateway.prometheus import (

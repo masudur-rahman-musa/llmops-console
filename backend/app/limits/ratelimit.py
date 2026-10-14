@@ -73,8 +73,8 @@ from typing import Final, Protocol
 
 import redis
 
-from app.routing.errors import IdentifierInvalid
-from app.routing.resolver import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
+from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
+from app.model_routing.errors import IdentifierInvalid
 
 RATE_LIMIT_KEY_PREFIX: Final[str] = "ratelimit"
 """The first segment of every key a tenant's bucket is stored under.

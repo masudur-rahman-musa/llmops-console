@@ -11,15 +11,16 @@ from collections.abc import Callable
 
 import pytest
 
-from app.providers.factory import build_adapters
-from app.routing.errors import (
+from app.core.validation import MAX_IDENTIFIER_LENGTH
+from app.model_routing.errors import (
     AliasUnknown,
     AllProvidersUnavailable,
     IdentifierInvalid,
     ResidencyUnavailable,
 )
-from app.routing.policy import DataClass, Policy, Residency, load_policy
-from app.routing.resolver import MAX_IDENTIFIER_LENGTH, Resolved, resolve
+from app.model_routing.policy import DataClass, Policy, Residency, load_policy
+from app.model_routing.resolver import Resolved, resolve
+from app.providers.factory import build_adapters
 
 from .conftest import SHIPPED_POLICY_PATH
 

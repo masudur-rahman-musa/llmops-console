@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from app.routing.errors import PolicyInvalid
-from app.routing.policy import PolicyStore, RateLimit, load_policy
+from app.model_routing.errors import PolicyInvalid
+from app.model_routing.policy import PolicyStore, RateLimit, load_policy
 
 from .conftest import SHIPPED_POLICY_PATH, DocFactory, PolicyWriter
 

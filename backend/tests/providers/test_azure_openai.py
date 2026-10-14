@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.model_routing.errors import IdentifierInvalid
 from app.providers.azure_openai import (
     AZURE_API_VERSION,
     AZURE_DEPLOYMENT_PATH,
@@ -41,7 +42,6 @@ from app.providers.base import (
     ToolSpec,
 )
 from app.providers.openai_compatible import to_openai
-from app.routing.errors import IdentifierInvalid
 
 from .conftest import (
     FixedJitter,

@@ -39,6 +39,7 @@ from typing import Any
 import httpx
 
 from app.core.errors import ProviderError
+from app.model_routing.errors import IdentifierInvalid
 from app.providers.base import (
     DEFAULT_MAX_TOKENS,
     ChatMessage,
@@ -64,7 +65,6 @@ from app.providers.transport import (
     ProviderTransport,
     unreadable,
 )
-from app.routing.errors import IdentifierInvalid
 
 __all__ = [
     # Re-exported from `providers.transport`, which owns the HTTP policy every

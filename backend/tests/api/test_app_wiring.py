@@ -29,12 +29,12 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from app.core.settings import Settings
+from app.core.config import Settings
 from app.gateway.app import close_adapters, create_app
+from app.model_routing.errors import PolicyInvalid
+from app.model_routing.policy import ResidencyMode
 from app.providers.base import Adapter
 from app.redaction import InProcessRedactionMapStore, RedisRedactionMapStore
-from app.routing.errors import PolicyInvalid
-from app.routing.policy import ResidencyMode
 
 from .conftest import API_KEYS, NO_PROVIDER_KEYS, SHIPPED_POLICY_PATH, StubAdapter
 

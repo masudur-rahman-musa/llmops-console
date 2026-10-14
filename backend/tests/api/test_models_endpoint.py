@@ -11,9 +11,9 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from app.routing.errors import AllProvidersUnavailable
-from app.routing.policy import DataClass, Policy
-from app.routing.resolver import Resolved
+from app.model_routing.errors import AllProvidersUnavailable
+from app.model_routing.policy import DataClass, Policy
+from app.model_routing.resolver import Resolved
 
 from .conftest import TEST_KEYS, assert_error_body, auth_headers, resolvable_aliases
 

@@ -49,7 +49,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.core.settings import Settings
+from app.core.config import Settings
 from app.gateway.app import create_app
 from app.gateway.routes import admin
 from app.ledger.console_events import (

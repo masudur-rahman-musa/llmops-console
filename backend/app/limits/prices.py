@@ -6,7 +6,7 @@ key `Adapter.price_key` builds from the POLICY provider name, so two rows of the
 same provider kind priced differently stay apart. This schema is the boundary
 where an operator's YAML becomes typed data.
 
-Loading is deliberately strict, in the shape `app.routing.policy` set.
+Loading is deliberately strict, in the shape `app.model_routing.policy` set.
 `yaml.safe_load` is the only deserialiser used (pinned by
 `test_safe_load_only`), unknown keys are rejected, a negative price, a
 non-finite price and an `effective_from` that is not a date are refused before
@@ -157,7 +157,7 @@ def price_version(key: str, entry: PriceEntry) -> str:
 class PriceStore:
     """Holds the price table the gateway costs against, and swaps it on reload.
 
-    Mirrors `app.routing.policy.PolicyStore`, and for the same reason:
+    Mirrors `app.model_routing.policy.PolicyStore`, and for the same reason:
     `reload` parses into a new `PriceTable` before it rebinds the attribute, so a
     failed reload leaves the previous snapshot in place and a pricing already
     holding a snapshot keeps reading a consistent one. Pinned by

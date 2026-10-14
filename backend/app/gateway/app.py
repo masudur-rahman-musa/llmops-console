@@ -30,8 +30,8 @@ from app.cache import (
     ResponseCache,
     SemanticCache,
 )
+from app.core.config import Settings
 from app.core.metrics import observe_request, start_request
-from app.core.settings import Settings
 from app.core.tracing import (
     ERROR_STATUS_FLOOR,
     TRACE_SCOPE_KEY,
@@ -80,6 +80,8 @@ from app.limits.ratelimit import (
     RateLimitStore,
     RedisRateLimitStore,
 )
+from app.model_routing.policy import PolicyStore, ResidencyMode
+from app.model_routing.resolver import RELAXED_REGIONS
 from app.providers.breaker import CircuitBreaker
 from app.providers.factory import build_adapters
 from app.providers.factory import close_adapters as close_adapters
@@ -91,8 +93,6 @@ from app.redaction import (
     RedisDirectoryStore,
     RedisRedactionMapStore,
 )
-from app.routing.policy import PolicyStore, ResidencyMode
-from app.routing.resolver import RELAXED_REGIONS
 
 
 def build_qdrant_data_client(base_url: str) -> httpx.Client:

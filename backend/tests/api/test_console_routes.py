@@ -44,7 +44,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.core.settings import Settings
+from app.core.config import Settings
+from app.core.validation import MAX_IDENTIFIER_LENGTH
 from app.gateway.app import create_app
 from app.gateway.console_reads import (
     HIGHER_IS_BETTER_METRICS,
@@ -82,7 +83,6 @@ from app.gateway.prometheus import (
 from app.gateway.routes import console
 from app.limits.budget import current_month
 from app.limits.prices import PriceTable
-from app.routing.resolver import MAX_IDENTIFIER_LENGTH
 
 from .conftest import (
     ADMIN_KEY,

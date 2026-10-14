@@ -39,13 +39,6 @@ from pathlib import Path
 
 import pytest
 
-from evals.test_tradeoff import (
-    MANIFEST_NAME,
-    api_pair,
-    self_hosted_pair,
-    write_inputs,
-    write_json,
-)
 from app.evals import cli
 from app.evals.cli import EXIT_OK, EXIT_USAGE
 from app.evals.tradeoff import (
@@ -55,6 +48,13 @@ from app.evals.tradeoff import (
     METHODOLOGY_HEADING,
     TRADEOFF_JSON_NAME,
     TRADEOFF_MD_NAME,
+)
+from evals.test_tradeoff import (
+    MANIFEST_NAME,
+    api_pair,
+    self_hosted_pair,
+    write_inputs,
+    write_json,
 )
 
 Build = Callable[[Path], Path]

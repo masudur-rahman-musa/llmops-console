@@ -26,9 +26,9 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict
 
 from app.gateway.context import Context
-from app.routing.errors import AliasUnknown, ResidencyUnavailable
-from app.routing.policy import PolicyStore, ResidencyMode
-from app.routing.resolver import resolve
+from app.model_routing.errors import AliasUnknown, ResidencyUnavailable
+from app.model_routing.policy import PolicyStore, ResidencyMode
+from app.model_routing.resolver import resolve
 
 OWNER = "opsconsole"
 """`owned_by` on every entry. The aliases are ours; the provider behind one is

@@ -42,7 +42,7 @@ from app.evals.judge import JUDGE_LOW_SCORE, JUDGE_PATH, JUDGE_SAMPLES, JudgeCli
 from app.evals.residency import EVAL_DATA_CLASS
 from app.evals.runner import RunResult, run_set
 from app.evals.target import RESET_PATH, TURN_PATH, TargetClient, TurnFailureKind
-from app.routing.policy import (
+from app.model_routing.policy import (
     DataClass,
     DataClassRule,
     Policy,

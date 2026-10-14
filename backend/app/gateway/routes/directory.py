@@ -52,15 +52,15 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict
 
 from app.core.errors import ProviderError
+from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
 from app.gateway.routes.admin import admin_key
+from app.model_routing.errors import IdentifierInvalid
 from app.redaction import (
     DirectoryNameInvalid,
     DirectoryStore,
     DirectoryStoreUnavailable,
     checked_entries,
 )
-from app.routing.errors import IdentifierInvalid
-from app.routing.resolver import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
 
 ADMIN_DIRECTORY = "/admin/directory"
 """The published route path. Pinned against the mounted route by

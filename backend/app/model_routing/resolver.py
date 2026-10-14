@@ -23,36 +23,23 @@ so a project rule still holds, and `pii` is identical in both modes
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 
 from pydantic import BaseModel, ConfigDict
 
-from app.routing.errors import (
+from app.core.validation import IdentifierInvalid, checked_identifier
+from app.model_routing.errors import (
     AliasUnknown,
     AllProvidersUnavailable,
-    IdentifierInvalid,
     ResidencyUnavailable,
 )
-from app.routing.policy import (
+from app.model_routing.policy import (
     Candidate,
     DataClass,
     Policy,
     Residency,
     ResidencyMode,
 )
-
-MAX_IDENTIFIER_LENGTH = 64
-"""Longest tenant or alias a request may name. Pinned by `test_max_identifier_length_is_pinned`."""
-
-IDENTIFIER_PATTERN = re.compile(r"[a-z0-9]+(?:[-_][a-z0-9]+)*")
-"""Lowercase slug, matched with `re.fullmatch`.
-
-`.match` with `^...$` would accept a trailing newline, and these strings become
-dictionary keys, metric labels and cache key parts. The rejection table in
-`test_identifier_rejection_table` covers a trailing newline, a trailing CRLF and
-a trailing space.
-"""
 
 RELAXED_REGIONS = ("us",)
 """The regions `ResidencyMode.RELAXED` adds, and the whole of what relaxed means.
@@ -84,15 +71,6 @@ def _always_healthy(provider: str) -> bool:
     return True
 
 
-def _checked_identifier(value: str, field: str) -> str:
-    """Validate one client-supplied identifier before it is used as a key."""
-    if len(value) > MAX_IDENTIFIER_LENGTH:
-        raise IdentifierInvalid(f"{field}: longer than {MAX_IDENTIFIER_LENGTH} characters")
-    if IDENTIFIER_PATTERN.fullmatch(value) is None:
-        raise IdentifierInvalid(f"{field}: not a lowercase slug")
-    return value
-
-
 def _checked_data_class(value: str) -> DataClass:
     """Coerce the request's data class into the closed enum, or reject it."""
     try:
@@ -122,8 +100,8 @@ def resolve(
     (`test_strict_is_the_default_mode`). `RELAXED` is the one widening this module
     has, it is applied below rather than here, and `pii` is outside it.
     """
-    _checked_identifier(tenant, "tenant")
-    _checked_identifier(alias, "alias")
+    checked_identifier(tenant, "tenant")
+    checked_identifier(alias, "alias")
     requested_class = _checked_data_class(data_class)
 
     if alias not in policy.aliases:

@@ -36,13 +36,14 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
 
-from app.core.settings import Settings
+from app.core.config import Settings
 from app.gateway.routes.redact import (
     REDACT,
     RedactedBatch,
     redact_batch,
     redaction_applies,
 )
+from app.model_routing.policy import DataClass, Policy
 from app.redaction import (
     MAX_REDACTION_INPUT_CHARS,
     REDACTION_MAP_ID_BYTES,
@@ -50,7 +51,6 @@ from app.redaction import (
     RedactionMapStore,
     RedactionMapStoreUnavailable,
 )
-from app.routing.policy import DataClass, Policy
 
 from .conftest import TEST_KEYS, assert_error_body, auth_headers, build_chat_client
 

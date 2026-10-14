@@ -42,6 +42,7 @@ from psycopg import Connection
 from psycopg.rows import TupleRow
 from psycopg_pool import ConnectionPool
 
+from app.core.validation import MAX_IDENTIFIER_LENGTH
 from app.ledger import (
     RESIDENCY_LOG_RETENTION_DAYS,
     InMemoryResidencyLogWriter,
@@ -52,9 +53,9 @@ from app.ledger import (
     region_allowed,
 )
 from app.ledger.residency import partition_name
-from app.routing.errors import IdentifierInvalid
-from app.routing.policy import DataClass, Policy, load_policy
-from app.routing.resolver import MAX_IDENTIFIER_LENGTH, Resolved
+from app.model_routing.errors import IdentifierInvalid
+from app.model_routing.policy import DataClass, Policy, load_policy
+from app.model_routing.resolver import Resolved
 
 Pool = ConnectionPool[Connection[TupleRow]]
 

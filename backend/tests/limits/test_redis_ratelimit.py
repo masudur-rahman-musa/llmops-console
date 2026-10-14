@@ -66,6 +66,7 @@ from typing import Any, cast
 import pytest
 import redis
 
+from app.core.validation import MAX_IDENTIFIER_LENGTH
 from app.limits.ratelimit import (
     RATE_LIMIT_KEY_PREFIX,
     RATE_LIMIT_KEY_TTL_SECONDS,
@@ -75,8 +76,7 @@ from app.limits.ratelimit import (
     Taken,
     bucket_key,
 )
-from app.routing.errors import IdentifierInvalid
-from app.routing.resolver import MAX_IDENTIFIER_LENGTH
+from app.model_routing.errors import IdentifierInvalid
 
 REDIS_URL_VAR = "OPSCONSOLE_TEST_REDIS_URL"
 REDIS_URL = os.environ.get(REDIS_URL_VAR)

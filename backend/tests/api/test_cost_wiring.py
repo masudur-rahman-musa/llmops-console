@@ -73,8 +73,8 @@ from app.cache import (
     InProcessResponseCache,
     InProcessSemanticCache,
 )
+from app.core.config import Settings
 from app.core.errors import ProviderError
-from app.core.settings import Settings
 from app.gateway.app import close_adapters, create_app
 from app.gateway.routes.chat import (
     CACHE_STATUS_HIT,

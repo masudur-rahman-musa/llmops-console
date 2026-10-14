@@ -5,12 +5,12 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from app.core.settings import (
+from app.core.config import (
     DEFAULT_PRICES_PATH,
     DEFAULT_ROUTING_POLICY_PATH,
     Settings,
 )
-from app.routing.policy import ResidencyMode
+from app.model_routing.policy import ResidencyMode
 
 
 def test_routing_and_prices_default_to_backend_config() -> None:

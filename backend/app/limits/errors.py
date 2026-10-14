@@ -1,6 +1,6 @@
 """Typed failures raised by the limits package.
 
-`PriceTableInvalid` is the shape `app.routing.errors.PolicyInvalid` set:
+`PriceTableInvalid` is the shape `app.model_routing.errors.PolicyInvalid` set:
 a rejected `prices.yaml` is an operator error reported to whoever loaded or
 reloaded it, never an answer to a caller, so it is a plain exception rather than
 a `GatewayError` carrying a wire code the handler could use.

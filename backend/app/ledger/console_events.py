@@ -58,7 +58,7 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, ConfigDict
 
 from app.ledger.db import DEFAULT_SCHEMA, checked_schema
-from app.routing.errors import IdentifierInvalid
+from app.model_routing.errors import IdentifierInvalid
 
 INCIDENTS: Final[str] = "incidents"
 """One of the two tables `migrations/004_console_events.sql` creates. Pinned

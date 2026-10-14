@@ -24,7 +24,11 @@ from typing import Self
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from app.routing.errors import PolicyInvalid
+# `ResidencyMode` now lives in `core/config.py` (the cycle break); re-exported
+# here with the explicit `as` form so the call sites that import it from the
+# policy keep resolving and `routing.yaml` stays the home of the policy types.
+from app.core.config import ResidencyMode as ResidencyMode
+from app.model_routing.errors import PolicyInvalid
 
 
 class DataClass(StrEnum):
@@ -41,26 +45,6 @@ class Residency(StrEnum):
 
     EU = "eu"
     ANY = "any"
-
-
-class ResidencyMode(StrEnum):
-    """How strictly the PROCESS enforces residency, as opposed to a tenant's regime.
-
-    `STRICT` is the shipped behaviour and the default everywhere: the resolver only
-    ever narrows, which is what makes the residency property a proof. `RELAXED` is
-    an opt-in local-demo mode that widens `resolve()`'s allowed region set by
-    `resolver.RELAXED_REGIONS` for a data class that has a rule and is not `PII`. It is a policy concept rather than a settings one, which is why it
-    lives beside `Residency` and `core.settings` imports it from here.
-
-    Read from `OPSCONSOLE_RESIDENCY_MODE` by `Settings.residency_mode`, where an
-    unknown value refuses construction
-    (`test_an_unknown_residency_mode_is_refused_at_construction`). The two members
-    are pinned by `test_the_residency_mode_defaults_to_strict` and
-    `test_the_residency_mode_accepts_relaxed`.
-    """
-
-    STRICT = "strict"
-    RELAXED = "relaxed"
 
 
 class ProviderKind(StrEnum):

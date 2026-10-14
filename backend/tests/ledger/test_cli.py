@@ -32,7 +32,7 @@ from psycopg import sql
 from app.ledger import RESIDENCY_LOG_RETENTION_DAYS, PostgresResidencyLogWriter
 from app.ledger.cli import migrate, purge, purge_partitions, refresh_rollup
 from app.ledger.residency import ResidencyLogRow, partition_name
-from app.routing.policy import DataClass
+from app.model_routing.policy import DataClass
 
 from .conftest import DATABASE_URL, Pool, partitions, requires_postgres
 

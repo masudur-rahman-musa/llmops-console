@@ -41,9 +41,9 @@ from typing import Final, Protocol
 
 import redis
 
+from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
+from app.model_routing.errors import IdentifierInvalid
 from app.redaction.errors import RedactionMapStoreUnavailable
-from app.routing.errors import IdentifierInvalid
-from app.routing.resolver import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
 
 REDACTION_MAP_TTL_SECONDS: Final[int] = 3600
 """How long a placeholder map stays readable, in seconds (the design's one hour).

@@ -41,6 +41,8 @@ import pytest
 import redis
 
 from app.core.errors import GatewayError
+from app.core.validation import MAX_IDENTIFIER_LENGTH
+from app.model_routing.errors import IdentifierInvalid
 from app.redaction import (
     REDACTION_MAP_TTL_SECONDS,
     RedactionMapStore,
@@ -51,8 +53,6 @@ from app.redaction.store import (
     REDACTION_MAP_KEY_PREFIX,
     RedisRedactionMapStore,
 )
-from app.routing.errors import IdentifierInvalid
-from app.routing.resolver import MAX_IDENTIFIER_LENGTH
 
 REDIS_URL_VAR = "OPSCONSOLE_TEST_REDIS_URL"
 REDIS_URL = os.environ.get(REDIS_URL_VAR)

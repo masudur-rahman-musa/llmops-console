@@ -63,7 +63,7 @@ from httpx import Response
 from prometheus_client import CollectorRegistry
 
 from app.cache import InProcessResponseCache, InProcessSemanticCache
-from app.core.settings import Settings
+from app.core.config import Settings
 from app.gateway.app import close_adapters, create_app
 from app.gateway.routes.chat import (
     CACHE_STATUS_HIT,
@@ -77,8 +77,8 @@ from app.limits.budget import (
     current_month,
     to_micro_usd,
 )
+from app.model_routing.policy import Policy
 from app.providers.base import Adapter
-from app.routing.policy import Policy
 
 from .conftest import (
     API_KEYS,

@@ -44,7 +44,7 @@ from fastapi.testclient import TestClient
 from httpx import Response
 
 from app.cache import InProcessResponseCache, InProcessSemanticCache
-from app.core.settings import Settings
+from app.core.config import Settings
 from app.ledger import InMemoryCostLedgerWriter
 from app.limits.budget import (
     BUDGET_OVERRIDE_HEADER,

@@ -43,7 +43,7 @@ from app.cache.key import NO_TOOL_CHOICE
 
 if TYPE_CHECKING:
     from app.gateway.routes.chat import ChatCompletionRequest
-    from app.routing.policy import Alias
+    from app.model_routing.policy import Alias
 
 SEMANTIC_THRESHOLD: Final[float] = 0.97
 """The cosine similarity at which two probes are the same question. INCLUSIVE.

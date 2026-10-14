@@ -96,7 +96,8 @@ from urllib.parse import urlparse
 
 import httpx
 
-from app.core.settings import DEFAULT_ROUTING_POLICY_PATH, Settings
+from app.core.config import DEFAULT_ROUTING_POLICY_PATH, Settings
+from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
 from app.evals.baseline_guard import (
     GUARD_PASSED_LINE,
     MAX_REF_LENGTH,
@@ -144,9 +145,8 @@ from app.evals.tradeoff import (
     write_tradeoff,
 )
 from app.ledger.db import build_pool
-from app.routing.errors import IdentifierInvalid, PolicyInvalid
-from app.routing.policy import Policy, load_policy
-from app.routing.resolver import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
+from app.model_routing.errors import IdentifierInvalid, PolicyInvalid
+from app.model_routing.policy import Policy, load_policy
 
 EXIT_OK: Final[int] = 0
 """Every case passed and every turn stayed in region."""

@@ -55,7 +55,7 @@ from app.cache import (
     InProcessResponseCache,
     RedisResponseCache,
 )
-from app.core.settings import Settings
+from app.core.config import Settings
 from app.gateway.app import close_adapters, create_app
 from app.providers.base import ChatRequest, ChatResponse, StreamEvent
 

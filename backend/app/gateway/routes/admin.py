@@ -72,8 +72,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, Query, Request
 from pydantic import BaseModel, ConfigDict
 
+from app.core.config import Settings
 from app.core.errors import Unauthorized
-from app.core.settings import Settings
+from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
 from app.gateway.auth import bearer_key
 from app.ledger.console_events import (
     EVAL_RUN_ID_FIELD,
@@ -82,17 +83,17 @@ from app.ledger.console_events import (
     ReleaseRow,
     checked_incident_id,
 )
-from app.providers.base import Adapter
-from app.providers.breaker import CircuitBreaker
-from app.providers.factory import build_adapters, close_adapters
-from app.routing.errors import (
+from app.model_routing.errors import (
     AliasUnknown,
     IdentifierInvalid,
     PolicyInvalid,
     ResidencyUnavailable,
 )
-from app.routing.policy import DataClass, Policy, PolicyStore, ResidencyMode
-from app.routing.resolver import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH, resolve
+from app.model_routing.policy import DataClass, Policy, PolicyStore, ResidencyMode
+from app.model_routing.resolver import resolve
+from app.providers.base import Adapter
+from app.providers.breaker import CircuitBreaker
+from app.providers.factory import build_adapters, close_adapters
 
 ADMIN_ROUTING = "/admin/routing"
 """The resolved-routing view. Pinned against the mounted route by

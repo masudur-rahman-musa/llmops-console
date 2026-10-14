@@ -25,7 +25,7 @@ from psycopg import sql
 from app.ledger import PostgresResidencyLogWriter, ResidencyLogRow
 from app.ledger.db import apply_migrations
 from app.ledger.residency import partition_name
-from app.routing.policy import DataClass
+from app.model_routing.policy import DataClass
 
 from .conftest import Pool, new_schema_name, partitions, requires_postgres, table_names
 

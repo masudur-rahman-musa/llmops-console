@@ -44,8 +44,8 @@ from providers.conftest import (
     make_local_adapter,
 )
 
+from app.core.config import Settings
 from app.core.errors import ProviderError
-from app.core.settings import Settings
 from app.gateway.routes.embeddings import (
     EMBEDDING_OBJECT,
     EMBEDDINGS,
@@ -55,9 +55,9 @@ from app.gateway.routes.embeddings import (
     to_base64,
 )
 from app.ledger import InMemoryCostLedgerWriter
+from app.model_routing.policy import Policy
+from app.model_routing.resolver import Resolved, resolve
 from app.providers.base import EmbeddingAdapter, EmbeddingRequest
-from app.routing.policy import Policy
-from app.routing.resolver import Resolved, resolve
 
 from .conftest import (
     EMBED_ALIAS,

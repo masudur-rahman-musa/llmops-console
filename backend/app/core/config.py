@@ -2,11 +2,32 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from app.routing.policy import ResidencyMode
+
+class ResidencyMode(StrEnum):
+    """How strictly the PROCESS enforces residency, as opposed to a tenant's regime.
+
+    `STRICT` is the shipped behaviour and the default everywhere: the resolver only
+    ever narrows, which is what makes the residency property a proof. `RELAXED` is
+    an opt-in local-demo mode that widens `resolve()`'s allowed region set by
+    `resolver.RELAXED_REGIONS` for a data class that has a rule and is not `PII`. It lives here in `core/config.py` because `Settings.residency_mode`
+    reads it and `core` must import nothing from `model_routing`; the resolver and
+    `model_routing/policy.py` import it back from here.
+
+    Read from `OPSCONSOLE_RESIDENCY_MODE` by `Settings.residency_mode`, where an
+    unknown value refuses construction
+    (`test_an_unknown_residency_mode_is_refused_at_construction`). The two members
+    are pinned by `test_the_residency_mode_defaults_to_strict` and
+    `test_the_residency_mode_accepts_relaxed`.
+    """
+
+    STRICT = "strict"
+    RELAXED = "relaxed"
+
 
 DEFAULT_ROUTING_POLICY_PATH = Path(__file__).resolve().parents[2] / "config" / "routing.yaml"
 """The shipped `routing.yaml`, found from this file rather than from the working

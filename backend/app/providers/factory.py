@@ -66,6 +66,7 @@ import logging
 import os
 from collections.abc import Mapping
 
+from app.model_routing.policy import Policy, Provider, ProviderKind
 from app.providers.anthropic import ANTHROPIC_BASE_URL, AnthropicAdapter
 from app.providers.azure_openai import (
     AZURE_API_VERSION,
@@ -74,7 +75,6 @@ from app.providers.azure_openai import (
 )
 from app.providers.base import Adapter
 from app.providers.openai_compatible import OPENAI_BASE_URL, OpenAICompatibleAdapter
-from app.routing.policy import Policy, Provider, ProviderKind
 
 logger = logging.getLogger(__name__)
 

@@ -42,9 +42,10 @@ from fastapi.testclient import TestClient
 from httpx import Response as HttpxResponse
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry
 
+from app.core.config import Settings
 from app.core.errors import ProviderError
 from app.core.metrics import request_metrics
-from app.core.settings import Settings
+from app.core.validation import MAX_IDENTIFIER_LENGTH
 from app.gateway.app import create_app
 from app.gateway.routes.redact import REDACT
 from app.providers.base import (
@@ -57,7 +58,6 @@ from app.providers.base import (
     UsageTotal,
 )
 from app.providers.breaker import MAX_FAILURES as BREAKER_MAX_FAILURES
-from app.routing.resolver import MAX_IDENTIFIER_LENGTH
 
 from .conftest import (
     CHAT,

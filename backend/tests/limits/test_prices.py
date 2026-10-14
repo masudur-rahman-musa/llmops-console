@@ -23,7 +23,7 @@ import pytest
 
 from app.limits.errors import PriceTableInvalid
 from app.limits.prices import PriceStore, load_prices, price_for
-from app.routing.policy import Policy, load_policy
+from app.model_routing.policy import Policy, load_policy
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SHIPPED_PRICES_PATH = REPO_ROOT / "prices.yaml"

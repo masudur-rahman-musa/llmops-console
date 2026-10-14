@@ -79,7 +79,7 @@ from app.gateway.prometheus import (
 from app.gateway.routes.admin import _checked_tenant, admin_key
 from app.limits.budget import budget_ratio, current_month, to_micro_usd, to_usd
 from app.limits.prices import PriceStore
-from app.routing.policy import PolicyStore
+from app.model_routing.policy import PolicyStore
 
 logger = logging.getLogger(__name__)
 

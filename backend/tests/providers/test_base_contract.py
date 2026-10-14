@@ -20,6 +20,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from app.model_routing.errors import IdentifierInvalid
 from app.providers import base
 from app.providers.base import (
     DEFAULT_MAX_TOKENS,
@@ -40,7 +41,6 @@ from app.providers.base import (
     Usage,
     checked_tool_name,
 )
-from app.routing.errors import IdentifierInvalid
 
 from .conftest import local_ok, make_adapter, make_local_adapter, ok
 

@@ -19,12 +19,12 @@ from pathlib import Path
 import httpx
 import pytest
 
+from app.model_routing.policy import Policy, Provider, ProviderKind, load_policy
 from app.providers.anthropic import AnthropicAdapter
 from app.providers.azure_openai import AZURE_API_VERSION, AzureOpenAIAdapter
 from app.providers.base import Adapter, ChatMessage, ChatRequest
 from app.providers.factory import build_adapters
 from app.providers.openai_compatible import OPENAI_BASE_URL, OpenAICompatibleAdapter
-from app.routing.policy import Policy, Provider, ProviderKind, load_policy
 
 from .conftest import ScriptedTransport, local_ok
 

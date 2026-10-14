@@ -27,10 +27,10 @@ from decimal import Decimal
 from fastapi.testclient import TestClient
 from httpx import Response
 
-from app.core.settings import Settings
+from app.core.config import Settings
 from app.ledger import InMemoryCostLedgerWriter
-from app.routing.policy import Policy
-from app.routing.resolver import Resolved, resolve
+from app.model_routing.policy import Policy
+from app.model_routing.resolver import Resolved, resolve
 
 from .conftest import StubAdapter, app_of, build_chat_client, chat_body, post_chat
 

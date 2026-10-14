@@ -60,9 +60,9 @@ import httpx
 from pydantic import ValidationError
 
 from app.cache.probe import SEMANTIC_THRESHOLD
+from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
+from app.model_routing.errors import IdentifierInvalid
 from app.providers.base import ChatResponse
-from app.routing.errors import IdentifierInvalid
-from app.routing.resolver import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
 
 SEMANTIC_COLLECTION_PREFIX: Final[str] = "cache_"
 """The first segment of every collection a tenant's semantic entries live in.

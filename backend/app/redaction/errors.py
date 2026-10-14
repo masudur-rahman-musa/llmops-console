@@ -4,7 +4,7 @@ Neither is a `GatewayError`. The nine
 codes in `app.core.errors.ErrorCode` are a closed set and
 `test_error_code_set_is_exhaustive` asserts exactly one concrete `GatewayError`
 subclass per code; `ErrorCode.VALIDATION` already belongs to
-`app.routing.errors.IdentifierInvalid` and `ErrorCode.PROVIDER_ERROR` to
+`app.core.validation.IdentifierInvalid` and `ErrorCode.PROVIDER_ERROR` to
 `app.core.errors.ProviderError`, so a second class carrying either would
 fail that test (`test_the_unavailable_failure_is_not_a_gateway_error`).
 `PolicyInvalid` in the routing package is the same shape for the same reason.
@@ -74,7 +74,7 @@ class DirectoryNameInvalid(Exception):
     `test_a_rejected_name_never_appears_in_the_error_body`).
 
     Not a `GatewayError`, for `RedactionInputTooLong`'s reason: `ErrorCode.VALIDATION`
-    belongs to `app.routing.errors.IdentifierInvalid` and
+    belongs to `app.core.validation.IdentifierInvalid` and
     `test_error_code_set_is_exhaustive` allows exactly one concrete class per code
     (`test_the_cap_failure_is_not_a_gateway_error`). `gateway.routes.directory`
     converts it, carrying this message through unchanged.

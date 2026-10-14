@@ -16,7 +16,8 @@ from typing import Protocol
 import pytest
 import yaml
 
-from app.routing.policy import (
+from app.core.validation import MAX_IDENTIFIER_LENGTH
+from app.model_routing.policy import (
     Alias,
     Candidate,
     DataClass,
@@ -28,11 +29,10 @@ from app.routing.policy import (
     Residency,
     Tenant,
 )
-from app.routing.resolver import MAX_IDENTIFIER_LENGTH
 
 # The policy file the product ships with, resolved from this file so the tests
 # do not depend on the working directory pytest was started from.
-SHIPPED_POLICY_PATH = Path(__file__).resolve().parents[2] / "routing.yaml"
+SHIPPED_POLICY_PATH = Path(__file__).resolve().parents[2] / "config" / "routing.yaml"
 
 
 class PolicyWriter(Protocol):

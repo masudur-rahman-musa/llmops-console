@@ -31,7 +31,7 @@ Contract this file assumes (the implementation follows it):
     tools_hash(body: ChatCompletionRequest) -> str
     semantic_eligible(body: ChatCompletionRequest, *, alias: Alias) -> bool
 
-`Alias` is `app.routing.policy.Alias` carrying the new
+`Alias` is `app.model_routing.policy.Alias` carrying the new
 `semantic_cache: bool = False` field (plan step 3). The alias objects below are
 built with `model_validate` from a dict rather than by keyword, so this file type
 checks against today's `Alias` and reddens at runtime until the field lands.
@@ -53,7 +53,7 @@ from app.cache.probe import (
     tools_hash,
 )
 from app.gateway.routes.chat import ChatCompletionRequest
-from app.routing.policy import Alias
+from app.model_routing.policy import Alias
 
 HEX_64 = re.compile(r"[0-9a-f]{64}")
 """What a sha256 rendered as lowercase hex looks like, the shape both hashes

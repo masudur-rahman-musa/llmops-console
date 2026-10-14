@@ -64,9 +64,9 @@ from typing import Final, Protocol
 
 import redis
 
+from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
 from app.limits.cost import COST_QUANTUM
-from app.routing.errors import IdentifierInvalid
-from app.routing.resolver import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
+from app.model_routing.errors import IdentifierInvalid
 
 BUDGET_KEY_PREFIX: Final[str] = "budget"
 """The first segment of every key a monthly counter is stored under.

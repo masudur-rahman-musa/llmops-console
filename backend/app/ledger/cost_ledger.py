@@ -49,12 +49,12 @@ from psycopg.rows import TupleRow
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, ConfigDict
 
+from app.core.validation import checked_identifier
 from app.ledger.db import DEFAULT_SCHEMA, checked_schema
 from app.limits.cost import COST_QUANTUM, cost_for, estimate_tokens
 from app.limits.prices import PriceTable
+from app.model_routing.errors import IdentifierInvalid
 from app.providers.base import Usage
-from app.routing.errors import IdentifierInvalid
-from app.routing.resolver import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
 
 logger = logging.getLogger(__name__)
 
@@ -228,12 +228,12 @@ class PostgresCostLedgerWriter:
 
     def write(self, row: CostLedgerRow) -> None:
         """Write one row. Raises only on a value that fails a pre-check."""
-        _checked_identifier(row.tenant, "tenant")
-        _checked_identifier(row.alias, "alias")
-        _checked_identifier(row.provider, "provider")
-        _checked_identifier(row.region, "region")
+        checked_identifier(row.tenant, "tenant")
+        checked_identifier(row.alias, "alias")
+        checked_identifier(row.provider, "provider")
+        checked_identifier(row.region, "region")
         if row.session is not None:
-            _checked_identifier(row.session, "session")
+            checked_identifier(row.session, "session")
         _checked_model(row.model)
         _checked_trace_id(row.trace_id)
         _checked_price_version(row.price_version)
@@ -264,21 +264,6 @@ class PostgresCostLedgerWriter:
                     row.trace_id,
                 ),
             )
-
-
-def _checked_identifier(value: str, field: str) -> str:
-    """One slug-shaped value that reaches the ledger, or `IdentifierInvalid` before any SQL.
-
-    The same cap and pattern the resolver applies, imported from it rather than
-    restated: these strings arrive from a request the resolver already accepted,
-    so a second, looser rule here would be a way into the table that the routing
-    layer has no idea exists. `re.fullmatch`, so a trailing newline is refused.
-    """
-    if len(value) > MAX_IDENTIFIER_LENGTH:
-        raise IdentifierInvalid(f"{field}: longer than {MAX_IDENTIFIER_LENGTH} characters")
-    if IDENTIFIER_PATTERN.fullmatch(value) is None:
-        raise IdentifierInvalid(f"{field}: not a lowercase slug")
-    return value
 
 
 def _checked_model(value: str) -> str:

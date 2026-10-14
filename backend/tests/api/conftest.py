@@ -52,13 +52,17 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from prometheus_client import CollectorRegistry
 
+from app.core.config import Settings
 from app.core.errors import ProviderError
 from app.core.metrics import registry
-from app.core.settings import Settings
 from app.core.tracing import tracer_provider
+from app.core.validation import MAX_IDENTIFIER_LENGTH
 from app.gateway.app import create_app
 from app.gateway.auth import MAX_KEY_LENGTH
 from app.gateway.context import RequestContext, request_context
+from app.model_routing.errors import ResidencyUnavailable, RoutingError
+from app.model_routing.policy import DataClass, Policy, load_policy
+from app.model_routing.resolver import resolve
 from app.providers.base import (
     Adapter,
     ChatRequest,
@@ -77,9 +81,6 @@ from app.providers.base import (
     UsageTotal,
 )
 from app.providers.breaker import CircuitBreaker
-from app.routing.errors import ResidencyUnavailable, RoutingError
-from app.routing.policy import DataClass, Policy, load_policy
-from app.routing.resolver import MAX_IDENTIFIER_LENGTH, resolve
 
 # Resolved from this file, so the tests do not depend on pytest's working
 # directory. The same path the shipped `Settings.routing_policy_path` defaults to.

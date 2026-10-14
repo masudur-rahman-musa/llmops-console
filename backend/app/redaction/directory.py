@@ -44,9 +44,9 @@ from typing import Final, Protocol
 import redis
 from redis.typing import EncodableT, FieldT
 
+from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
+from app.model_routing.errors import IdentifierInvalid
 from app.redaction.errors import DirectoryNameInvalid, DirectoryStoreUnavailable
-from app.routing.errors import IdentifierInvalid
-from app.routing.resolver import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
 
 MIN_DIRECTORY_NAME_CHARS: Final[int] = 2
 """The shortest name an operator may push, in normalised characters.

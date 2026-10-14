@@ -42,8 +42,8 @@ from providers.conftest import (
     ok,
 )
 
+from app.core.config import Settings
 from app.core.errors import ProviderError
-from app.core.settings import Settings
 from app.gateway.routes.chat import COMPLETION_ID_BYTES, COMPLETION_ID_PREFIX
 from app.providers.base import (
     Adapter,

@@ -73,6 +73,7 @@ from typing import Any, NoReturn
 import httpx
 import pytest
 
+from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
 from app.evals import cli
 from app.evals.assertions import AssertionResult, AssertionStatus, CaseAssertions
 from app.evals.baseline_guard import (
@@ -122,8 +123,7 @@ from app.evals.report import (
 from app.evals.residency import ResidencyVerdict
 from app.evals.runner import CaseRun, RunResult
 from app.evals.target import TargetClient
-from app.routing.policy import Policy
-from app.routing.resolver import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
+from app.model_routing.policy import Policy
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
 

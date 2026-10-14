@@ -31,7 +31,7 @@ from app.evals.judge import JUDGE_LOW_SCORE, JudgeClient, JudgeVerdict
 from app.evals.outcome import CaseOutcome
 from app.evals.residency import EVAL_DATA_CLASS, ResidencyVerdict, check_residency
 from app.evals.target import TargetClient, TurnFailed, TurnFailureKind
-from app.routing.policy import Policy
+from app.model_routing.policy import Policy
 
 LEAK_ASSERTION: str = "cross_tenant_leak"
 """The assertion whose failure is a tenant boundary breach rather than a score.
