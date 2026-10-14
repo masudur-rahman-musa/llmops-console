@@ -48,7 +48,6 @@ LICENSE
 dist/
 build/
 coverage/
-.coverage*
 
 # The console is its own image, built from its own context with its own
 # .dockerignore. The gateway image needs none of it.
