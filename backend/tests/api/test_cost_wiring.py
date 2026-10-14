@@ -47,7 +47,7 @@ The contract these cases are written against, before it exists:
   `settings.prices_path`), `app.state.db_pool` (one pool, decision D) and
   `app.state.cost_ledger` (`PostgresCostLedgerWriter` with a database URL, else
   `InMemoryCostLedgerWriter`);
-* `book_cost` in `gateway/routes/chat.py` calls `record_cost`, takes the row it
+* `book_cost` in `services/chat_pipeline.py` calls `record_cost`, takes the row it
   answers (decision G), increments `COST_USD` and answers the header value;
 * the non-streamed served path, both cache-hit paths and `/v1/embeddings` set
   `X-Gateway-Cost-USD` from it; the streamed path books from its token sink and
@@ -76,11 +76,6 @@ from app.cache import (
 from app.core.config import Settings
 from app.core.errors import ProviderError
 from app.gateway.app import close_adapters, create_app
-from app.gateway.routes.chat import (
-    CACHE_STATUS_HIT,
-    CACHE_STATUS_MISS,
-    CACHE_STATUS_SEMANTIC,
-)
 from app.ledger import (
     CostLedgerRow,
     CostLedgerWriter,
@@ -95,6 +90,11 @@ from app.providers.base import (
     EmbeddingRequest,
     EmbeddingResponse,
     StreamEvent,
+)
+from app.services.chat_pipeline import (
+    CACHE_STATUS_HIT,
+    CACHE_STATUS_MISS,
+    CACHE_STATUS_SEMANTIC,
 )
 
 from .conftest import (

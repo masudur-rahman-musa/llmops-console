@@ -36,7 +36,7 @@ from app.cache import (
     cache_key,
     is_cacheable,
 )
-from app.gateway.routes.chat import ChatCompletionRequest
+from app.schemas.chat import ChatCompletionRequest
 
 from .conftest import (
     BASE_ALIAS,

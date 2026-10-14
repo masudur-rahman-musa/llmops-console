@@ -111,7 +111,7 @@ FLOAT32_MAX = 3.4028234663852886e38
 component a vector may carry.
 
 The gateway renders base64 by packing components as float32
-(`gateway/routes/embeddings.py`), and `struct.pack("<f", 1e300)` raises
+(`services/embedding_pipeline.py`), and `struct.pack("<f", 1e300)` raises
 `OverflowError` - uncaught, that is a 500 with no code for what is really a
 provider defect. Pinned by `test_a_vector_component_out_of_float32_range_raises`."""
 

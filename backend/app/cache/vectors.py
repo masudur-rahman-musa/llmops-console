@@ -44,7 +44,7 @@ is an unsized store and there is no backstop behind that check.
 Nothing here embeds anything. The vector arrives as an argument, because an
 embedding is a provider call with a residency regime and a failure mode of its
 own, and those belong to the route, where `embedded_probe` in
-`gateway/routes/chat.py` makes the call and swallows its every failure into a
+`services/chat_pipeline.py` makes the call and swallows its every failure into a
 miss.
 """
 

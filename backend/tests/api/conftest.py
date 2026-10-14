@@ -84,7 +84,7 @@ from app.providers.breaker import CircuitBreaker
 
 # Resolved from this file, so the tests do not depend on pytest's working
 # directory. The same path the shipped `Settings.routing_policy_path` defaults to.
-SHIPPED_POLICY_PATH = Path(__file__).resolve().parents[2] / "routing.yaml"
+SHIPPED_POLICY_PATH = Path(__file__).resolve().parents[2] / "config" / "routing.yaml"
 
 # A tenant name of exactly `MAX_IDENTIFIER_LENGTH` characters, used for the
 # inclusive boundary row of the `X-Tenant` pre-check. It has a key of its own so

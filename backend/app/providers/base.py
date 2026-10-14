@@ -110,7 +110,7 @@ class ChatMessage(_Contract):
     a call rather than words, so `content` defaults to empty rather than being
     required (`test_a_tool_call_only_assistant_turn_needs_no_content`). Which
     combinations are coherent is settled at the API boundary, in
-    `gateway/routes/chat.py`, where an incoherent one is a 422 the caller can
+    `schemas/chat.py`, where an incoherent one is a 422 the caller can
     read; the ids themselves are checked by the adapter, before any outbound
     call (`test_bad_tool_ids_raise_before_any_outbound_call`).
     """

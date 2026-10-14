@@ -64,7 +64,7 @@ class Resolved(BaseModel):
 def _always_healthy(provider: str) -> bool:
     """The default health seam, for a caller that has no health to report.
 
-    The routes replace it with `gateway.routes.chat.health_seam`; the admin view
+    The routes replace it with `services.chat_pipeline.health_seam`; the admin view
     and `/v1/models` deliberately keep this one, so an operator's catalogue does
     not flicker with a breaker.
     """

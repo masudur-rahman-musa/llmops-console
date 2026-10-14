@@ -19,9 +19,11 @@ with these files and no others:
 
     gateway/context.py              TenantMismatch, Unauthorized
     gateway/routes/admin.py         Unauthorized
-    gateway/routes/chat.py          BudgetExceeded, ProviderError, RateLimited
+    services/chat_pipeline.py       BudgetExceeded, RateLimited
+    services/wire_mapping.py        ProviderError
+    services/streaming.py           ProviderError
     gateway/routes/directory.py     ProviderError
-    gateway/routes/redact.py        ProviderError
+    services/redaction_flow.py      ProviderError
     providers/anthropic.py          ProviderError
     providers/openai_compatible.py  ProviderError
 """
@@ -103,7 +105,7 @@ class TenantMismatch(GatewayError):
 class BudgetExceeded(GatewayError):
     """The tenant's spend cap for the period is reached (#27).
 
-    Raised by `gateway/routes/chat.py::check_budget`, at the top of both the chat
+    Raised by `services/chat_pipeline.py::check_budget`, at the top of both the chat
     and the embeddings route and before anything is resolved or dialled, so a
     refusal costs no provider call and books no row
     (`test_a_tenant_over_cap_is_429_budget_exceeded`,
@@ -119,7 +121,7 @@ class BudgetExceeded(GatewayError):
 class RateLimited(GatewayError):
     """The tenant has spent its minute's requests or its minute's tokens (#28).
 
-    Raised by `gateway/routes/chat.py::check_rate_limit`, at the top of both the
+    Raised by `services/chat_pipeline.py::check_rate_limit`, at the top of both the
     chat and the embeddings route and BEFORE `check_budget`, so a tenant over
     both is told to slow down rather than to top up
     (`test_a_tenant_over_its_request_rate_is_429_rate_limited`,

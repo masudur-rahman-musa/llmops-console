@@ -18,9 +18,9 @@ argument, because an embedding is a provider call with a residency regime and a 
 mode of its own: the chat route embeds the probe, and the lookup, the headers and the
 `kind="semantic"` metric are its too.
 
-The gateway's use of all four lives in `app.gateway.routes.chat`, not
-here: this package never reads a header, resolves an alias or renders a wire
-body.
+The gateway's use of all four lives in `app.services.chat_pipeline` and
+`app.api.routes.chat`, not here: this package never reads a header, resolves an
+alias or renders a wire body.
 
 One property is worth carrying into any file that imports this one. Unlike
 `app.redaction`'s map store, nothing here raises when the backing store

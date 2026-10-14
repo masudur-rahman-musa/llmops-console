@@ -38,13 +38,13 @@ from fastapi.testclient import TestClient
 from httpx import Response
 
 from app.core.config import Settings
-from app.gateway.routes.chat import REDACTED_FALSE, REDACTED_TRUE, gateway_headers
-from app.gateway.routes.embeddings import MAX_EMBEDDING_INPUT_CHARS
 from app.model_routing.policy import Policy
 from app.model_routing.resolver import Resolved, resolve
 from app.redaction import MAX_REDACTION_INPUT_CHARS
 from app.redaction.directory import DirectoryStore
 from app.redaction.errors import DirectoryStoreUnavailable
+from app.schemas.embeddings import MAX_EMBEDDING_INPUT_CHARS
+from app.services.chat_pipeline import REDACTED_FALSE, REDACTED_TRUE, gateway_headers
 
 from .conftest import (
     TEST_KEYS,

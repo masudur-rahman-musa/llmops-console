@@ -95,7 +95,7 @@ def taken_placeholders(text: str) -> set[str]:
     look like a placeholder is still a token a reader would confuse with ours.
 
     Public because `redact` is per-string and an earlier change redacts a whole request
-    under ONE numbering: `gateway.routes.redact.redact_batch` has to skip a token
+    under ONE numbering: `services.redaction_flow.redact_batch` has to skip a token
     literal in ANY of the call's strings, not only in the one being written, and
     a second copy of `_LITERAL_PLACEHOLDER` there is how the two definitions
     would drift. It reads `text` and nothing else, so exporting it changes no

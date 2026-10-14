@@ -44,7 +44,6 @@ from providers.conftest import (
 
 from app.core.config import Settings
 from app.core.errors import ProviderError
-from app.gateway.routes.chat import COMPLETION_ID_BYTES, COMPLETION_ID_PREFIX
 from app.providers.base import (
     Adapter,
     ChatMessage,
@@ -53,6 +52,7 @@ from app.providers.base import (
     ToolChoice,
     ToolSpec,
 )
+from app.services.wire_mapping import COMPLETION_ID_BYTES, COMPLETION_ID_PREFIX
 
 from .conftest import (
     CHAT,

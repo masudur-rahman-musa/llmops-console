@@ -52,8 +52,8 @@ from app.cache.probe import (
     system_hash,
     tools_hash,
 )
-from app.gateway.routes.chat import ChatCompletionRequest
 from app.model_routing.policy import Alias
+from app.schemas.chat import ChatCompletionRequest
 
 HEX_64 = re.compile(r"[0-9a-f]{64}")
 """What a sha256 rendered as lowercase hex looks like, the shape both hashes

@@ -25,7 +25,7 @@ sentinel result, decided in `app.limits.cost`, and
 `test_an_unpriced_key_costs_zero_and_does_not_raise` is what holds it. A budget
 that is reached is not one either, and neither is a rate limit - those refusals
 are `core.errors.BudgetExceeded` and `core.errors.RateLimited`, raised from
-`gateway/routes/chat.py::check_budget` and `::check_rate_limit`, because they are
+`services/chat_pipeline.py::check_budget` and `::check_rate_limit`, because they are
 answers to a caller with a wire code and a 429, which is the whole distinction
 this module's first paragraph draws.
 """

@@ -16,7 +16,7 @@ The contract these cases are written against, before it exists:
 
 * `create_app` hangs a `ResidencyLogWriter` on `app.state.residency_log`, the
   in-process one when `settings.database_url` is unset;
-* `record_served` in `gateway/routes/chat.py` calls `record_residency` for the
+* `record_served` in `services/chat_pipeline.py` calls `record_residency` for the
   candidate that SERVED, on all three paths, with `allowed` computed from the
   policy rather than passed;
 * an `allowed=false` row is the only thing that moves

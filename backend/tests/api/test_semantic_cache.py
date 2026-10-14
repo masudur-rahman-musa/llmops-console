@@ -71,15 +71,6 @@ from app.core.errors import ProviderError
 from app.core.metrics import SEMANTIC_CACHE_KIND
 from app.gateway.app import build_qdrant_data_client, close_adapters, create_app
 from app.gateway.probes import PROBE_TIMEOUT_SECONDS
-from app.gateway.routes.chat import (
-    CACHE_SPAN,
-    CACHE_STATUS_HIT,
-    CACHE_STATUS_MISS,
-    CACHE_STATUS_SEMANTIC,
-    EMBED_ALIAS,
-    SEMANTIC_SPAN,
-)
-from app.gateway.routes.embeddings import MAX_EMBEDDING_INPUT_CHARS
 from app.ledger import InMemoryResidencyLogWriter, ResidencyLogRow
 from app.providers.base import (
     Adapter,
@@ -90,6 +81,15 @@ from app.providers.base import (
     EmbeddingResponse,
     EmbeddingUsage,
     StreamEvent,
+)
+from app.schemas.embeddings import MAX_EMBEDDING_INPUT_CHARS
+from app.services.chat_pipeline import (
+    CACHE_SPAN,
+    CACHE_STATUS_HIT,
+    CACHE_STATUS_MISS,
+    CACHE_STATUS_SEMANTIC,
+    EMBED_ALIAS,
+    SEMANTIC_SPAN,
 )
 
 from .conftest import (

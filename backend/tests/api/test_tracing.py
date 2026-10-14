@@ -44,6 +44,7 @@ from opentelemetry.trace import SpanContext, StatusCode
 from pydantic import ValidationError
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from app.api.routes.redact import REDACT
 from app.core.config import Settings
 from app.core.errors import ProviderError
 from app.core.tracing import (
@@ -58,7 +59,6 @@ from app.core.tracing import (
 )
 from app.gateway.app import create_app
 from app.gateway.context import emitted_trace_id
-from app.gateway.routes.redact import REDACT
 from app.model_routing.errors import ResidencyUnavailable
 from app.providers.base import (
     ChatRequest,

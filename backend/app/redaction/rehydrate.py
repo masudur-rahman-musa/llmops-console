@@ -4,7 +4,7 @@ r"""Put the raw values back: the read half of what `redact` produced.
 placeholder to the value it stood in for. This module walks that mapping in the
 other direction and does nothing else: no store, no tenant, no HTTP. Which map
 to use, whose it is and whether the caller asked for it at all are the route's
-questions, answered in `app.gateway.routes.chat`.
+questions, answered in `app.services.wire_mapping` and `app.services.streaming`.
 
 Two shapes, one substitution. `rehydrate` is the pure function a whole answer
 goes through; `StreamRehydrator` is the same substitution with a carry, for an

@@ -36,15 +36,10 @@ from httpx import Response
 
 from app.core.config import Settings
 from app.core.errors import ProviderError
-from app.gateway.routes.chat import (
-    CHUNK_OBJECT,
-    COMPLETION_ID_PREFIX,
-    DONE_SENTINEL,
-    SSE_HEADERS,
-    SSE_MEDIA_TYPE,
-    sse_frames,
-)
 from app.providers.base import Adapter, ChatMessage, ChatRequest, ToolCallDelta
+from app.schemas.chat import CHUNK_OBJECT
+from app.services.streaming import DONE_SENTINEL, SSE_HEADERS, SSE_MEDIA_TYPE, sse_frames
+from app.services.wire_mapping import COMPLETION_ID_PREFIX
 
 from .conftest import (
     STREAM_ANSWER,

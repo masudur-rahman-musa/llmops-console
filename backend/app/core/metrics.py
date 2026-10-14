@@ -485,7 +485,7 @@ regimes. Pinned by `test_a_hit_counts_a_cache_hit_and_labels_the_request_hit`
 and `test_a_semantic_hit_counts_its_own_kind_and_labels_the_request_semantic`.
 
 The semantic value is the same word the header and the `cache` label answer
-(`CACHE_STATUS_SEMANTIC` in `app.gateway.routes.chat`), so a hit rate per
+(`CACHE_STATUS_SEMANTIC` in `app.services.chat_pipeline`), so a hit rate per
 tier is one query rather than a join."""
 
 

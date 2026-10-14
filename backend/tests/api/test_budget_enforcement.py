@@ -65,11 +65,6 @@ from prometheus_client import CollectorRegistry
 from app.cache import InProcessResponseCache, InProcessSemanticCache
 from app.core.config import Settings
 from app.gateway.app import close_adapters, create_app
-from app.gateway.routes.chat import (
-    CACHE_STATUS_HIT,
-    CACHE_STATUS_MISS,
-    CACHE_STATUS_SEMANTIC,
-)
 from app.ledger import CostLedgerRow, CostLedgerWriter, InMemoryCostLedgerWriter
 from app.limits.budget import (
     InProcessBudgetStore,
@@ -79,6 +74,11 @@ from app.limits.budget import (
 )
 from app.model_routing.policy import Policy
 from app.providers.base import Adapter
+from app.services.chat_pipeline import (
+    CACHE_STATUS_HIT,
+    CACHE_STATUS_MISS,
+    CACHE_STATUS_SEMANTIC,
+)
 
 from .conftest import (
     API_KEYS,
@@ -676,7 +676,7 @@ def test_a_stream_that_reports_no_usage_still_debits_its_estimated_row(
 ) -> None:
     """The SIXTH `book_cost` call site, which the plan's list of five does not name: a
     stream that ends without a usage frame books an ESTIMATED row from a second sink
-    (`_estimated_cost_sink` in `gateway/routes/chat.py`).
+    (`_estimated_cost_sink` in `services/chat_pipeline.py`).
 
     Catches a debit wired into the reported-usage sink alone. A provider that stops
     sending usage - or a client that goes away mid-stream - would then spend real money

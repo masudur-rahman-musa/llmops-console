@@ -44,20 +44,20 @@ from providers.conftest import (
     make_local_adapter,
 )
 
+from app.api.routes.embeddings import EMBEDDINGS
 from app.core.config import Settings
 from app.core.errors import ProviderError
-from app.gateway.routes.embeddings import (
-    EMBEDDING_OBJECT,
-    EMBEDDINGS,
-    LIST_OBJECT,
-    MAX_EMBEDDING_INPUT_CHARS,
-    MAX_EMBEDDING_INPUTS,
-    to_base64,
-)
 from app.ledger import InMemoryCostLedgerWriter
 from app.model_routing.policy import Policy
 from app.model_routing.resolver import Resolved, resolve
 from app.providers.base import EmbeddingAdapter, EmbeddingRequest
+from app.schemas.embeddings import (
+    EMBEDDING_OBJECT,
+    LIST_OBJECT,
+    MAX_EMBEDDING_INPUT_CHARS,
+    MAX_EMBEDDING_INPUTS,
+)
+from app.services.embedding_pipeline import to_base64
 
 from .conftest import (
     EMBED_ALIAS,

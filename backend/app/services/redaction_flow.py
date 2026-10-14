@@ -1,57 +1,14 @@
-r"""`POST /v1/redact`, and the two pieces the inline path shares with it.
-
-Four things live here, and all but the route are here because the chat and
-embeddings routes need them too - the same reason `gateway_headers` lives in
-`chat.py` and is imported rather than copied.
-
-* `redact_batch` redacts a whole request under ONE map and ONE numbering. The
-  engine is per-string; a request is a list of them, and #19's "placeholders are
-  stable within a request" is exactly the difference. Called once per message,
-  the engine would restart at 1 for every turn, so `<EMAIL_1>` would name a
-  different person in message 1 and message 4 and the map would stop being an
-  inverse (`test_one_numbering_spans_every_string_in_the_batch`).
-* `redaction_applies` answers whether the tenant's rule for a data class carries
-  `redact: true`. The routing policy is where that flag lives; nothing in the
-  routing package reads it, because the control it configures is this one.
-* `tenant_directory` loads a tenant's pushed display names and compiles them
-  once per request, because the tenth detector kind's input is not the text. All three call sites take the matcher it returns; an unreachable
-  directory store is a 502 there and never an empty directory.
-* The route itself: the two body shapes, the class it applied, and the id of the
-  map it filed.
-
-The endpoint always redacts, whatever the tenant's `redact` flag says for the
-class (decision D). It is the ingestion path and the call is explicit, so
-honouring the flag would turn a request that asked for redaction into a silent
-no-op; `redaction_applies` gates the INLINE path and nothing here
-(`test_the_endpoint_redacts_on_a_class_whose_rule_carries_no_redact_flag`).
-
-No `X-Gateway-*` header is written on this route. Those six describe where a
-request was served and by which provider, and this one resolves nothing
-(`test_the_response_carries_no_gateway_headers`).
-
-The cap is per STRING, applied by the request model rather than in the route body
-(decision F, a project rule): a body over the cap is a 422 before anything
-reaches the store, and a legal 64-item batch of at-cap strings is not refused for
-its total. `MAX_REDACTION_INPUT_CHARS` is imported from the engine, never
-restated, so a body and the engine cannot disagree about what is too long.
-"""
+"""Shared redaction logic: batch redaction, the directory, the map store."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
-from fastapi import APIRouter, Request
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-
 from app.core.errors import ProviderError
-from app.core.metrics import record_redactions
-from app.core.tracing import SpanAttributes, annotate, stage_span
-from app.gateway.context import Context
 from app.model_routing.errors import IdentifierInvalid
 from app.model_routing.policy import DataClass, Policy
 from app.redaction import (
-    MAX_REDACTION_INPUT_CHARS,
     DirectoryStore,
     DirectoryStoreUnavailable,
     Kind,
@@ -62,10 +19,6 @@ from app.redaction import (
     redact,
     taken_placeholders,
 )
-
-REDACT = "/v1/redact"
-"""The published route path. Pinned against the mounted route by
-`test_the_route_path_is_the_published_one`."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,102 +180,6 @@ def redaction_applies(policy: Policy, tenant: str, data_class: DataClass) -> boo
     return rule is not None and rule.redact
 
 
-class _Wire(BaseModel):
-    """A model on the published API boundary: frozen, and unknown fields rejected.
-
-    Rejected rather than ignored, as on the chat and embeddings routes: a
-    misspelled `texts` would otherwise be a 200 that redacted nothing the caller
-    sent (`test_an_unknown_field_in_the_body_is_422`).
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-
-def _within_cap(value: str, field: str) -> str:
-    """Refuse one string the engine would refuse, before anything is stored.
-
-    The number is the engine's own constant. Inclusive: `MAX_REDACTION_INPUT_CHARS`
-    characters is accepted and one more is not
-    (`test_a_string_at_the_cap_is_accepted`,
-    `test_a_string_over_the_cap_is_422_before_any_store_write`).
-    """
-    if len(value) > MAX_REDACTION_INPUT_CHARS:
-        raise ValueError(f"{field}: longer than {MAX_REDACTION_INPUT_CHARS} characters")
-    return value
-
-
-class RedactMessage(_Wire):
-    """One turn, in the only shape this endpoint takes: a role and its text.
-
-    `role` is a free string rather than the chat route's closed set. Nothing here
-    is sent to a provider, so a role this gateway does not know is the caller's
-    business; refusing it would make the ingestion path stricter than the
-    completion path for no gain.
-    """
-
-    role: str
-    content: str
-
-    @model_validator(mode="after")
-    def _within_caps(self) -> RedactMessage:
-        """Apply the per-string cap to every turn, not only the first.
-
-        On the message rather than on the list, so a 64-turn body is refused for
-        the one turn that is too long rather than for its total
-        (`test_the_cap_applies_to_a_later_message_too`,
-        `test_two_messages_each_at_the_cap_are_accepted`).
-        """
-        _within_cap(self.content, "content")
-        return self
-
-
-class RedactRequest(_Wire):
-    """One redaction request: exactly one of `text` or `messages`, and an optional class.
-
-    `data_class` is the closed enum, so an unknown one is a 422 rather than a
-    coercion onto the default: the class is stored alongside the map and read
-    back by an earlier change, and silently filing `secret` as `confidential` labels it
-    with something the caller never asked for
-    (`test_an_unknown_body_data_class_is_422_before_any_store_write`).
-    """
-
-    text: str | None = None
-    messages: tuple[RedactMessage, ...] | None = Field(default=None, min_length=1)
-    data_class: DataClass | None = None
-
-    @model_validator(mode="after")
-    def _exactly_one_shape(self) -> RedactRequest:
-        """Refuse a body carrying neither shape or both of them.
-
-        Both is not a merge and not a silent preference for `text`: the answer
-        has one `redaction_map_id`, and a caller that sent both cannot tell which
-        half it describes. On the model, so the refusal happens before the route
-        body and therefore before any store write
-        (`test_a_body_that_is_not_exactly_one_shape_is_422_before_any_store_write`).
-        """
-        if (self.text is None) == (self.messages is None):
-            raise ValueError("exactly one of text or messages is required")
-        if self.text is not None:
-            _within_cap(self.text, "text")
-        return self
-
-
-class RedactResponse(BaseModel):
-    """The redacted payload, the class that applied, and the id of the stored map.
-
-    The shape mirrors the request: a `text` call answers `text` with `messages`
-    null, and a `messages` call the other way round, so a caller reads back what
-    it sent rather than a shape it has to branch on twice.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    text: str | None
-    messages: tuple[RedactMessage, ...] | None
-    data_class: DataClass
-    redaction_map_id: str
-
-
 def filed_map_id(store: RedactionMapStore, tenant: str, mapping: Mapping[str, str]) -> str:
     """File one map, with an unreachable store rendered as the 502 a client can act on.
 
@@ -348,57 +205,3 @@ def filed_map_id(store: RedactionMapStore, tenant: str, mapping: Mapping[str, st
         return store.put(tenant, mapping)
     except RedactionMapStoreUnavailable as exc:
         raise ProviderError("the redaction map store is unavailable", retryable=True) from exc
-
-
-router = APIRouter()
-
-
-@router.post(REDACT)
-def create_redaction(
-    request: Request,
-    context: Context,
-    body: RedactRequest,
-) -> RedactResponse:
-    """Redact the body under one map, file the map for the tenant, answer both.
-
-    The tenant is the AUTHENTICATED one from `context`, never the `X-Tenant`
-    header on its own: the map holds raw personal data, so filing it under a name
-    the client merely claimed would be the store's one unacceptable failure. The
-    header is checked against the key before this runs
-    (`test_a_tenant_that_does_not_match_the_key_is_403`).
-
-    The class is the body's when it carries one and `X-Data-Class` otherwise
-    (decision E), and the answer echoes whichever applied. It is a label on this
-    call rather than a control: what the class decides is the INLINE path, and
-    this route redacts either way.
-
-    Declared `def` rather than `async def` like every other route here. Redaction
-    is CPU work over the whole body, so a coroutine would hold the event loop for
-    the length of the scan instead of running in a worker thread.
-    """
-    maps: RedactionMapStore = request.app.state.redaction_map_store
-    directory = tenant_directory(request.app.state.directory_store, context.tenant)
-    data_class = body.data_class if body.data_class is not None else context.data_class
-
-    with stage_span(request.scope, REDACT_SPAN):
-        if body.text is not None:
-            batch = redact_batch((body.text,), directory)
-            text: str | None = batch.texts[0]
-            messages: tuple[RedactMessage, ...] | None = None
-        else:
-            turns = body.messages or ()
-            batch = redact_batch(tuple(turn.content for turn in turns), directory)
-            text = None
-            messages = tuple(
-                turn.model_copy(update={"content": content})
-                for turn, content in zip(turns, batch.texts, strict=True)
-            )
-    annotate(request.scope, SpanAttributes(redacted=batch.redacted, data_class=data_class.value))
-    record_redactions(tenant=context.tenant, counts=batch.counts)
-
-    return RedactResponse(
-        text=text,
-        messages=messages,
-        data_class=data_class,
-        redaction_map_id=filed_map_id(maps, context.tenant, batch.mapping),
-    )

@@ -46,7 +46,7 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
-    from app.gateway.routes.chat import ChatCompletionRequest
+    from app.schemas.chat import ChatCompletionRequest
 
 CACHE_KEY_PREFIX: Final[str] = "response"
 """The first segment of every Redis key a cached answer is stored under.

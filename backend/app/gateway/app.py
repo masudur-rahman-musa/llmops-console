@@ -22,6 +22,9 @@ from fastapi import FastAPI
 from opentelemetry.context import Context
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.api.routes.chat import router as chat_router
+from app.api.routes.embeddings import router as embeddings_router
+from app.api.routes.redact import router as redact_router
 from app.cache import (
     InProcessResponseCache,
     InProcessSemanticCache,
@@ -54,13 +57,10 @@ from app.gateway.health import router as health_router
 from app.gateway.probes import PROBE_TIMEOUT_SECONDS, build_redis_client, register_probes
 from app.gateway.prometheus import PrometheusClient, build_prometheus_http
 from app.gateway.routes.admin import router as admin_router
-from app.gateway.routes.chat import router as chat_router
 from app.gateway.routes.console import router as console_router
 from app.gateway.routes.directory import router as directory_router
-from app.gateway.routes.embeddings import router as embeddings_router
 from app.gateway.routes.metrics import router as metrics_router
 from app.gateway.routes.models import router as models_router
-from app.gateway.routes.redact import router as redact_router
 from app.ledger import (
     ConsoleEventWriter,
     CostLedgerWriter,

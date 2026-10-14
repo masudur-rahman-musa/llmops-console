@@ -284,7 +284,7 @@ def record_residency(
 ) -> None:
     """Write the row for the candidate that served. Never raises.
 
-    Called once per served request, from `gateway/routes/chat.py::record_served`,
+    Called once per served request, from `services/chat_pipeline.py::record_served`,
     which both the chat paths and `/v1/embeddings` go through at the moment the
     serving candidate is known - and, on a stream, before the first frame is on
     the wire.

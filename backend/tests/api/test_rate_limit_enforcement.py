@@ -46,7 +46,7 @@ The contract these cases are written against, before it exists:
 * `create_app` builds `app.state.rate_limit_store` - `RedisRateLimitStore` with a
   Redis URL, `InProcessRateLimitStore` without one;
 * `check_rate_limit(state, context)` lives beside `check_budget` in
-  `gateway/routes/chat.py` and is called from BOTH routes immediately BEFORE
+  `services/chat_pipeline.py` and is called from BOTH routes immediately BEFORE
   `check_budget`, after `Context` has authenticated the tenant. It takes
   `CHECK_COST` from the request bucket and `CHECK_COST` from the token bucket,
   at the tenant's own `rpm`/`tpm` capacity and `rpm/60`/`tpm/60` rate, and raises
@@ -78,11 +78,6 @@ from httpx import Response
 from app.cache import InProcessResponseCache, InProcessSemanticCache
 from app.core.config import Settings
 from app.gateway.app import close_adapters, create_app
-from app.gateway.routes.chat import (
-    CACHE_STATUS_HIT,
-    CACHE_STATUS_MISS,
-    CACHE_STATUS_SEMANTIC,
-)
 from app.ledger import CostLedgerRow, CostLedgerWriter, InMemoryCostLedgerWriter
 from app.limits.budget import InProcessBudgetStore, current_month, to_micro_usd
 from app.limits.ratelimit import (
@@ -94,6 +89,11 @@ from app.limits.ratelimit import (
 )
 from app.model_routing.policy import Policy
 from app.providers.base import Adapter
+from app.services.chat_pipeline import (
+    CACHE_STATUS_HIT,
+    CACHE_STATUS_MISS,
+    CACHE_STATUS_SEMANTIC,
+)
 
 from .conftest import (
     API_KEYS,
