@@ -94,6 +94,12 @@ class Commit(BaseModel):
     sha: str
     subject: str
     files: tuple[str, ...]
+    exact_moves: tuple[tuple[str, str], ...] = ()
+    """(old, new) pairs git reported as byte-identical moves (`R100`). Both sides are
+    also in `files`, so moving the baseline away is still judged
+    (`test_moving_the_baseline_away_is_still_judged`). Empty by default, so a caller
+    that knows nothing of moves keeps working
+    (`test_commit_exact_moves_defaults_to_empty`)."""
 
 
 class Offence(BaseModel):
@@ -133,7 +139,7 @@ def check(commits: Sequence[Commit]) -> GuardVerdict:
     """
     offences: list[Offence] = []
     for commit in commits:
-        if BASELINE_PATH not in commit.files:
+        if BASELINE_PATH not in commit.files or _only_moves_the_baseline_in(commit):
             continue
         reasons: list[str] = []
         if not commit.subject.startswith(BASELINE_PREFIX):
@@ -143,6 +149,22 @@ def check(commits: Sequence[Commit]) -> GuardVerdict:
         if reasons:
             offences.append(Offence(sha=commit.sha, reasons=tuple(reasons)))
     return GuardVerdict(offences=tuple(offences))
+
+
+def _only_moves_the_baseline_in(commit: Commit) -> bool:
+    """True when the commit lands a byte-identical `baseline.json` on `BASELINE_PATH`.
+
+    The content did not change, so there is nothing for an ADR to justify
+    (`test_an_exact_move_onto_the_baseline_with_no_prefix_or_adr_passes`). The old
+    name must be a `baseline.json` too, or any file moved onto the baseline would
+    replace it unjudged (`test_another_file_moved_exactly_onto_the_baseline_is_still_judged`);
+    the new name must be the baseline, or moving it away would pass
+    (`test_moving_the_baseline_away_is_still_judged`).
+    """
+    return any(
+        new == BASELINE_PATH and old.rsplit("/", 1)[-1] == "baseline.json"
+        for old, new in commit.exact_moves
+    )
 
 
 def offence_line(offence: Offence) -> str:

@@ -3,7 +3,7 @@
 A run says what happened. The gate says whether it may merge.
 
     ops-eval gate --report reports/report.json \
-                  --baseline project-evals/baseline.json \
+                  --baseline backend/evals/baseline.json \
                   [--comment comment.md]
 
 It reads two files and touches nothing else: no database, no gateway, no clock.
@@ -75,7 +75,7 @@ is where the merge decision is made.
 
 ## Changing the baseline
 
-`project-evals/baseline.json` is the record of what the system is known to do. It
+`backend/evals/baseline.json` is the record of what the system is known to do. It
 changes only in a commit whose subject begins `baseline:`, with an ADR saying
 what moved and why. It is never edited to make a run pass - a gate that can be
 edited green is a gate nobody has.
@@ -88,17 +88,23 @@ The rule is enforced in CI, not by review:
 
     ops-eval baseline-guard --base <ref> --head <ref>
 
-It reads `base..head` once with `git log --format=%H%x00%s --name-only` and
-answers a verdict over the commits in it. A commit that does not touch
-`project-evals/baseline.json` is not examined. One that does is clean only when
+It reads `base..head` once with `git log --format=%H%x00%s --name-status -M100%`
+and answers a verdict over the commits in it. A commit that does not touch
+`backend/evals/baseline.json` is not examined. One that does is clean only when
 its subject starts `baseline:` **and** that same commit carries a file under
 the project notes.
+
+A commit that only moves a file named `baseline.json` onto
+`backend/evals/baseline.json`, byte for byte, is clean without either: the
+content did not change, so there is nothing to justify. Git reports such a move
+as `R100`; a move with any edit shows as a delete and an add, and is judged like
+any other change. Moving the baseline away from its path is a change too.
 
 Same commit, not same pull request. A merge and a revert can separate a baseline
 change from its justification across a pull request; they cannot separate them
 inside one commit.
 
-The path is matched exactly. `project-evals/baseline.json.bak` is not the
+The path is matched exactly. `backend/evals/baseline.json.bak` is not the
 baseline and neither is a file of that name under another directory, so a rename
 beside the file does not block a pull request that never touched it.
 

@@ -86,6 +86,7 @@ from app.cli.evals import (
 from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
 from app.evals.assertions import AssertionResult, AssertionStatus, CaseAssertions
 from app.evals.baseline_guard import (
+    BASELINE_PATH,
     GUARD_PASSED_LINE,
     MAX_REF_LENGTH,
     MISSING_ADR_REASON,
@@ -2309,13 +2310,13 @@ def guard_repo(tmp_path_factory: pytest.TempPathFactory) -> GuardRepo:
         "shape": guard_commit(
             repo,
             "baseline: write the thresholds in points",
-            ["dev/adr/0008-the-baseline-is-written-in-points.md", "project-evals/baseline.json"],
+            ["dev/adr/0008-the-baseline-is-written-in-points.md", BASELINE_PATH],
         ),
-        "no_adr": guard_commit(repo, "baseline: bump the floor", ["project-evals/baseline.json"]),
+        "no_adr": guard_commit(repo, "baseline: bump the floor", [BASELINE_PATH]),
         "no_prefix": guard_commit(
             repo,
             "write the thresholds in points",
-            ["dev/adr/0010-x.md", "project-evals/baseline.json"],
+            ["dev/adr/0010-x.md", BASELINE_PATH],
         ),
     }
     return GuardRepo(path=repo, shas=shas)
@@ -2473,3 +2474,132 @@ def test_a_ref_of_exactly_the_cap_gets_past_the_pre_check(
     assert "--base" not in printed.err
     assert len(printed.err.strip().splitlines()) == 1
     assert "Traceback" not in printed.err
+
+
+# --------------------------------------------------------------------------
+# baseline-guard (53): a byte-identical `git mv` onto the baseline passes
+# --------------------------------------------------------------------------
+
+OLD_BASELINE_PATH = "project-evals/baseline.json"
+"""Where the baseline lived before an earlier change moved it."""
+
+MOVED_AWAY_PATH = "old/baseline.json"
+"""Where the move-away row puts the baseline, a name that still ends `baseline.json`."""
+
+MOVE_BASELINE_TEXT = (
+    "{\n"
+    '  "set": "helpdesk",\n'
+    '  "metrics": {\n'
+    '    "decision_accuracy": 90.0,\n'
+    '    "residency_violations": 0,\n'
+    '    "redaction_recall": 98.5\n'
+    "  }\n"
+    "}\n"
+)
+"""The baseline's content in the move repo, long enough that a one-byte edit still reads as
+a rename under git's default 50% similarity, so only `-M100%` tells the edit apart."""
+
+
+def move_commit(repo: Path, subject: str, old: str, new: str, *, edited: bool = False) -> str:
+    """`git mv old new` (plus, with `edited`, one changed byte in the moved file), commit it
+    under `subject` and answer the new sha. Nothing else is staged, so the commit holds
+    exactly the move."""
+    (repo / new).parent.mkdir(parents=True, exist_ok=True)
+    git(repo, "mv", "--", old, new)
+    if edited:
+        moved = repo / new
+        moved.write_text(
+            moved.read_text(encoding="utf-8").replace("90.0", "91.0"), encoding="utf-8"
+        )
+        git(repo, "add", "--", new)
+    git(repo, "commit", "--no-gpg-sign", "-m", subject)
+    return git(repo, "rev-parse", "HEAD").strip()
+
+
+@pytest.fixture(scope="module")
+def move_repo(tmp_path_factory: pytest.TempPathFactory) -> GuardRepo:
+    """Five commits: the baseline is added at its old path, moved exactly onto
+    `BASELINE_PATH`, moved exactly away, then moved back with one byte changed.
+
+    Separate from `guard_repo` so that fixture's ranges and counts stay as they are. No
+    move commit carries a `baseline:` prefix or an ADR file, so each one is a full offence
+    in both halves the moment the guard judges it.
+    """
+    repo = tmp_path_factory.mktemp("move-repo")
+    git(repo, "init", "--initial-branch=main", ".")
+    root = guard_commit(repo, "add the readme", ["README.md"])
+    old = repo / OLD_BASELINE_PATH
+    old.parent.mkdir(parents=True, exist_ok=True)
+    old.write_text(MOVE_BASELINE_TEXT, encoding="utf-8")
+    git(repo, "add", "--", OLD_BASELINE_PATH)
+    git(repo, "commit", "--no-gpg-sign", "-m", "add the old baseline")
+    shas = {
+        "root": root,
+        "old": git(repo, "rev-parse", "HEAD").strip(),
+        "pure_move": move_commit(repo, "move the backend", OLD_BASELINE_PATH, BASELINE_PATH),
+        "away": move_commit(repo, "tidy the old files", BASELINE_PATH, MOVED_AWAY_PATH),
+        "edited_move": move_commit(
+            repo, "move the baseline back", MOVED_AWAY_PATH, BASELINE_PATH, edited=True
+        ),
+    }
+    return GuardRepo(path=repo, shas=shas)
+
+
+def test_baseline_guard_passes_a_pure_git_mv_of_the_baseline(
+    move_repo: GuardRepo, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Catches a CLI that still reads `git log --name-only` (or never fills `exact_moves`),
+    which reports a pure `git mv` onto `backend/evals/baseline.json` as a baseline change
+    and failed `eval-gate` on 4b9cfd9. The move carries no prefix and no ADR, so only the
+    exact-move reading can make this range pass; the count of 2 catches a read that saw
+    nothing."""
+    monkeypatch.chdir(move_repo.path)
+
+    code = run_guard(move_repo.shas["root"], move_repo.shas["pure_move"])
+
+    printed = capsys.readouterr()
+    assert code == EXIT_OK
+    assert printed.out.strip() == GUARD_PASSED_LINE.format(checked=2)
+    assert printed.err == ""
+
+
+def test_baseline_guard_fails_a_move_that_also_edits_the_baseline(
+    move_repo: GuardRepo, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Catches a CLI that counts any rename git reports as an exact move (plain `-M`, or a
+    status read as `R` without `100`), which would let a threshold change ride in on a
+    move. The fixture's edit is one byte, so git's default rename detection still calls it
+    a rename (asserted first); only `-M100%` turns it into a delete plus an add."""
+    sha = move_repo.shas["edited_move"]
+    default_status = git(move_repo.path, "show", "-M", "--name-status", "--format=", sha)
+    assert default_status.startswith("R")
+    monkeypatch.chdir(move_repo.path)
+
+    code = run_guard(move_repo.shas["away"], sha)
+
+    printed = capsys.readouterr()
+    assert code == EXIT_FAILED
+    assert printed.out == ""
+    assert printed.err.strip().splitlines() == [
+        f"{sha}: touches {BASELINE_PATH} but {MISSING_PREFIX_REASON} and {MISSING_ADR_REASON}"
+    ]
+
+
+def test_baseline_guard_fails_a_commit_that_moves_the_baseline_away(
+    move_repo: GuardRepo, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Catches a git read that keeps only the new side of a rename in `files` (what
+    `--name-only` does with rename detection on), so a commit moving the baseline out of
+    `backend/evals/` never names it and passes with no prefix and no ADR. The move is
+    byte-identical, so a skip that ignores which side is the baseline lets it through too."""
+    sha = move_repo.shas["away"]
+    monkeypatch.chdir(move_repo.path)
+
+    code = run_guard(move_repo.shas["pure_move"], sha)
+
+    printed = capsys.readouterr()
+    assert code == EXIT_FAILED
+    assert printed.out == ""
+    assert printed.err.strip().splitlines() == [
+        f"{sha}: touches {BASELINE_PATH} but {MISSING_PREFIX_REASON} and {MISSING_ADR_REASON}"
+    ]

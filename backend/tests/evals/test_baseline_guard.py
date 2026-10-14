@@ -292,3 +292,112 @@ def test_the_models_are_frozen() -> None:
         offence.sha = "rewritten"  # type: ignore[misc]
     with pytest.raises(ValueError):
         verdict.offences = ()  # type: ignore[misc]
+
+
+# --------------------------------------------------------------------------
+# an earlier change: a byte-identical move onto the baseline is not a baseline change
+# --------------------------------------------------------------------------
+
+OLD_BASELINE_PATH = "project-evals/baseline.json"
+"""Where the baseline lived before an earlier change moved it, without changing a byte."""
+
+MOVE_SUBJECT = "move everything"
+"""A subject with no `baseline:` prefix, used by every move row below with no ADR file.
+
+So each row is a full offence in both halves if the commit is judged at all, and
+only the exact-move skip can turn it clean."""
+
+
+def test_an_exact_move_onto_the_baseline_with_no_prefix_or_adr_passes() -> None:
+    """Catches a `check` that ignores `exact_moves` and judges every commit whose files name
+    the baseline, which is what failed `eval-gate` on 4b9cfd9: a pure `git mv` carrying no
+    prefix and no ADR. Both halves are broken here, so the skip is the only thing that can
+    keep the verdict clean."""
+    verdict = check(
+        [
+            Commit(
+                sha=OTHER_SHA,
+                subject=MOVE_SUBJECT,
+                files=(OLD_BASELINE_PATH, BASELINE_PATH),
+                exact_moves=((OLD_BASELINE_PATH, BASELINE_PATH),),
+            )
+        ]
+    )
+
+    assert verdict.passed is True
+    assert verdict.offences == ()
+
+
+def test_a_move_with_an_edit_is_judged_like_any_change() -> None:
+    """Catches a `check` that infers a move from the file list itself (another
+    `baseline.json` gone and `BASELINE_PATH` added in one commit) instead of trusting only
+    git's byte-identical report, which would wave through a threshold edited during a move.
+    `exact_moves` is empty, exactly what git hands over for a move with any edit."""
+    verdict = check(
+        [
+            Commit(
+                sha=OTHER_SHA,
+                subject=MOVE_SUBJECT,
+                files=(OLD_BASELINE_PATH, BASELINE_PATH),
+                exact_moves=(),
+            )
+        ]
+    )
+
+    assert verdict.passed is False
+    assert verdict.offences == (
+        Offence(sha=OTHER_SHA, reasons=(MISSING_PREFIX_REASON, MISSING_ADR_REASON)),
+    )
+
+
+def test_another_file_moved_exactly_onto_the_baseline_is_still_judged() -> None:
+    """Catches a skip that checks only the new side of the move, which would let any file at
+    all, `notes/other.json` here, be renamed onto the baseline with no prefix and no ADR,
+    replacing every threshold in one unreviewed commit. The move is exact and its new path is
+    exactly the baseline, so only the old path's `baseline.json` name test can refuse it."""
+    verdict = check(
+        [
+            Commit(
+                sha=OTHER_SHA,
+                subject=MOVE_SUBJECT,
+                files=("notes/other.json", BASELINE_PATH),
+                exact_moves=(("notes/other.json", BASELINE_PATH),),
+            )
+        ]
+    )
+
+    assert verdict.passed is False
+    assert verdict.offences == (
+        Offence(sha=OTHER_SHA, reasons=(MISSING_PREFIX_REASON, MISSING_ADR_REASON)),
+    )
+
+
+def test_moving_the_baseline_away_is_still_judged() -> None:
+    """Catches a skip that accepts any exact move with `baseline.json` on both sides, or with
+    the baseline on either side, which would let a commit move the watched file out of
+    `backend/evals/` and leave the gate reading nothing. Both names here end `baseline.json`,
+    so only the `new == BASELINE_PATH` test can keep this commit judged."""
+    verdict = check(
+        [
+            Commit(
+                sha=OTHER_SHA,
+                subject=MOVE_SUBJECT,
+                files=(BASELINE_PATH, "old/baseline.json"),
+                exact_moves=((BASELINE_PATH, "old/baseline.json"),),
+            )
+        ]
+    )
+
+    assert verdict.passed is False
+    assert verdict.offences == (
+        Offence(sha=OTHER_SHA, reasons=(MISSING_PREFIX_REASON, MISSING_ADR_REASON)),
+    )
+
+
+def test_commit_exact_moves_defaults_to_empty() -> None:
+    """Catches `exact_moves` added as a required field, which breaks every caller that builds
+    `Commit(sha, subject, files)` today, and catches a default that is anything but empty,
+    which would mark commits as moves nobody reported."""
+    commit = Commit(sha=SHAPE_SHA, subject=SHAPE_SUBJECT, files=(BASELINE_PATH,))
+
+    assert commit.exact_moves == ()

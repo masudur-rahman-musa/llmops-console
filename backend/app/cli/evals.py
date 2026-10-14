@@ -366,10 +366,17 @@ def _checked_ref(value: str, flag: str) -> str:
 def _commits(base: str, head: str) -> tuple[Commit, ...]:
     r"""Read `base..head` once and answer what each commit touched.
 
-    `git log --format=%H%x00%s --name-only` prints a header line `<sha>\x00<subject>`, then a
-    blank line, then one path per line until the next header. The NUL is what
-    separates the sha from a subject that may contain anything, including the colon
-    every well-formed baseline commit's subject carries.
+    `git log --format=%H%x00%s --name-status -M100%` prints a header line
+    `<sha>\x00<subject>`, then a blank line, then one `<status>\t<path>` line per file
+    until the next header. The NUL is what separates the sha from a subject that may
+    contain anything, including the colon every well-formed baseline commit's subject
+    carries.
+
+    `-M100%` makes git report only a byte-identical move as `R100\told\tnew`; any edit
+    turns it into a delete and an add, so it is judged like any change
+    (`test_baseline_guard_fails_a_move_that_also_edits_the_baseline`). Both sides of
+    a move go into `files`, so moving the baseline away is still seen
+    (`test_baseline_guard_fails_a_commit_that_moves_the_baseline_away`).
 
     A range git cannot resolve exits non-zero, and that is reported as a refusal
     rather than as an empty commit list: a shallow checkout would otherwise let this
@@ -381,7 +388,7 @@ def _commits(base: str, head: str) -> tuple[Commit, ...]:
     revisions = f"{base}..{head}"
     try:
         finished = subprocess.run(
-            ["git", "log", "--format=%H%x00%s", "--name-only", revisions],
+            ["git", "log", "--format=%H%x00%s", "--name-status", "-M100%", revisions],
             capture_output=True,
             text=True,
             check=False,
@@ -395,16 +402,23 @@ def _commits(base: str, head: str) -> tuple[Commit, ...]:
     shas: list[str] = []
     subjects: list[str] = []
     touched: list[list[str]] = []
+    moves: list[list[tuple[str, str]]] = []
     for line in finished.stdout.splitlines():
         if "\x00" in line:
             sha, _, subject = line.partition("\x00")
             shas.append(sha)
             subjects.append(subject)
             touched.append([])
+            moves.append([])
         elif line and touched:
-            touched[-1].append(line)
-    for sha, subject, files in zip(shas, subjects, touched, strict=True):
-        commits.append(Commit(sha=sha, subject=subject, files=tuple(files)))
+            status, *paths = line.split("\t")
+            touched[-1].extend(paths)
+            if status == "R100" and len(paths) == 2:
+                moves[-1].append((paths[0], paths[1]))
+    for sha, subject, files, exact in zip(shas, subjects, touched, moves, strict=True):
+        commits.append(
+            Commit(sha=sha, subject=subject, files=tuple(files), exact_moves=tuple(exact))
+        )
     return tuple(commits)
 
 

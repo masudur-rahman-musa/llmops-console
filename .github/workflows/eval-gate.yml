@@ -1,7 +1,7 @@
 name: eval-gate
 # the design's pull request gate, in two halves that fail for different reasons.
 #
-# `baseline-guard` enforces #42: a change to `project-evals/baseline.json` arrives
+# `baseline-guard` enforces #42: a change to `backend/evals/baseline.json` arrives
 # in a commit whose subject starts `baseline:` and which carries its own ADR. It
 # runs on every pull request into main, unconditionally, and it is the half that
 # really executes in this repository today.
