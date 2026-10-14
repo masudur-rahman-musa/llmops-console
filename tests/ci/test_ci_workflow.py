@@ -100,7 +100,7 @@ FINGERPRINT_PATTERN = re.compile(r"[0-9a-f]{40}:[^:]+:generic-api-key:\d+")
 
 #: Case 10's directories. Every allowed literal is a fake one written by a test, so a
 #: fingerprint naming anything else is an exception nobody reviewed as one.
-ALLOWED_FINGERPRINT_PREFIXES = ("tests/", "services/console/tests/")
+ALLOWED_FINGERPRINT_PREFIXES = ("tests/", "services/console/tests/", "web/tests/")
 
 #: Cases 9 and 10's unhappy rows, built from a repeated hex character rather than typed as a
 #: realistic digest: this repository's own `secrets` job scans this file's history with the

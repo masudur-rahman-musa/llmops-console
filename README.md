@@ -68,7 +68,7 @@ The full component breakdown, written up once the system is complete, is in
 [docs/architecture.md](docs/architecture.md). The deployment is Terraform for
 the hosts ([infra/terraform/](infra/terraform/)) and kustomize over k3s for the
 workloads ([infra/k8s/](infra/k8s/)); the dashboard is a Next.js app
-([services/console/](services/console/)) that reads through the gateway's
+([web/](web/)) that reads through the gateway's
 console API and never touches a database or Prometheus from the browser.
 
 ## The seven guarantees

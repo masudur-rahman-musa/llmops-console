@@ -59,8 +59,8 @@ CONSOLE_JOB = "console"
 
 #: An earlier change criterion: the console job's build inputs, and the single tag it publishes, written
 #: out literally so the comparison with the overlay is between two files that both SAY it.
-CONSOLE_CONTEXT = "services/console"
-CONSOLE_DOCKERFILE = "services/console/Dockerfile"
+CONSOLE_CONTEXT = "web"
+CONSOLE_DOCKERFILE = "web/Dockerfile"
 CONSOLE_REPOSITORY = "ghcr.io/masudur-rahman-musa/ai-operations-console/console"
 CONSOLE_TAG_EXPRESSION = "${{ github.sha }}"
 

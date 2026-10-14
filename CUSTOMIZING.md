@@ -69,7 +69,7 @@ You do not have to touch any of these to run the gateway.
 - **Infrastructure.** [infra/terraform/](infra/terraform/) provisions the hosts
   and [infra/k8s/](infra/k8s/) holds the manifests. Both expect your own domain,
   your own state backend and your own registry.
-- **The console.** [services/console/](services/console/) is the dashboard. It
+- **The console.** [web/](web/) is the dashboard. It
   reads through the gateway's console API and holds no credentials of its own.
 
 ## Decisions you are inheriting

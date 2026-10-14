@@ -44,16 +44,16 @@ jobs:
           enable-cache: true
       - run: uv sync --locked --project backend
       # `make lint`, `typecheck` and `test` also run the console's scripts now
-      # that services/console exists, so this job needs pnpm and its install too.
+      # that web exists, so this job needs pnpm and its install too.
       - uses: pnpm/action-setup@v4
         with:
-          package_json_file: services/console/package.json
+          package_json_file: web/package.json
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: services/console/pnpm-lock.yaml
-      - run: pnpm -C services/console install --frozen-lockfile
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm -C web install --frozen-lockfile
       # Same checks as the local pre-commit hooks, and unskippable here.
       - run: uv run --project backend pre-commit run --all-files
       # Mirrors the Makefile gate. `format` runs as a check with the locked ruff,
@@ -70,17 +70,17 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: services/console
+        working-directory: web
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
-          package_json_file: services/console/package.json
+          package_json_file: web/package.json
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: services/console/pnpm-lock.yaml
+          cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm typecheck

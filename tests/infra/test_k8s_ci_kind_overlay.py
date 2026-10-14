@@ -46,7 +46,7 @@ REQUIRED_OBJECTS: frozenset[tuple[str, str, str]] = frozenset(
 )
 
 #: Criterion 2's other half: names no CI overlay may emit, whatever their kind -
-#: nothing here can pull the four Helpdesk images or `services/console`, and kind
+#: nothing here can pull the four Helpdesk images or `web`, and kind
 #: has no controller for either CRD kind.
 EXCLUDED_NAMES: frozenset[str] = frozenset(
     {

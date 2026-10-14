@@ -148,13 +148,13 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Its own context: the console's `.dockerignore` applies only when the
-      # context is `services/console`, and the root context would send the whole
+      # context is `web`, and the root context would send the whole
       # repository to the builder.
       - name: Build and push the console image
         uses: docker/build-push-action@v6
         with:
-          context: services/console
-          file: services/console/Dockerfile
+          context: web
+          file: web/Dockerfile
           platforms: linux/amd64
           push: true
           tags: ghcr.io/masudur-rahman-musa/ai-operations-console/console:${{ github.sha }}

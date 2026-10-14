@@ -1,5 +1,5 @@
 r"""An earlier change: the console in the cluster, read off what kustomize actually emits, plus the three
-files that build its image (`services/console/Dockerfile`, `.dockerignore`, `next.config.ts`).
+files that build its image (`web/Dockerfile`, `.dockerignore`, `next.config.ts`).
 
 The stream comes from the session-scoped `built` fixture in `tests/infra/conftest.py`: one
 `kubectl kustomize infra/k8s` for the whole session, shared with every other
