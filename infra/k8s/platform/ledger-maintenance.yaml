@@ -1,0 +1,109 @@
+# The two ledger-maintenance CronJobs. Both ship entrypoints
+# that nothing called on a schedule until now: `ops-purge-residency` drops the
+# residency_log day partitions past the 90-day retention, and `ops-refresh-rollup`
+# recomputes the `cost_ledger_daily` materialised view the console's cost page reads
+# (`app/ledger/cli.py`). They run on the gateway image, the one image that already
+# carries that code.
+#
+# `image: gateway` is the bare name on purpose, the same as `apps/gateway.yaml`: the
+# platform kustomization's `images:` transformer rewrites it to the full GHCR path at
+# the placeholder tag in the root build, and the server overlay's own `images:` block
+# does the same there - where `deploy.yml`'s `kustomize edit set image` sets the real
+# deployed SHA. Writing the full literal here (the shape `evals/nightly-eval-cronjob.yaml`
+# has to use, since no transformer reaches its sibling kustomization) would pin the
+# placeholder tag on the live node and the pods would never pull.
+#
+# No `imagePullSecrets`: `ghcr-pull` lives in `apps`, not `platform`, and a Secret is
+# namespaced. It is not needed here. The gateway Deployment in `apps` has already pulled
+# this exact image onto the node, and containerd's image store is node-wide, not
+# per-namespace; the tag is a SHA (never `:latest`), so the default `IfNotPresent` pull
+# policy finds the resident image and never reaches GHCR. This holds on the single-node
+# cluster this repo deploys to; a multi-node cluster would owe `platform` its own pull
+# Secret.
+#
+# `OPSCONSOLE_DATABASE_URL` is built from `postgres-credentials` by `$(VAR)` expansion,
+# so no literal credential is written and no new Secret is needed: the
+# three parts already live in that Secret, read in by `envFrom`, and Kubernetes expands
+# `$(POSTGRES_USER)` and friends in the `value` from the container's own environment.
+#
+# Schedules sit at their own hours, clear of the two backups' 03:00 and of each other
+# (`residency-purge` 01:00, `rollup-refresh` 02:00). A CronJob costs the quota only while
+# its Job pod exists, so staggered jobs never coexist and the platform envelope is
+# unchanged: the peak is still the two backups at 03:00. `restartPolicy: OnFailure` with
+# `concurrencyPolicy: Forbid` means a failed night is reported as one and never overlaps
+# the next.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: residency-purge
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: residency-purge
+spec:
+  schedule: "0 1 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: residency-purge
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: residency-purge
+              image: gateway
+              command:
+                - ops-purge-residency
+              envFrom:
+                - secretRef:
+                    name: postgres-credentials
+              env:
+                - name: OPSCONSOLE_DATABASE_URL
+                  value: postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres.platform.svc.cluster.local:5432/$(POSTGRES_DB)
+              resources:
+                requests:
+                  memory: 128Mi
+                  cpu: 100m
+                limits:
+                  memory: 192Mi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: rollup-refresh
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: rollup-refresh
+spec:
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: rollup-refresh
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: rollup-refresh
+              image: gateway
+              command:
+                - ops-refresh-rollup
+              envFrom:
+                - secretRef:
+                    name: postgres-credentials
+              env:
+                - name: OPSCONSOLE_DATABASE_URL
+                  value: postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres.platform.svc.cluster.local:5432/$(POSTGRES_DB)
+              resources:
+                requests:
+                  memory: 128Mi
+                  cpu: 100m
+                limits:
+                  memory: 192Mi

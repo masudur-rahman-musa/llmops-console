@@ -93,6 +93,9 @@ PLATFORM_OBJECTS: frozenset[tuple[str, str, str | None]] = frozenset(
         ("PersistentVolumeClaim", "backups-data", PLATFORM),
         ("CronJob", "postgres-backup", PLATFORM),
         ("CronJob", "qdrant-backup", PLATFORM),
+        # An earlier change: the two ledger-maintenance CronJobs.
+        ("CronJob", "residency-purge", PLATFORM),
+        ("CronJob", "rollup-refresh", PLATFORM),
     }
 )
 
@@ -143,6 +146,23 @@ BACKUP_CONTAINERS: dict[str, dict[str, tuple[str, dict[str, str]]]] = {
 
 #: Criterion re decision B: the account-specific Secret both `rclone-sync` containers read.
 BACKUP_SECRET_NAME = "backup-secrets"
+
+#: An earlier change's two ledger-maintenance CronJobs, by NAME, kept separate from WORKLOAD_RESOURCES
+#: (the probe/Service parametrization would otherwise look for a readinessProbe on a CronJob).
+MAINTENANCE_CRONJOB_NAMES = ("residency-purge", "rollup-refresh")
+#: Each maintenance CronJob's ledger entrypoint (pyproject [project.scripts]).
+MAINTENANCE_ENTRYPOINTS = {
+    "residency-purge": "ops-purge-residency",
+    "rollup-refresh": "ops-refresh-rollup",
+}
+#: The gateway image both maintenance jobs run, as the built stream reads it after the
+#: platform kustomization's images transformer (bare `gateway` -> this full path at the
+#: placeholder tag; deploy.yml sets the real SHA at deploy time and commits nothing back).
+MAINTENANCE_IMAGE = "ghcr.io/masudur-rahman-musa/ai-operations-console/gateway:0.0.0-unbuilt"
+#: The DB credential parts the maintenance env expands from `postgres-credentials` by $(VAR),
+#: so OPSCONSOLE_DATABASE_URL carries no literal secret.
+POSTGRES_CREDENTIALS_SECRET = "postgres-credentials"
+DATABASE_URL_EXPANSIONS = ("$(POSTGRES_USER)", "$(POSTGRES_PASSWORD)", "$(POSTGRES_DB)")
 
 #: The shared PVC row 23d adds, and the mount path both CronJobs' containers agree on.
 BACKUPS_DATA_PVC = "backups-data"
@@ -582,16 +602,19 @@ def test_each_platform_workload_carries_the_agreed_quantities(
 
 
 def test_the_platform_subtotals_fit_inside_the_namespace_quota(built: list[dict[str, Any]]) -> None:
-    """Criterion 4, derived and never restated: the three sums are parsed off
-    the BUILT pod templates in `platform`, multiplied by each workload's replica count, added
-    to `CERT_MANAGER_RESERVE`, and compared to the `platform` `ResourceQuota` read from the
-    SAME build. Catches the arithmetic failing even though every individual row above is
-    correct - a workload raised to fit, a second replica, or the quota lowered by 20a's table
-    - which is the state where `helm install cert-manager` is refused at admission with three
-    pods' worth of budget already spent, and nothing in this repo said so first. Millicores as
-    ints: `0.2 + 0.1 + 0.2 + 0.03` is not `0.53` in binary floating point, so a float
-    comparison would redden a correct manifest. Compared with `<=`, because the reserve is a
-    floor on what cert-manager may take and the headroom above it is deliberate."""
+    """Criterion 4, derived and never restated, now CONCURRENCY-AWARE because
+    an earlier change adds two maintenance CronJobs to `platform` while base/quotas.yaml is deliberately
+    unchanged. A ResourceQuota only counts pods alive at the same moment; CronJobs at different
+    scheduled hours never coexist, so the platform peak is the always-on workloads (full pod
+    every minute, times replicas) PLUS the single costliest hour-group of CronJobs. The two
+    backups share 03:00 and are the peak hour today, so the derived totals are unchanged -
+    1600Mi / 705m / 3040Mi against the quota's 2Gi / 800m / 3Gi; the two maintenance jobs sit at
+    their own hours and add nothing. Catches the arithmetic failing even though every individual
+    row is correct - a workload raised to fit, a second replica, the quota lowered, or a
+    maintenance job grown past the backups' hour so the peak hour changes. Millicores as ints:
+    `0.2 + 0.1 + 0.2 + 0.03` is not `0.53` in binary floating point. Compared with `<=`, because
+    the reserve is a floor on what cert-manager may take and the headroom above it is
+    deliberate."""
     quotas = [
         quota
         for quota in objects_of_kind(built, "ResourceQuota")
@@ -610,16 +633,43 @@ def test_the_platform_subtotals_fit_inside_the_namespace_quota(built: list[dict[
         "limits.memory": pods * memory_limit,
     }
 
+    # always-on workloads cost their full pod every minute; CronJobs cost only while a Job
+    # pod exists, so staggered jobs never coexist. The platform peak is the always-on set
+    # plus the single costliest scheduled hour. The two backups share 03:00 (counted
+    # together, as before); the two maintenance jobs sit at their own hours and add nothing.
     owners = [owner for owner in pod_owners(built) if namespace_of(owner) == PLATFORM]
-    expected_owners = len(WORKLOAD_RESOURCES) + len(BACKUP_CRONJOB_NAMES)
+    expected_owners = (
+        len(WORKLOAD_RESOURCES) + len(BACKUP_CRONJOB_NAMES) + len(MAINTENANCE_CRONJOB_NAMES)
+    )
     assert len(owners) == expected_owners, f"{len(owners)} platform workloads built"
+
     for owner in owners:
+        if owner.get("kind") == "CronJob":
+            continue
         replicas = replicas_of(owner)
         for container in all_containers(owner):
             quantities = resource_quantities(container)
             totals["requests.memory"] += replicas * memory_bytes(quantities["requests.memory"])
             totals["requests.cpu"] += replicas * cpu_millicores(quantities["requests.cpu"])
             totals["limits.memory"] += replicas * memory_bytes(quantities["limits.memory"])
+
+    by_hour: dict[str, dict[str, int]] = {}
+    for owner in owners:
+        if owner.get("kind") != "CronJob":
+            continue
+        hour = str(owner["spec"]["schedule"]).split()[1]
+        group = by_hour.setdefault(
+            hour, {"requests.memory": 0, "requests.cpu": 0, "limits.memory": 0}
+        )
+        for container in all_containers(owner):
+            quantities = resource_quantities(container)
+            group["requests.memory"] += memory_bytes(quantities["requests.memory"])
+            group["requests.cpu"] += cpu_millicores(quantities["requests.cpu"])
+            group["limits.memory"] += memory_bytes(quantities["limits.memory"])
+    if by_hour:
+        peak = max(by_hour.values(), key=lambda group: group["limits.memory"])
+        for key in totals:
+            totals[key] += peak[key]
 
     assert totals["requests.memory"] <= memory_bytes(hard["requests.memory"]), (
         f"platform requests {totals['requests.memory']} bytes against {hard['requests.memory']}"
@@ -878,6 +928,78 @@ def test_each_rclone_sync_container_reads_backup_secrets_and_guards_backup_bucke
     assert "rclone copy" in command, (
         f"{cronjob_name}.rclone-sync's command carries no rclone copy: {command!r}"
     )
+
+
+def test_the_two_maintenance_cronjobs_exist(built: list[dict[str, Any]]) -> None:
+    """An earlier change criterion: both ledger-maintenance CronJobs are in the `platform` stream, exactly
+    one of each name. Catches `ledger-maintenance.yaml` written but left out of
+    `platform/kustomization.yaml`'s `resources` (the file is valid and the object is simply not
+    built, the state decision D's "build and parse" exists to see), and catches either job
+    dropped or duplicated. Scoped by name and namespace, so an unrelated CronJob added elsewhere
+    does not flip it."""
+    for cronjob_name in MAINTENANCE_CRONJOB_NAMES:
+        found = [
+            d
+            for d in objects_of_kind(built, "CronJob")
+            if name_of(d) == cronjob_name and namespace_of(d) == PLATFORM
+        ]
+        assert len(found) == 1, f"{len(found)} CronJobs named {cronjob_name} in {PLATFORM}"
+
+
+def test_the_maintenance_jobs_run_the_ledger_entrypoints(built: list[dict[str, Any]]) -> None:
+    """An earlier change criterion: each maintenance CronJob runs its own ops-* entrypoint as `command[0]`
+    on the gateway image. Catches the two jobs' commands swapped (residency-purge running the
+    rollup refresh, which drops nothing past retention), a command with extra args appended
+    (`command` must be exactly the one entrypoint), and the image left bare or pointed at the
+    wrong package - the value read is what the platform images transformer rewrites `gateway` to,
+    so a job that forgot to name `image: gateway` reddens here."""
+    for cronjob_name, entrypoint in MAINTENANCE_ENTRYPOINTS.items():
+        container = sole_container(workload(built, cronjob_name))
+        assert container.get("command") == [entrypoint], container.get("command")
+        assert container.get("image") == MAINTENANCE_IMAGE, container.get("image")
+
+
+def test_the_maintenance_jobs_carry_no_literal_database_url(built: list[dict[str, Any]]) -> None:
+    """An earlier change criterion and a project rule: `OPSCONSOLE_DATABASE_URL` is built in the container env
+    from `postgres-credentials` by `$(VAR)` expansion, never a literal credential. Catches the
+    `postgres-credentials` envFrom dropped (so the `$(VAR)` names expand to nothing and the job
+    cannot reach the DB), the URL read from a secret KEY via `valueFrom` instead of assembled by
+    expansion (which the plan rejects), and any one of the three `$(POSTGRES_*)` parts missing
+    from the value - a hardcoded password would fail the part check. Build-wide credential
+    scanning lives in its own case; this one pins the shape of THIS env var."""
+    for cronjob_name in MAINTENANCE_CRONJOB_NAMES:
+        container = sole_container(workload(built, cronjob_name))
+        sources = {
+            e["secretRef"]["name"]
+            for e in container.get("envFrom", [])
+            if isinstance(e, dict) and isinstance(e.get("secretRef"), dict)
+        }
+        assert POSTGRES_CREDENTIALS_SECRET in sources, f"{cronjob_name} envFrom {sources}"
+        env = {e["name"]: e for e in container.get("env", []) if isinstance(e, dict)}
+        assert "OPSCONSOLE_DATABASE_URL" in env, f"{cronjob_name} sets no OPSCONSOLE_DATABASE_URL"
+        entry = env["OPSCONSOLE_DATABASE_URL"]
+        assert "valueFrom" not in entry, f"{cronjob_name} reads the URL from a secret key, not $(VAR)"
+        value = str(entry.get("value", ""))
+        for part in DATABASE_URL_EXPANSIONS:
+            assert part in value, f"{cronjob_name} OPSCONSOLE_DATABASE_URL lacks {part}: {value!r}"
+
+
+def test_the_four_platform_cronjobs_run_at_distinct_hours(built: list[dict[str, Any]]) -> None:
+    """An earlier change's unhappy path: the ResourceQuota prices only the single most expensive hour-group
+    of CronJobs, so a maintenance job must sit alone at its hour and add nothing to the peak. The
+    two backups legitimately share 03:00 (their existing pair, priced together), so this case
+    only requires that NEITHER maintenance job shares its hour with anything else - including the
+    other maintenance job. Catches a maintenance schedule left on the backups' 03:00, or the two
+    maintenance jobs stacked on one hour, either of which would make the quota price two pods at
+    once."""
+    platform_cronjobs = [
+        d for d in objects_of_kind(built, "CronJob") if namespace_of(d) == PLATFORM
+    ]
+    hour_of = {name_of(d): str(d["spec"]["schedule"]).split()[1] for d in platform_cronjobs}
+    for mname in MAINTENANCE_CRONJOB_NAMES:
+        assert mname in hour_of, f"{mname} is not a platform CronJob"
+        sharers = sorted(n for n, h in hour_of.items() if h == hour_of[mname] and n != mname)
+        assert sharers == [], f"{mname} shares hour {hour_of[mname]} with {sharers}"
 
 
 def test_the_middlewares_carry_the_agreed_values(built: list[dict[str, Any]]) -> None:

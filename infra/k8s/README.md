@@ -90,6 +90,16 @@ a row raised in isolation fails there rather than at `helm install`. Row 23d's t
 CronJobs leave the namespace 448Mi / 95m / 32Mi of headroom - the limits column is
 now the tight one.
 
+An earlier change adds two more `platform` CronJobs on the gateway image - `residency-purge`
+and `rollup-refresh` (`app/ledger/cli.py`) - but the table above does not grow,
+and the headroom does not shrink. A CronJob costs the quota only while its Job pod
+exists, so jobs at different hours never coexist. The two backups share 03:00 and
+are counted together (the peak); the two maintenance jobs run at 01:00 and 02:00,
+each alone at its hour and no larger than a backup job, so they add nothing to the
+peak the quota is sized for. That is why the subtotals test counts the costliest
+single hour rather than the sum of every CronJob, and a maintenance job moved onto
+03:00 would make the peak three pods and fail it.
+
 ## The apps budget
 
 What `apps/` spends of the 3Gi / 1500m / 7Gi the envelope gives it. The gateway
@@ -544,7 +554,9 @@ make k8s-server-check
 ```
 
 It carries `base`, the platform data stores, the staging issuer, the
-middlewares, the backups (suspended until the node has a bucket), the gateway
+middlewares, the backups (suspended until the node has a bucket), the two
+ledger-maintenance CronJobs (`residency-purge`, `rollup-refresh`, which run live
+here because Postgres is on the node - an earlier change, a design note), the gateway
 and the console. Left out: llama, llama-embed, `monitoring` and `evals`, which
 do not fit; our own `letsencrypt-prod`, so the live one is never overwritten;
 and the Helpdesk's workloads, config and images, which its own repo deploys. The gateway runs one replica with no HPA and
@@ -573,9 +585,10 @@ built objects, adds the Helpdesk's share (704Mi, 300m,
 | `monitoring` | 0 | 0 | 0 | nothing on this node |
 | **total** | **1728Mi** | **1350m** | **3072Mi** | |
 
-The two backup jobs run at 03:00 and 04:00, so the quota pays for one at a
-time. Redis is capped at 96mb and evicts only keys with a TTL, so the budget
-and rate-limit counters stay.
+The two backup jobs run at 03:00 and 04:00 and the two maintenance jobs at 01:00
+and 02:00, all at their own hours, so the platform quota pays for one job at a
+time and the maintenance jobs add nothing to it. Redis is capped at 96mb and
+evicts only keys with a TTL, so the budget and rate-limit counters stay.
 
 The Helpdesk runs beside this build and depends on what it ships: Postgres, Redis
 and Qdrant in `platform`, the gateway, `traefik-basic-auth`, and the `server`

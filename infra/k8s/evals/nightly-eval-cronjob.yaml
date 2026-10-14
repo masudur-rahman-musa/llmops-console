@@ -14,12 +14,13 @@
 # joining the gap the project notes already names for the four Helpdesk images.
 #
 # `ops-eval` is a `[project.scripts]` entry point already installed in that image
-# (`pyproject.toml`), so no second image exists for this job to run. This manifest is
-# honest about being currently inert beyond that: no image has been published under this
-# path yet, and the gateway image's own `Dockerfile`
-# does not `COPY` `backend/evals/`, so `--set` names a path nothing in the container
-# actually carries until a later plan closes that gap too - the same "ships correct but
-# inert" shape `eval-gate.yml` and `deploy.yml` already carry.
+# (`pyproject.toml`), so no second image exists for this job to run.
+#
+# `--set` reads `/app/evals/golden/example.jsonl`, an absolute in-image path: the gateway
+# image's `Dockerfile` now `COPY`s `evals/golden/` into `/app` and `/app` is the workdir
+#, so the file is really there. The old value `backend/evals/golden/...`
+# was repo-relative and the container never carried it. The `nightly-eval.yml` Actions
+# workflow is unchanged: it runs from a checkout, so its `backend/evals/...` path is right.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -52,7 +53,7 @@ spec:
                 - --target
                 - http://gateway.apps.svc.cluster.local
                 - --set
-                - backend/evals/golden/example.jsonl
+                - /app/evals/golden/example.jsonl
                 - --tenant
                 - evals
                 - --run-kind
