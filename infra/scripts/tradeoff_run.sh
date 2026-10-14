@@ -51,7 +51,7 @@ GPU_OVERLAY="$REPO_ROOT/infra/k8s/gpu"
 POLICY_BUILDER="$REPO_ROOT/dev/scripts/tradeoff_policy.py"
 EVIDENCE_ROOT="${TRADEOFF_TEST_ROOT:-$REPO_ROOT}/docs/tradeoff-run"
 
-COMPOSE=(docker compose -f "$REPO_ROOT/docker-compose.yml" -f "$REPO_ROOT/docker-compose.tradeoff.yml" --profile tradeoff --profile local-model)
+COMPOSE=(docker compose -f "$REPO_ROOT/docker-compose.yml" -f "$REPO_ROOT/infra/tradeoff/compose.yml" --profile tradeoff --profile local-model)
 
 # The stand-in golden set: the Helpdesk set lives in the companion
 # repository and does not exist yet, so waiting for it means no table at all.
@@ -63,7 +63,7 @@ TENANT="evals"
 # provider is an expensive way to publish a wrong row.
 GPU_OPTION="gpu-vllm"
 
-# The stub inside the harness, on the port `docker-compose.tradeoff.yml` publishes.
+# The stub inside the harness, on the port `infra/tradeoff/compose.yml` publishes.
 GPU_TARGET="http://localhost:8090"
 
 # Bash `=~` is POSIX ERE over the whole string: `$` does not match before a trailing

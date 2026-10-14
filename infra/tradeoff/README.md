@@ -2,7 +2,7 @@
 
 One partial routing policy per measurement option. `dev/scripts/tradeoff_policy.py`
 deep-merges the file named for an option id over the shipped `routing.yaml` and
-writes the result somewhere temporary; `docker-compose.tradeoff.yml` mounts that
+writes the result somewhere temporary; `infra/tradeoff/compose.yml` mounts that
 result into the gateway read-only. The shipped policy is never edited.
 
 Partials rather than whole copies: each file then says only what makes

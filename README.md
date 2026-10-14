@@ -320,9 +320,9 @@ Requires Docker, [uv](https://docs.astral.sh/uv/) and pnpm.
 
     git clone https://github.com/masudur-rahman-musa/ai-operations-console
     cd ai-operations-console
-    cp .env.example .env        # fill in the provider keys you have
-    docker compose up -d        # gateway, Redis, Postgres, Qdrant
-    uv sync
+    cp backend/.env.example backend/.env   # fill in the provider keys you have
+    docker compose up -d                   # gateway, Redis, Postgres, Qdrant
+    uv sync --project backend
 
 The local llama.cpp model servers are off by default. To start them too:
 
@@ -338,7 +338,7 @@ Then send it an OpenAI-shaped request, naming an alias rather than a model:
 
 `/healthz` says the process is up and `/readyz` says its dependencies are
 reachable. The console is at `http://localhost:3000`. The variables every
-service reads are listed with placeholders in [.env.example](.env.example).
+service reads are listed with placeholders in [backend/.env.example](backend/.env.example).
 
 To run this as your own platform, see [docs/customizing.md](docs/customizing.md): the only
 two files you have to edit are the routing policy and the price table.

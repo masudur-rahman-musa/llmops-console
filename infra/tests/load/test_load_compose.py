@@ -1,4 +1,4 @@
-r"""`docker-compose.load.yml`, the Makefile's `load` target and the results
+r"""`infra/load/compose.yml`, the Makefile's `load` target and the results
 `.gitignore` entry.
 
 Parsing only: the override is read as YAML and the Makefile recipe as text, with
@@ -15,12 +15,12 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-COMPOSE_LOAD = REPO_ROOT / "docker-compose.load.yml"
+COMPOSE_LOAD = REPO_ROOT / "infra" / "load" / "compose.yml"
 MAKEFILE = REPO_ROOT / "Makefile"
 GITIGNORE = REPO_ROOT / ".gitignore"
 
 LOAD_COMPOSE = (
-    "docker compose -f docker-compose.yml -f docker-compose.load.yml --profile load"
+    "docker compose -f docker-compose.yml -f infra/load/compose.yml --profile load"
 )
 POLICY_SOURCE = "./infra/load/routing.load.yaml"
 POLICY_TARGET = "/etc/opsconsole/routing.load.yaml"

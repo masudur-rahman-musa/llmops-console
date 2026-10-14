@@ -1,7 +1,7 @@
 # One command brings up the whole local stack: `docker compose up -d`.
 #
 # No secret is written here. Every credential the gateway needs arrives through
-# `env_file: .env`, and the values below that look like
+# `env_file: backend/.env`, and the values below that look like
 # credentials are the LOCAL Postgres account, which exists only inside this
 # compose network and is created by the same variables that connect to it.
 #
@@ -24,12 +24,16 @@
 services:
   gateway:
     build: backend
-    # Optional, so `docker compose config` and a stack brought up for the
-    # backing services alone work on a checkout with no `.env` yet. A gateway
-    # that needs to reach a provider still needs one: `.env.example` is the
-    # template, and no credential is written in this file.
+    # `backend/.env.demo` (stand-in values) first, then the owner's real
+    # `backend/.env` over it. Both optional, so `docker compose config` and a
+    # stack brought up for the backing services alone work on a fresh checkout
+    # (pinned by `infra/tests/infra/test_root_cleanup.py`). A gateway that needs
+    # to reach a provider still needs `backend/.env`: `backend/.env.example` is
+    # the template, and no credential is written in this file.
     env_file:
-      - path: .env
+      - path: backend/.env.demo
+        required: false
+      - path: backend/.env
         required: false
     ports: ["8080:8080"]
     environment:

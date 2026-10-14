@@ -85,7 +85,7 @@ tradeoff-gpu: ## Apply the GPU host, measure gpu-vllm, capture, destroy (SHA=<co
 tradeoff-gpu-cost: ## Write docs/tradeoff-run/cost.json from Cost Explorer (START=, END=)
 	infra/scripts/tradeoff_run.sh cost $(START) $(END)
 # The k6 load run: 50 RPS for ten minutes against the real gateway over the
-# fixed-delay mock provider (`docker-compose.load.yml`).
+# fixed-delay mock provider (`infra/load/compose.yml`).
 #
 # One logical shell line, so the throwaway key lives in one shell's environment
 # and nowhere else: it is generated here, its digest is handed to the gateway and
@@ -95,7 +95,7 @@ tradeoff-gpu-cost: ## Write docs/tradeoff-run/cost.json from Cost Explorer (STAR
 # a breached threshold fails `make load` and the workflow that calls it.
 # The results directory is opened to every uid because the k6 image runs as its
 # own non-root user, which on a Linux runner does not own the bind mount.
-LOAD_COMPOSE = docker compose -f docker-compose.yml -f docker-compose.load.yml --profile load
+LOAD_COMPOSE = docker compose -f docker-compose.yml -f infra/load/compose.yml --profile load
 load:       ## k6 load test, 50 RPS for 10 minutes, against a mock provider
 	@mkdir -p infra/load/results
 	@chmod a+rwx infra/load/results

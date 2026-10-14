@@ -9,7 +9,7 @@
 # container reaches the model server through the node's own NodePort. The port
 # is `infra/k8s/gpu/vllm.yaml`'s `vllm-node` Service, written out in both files so
 # a test can compare them, and `host.docker.internal` resolves
-# because `docker-compose.tradeoff.yml` gives the gateway `extra_hosts`.
+# because `infra/tradeoff/compose.yml` gives the gateway `extra_hosts`.
 #
 # Enabling the provider here rather than in `routing.yaml` is the point of the
 # overlay: the shipped policy keeps `vllm` disabled, so the live system never
