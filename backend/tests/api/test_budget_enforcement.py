@@ -64,7 +64,6 @@ from prometheus_client import CollectorRegistry
 
 from app.cache import InProcessResponseCache, InProcessSemanticCache
 from app.core.config import Settings
-from app.gateway.app import close_adapters, create_app
 from app.ledger import CostLedgerRow, CostLedgerWriter, InMemoryCostLedgerWriter
 from app.limits.budget import (
     InProcessBudgetStore,
@@ -72,6 +71,7 @@ from app.limits.budget import (
     current_month,
     to_micro_usd,
 )
+from app.main import close_adapters, create_app
 from app.model_routing.policy import Policy
 from app.providers.base import Adapter
 from app.services.chat_pipeline import (

@@ -15,7 +15,7 @@ The contract these tests are written against, before it exists:
   `RequestMetrics` record carried in the ASGI scope beside `RequestTrace`, filled
   where `annotate` is filled and read once by the middleware after the last byte
   (decision E). `None` when nothing started one.
-* `app.gateway.routes.metrics` - `GET /metrics`, unauthenticated
+* `app.api.routes.health` - `GET /metrics`, unauthenticated
   (decision D), answering the Prometheus text exposition format.
 
 The eleven family names below are the design's, spelled as the exposition spells
@@ -47,7 +47,7 @@ from app.core.config import Settings
 from app.core.errors import ProviderError
 from app.core.metrics import request_metrics
 from app.core.validation import MAX_IDENTIFIER_LENGTH
-from app.gateway.app import create_app
+from app.main import create_app
 from app.providers.base import (
     ChatRequest,
     ChatResponse,

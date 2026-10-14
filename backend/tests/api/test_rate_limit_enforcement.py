@@ -77,7 +77,6 @@ from httpx import Response
 
 from app.cache import InProcessResponseCache, InProcessSemanticCache
 from app.core.config import Settings
-from app.gateway.app import close_adapters, create_app
 from app.ledger import CostLedgerRow, CostLedgerWriter, InMemoryCostLedgerWriter
 from app.limits.budget import InProcessBudgetStore, current_month, to_micro_usd
 from app.limits.ratelimit import (
@@ -87,6 +86,7 @@ from app.limits.ratelimit import (
     RedisRateLimitStore,
     Taken,
 )
+from app.main import close_adapters, create_app
 from app.model_routing.policy import Policy
 from app.providers.base import Adapter
 from app.services.chat_pipeline import (

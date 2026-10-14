@@ -41,10 +41,10 @@ import yaml
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.api.routes.admin import routing as admin
 from app.core.config import Settings
 from app.core.validation import MAX_IDENTIFIER_LENGTH
-from app.gateway.app import create_app
-from app.gateway.routes import admin
+from app.main import create_app
 from app.model_routing.errors import AliasUnknown, ResidencyUnavailable
 from app.model_routing.policy import DataClass, Policy
 from app.model_routing.resolver import resolve

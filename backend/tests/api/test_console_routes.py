@@ -21,11 +21,11 @@ What is pinned, each case naming the wrong implementation it catches:
 
 The contract these cases are written against, before it exists:
 
-* `app.gateway.routes.console`: the `CONSOLE_*` path constants and
+* `app.api.routes.dashboard`: the `CONSOLE_*` path constants and
   `CONSOLE_PATHS`, `MIN_DAYS`/`MAX_DAYS`/`DEFAULT_DAYS`, `SourceState`;
 * `app.gateway.console_reads`: the read models, `ConsoleReader`,
   `UnconfiguredConsoleReader`, `HIGHER_IS_BETTER_METRICS` and `regressed_metrics`;
-* `app.gateway.prometheus`: `PrometheusClient` and the named queries;
+* `app.services.prometheus_reads`: `PrometheusClient` and the named queries;
 * `app.state.console_reader` and `app.state.prometheus`, built by `create_app`.
 """
 
@@ -44,9 +44,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.api.routes import dashboard as console
 from app.core.config import Settings
 from app.core.validation import MAX_IDENTIFIER_LENGTH
-from app.gateway.app import create_app
 from app.gateway.console_reads import (
     HIGHER_IS_BETTER_METRICS,
     AliasCost,
@@ -69,7 +69,10 @@ from app.gateway.console_reads import (
     UnconfiguredConsoleReader,
     regressed_metrics,
 )
-from app.gateway.prometheus import (
+from app.limits.budget import current_month
+from app.limits.prices import PriceTable
+from app.main import create_app
+from app.services.prometheus_reads import (
     AVAILABILITY_BUDGET_QUERY,
     CIRCUITS_QUERY,
     ERROR_RATE_QUERY,
@@ -80,9 +83,6 @@ from app.gateway.prometheus import (
     RESIDENCY_VIOLATIONS_30D_QUERY,
     PrometheusClient,
 )
-from app.gateway.routes import console
-from app.limits.budget import current_month
-from app.limits.prices import PriceTable
 
 from .conftest import (
     ADMIN_KEY,
@@ -110,7 +110,7 @@ TENANT_PATHS = [COST, RESIDENCY]
 POSTGRES_PATHS = [HOME, COST, QUALITY, RESIDENCY, INCIDENTS, RELEASES]
 PROMETHEUS_PATHS = [HOME, RESIDENCY, RELIABILITY]
 
-LOGGER = "app.gateway.routes.console"
+LOGGER = "app.services.dashboard"
 
 ADMIN_HEADERS = {"Authorization": f"Bearer {ADMIN_KEY}"}
 TENANT_KEY = TEST_KEYS["nordlicht"]

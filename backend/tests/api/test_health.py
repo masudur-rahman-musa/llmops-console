@@ -21,9 +21,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.api.routes.health import ProbeRegistry
 from app.core.config import Settings
-from app.gateway.app import create_app
-from app.gateway.health import ProbeRegistry
+from app.main import create_app
 from app.model_routing.policy import ResidencyMode
 
 

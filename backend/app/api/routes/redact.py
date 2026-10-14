@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request
 
+from app.api.deps import Context
 from app.core.metrics import record_redactions
 from app.core.tracing import SpanAttributes, annotate, stage_span
-from app.gateway.context import Context
 from app.redaction import RedactionMapStore
 from app.schemas.redact import RedactMessage, RedactRequest, RedactResponse
 from app.services.redaction_flow import REDACT_SPAN, filed_map_id, redact_batch, tenant_directory

@@ -30,7 +30,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from app.core.config import Settings
-from app.gateway.app import close_adapters, create_app
+from app.main import close_adapters, create_app
 from app.model_routing.errors import PolicyInvalid
 from app.model_routing.policy import ResidencyMode
 from app.providers.base import Adapter
@@ -199,7 +199,7 @@ def test_create_app_uses_the_redis_store_when_a_redis_url_is_configured() -> Non
 # half, pinned in `tests/test_health.py`), and the refusal below is what stops a
 # mistyped value starting at all.
 
-APP_LOGGER = "app.gateway.app"
+APP_LOGGER = "app.main"
 
 
 def residency_settings(mode: ResidencyMode) -> Settings:

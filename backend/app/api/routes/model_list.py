@@ -25,7 +25,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict
 
-from app.gateway.context import Context
+from app.api.deps import Context
 from app.model_routing.errors import AliasUnknown, ResidencyUnavailable
 from app.model_routing.policy import PolicyStore, ResidencyMode
 from app.model_routing.resolver import resolve

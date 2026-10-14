@@ -75,13 +75,13 @@ from app.cache import (
 )
 from app.core.config import Settings
 from app.core.errors import ProviderError
-from app.gateway.app import close_adapters, create_app
 from app.ledger import (
     CostLedgerRow,
     CostLedgerWriter,
     InMemoryCostLedgerWriter,
 )
 from app.limits import PriceStore, PriceTableInvalid, price_for
+from app.main import close_adapters, create_app
 from app.providers.base import (
     Adapter,
     ChatRequest,

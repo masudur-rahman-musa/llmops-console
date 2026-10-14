@@ -7,10 +7,10 @@ from typing import cast
 
 from fastapi import APIRouter, Request, Response
 
+from app.api.deps import Context
 from app.core.errors import ProviderError
 from app.core.metrics import record_redactions, record_tokens
 from app.core.tracing import SpanAttributes, annotate, stage_span
-from app.gateway.context import Context
 from app.limits.budget import BUDGET_OVERRIDE_HEADER
 from app.model_routing.errors import AllProvidersUnavailable
 from app.model_routing.policy import PolicyStore, ResidencyMode

@@ -51,9 +51,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict
 
+from app.api.deps import admin_key
 from app.core.errors import ProviderError
 from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
-from app.gateway.routes.admin import admin_key
 from app.model_routing.errors import IdentifierInvalid
 from app.redaction import (
     DirectoryNameInvalid,

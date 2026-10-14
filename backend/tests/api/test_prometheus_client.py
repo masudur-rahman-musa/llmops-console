@@ -1,4 +1,4 @@
-"""`app.gateway.prometheus`: the named queries and the two parsers behind them.
+"""`app.services.prometheus_reads`: the named queries and the two parsers behind them.
 
 No backing service. Every case talks to an `httpx.MockTransport`, so the request
 the client sends and the body it parses are both written out here, and the only
@@ -34,7 +34,7 @@ from typing import Any
 import httpx
 import pytest
 
-from app.gateway.prometheus import (
+from app.services.prometheus_reads import (
     CIRCUITS_QUERY,
     ERROR_RATE_QUERY,
     P95_QUERY,

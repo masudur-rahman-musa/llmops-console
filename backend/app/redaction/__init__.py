@@ -7,7 +7,7 @@ expiring after an hour, `rehydrate.py` puts those values back into an answer -
 whole, or fragment by fragment as a stream delivers it - and
 `directory.py` holds the display names a tenant's operator pushed. The gateway's
 `POST /v1/redact`, `POST /admin/directory` and the inline call sites live in
-`app.gateway.routes`, not here.
+`app.api.routes`, not here.
 
 Ten kinds are detected (`Kind`). Nine have their own pattern and, where the shape
 alone is not enough, their own check: Luhn for cards, mod-97 for IBANs, ISO 7064

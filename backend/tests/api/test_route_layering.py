@@ -16,6 +16,17 @@ _OLD_ROUTE_MODULES = (
     "app.gateway.routes.redact",
 )
 
+_GONE_GATEWAY_MODULES = (
+    "app.gateway.app",
+    "app.gateway.auth",
+    "app.gateway.context",
+    "app.gateway.errors",
+    "app.gateway.health",
+    "app.gateway.probes",
+    "app.gateway.prometheus",
+    "app.gateway.routes",
+)
+
 
 def _imported_modules(path: Path) -> list[str]:
     """Return every `from X import ...` target module named in the file at path."""
@@ -63,3 +74,24 @@ def test_no_route_imports_another_route_and_cache_imports_no_route() -> None:
                 f"cache {path} imports route module {module}; "
                 "the cache reads schema shapes, never a route"
             )
+
+
+def test_the_gateway_api_modules_are_gone() -> None:
+    """Catches an impl that leaves a gateway app/support/route module importable after the split."""
+    for name in _GONE_GATEWAY_MODULES:
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(name)
+    # console_reads stays until an earlier change, so app.gateway is still a package that imports it.
+    importlib.import_module("app.gateway.console_reads")
+
+
+def test_the_admin_routes_are_split() -> None:
+    """Catches an impl that did not split the admin surface into its own package and files."""
+    app_dir = Path(app.__file__).parent
+    admin_dir = app_dir / "api" / "routes" / "admin"
+    assert admin_dir.is_dir(), f"expected admin route package at {admin_dir}"
+    for leaf in ("routing.py", "incidents.py", "releases.py", "directory.py"):
+        assert (admin_dir / leaf).is_file(), f"expected admin route file {admin_dir / leaf}"
+    routes_dir = app_dir / "api" / "routes"
+    for leaf in ("dashboard.py", "health.py", "model_list.py"):
+        assert (routes_dir / leaf).is_file(), f"expected route file {routes_dir / leaf}"

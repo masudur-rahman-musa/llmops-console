@@ -38,24 +38,26 @@ import redis
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.core.config import Settings
-from app.gateway.app import create_app
-from app.gateway.health import ProbeRegistry
-from app.gateway.probes import (
+from app.api.routes.health import (
     POSTGRES_PROBE,
-    PROBE_TIMEOUT_SECONDS,
     PROVIDER_PROBE,
     QDRANT_PROBE,
     QDRANT_READY_PATH,
     REDIS_PROBE,
-    build_qdrant_client,
-    build_redis_client,
+    ProbeRegistry,
     postgres_probe,
     provider_probe,
     qdrant_probe,
     redis_probe,
     register_probes,
 )
+from app.core.clients import (
+    PROBE_TIMEOUT_SECONDS,
+    build_qdrant_client,
+    build_redis_client,
+)
+from app.core.config import Settings
+from app.main import create_app
 from app.providers.base import Adapter
 
 from .conftest import (

@@ -15,11 +15,11 @@ from fastapi.testclient import TestClient
 
 # Imported for their side effect on `GatewayError.__subclasses__()`: a code whose
 # class lives in a module nobody imported would otherwise look missing.
-import app.gateway.auth
-import app.gateway.errors
+import app.api.deps
+import app.core.http_errors
 import app.model_routing.errors  # noqa: F401
 from app.core.errors import ErrorCode, GatewayError
-from app.gateway.errors import GENERIC_FAILURE_MESSAGE, error_type
+from app.core.http_errors import GENERIC_FAILURE_MESSAGE, error_type
 from app.model_routing.errors import (
     AliasUnknown,
     AllProvidersUnavailable,

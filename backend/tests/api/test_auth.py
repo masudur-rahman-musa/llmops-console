@@ -14,7 +14,7 @@ import re
 import pytest
 from fastapi.testclient import TestClient
 
-from app.gateway.auth import MAX_KEY_LENGTH, SettingsKeyStore
+from app.api.deps import MAX_KEY_LENGTH, SettingsKeyStore
 
 from .conftest import (
     API_KEYS,

@@ -159,7 +159,7 @@ def test_models_propagates_a_health_failure(
     def unavailable(*args: object, **kwargs: object) -> tuple[Resolved, ...]:
         raise AllProvidersUnavailable("every provider is unhealthy")
 
-    monkeypatch.setattr("app.gateway.routes.models.resolve", unavailable)
+    monkeypatch.setattr("app.api.routes.model_list.resolve", unavailable)
 
     response = gateway_client.get(MODELS, headers=auth_headers(key=EVALS_KEY, tenant="evals"))
 

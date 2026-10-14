@@ -10,7 +10,7 @@ residency violation.
 
 The contract these cases are written against, before it exists:
 
-* `app.gateway.prometheus`: `AVAILABILITY_BUDGET_QUERY`, `LATENCY_BUDGET_QUERY`,
+* `app.services.prometheus_reads`: `AVAILABILITY_BUDGET_QUERY`, `LATENCY_BUDGET_QUERY`,
   `RESIDENCY_VIOLATIONS_30D_QUERY`, `AVAILABILITY_OBJECTIVE`, `AVAILABILITY_ALLOWED_BAD`,
   `LATENCY_THRESHOLD_SECONDS`, `LATENCY_ALLOWED_SLOW`;
 * `ReliabilityPage.slos`: rows `{name, objective, window, observed, budget_remaining}`,
@@ -30,7 +30,8 @@ from typing import Any
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from gateway.test_console_routes import (
+
+from api.test_console_routes import (
     ERROR,
     FALLBACKS_PREFIX,
     OK,
@@ -42,11 +43,10 @@ from gateway.test_console_routes import (
     Wired,
     error_records,
 )
-
 from app.core.config import Settings
-from app.gateway import prometheus
-from app.gateway.app import create_app
-from app.gateway.prometheus import (
+from app.main import create_app
+from app.services import prometheus_reads as prometheus
+from app.services.prometheus_reads import (
     AVAILABILITY_BUDGET_QUERY,
     LATENCY_BUDGET_QUERY,
     QUERY_PATH,

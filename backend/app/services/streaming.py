@@ -11,7 +11,7 @@ from itertools import chain
 from fastapi.responses import StreamingResponse
 
 from app.core.errors import GatewayError, ProviderError
-from app.gateway.errors import error_body
+from app.core.http_errors import error_body
 from app.model_routing.resolver import Resolved
 from app.providers.base import Adapter, StreamEvent, TextDelta, ToolCallDelta, Usage, UsageTotal
 from app.redaction import StreamRehydrator, rehydrate

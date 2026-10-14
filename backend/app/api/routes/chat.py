@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import StreamingResponse
 
+from app.api.deps import Context
 from app.cache import (
     CACHE_HEADER,
     ResponseCache,
@@ -19,7 +20,6 @@ from app.cache import (
 from app.core.errors import ProviderError
 from app.core.metrics import EXACT_CACHE_KIND, SEMANTIC_CACHE_KIND, record_cache_hit, record_tokens
 from app.core.tracing import SpanAttributes, annotate, stage_span
-from app.gateway.context import Context
 from app.limits.budget import BUDGET_OVERRIDE_HEADER
 from app.model_routing.errors import AllProvidersUnavailable
 from app.model_routing.policy import PolicyStore, ResidencyMode

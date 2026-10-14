@@ -1,7 +1,7 @@
 """Typed routing failures.
 
 Each client-facing error carries the wire `code` from the API error contract and
-the HTTP status it maps to. `app.gateway.errors` builds the OpenAI-shaped
+the HTTP status it maps to. `app.core.http_errors` builds the OpenAI-shaped
 body from those two attributes, so they are pinned exactly by
 `test_empty_candidates_raises_residency_unavailable`, `test_unknown_alias_raises`,
 `test_is_healthy_filtering_everything_raises_all_providers_unavailable`,

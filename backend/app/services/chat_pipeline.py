@@ -9,6 +9,7 @@ from typing import cast
 from starlette.datastructures import State
 from starlette.types import Scope
 
+from app.api.deps import RequestContext
 from app.cache import (
     CACHE_ALLOW,
     CACHE_HEADER,
@@ -29,7 +30,6 @@ from app.core.metrics import (
     record_tokens,
 )
 from app.core.tracing import SpanAttributes, annotate, stage_span
-from app.gateway.context import RequestContext
 from app.ledger import (
     CostLedgerRow,
     CostLedgerWriter,

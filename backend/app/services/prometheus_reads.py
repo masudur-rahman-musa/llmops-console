@@ -7,7 +7,7 @@ as a failing test rather than as an empty panel.
 
 The only client-supplied text that reaches a query is `tenant`, inside
 `redactions_query`'s label matcher. It arrives here already pre-checked by
-`routes.admin._checked_tenant`, a lowercase slug under `re.fullmatch`, which is
+`app.api.deps._checked_tenant`, a lowercase slug under `re.fullmatch`, which is
 what keeps a `"` or a `}` from closing the matcher
 (`test_the_tenant_rejection_table`). This module does not re-check it; the route
 is the one boundary a client string crosses.

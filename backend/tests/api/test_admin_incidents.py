@@ -31,7 +31,7 @@ same app every other case here uses, rather than a fifth app.
 
 The contract these cases are written against, before it exists:
 
-* `admin.ADMIN_INCIDENTS`, `admin.ADMIN_INCIDENT` and `admin.ADMIN_RELEASES`,
+* `incidents.ADMIN_INCIDENTS`, `incidents.ADMIN_INCIDENT` and `releases.ADMIN_RELEASES`,
   mounted POST/PATCH/POST and answering 201/200/201;
 * `app.state.console_events`, a `ConsoleEventWriter`, built alongside
   `app.state.db_pool` and `InMemoryConsoleEventWriter` when there is no pool.
@@ -49,14 +49,14 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.api.routes.admin import incidents, releases
 from app.core.config import Settings
-from app.gateway.app import create_app
-from app.gateway.routes import admin
 from app.ledger.console_events import (
     IncidentRow,
     InMemoryConsoleEventWriter,
     ReleaseRow,
 )
+from app.main import create_app
 
 from .conftest import (
     ADMIN_KEY,
@@ -208,9 +208,9 @@ def test_the_admin_console_event_paths_and_statuses_are_pinned(admin_client: Tes
     registered is caught too. 201/200/201 are values this plan introduces, so standing
     rule 2 has them asserted exactly rather than as "not an error".
     """
-    assert admin.ADMIN_INCIDENTS == ADMIN_INCIDENTS == "/admin/incidents"
-    assert admin.ADMIN_INCIDENT == ADMIN_INCIDENT == "/admin/incidents/{incident_id}"
-    assert admin.ADMIN_RELEASES == ADMIN_RELEASES == "/admin/releases"
+    assert incidents.ADMIN_INCIDENTS == ADMIN_INCIDENTS == "/admin/incidents"
+    assert incidents.ADMIN_INCIDENT == ADMIN_INCIDENT == "/admin/incidents/{incident_id}"
+    assert releases.ADMIN_RELEASES == ADMIN_RELEASES == "/admin/releases"
 
     # The mounted paths, read from the app's own OpenAPI document rather than by
     # walking `app.routes`: this FastAPI wraps every `include_router` call in an

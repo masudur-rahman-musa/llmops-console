@@ -35,8 +35,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
 
+from app.api.routes.admin.directory import ADMIN_DIRECTORY
 from app.core.validation import MAX_IDENTIFIER_LENGTH
-from app.gateway.routes.directory import ADMIN_DIRECTORY
 from app.redaction.directory import (
     MAX_DIRECTORY_NAME_CHARS,
     MAX_DIRECTORY_NAMES,
