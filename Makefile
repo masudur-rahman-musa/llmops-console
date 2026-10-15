@@ -40,11 +40,12 @@ COVERED_100 = backend/app/model_routing/*,backend/app/core/validation.py,backend
 #. The password matches compose's default (POSTGRES_PASSWORD
 # defaults to opsconsole in docker-compose.yml and backend/.env.demo). The three
 # names are written out in each recipe, not hidden behind a make variable, so a
-# static reader (and its guard test) sees the suite is pointed at them.
+# static reader (and its guard test) sees the suite is pointed at them. Each
+# keeps a value already set (CI's service ports) and falls back to compose's.
 test:       ## Run tests with the coverage gate (backing services must be up)
-	OPSCONSOLE_TEST_DATABASE_URL=postgresql://opsconsole:opsconsole@localhost:15432/opsconsole \
-	OPSCONSOLE_TEST_REDIS_URL=redis://localhost:16379/15 \
-	OPSCONSOLE_TEST_QDRANT_URL=http://localhost:16333 \
+	OPSCONSOLE_TEST_DATABASE_URL=$${OPSCONSOLE_TEST_DATABASE_URL:-postgresql://opsconsole:opsconsole@localhost:15432/opsconsole} \
+	OPSCONSOLE_TEST_REDIS_URL=$${OPSCONSOLE_TEST_REDIS_URL:-redis://localhost:16379/15} \
+	OPSCONSOLE_TEST_QDRANT_URL=$${OPSCONSOLE_TEST_QDRANT_URL:-http://localhost:16333} \
 	$(UV_ROOT) pytest backend/tests -n auto --cov --cov-fail-under=80
 	$(UV_ROOT) coverage report --include='$(COVERED_100)' --fail-under=100
 	$(call console,test)
