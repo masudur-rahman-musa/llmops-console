@@ -10,7 +10,6 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 .coverage
-.coverage-baseline
 htmlcov/
 node_modules/
 .next/

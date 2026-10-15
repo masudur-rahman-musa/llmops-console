@@ -1,4 +1,4 @@
-.PHONY: help setup run test select-tests test-adjacent lint typecheck format verify eval infra-check k8s-check k8s-aws-check k8s-server-check server-secrets server-helpdesk-data k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate purge-residency refresh-rollup secrets-encrypt secrets-decrypt secrets-check load
+.PHONY: help setup run test lint typecheck format verify eval infra-check k8s-check k8s-aws-check k8s-server-check server-secrets server-helpdesk-data k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate purge-residency refresh-rollup secrets-encrypt secrets-decrypt secrets-check load
 
 # The console's checks run through pnpm, and are skipped only in a checkout that
 # has no web, so the intended gate stays visible in this file. The
@@ -30,17 +30,10 @@ run:        ## Run the project locally
 # flag overrides `[tool.coverage.run] source` and would silently unmeasure
 # everything outside the path.
 COVERED_100 = backend/app/model_routing/*,backend/app/core/validation.py
-# The per-test coverage map the adjacent check selects from. Written by the
-# same run that proves the suite green, so it can never be staler than it.
-COV_DB = .coverage-baseline
 test:       ## Run tests with the coverage gate
-	COVERAGE_FILE=$(COV_DB) $(UV_ROOT) pytest backend/tests --cov --cov-context=test --cov-fail-under=80
-	COVERAGE_FILE=$(COV_DB) $(UV_ROOT) coverage report --include='$(COVERED_100)' --fail-under=100
+	$(UV_ROOT) pytest backend/tests --cov --cov-fail-under=80
+	$(UV_ROOT) coverage report --include='$(COVERED_100)' --fail-under=100
 	$(call console,test)
-select-tests: ## Print the tests whose recorded coverage touches this change
-	@$(UV_ROOT) python dev/scripts/select_tests.py --explain
-test-adjacent: ## Run only the tests whose coverage touches this change
-	@$(UV_ROOT) python dev/scripts/select_tests.py | tr ' ' '\n' | xargs $(UV_ROOT) pytest
 lint:       ## Lint
 	$(UV_ROOT) ruff check --config backend/pyproject.toml .
 	$(call console,lint)
