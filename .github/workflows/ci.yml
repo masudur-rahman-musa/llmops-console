@@ -321,7 +321,7 @@ jobs:
       # `--no-emit-project` to keep the unhashed editable entry out of a file that
       # is about to be read under `--require-hashes`.
       - name: export the locked dependency set
-        run: uv export --format requirements-txt --locked --no-emit-project --all-groups -o requirements-audit.txt
+        run: uv export --project backend --format requirements-txt --locked --no-emit-project --all-groups -o requirements-audit.txt
       # `--strict` so an unresolvable dependency fails rather than warning, and
       # `--disable-pip` so the audit resolves nothing of its own.
       - name: audit the locked dependency set
