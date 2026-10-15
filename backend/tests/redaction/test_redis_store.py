@@ -32,9 +32,8 @@ accepts the first of those and would hand Redis a key with a line break in it.
 
 from __future__ import annotations
 
-import os
 import uuid
-from collections.abc import Iterator, Mapping
+from collections.abc import Mapping
 from typing import cast
 
 import pytest
@@ -53,9 +52,6 @@ from app.redaction.store import (
     REDACTION_MAP_KEY_PREFIX,
     RedisRedactionMapStore,
 )
-
-REDIS_URL_VAR = "OPSCONSOLE_TEST_REDIS_URL"
-REDIS_URL = os.environ.get(REDIS_URL_VAR)
 
 TENANT = "nordlicht"
 OTHER_TENANT = "cuan"
@@ -310,36 +306,13 @@ def test_the_typed_failure_does_not_swallow_the_cause() -> None:
 # --------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="session")
-def redis_client() -> Iterator[redis.Redis]:
-    """One client for the whole session, built once.
-
-    The skip is an explicit conditional on `OPSCONSOLE_REDIS_URL` (standing rule
-    9), never a swallowed connection error: a suite that could not reach Redis
-    has to say so by name, or the half of this file that pins the TTL would
-    report success having checked nothing.
-    """
-    if REDIS_URL is None:
-        pytest.skip(f"{REDIS_URL_VAR} is not set: start Redis and export it to run these")
-    client: redis.Redis = redis.Redis.from_url(REDIS_URL)
-    yield client
-    client.close()
-
-
-@pytest.fixture
-def key_prefix() -> str:
-    """A namespace unique to one test, which is the whole of its isolation.
-
-    Never `FLUSHDB`: this suite may share a database with anything else, and a
-    flush would delete keys it does not own. Every key written under this prefix
-    expires on its own TTL.
-    """
-    return f"test-{uuid.uuid4().hex}"
-
-
 @pytest.fixture
 def store(redis_client: redis.Redis, key_prefix: str) -> RedisRedactionMapStore:
-    """The store under test, namespaced to this test and sharing the session's client."""
+    """The store under test, namespaced to this test and sharing the session's client.
+
+    `redis_client` and `key_prefix` come from the top `tests/conftest.py`, built
+    once per run; this file builds no client of its own.
+    """
     return RedisRedactionMapStore(redis_client, key_prefix=key_prefix)
 
 

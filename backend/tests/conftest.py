@@ -14,9 +14,13 @@ developer with a local stack up would run a different suite from one without.
 
 from __future__ import annotations
 
+import os
+import uuid
 from collections.abc import Iterator
 
+import httpx
 import pytest
+import redis
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -55,6 +59,15 @@ def _no_backing_service_environment() -> Iterator[None]:
     with pytest.MonkeyPatch.context() as patched:
         for variable in CLEARED_VARIABLES:
             patched.delenv(variable, raising=False)
+        # Bound the OTLP export retry for the whole session. A tracing test builds
+        # an app pointed at an endpoint nothing listens on (an earlier change,
+        # `tests/api/test_tracing.py`), which attaches a `BatchSpanProcessor` to the
+        # process-wide provider that can never be detached. Every later app shutdown
+        # then calls `flush_tracing()` -> `force_flush()`, and the OTLP/HTTP exporter
+        # retries the dead endpoint with exponential backoff - about seven seconds a
+        # flush, a third of the old run. The exporter bounds its own retry loop by
+        # this timeout, so one second turns each of those flushes into under a second.
+        patched.setenv("OTEL_EXPORTER_OTLP_TRACES_TIMEOUT", "1")
         yield
 
 
@@ -79,3 +92,75 @@ def registry(app: FastAPI) -> ProbeRegistry:
     probes = app.state.probes
     assert isinstance(probes, ProbeRegistry)
     return probes
+
+
+# --- shared backing-service clients ------------------------
+#
+# One Redis client and one Qdrant client for the whole run, built once here so no
+# test file builds its own (the own-client guard, `test_own_client_guard.py`,
+# scans every non-conftest file for a real build and holds the allowlist empty).
+# Under `make test`'s `-n auto`, session scope means one client per xdist worker;
+# per-test isolation is the uuid `key_prefix` and `collection_prefix` below, never
+# a rebuild and never a flush that would delete a neighbour's keys.
+#
+# The skip is an explicit conditional on the `OPSCONSOLE_TEST_*` variable's NAME
+#, never a swallowed connection error: a cache answers absent on
+# every failure, so a suite that could not reach its store would otherwise report
+# success having checked nothing. Deliberately NOT the `OPSCONSOLE_*` names
+# `Settings` reads, which the session fixture above clears.
+
+REDIS_URL_VAR = "OPSCONSOLE_TEST_REDIS_URL"
+QDRANT_URL_VAR = "OPSCONSOLE_TEST_QDRANT_URL"
+
+QDRANT_SESSION_PREFIX = f"opsconsole-test-{uuid.uuid4().hex[:8]}-"
+"""Every collection this run creates begins with it, so the teardown names its own
+collections and touches nothing else a shared Qdrant may hold."""
+
+
+@pytest.fixture(scope="session")
+def redis_client() -> Iterator[redis.Redis]:
+    """One Redis client for the whole session, built once."""
+    url = os.environ.get(REDIS_URL_VAR)
+    if url is None:
+        pytest.skip(f"{REDIS_URL_VAR} is not set: start Redis and export it to run these")
+    client: redis.Redis = redis.Redis.from_url(url)
+    yield client
+    client.close()
+
+
+@pytest.fixture
+def key_prefix() -> str:
+    """A Redis namespace unique to one test, which is the whole of its isolation.
+
+    Never `FLUSHDB`: a run may share a database with anything else, and a flush
+    would delete keys it does not own. Every key written under this prefix expires
+    on its own TTL.
+    """
+    return f"test-{uuid.uuid4().hex}"
+
+
+@pytest.fixture(scope="session")
+def qdrant_client() -> Iterator[httpx.Client]:
+    """One Qdrant client for the whole session, built once.
+
+    The teardown removes the collections THIS run created, found by
+    `QDRANT_SESSION_PREFIX`. It is not a sweep: a shared Qdrant may hold
+    collections this suite does not own.
+    """
+    url = os.environ.get(QDRANT_URL_VAR)
+    if url is None:
+        pytest.skip(f"{QDRANT_URL_VAR} is not set: start Qdrant and export it to run these")
+    client = httpx.Client(base_url=url, timeout=httpx.Timeout(5.0))
+    yield client
+    listed = client.get("/collections")
+    if listed.status_code < 300:
+        for entry in listed.json()["result"]["collections"]:
+            if str(entry["name"]).startswith(QDRANT_SESSION_PREFIX):
+                client.delete(f"/collections/{entry['name']}")
+    client.close()
+
+
+@pytest.fixture
+def collection_prefix() -> str:
+    """A Qdrant collection namespace unique to one test, the whole of its isolation."""
+    return f"{QDRANT_SESSION_PREFIX}{uuid.uuid4().hex[:8]}-cache_"

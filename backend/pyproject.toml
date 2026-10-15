@@ -123,6 +123,7 @@ addopts = "-q"
 # unknown-marker warning cannot hide a typo'd mark.
 markers = [
     "slow: a slow test, skipped by `make fast` but run by CI and `make verify`",
+    "db: a test that reaches a real backing service (Postgres, Redis or Qdrant)",
 ]
 
 [tool.coverage.run]

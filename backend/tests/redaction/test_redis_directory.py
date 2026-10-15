@@ -37,7 +37,6 @@ a Redis key.
 
 from __future__ import annotations
 
-import os
 import uuid
 from collections.abc import Iterator, Mapping, Sequence
 from typing import cast
@@ -57,9 +56,6 @@ from app.redaction.names_store import (
     name_field,
     normalise_name,
 )
-
-REDIS_URL_VAR = "OPSCONSOLE_TEST_REDIS_URL"
-REDIS_URL = os.environ.get(REDIS_URL_VAR)
 
 TENANT = "nordlicht"
 OTHER_TENANT = "cuan"
@@ -300,35 +296,12 @@ def test_the_typed_failure_does_not_swallow_the_cause() -> None:
 # --------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="session")
-def redis_client() -> Iterator[redis.Redis]:
-    """One client for the whole session, built once.
-
-    The skip is an explicit conditional on `OPSCONSOLE_TEST_REDIS_URL` (standing
-    rule 9), never a swallowed connection error: a suite that could not reach
-    Redis has to say so by name, or the half of this file that pins the key shape
-    would report success having checked nothing.
-    """
-    if REDIS_URL is None:
-        pytest.skip(f"{REDIS_URL_VAR} is not set: start Redis and export it to run these")
-    client: redis.Redis = redis.Redis.from_url(REDIS_URL)
-    yield client
-    client.close()
-
-
-@pytest.fixture
-def key_prefix() -> str:
-    """A namespace unique to one test, which is the whole of its isolation.
-
-    Never `FLUSHDB`: this suite may share a database with anything else, and a
-    flush would delete keys it does not own.
-    """
-    return f"test-{uuid.uuid4().hex}"
-
-
 @pytest.fixture
 def store(redis_client: redis.Redis, key_prefix: str) -> Iterator[RedisDirectoryStore]:
     """The store under test, namespaced to this test and sharing the session's client.
+
+    `redis_client` and `key_prefix` come from the top `tests/conftest.py`, built
+    once per run; this file builds no client of its own.
 
     A directory key has no TTL, so the teardown deletes the two keys this file can
     have written under this test's prefix, by their exact names. Naming them is

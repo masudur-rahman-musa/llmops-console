@@ -57,8 +57,6 @@ is the one thing a rate limit must not cause.
 from __future__ import annotations
 
 import logging
-import os
-import uuid
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from typing import Any, cast
@@ -77,9 +75,6 @@ from app.limits.ratelimit import (
     bucket_key,
 )
 from app.model_routing.errors import IdentifierInvalid
-
-REDIS_URL_VAR = "OPSCONSOLE_TEST_REDIS_URL"
-REDIS_URL = os.environ.get(REDIS_URL_VAR)
 
 RATE_LIMIT_LOGGER = "app.limits.ratelimit"
 """Where a swallowed failure is reported. Named so the assertions below count THIS
@@ -444,35 +439,6 @@ def test_an_answer_the_script_could_not_have_produced_reads_unknown() -> None:
 # --------------------------------------------------------------------------
 # against a real Redis
 # --------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="session")
-def redis_client() -> Iterator[redis.Redis]:
-    """One client for the whole session, built once.
-
-    The skip is an explicit conditional on `OPSCONSOLE_TEST_REDIS_URL` (standing
-    rule 9), never a swallowed connection error: a suite that could not reach
-    Redis has to say so by name, or the half of this file that makes the
-    in-process twin evidence about the Lua script would report success having
-    checked nothing.
-    """
-    if REDIS_URL is None:
-        pytest.skip(f"{REDIS_URL_VAR} is not set: start Redis and export it to run these")
-    client: redis.Redis = redis.Redis.from_url(REDIS_URL)
-    yield client
-    client.close()
-
-
-@pytest.fixture
-def key_prefix() -> str:
-    """A namespace unique to one test, which is the whole of its isolation.
-
-    Never `FLUSHDB`: this suite may share a database with anything else, and a
-    flush would delete keys it does not own. Every key this
-    file writes carries the shipped TTL, so nothing it leaves behind is
-    permanent.
-    """
-    return f"test-ratelimit-{uuid.uuid4().hex}"
 
 
 @pytest.fixture

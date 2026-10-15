@@ -45,10 +45,6 @@ sent with no threshold at all.
 
 from __future__ import annotations
 
-import os
-import uuid
-from collections.abc import Iterator
-
 import httpx
 import pytest
 
@@ -65,13 +61,6 @@ from .test_vectors import (
     SYSTEM_HASH,
     TOOLS_HASH,
 )
-
-QDRANT_URL_VAR = "OPSCONSOLE_TEST_QDRANT_URL"
-QDRANT_URL = os.environ.get(QDRANT_URL_VAR)
-
-SESSION_PREFIX = f"opsconsole-test-{uuid.uuid4().hex[:8]}-"
-"""Every collection this run creates begins with it, so the teardown can name its
-own collections and touch nothing else."""
 
 UNREACHABLE_URL = "http://qdrant.invalid:6333"
 
@@ -253,42 +242,25 @@ def test_a_stored_payload_this_build_cannot_read_is_a_miss(case: str, payload: o
 # --------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="session")
-def qdrant_client() -> Iterator[httpx.Client]:
-    """One client for the whole session, built once.
-
-    The skip is an explicit conditional on `OPSCONSOLE_TEST_QDRANT_URL` (standing
-    rule 9), never a swallowed connection error: this cache answers absent on
-    every failure, so a suite that could not reach Qdrant would otherwise report
-    success having checked nothing at all - the trap this class's own semantics
-    set for its tests.
-
-    The teardown removes the collections THIS run created, found by
-    `SESSION_PREFIX`. It is not a sweep: a shared Qdrant may hold collections
-    this suite does not own, and a project rule's namespace is what keeps them
-    out of reach in the first place.
-    """
-    if QDRANT_URL is None:
-        pytest.skip(f"{QDRANT_URL_VAR} is not set: start Qdrant and export it to run these")
-    client = httpx.Client(base_url=QDRANT_URL, timeout=httpx.Timeout(5.0))
-    yield client
-    listed = client.get("/collections")
-    if listed.status_code < 300:
-        for entry in listed.json()["result"]["collections"]:
-            if str(entry["name"]).startswith(SESSION_PREFIX):
-                client.delete(f"/collections/{entry['name']}")
-    client.close()
-
-
-@pytest.fixture
-def collection_prefix() -> str:
-    """A collection namespace unique to one test, which is the whole of its isolation."""
-    return f"{SESSION_PREFIX}{uuid.uuid4().hex[:8]}-cache_"
+@pytest.mark.db
+def test_the_qdrant_client_is_the_shared_session_client(
+    cache: QdrantSemanticCache, qdrant_client: httpx.Client, request: pytest.FixtureRequest
+) -> None:
+    """Catches a file that builds its own Qdrant client instead of taking the shared one:
+    the cache under test must hold the session client from `conftest.py`, and that client
+    is built once per run. Asking for `qdrant_client` a second time hands back the identical
+    object, which is what "built once" means - a per-test rebuild would answer a new one."""
+    assert cache._client is qdrant_client
+    assert request.getfixturevalue("qdrant_client") is qdrant_client
 
 
 @pytest.fixture
 def cache(qdrant_client: httpx.Client, collection_prefix: str) -> QdrantSemanticCache:
-    """The cache under test, namespaced to this test and sharing the session's client."""
+    """The cache under test, namespaced to this test and sharing the session's client.
+
+    `qdrant_client` and `collection_prefix` come from the top `tests/conftest.py`, built
+    once per run; this file builds no client of its own.
+    """
     return QdrantSemanticCache(qdrant_client, collection_prefix=collection_prefix)
 
 
@@ -326,6 +298,7 @@ def collection_config(client: httpx.Client, name: str) -> httpx.Response:
     return client.get(f"/collections/{name}")
 
 
+@pytest.mark.db
 def test_a_stored_answer_round_trips_through_qdrant(cache: QdrantSemanticCache) -> None:
     """Catches an answer written with `str(answer)` or read back as raw bytes: the entry
     travels as JSON in the point payload and comes back as a `ChatResponse`, so a round trip

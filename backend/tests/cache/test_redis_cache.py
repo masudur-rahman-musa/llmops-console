@@ -31,9 +31,7 @@ neighbouring suite's keys) and never a fresh client.
 
 from __future__ import annotations
 
-import os
 import uuid
-from collections.abc import Iterator
 from typing import cast
 
 import pytest
@@ -50,9 +48,6 @@ from app.model_routing.errors import IdentifierInvalid
 from app.providers.base import ChatResponse
 
 from .conftest import OTHER_TENANT, TENANT, cached_answer
-
-REDIS_URL_VAR = "OPSCONSOLE_TEST_REDIS_URL"
-REDIS_URL = os.environ.get(REDIS_URL_VAR)
 
 WELL_FORMED_KEY = "0123456789abcdef" * 4
 """64 lowercase hex characters: the shape `cache_key` mints and `get` accepts."""
@@ -292,38 +287,26 @@ def test_unreadable_stored_bytes_answer_absent_rather_than_raising() -> None:
 # --------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="session")
-def redis_client() -> Iterator[redis.Redis]:
-    """One client for the whole session, built once.
-
-    The skip is an explicit conditional on `OPSCONSOLE_TEST_REDIS_URL` (standing
-    rule 9), never a swallowed connection error: this store answers `None` on
-    every failure, so a suite that could not reach Redis would otherwise report
-    success having checked nothing at all - which is exactly the trap this
-    store's own semantics set for its tests.
-    """
-    if REDIS_URL is None:
-        pytest.skip(f"{REDIS_URL_VAR} is not set: start Redis and export it to run these")
-    client: redis.Redis = redis.Redis.from_url(REDIS_URL)
-    yield client
-    client.close()
-
-
-@pytest.fixture
-def key_prefix() -> str:
-    """A namespace unique to one test, which is the whole of its isolation.
-
-    Never `FLUSHDB`: this suite may share a database with anything else, and a
-    flush would delete keys it does not own. Every key written under this prefix
-    expires on its own TTL.
-    """
-    return f"test-{uuid.uuid4().hex}"
-
-
 @pytest.fixture
 def cache(redis_client: redis.Redis, key_prefix: str) -> RedisResponseCache:
-    """The cache under test, namespaced to this test and sharing the session's client."""
+    """The cache under test, namespaced to this test and sharing the session's client.
+
+    `redis_client` and `key_prefix` come from the top `tests/conftest.py`, built
+    once per run; this file builds no client of its own.
+    """
     return RedisResponseCache(redis_client, key_prefix=key_prefix)
+
+
+@pytest.mark.db
+def test_the_redis_client_is_the_shared_session_client(
+    cache: RedisResponseCache, redis_client: redis.Redis, request: pytest.FixtureRequest
+) -> None:
+    """Catches a file that builds its own Redis client instead of taking the shared one:
+    the cache under test must hold the session client from `conftest.py`, and that client
+    is built once per run. Asking for `redis_client` a second time hands back the identical
+    object, which is what "built once" means - a per-test rebuild would answer a new one."""
+    assert cache._client is redis_client
+    assert request.getfixturevalue("redis_client") is redis_client
 
 
 def test_a_stored_answer_round_trips_through_redis(cache: RedisResponseCache) -> None:

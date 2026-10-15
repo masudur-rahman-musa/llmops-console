@@ -45,7 +45,7 @@ test:       ## Run tests with the coverage gate (backing services must be up)
 	OPSCONSOLE_TEST_DATABASE_URL=postgresql://opsconsole:opsconsole@localhost:15432/opsconsole \
 	OPSCONSOLE_TEST_REDIS_URL=redis://localhost:16379/15 \
 	OPSCONSOLE_TEST_QDRANT_URL=http://localhost:16333 \
-	$(UV_ROOT) pytest backend/tests --cov --cov-fail-under=80
+	$(UV_ROOT) pytest backend/tests -n auto --cov --cov-fail-under=80
 	$(UV_ROOT) coverage report --include='$(COVERED_100)' --fail-under=100
 	$(call console,test)
 # The everyday run: every test not marked `slow`, across one
