@@ -29,7 +29,7 @@ run:        ## Run the project locally
 # data pytest just wrote instead of re-running with `--cov=<path>`, because that
 # flag overrides `[tool.coverage.run] source` and would silently unmeasure
 # everything outside the path.
-COVERED_100 = backend/app/model_routing/*,backend/app/core/validation.py
+COVERED_100 = backend/app/model_routing/*,backend/app/core/validation.py,backend/app/limits/*
 # `make test` (and so `make verify`) points the three OPSCONSOLE_TEST_* URLs at
 # the compose host ports (Postgres 15432, Redis 16379 db 15, Qdrant 16333), so
 # the full suite really runs the 116 backing-service tests instead of skipping

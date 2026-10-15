@@ -464,6 +464,12 @@ def test_the_retry_after_floor_is_a_whole_second() -> None:
     assert retry_after(tokens=0.0, cost=1, rate_per_second=1000.0) == MIN_RETRY_AFTER_SECONDS
 
 
+def test_a_zero_rate_answers_the_floor_instead_of_raising() -> None:
+    """A bucket that never refills has no wait to report. Catches a division by zero
+    inside a request that is already being refused."""
+    assert retry_after(tokens=0.0, cost=1, rate_per_second=0.0) == MIN_RETRY_AFTER_SECONDS
+
+
 def test_the_retry_after_is_a_whole_number_of_seconds() -> None:
     """The type, not the value. `Retry-After: 0.5` is not a legal header value and a client
     parsing it as an integer fails on the response that was trying to help it. Catches a
