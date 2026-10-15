@@ -743,7 +743,7 @@ def test_exactly_the_usable_azure_providers_are_built() -> None:
 
 # The policy file the product ships with, resolved from this file so the test does
 # not depend on the working directory pytest was started from.
-SHIPPED_POLICY_PATH = Path(__file__).resolve().parents[2] / "routing.yaml"
+SHIPPED_POLICY_PATH = Path(__file__).resolve().parents[2] / "config" / "routing.yaml"
 
 
 def test_the_shipped_azure_provider_is_disabled_and_builds_nothing(

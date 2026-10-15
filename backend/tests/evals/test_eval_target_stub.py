@@ -29,8 +29,8 @@ from app.evals.cases import EvalCase, load_golden_set
 from app.evals.target import EvalEnvelope, to_outcome
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-STUB_PATH = REPO_ROOT / "project-evals" / "ci" / "eval-target-stub" / "main.py"
-GOLDEN_SET = REPO_ROOT / "project-evals" / "golden" / "e2e-kind.jsonl"
+STUB_PATH = REPO_ROOT / "evals" / "target-stub" / "main.py"
+GOLDEN_SET = REPO_ROOT / "evals" / "golden" / "e2e-kind.jsonl"
 
 EXPECTED_CASE_COUNT = 10
 """Acceptance criterion 5: the set is exactly ten cases."""

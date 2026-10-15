@@ -37,7 +37,7 @@ import pytest
 from app.redaction import Detection, Kind, NameDirectory, RedactionResult, redact
 
 FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "cases.json"
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 README_PATH = REPO_ROOT / "README.md"
 REPORT_SCRIPT_PATH = REPO_ROOT / "dev" / "scripts" / "redaction_report.py"
 

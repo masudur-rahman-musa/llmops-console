@@ -28,6 +28,7 @@ no network: the four end-to-end runs are made once for the module.
 from __future__ import annotations
 
 import importlib.util
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -37,16 +38,32 @@ from urllib.parse import urlparse
 
 import pytest
 import yaml
-from infra.test_hetzner_module import ASSIGNMENT, SECRETISH_NAME, TOKEN_LITERAL, read
 
 from app.evals.tradeoff import OPTION_ID_PATTERN
 from app.model_routing.policy import load_policy
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "dev" / "scripts" / "tradeoff_policy.py"
 OVERLAY_DIR = REPO_ROOT / "infra" / "tradeoff"
-ROUTING = REPO_ROOT / "routing.yaml"
+ROUTING = REPO_ROOT / "backend" / "config" / "routing.yaml"
 GPU_VLLM_MANIFEST = REPO_ROOT / "infra" / "k8s" / "gpu" / "vllm.yaml"
+COMPOSE_OVERLAY = "compose.yml"
+
+# The secret scan's three patterns and its reader, kept here rather than imported:
+# they live in `infra/tests/infra/test_hetzner_module.py`, a tree a backend test
+# cannot import (pinned by `tests/test_test_tree.py`). Keep the two copies equal.
+SECRETISH_NAME = re.compile(
+    r"[A-Za-z0-9_.-]*(token|secret|password|api_key)[A-Za-z0-9_.-]*", re.IGNORECASE
+)
+TOKEN_LITERAL = re.compile(r"[A-Za-z0-9+/=_-]{20,}")
+ASSIGNMENT = re.compile(r"""([A-Za-z0-9_.-]+)\s*[:=]\s*["']([^"'\n]*)["']""")
+
+
+def read(path: Path) -> str:
+    """Read a file the case needs, failing this case alone when it is absent."""
+    assert path.is_file(), f"{path} does not exist"
+    return path.read_text(encoding="utf-8")
+
 
 #: Section 1's four overlays, in SPEC section 11's order, with the ONE candidate each pins.
 #: Provider and model are required TOGETHER: a file naming the right
@@ -389,7 +406,12 @@ def test_the_overlay_directory_holds_exactly_the_four_option_files() -> None:
     does not name and no test reads, and an option file named for an id the manifest never uses
     - the run would build a policy nobody measures."""
     assert OVERLAY_DIR.is_dir(), f"{OVERLAY_DIR} does not exist"
-    names = sorted(path.name for path in OVERLAY_DIR.iterdir() if path.suffix in {".yaml", ".yml"})
+    # `compose.yml` is the run's Docker Compose overlay, kept with its kit, not a policy overlay.
+    names = sorted(
+        path.name
+        for path in OVERLAY_DIR.iterdir()
+        if path.suffix in {".yaml", ".yml"} and path.name != COMPOSE_OVERLAY
+    )
 
     assert names == sorted(f"{option_id}.yaml" for option_id in OPTION_IDS), names
 

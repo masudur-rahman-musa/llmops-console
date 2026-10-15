@@ -34,13 +34,13 @@ COVERED_100 = backend/app/model_routing/*,backend/app/core/validation.py
 # same run that proves the suite green, so it can never be staler than it.
 COV_DB = .coverage-baseline
 test:       ## Run tests with the coverage gate
-	COVERAGE_FILE=$(COV_DB) $(UV_ROOT) pytest -q backend/tests --cov --cov-context=test --cov-fail-under=80
+	COVERAGE_FILE=$(COV_DB) $(UV_ROOT) pytest backend/tests --cov --cov-context=test --cov-fail-under=80
 	COVERAGE_FILE=$(COV_DB) $(UV_ROOT) coverage report --include='$(COVERED_100)' --fail-under=100
 	$(call console,test)
 select-tests: ## Print the tests whose recorded coverage touches this change
 	@$(UV_ROOT) python dev/scripts/select_tests.py --explain
 test-adjacent: ## Run only the tests whose coverage touches this change
-	@$(UV_ROOT) python dev/scripts/select_tests.py | tr ' ' '\n' | xargs $(UV_ROOT) pytest -q
+	@$(UV_ROOT) python dev/scripts/select_tests.py | tr ' ' '\n' | xargs $(UV_ROOT) pytest
 lint:       ## Lint
 	$(UV_ROOT) ruff check --config backend/pyproject.toml .
 	$(call console,lint)

@@ -77,7 +77,7 @@ from app.storage.cost_ledger import (
 
 Pool = ConnectionPool[Connection[TupleRow]]
 
-SHIPPED_POLICY_PATH = Path(__file__).resolve().parents[2] / "routing.yaml"
+SHIPPED_POLICY_PATH = Path(__file__).resolve().parents[2] / "config" / "routing.yaml"
 """Resolved from this file, so the cases do not depend on pytest's directory."""
 
 # One fixed instant, with a time of day far from both midnights so a writer that

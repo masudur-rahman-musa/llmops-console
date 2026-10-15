@@ -26,8 +26,8 @@ from app.limits.prices import PriceStore, load_prices, price_for
 from app.model_routing.policy import Policy, load_policy
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SHIPPED_PRICES_PATH = REPO_ROOT / "prices.yaml"
-SHIPPED_POLICY_PATH = REPO_ROOT / "routing.yaml"
+SHIPPED_PRICES_PATH = REPO_ROOT / "config" / "prices.yaml"
+SHIPPED_POLICY_PATH = REPO_ROOT / "config" / "routing.yaml"
 
 KEY = "prov-a/model-a"
 """The one price key every crafted document below carries."""
