@@ -1,7 +1,10 @@
-# Qdrant: the semantic cache's vector store. `qdrant/qdrant:v1.12.4`, pinned to
-# the patch the local stack runs (decision E) - the on-disk collection format is
-# what changes underneath a StatefulSet's claim, so this is the one image where
-# a floating tag would be a data question rather than a version question.
+# Qdrant: the semantic cache's vector store. `qdrant/qdrant:v1.19.2`, pinned to
+# the patch the local stack runs (decision E) and the minor the Helpdesk's
+# qdrant-client 1.19.0 speaks - the on-disk collection format is what changes
+# underneath a StatefulSet's claim, so this is the one image where a floating
+# tag would be a data question rather than a version question. The cache is
+# throwaway, so the version move wipes this claim rather than stepping minors;
+# the runbook writes that down.
 #
 # Both ports are published: 6333 is the HTTP API the gateway uses and the one
 # the probes read, 6334 the gRPC API nothing in this repo speaks yet.
@@ -34,7 +37,7 @@ spec:
     spec:
       containers:
         - name: qdrant
-          image: qdrant/qdrant:v1.12.4
+          image: qdrant/qdrant:v1.19.2
           ports:
             - name: http
               containerPort: 6333

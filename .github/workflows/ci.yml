@@ -53,7 +53,7 @@ jobs:
         # one Qdrant. Its health check is the binary's own `--version`, matching
         # compose; the client in `tests/cache/test_qdrant_cache.py` tolerates a
         # cold start.
-        image: qdrant/qdrant:v1.12.4
+        image: qdrant/qdrant:v1.19.2
         ports: ["6333:6333"]
         options: >-
           --health-cmd "/qdrant/qdrant --version"

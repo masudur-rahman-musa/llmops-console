@@ -86,7 +86,7 @@ services:
     ports: ["9091:9091"]
 
   qdrant:
-    image: qdrant/qdrant:v1.12.4
+    image: qdrant/qdrant:v1.19.2
     ports: ["16333:6333"]
     volumes: ["qdrantdata:/qdrant/storage"]
     healthcheck:
