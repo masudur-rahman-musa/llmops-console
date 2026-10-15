@@ -75,26 +75,21 @@ def jobs(workflow: dict[str, Any]) -> dict[str, Any]:
     return listed
 
 
-def test_the_workflow_triggers_on_a_schedule_and_manually(
+def test_the_workflow_runs_only_by_hand(
     workflow: dict[str, Any],
 ) -> None:
-    """Catches a workflow that only triggers on `workflow_dispatch:`, which is not a nightly
-    job at all - a human has to remember to click it every night forever - and catches
-    `schedule:` written with no `cron:` entry, which GitHub Actions accepts as valid YAML
-    and then simply never runs. Both triggers are required: `workflow_dispatch` is what lets
-    an operator run the backup path once by hand to check it still works between the nights
-    nobody is watching."""
+    """Catches a `schedule:` trigger put back: evals run on demand, never on a timer, so a
+    cron entry here would spend model calls every night nobody asked for. Also catches
+    `workflow_dispatch:` dropped, which would leave a workflow nothing can start."""
     block = trigger(workflow)
-    assert "schedule" in block, "the workflow declares no schedule trigger"
     assert "workflow_dispatch" in block, "the workflow cannot be run by hand"
-    crons = [str(entry.get("cron", "")) for entry in block["schedule"] if isinstance(entry, dict)]
-    assert any(crons), "the schedule trigger names no cron expression"
+    assert "schedule" not in block, "the workflow still runs on a schedule"
 
 
 def test_the_workflow_carries_exactly_one_job(jobs: dict[str, Any]) -> None:
     """Catches a second job nobody agreed to: this workflow's whole purpose is one inert-until-
     configured eval run, and a required-check-by-name mistake here is `eval-gate.yml`'s own
-    decision E risk repeated on a workflow that runs unattended at night."""
+    decision E risk repeated on a workflow nobody watches while it runs."""
     assert set(jobs) == {"nightly-eval"}
 
 
@@ -103,7 +98,7 @@ def test_the_job_runs_only_when_a_target_url_is_configured(
 ) -> None:
     """Mirrors `eval-gate.yml`'s decision A exactly, per this plan's own acceptance criteria
     ("gated the same way `eval-gate.yml` is"). Catches the condition dropped, which would
-    fail every scheduled run on a compose stack with nothing to evaluate against, since no
+    fail every run on a compose stack with nothing to evaluate against, since no
     prod target exists yet."""
     assert "EVAL_TARGET_URL" in str(jobs["nightly-eval"]["if"])
 
