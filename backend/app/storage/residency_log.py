@@ -240,6 +240,15 @@ class PostgresResidencyLogWriter:
         already said no, each one taking an `ACCESS EXCLUSIVE` lock attempt on
         the parent; the DEFAULT partition is the backstop that makes swallowing
         it affordable.
+
+        The `FOR VALUES` bounds are `sql.Literal`, not bound parameters.
+        PostgreSQL refuses a placeholder in a partition bound ("there is no
+        parameter $1"), and a `CREATE` that always failed sent every row to the
+        DEFAULT partition, so the retention purge had whole-day partitions to
+        drop and never dropped anything. `sql.Literal` over the two `datetime`
+        values builds the bound with no string-joining, so there is nothing to
+        inject. Pinned by `test_postgres_writer.py`'s three partition cases and
+        `test_cli.py`'s eight purge cases.
         """
         with self._lock:
             if day in self._days:
@@ -251,12 +260,13 @@ class PostgresResidencyLogWriter:
             with self._pool.connection() as conn:
                 conn.execute(
                     sql.SQL(
-                        "CREATE TABLE IF NOT EXISTS {} PARTITION OF {} FOR VALUES FROM (%s) TO (%s)"
+                        "CREATE TABLE IF NOT EXISTS {} PARTITION OF {} FOR VALUES FROM ({}) TO ({})"
                     ).format(
                         sql.Identifier(self._schema, name),
                         sql.Identifier(self._schema, RESIDENCY_LOG),
+                        sql.Literal(start),
+                        sql.Literal(start + timedelta(days=1)),
                     ),
-                    (start, start + timedelta(days=1)),
                 )
         except Exception:
             logger.exception("residency log partition %s could not be created", name)

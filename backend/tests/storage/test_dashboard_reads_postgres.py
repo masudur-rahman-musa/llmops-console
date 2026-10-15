@@ -58,7 +58,7 @@ from .conftest import Pool, requires_postgres
 pytestmark = requires_postgres
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SHIPPED_PRICES = REPO_ROOT / "prices.yaml"
+SHIPPED_PRICES = REPO_ROOT / "config" / "prices.yaml"
 
 NOW = datetime(2026, 9, 16, 12, 0, tzinfo=UTC)
 MIDNIGHT = datetime(2026, 9, 16, 0, 0, tzinfo=UTC)

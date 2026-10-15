@@ -292,8 +292,11 @@ def test_a_report_round_trips_into_the_two_tables(pool: Pool, migrated_schema: s
     are all `text`, so two of them swapped is a run attributed to the wrong tenant and
     PostgreSQL accepts it without a murmur. `metrics` is asserted as the same mapping
     because it is what the eval gate reads back, and a `jsonb` column handed a Python dict with
-    no adapter is the first thing that breaks here. Decision F's two columns are asserted
-    NULL in the same row, so a store that filled them with zeros fails."""
+    no adapter is the first thing that breaks here. The expected mapping is the report's
+    own JSON form (`model_dump(mode="json")["metrics"]`), the exact bytes the store writes,
+    so the two `Decimal` costs come back as the decimal STRINGS jsonb holds; the precise
+    value lives in the `cost_usd` numeric column, pinned by the case below. Decision F's two
+    columns are asserted NULL in the same row, so a store that filled them with zeros fails."""
     report = a_report()
 
     store_report(pool, migrated_schema, report)
@@ -310,7 +313,7 @@ def test_a_report_round_trips_into_the_two_tables(pool: Pool, migrated_schema: s
             TARGET,
             TENANT,
             GIT_SHA,
-            dict(report.metrics),
+            report.model_dump(mode="json")["metrics"],
             False,
             str(REPORT_PATH),
             None,
