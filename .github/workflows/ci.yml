@@ -16,6 +16,8 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # A healthy run takes about 4 minutes; a hung test would otherwise burn minutes for 6 hours.
+    timeout-minutes: 15
     # The Redis the map-store suite needs. It is a service container rather than
     # an optional local server so that the skip in
     # `tests/redaction/test_redis_store.py` cannot silently be taken in CI: those
