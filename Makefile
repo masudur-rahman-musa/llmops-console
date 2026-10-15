@@ -1,4 +1,4 @@
-.PHONY: help setup run test lint typecheck format verify eval infra-check k8s-check k8s-aws-check k8s-server-check server-secrets server-helpdesk-data k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate purge-residency refresh-rollup secrets-encrypt secrets-decrypt secrets-check load
+.PHONY: help setup run test fast test-slowest lint typecheck format verify eval infra-check k8s-check k8s-aws-check k8s-server-check server-secrets server-helpdesk-data k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate purge-residency refresh-rollup secrets-encrypt secrets-decrypt secrets-check load
 
 # The console's checks run through pnpm, and are skipped only in a checkout that
 # has no web, so the intended gate stays visible in this file. The
@@ -30,10 +30,39 @@ run:        ## Run the project locally
 # flag overrides `[tool.coverage.run] source` and would silently unmeasure
 # everything outside the path.
 COVERED_100 = backend/app/model_routing/*,backend/app/core/validation.py
-test:       ## Run tests with the coverage gate
+# `make test` (and so `make verify`) points the three OPSCONSOLE_TEST_* URLs at
+# the compose host ports (Postgres 15432, Redis 16379 db 15, Qdrant 16333), so
+# the full suite really runs the 116 backing-service tests instead of skipping
+# them. This needs `docker compose up -d` first; without a reachable service
+# those tests FAIL rather than skip, which is the point - a green `make verify`
+# now means the backing tests ran. The names are OPSCONSOLE_TEST_*, never the
+# OPSCONSOLE_* ones Settings reads, so they reach only the test fixtures
+#. The password matches compose's default (POSTGRES_PASSWORD
+# defaults to opsconsole in docker-compose.yml and backend/.env.demo). The three
+# names are written out in each recipe, not hidden behind a make variable, so a
+# static reader (and its guard test) sees the suite is pointed at them.
+test:       ## Run tests with the coverage gate (backing services must be up)
+	OPSCONSOLE_TEST_DATABASE_URL=postgresql://opsconsole:opsconsole@localhost:15432/opsconsole \
+	OPSCONSOLE_TEST_REDIS_URL=redis://localhost:16379/15 \
+	OPSCONSOLE_TEST_QDRANT_URL=http://localhost:16333 \
 	$(UV_ROOT) pytest backend/tests --cov --cov-fail-under=80
 	$(UV_ROOT) coverage report --include='$(COVERED_100)' --fail-under=100
 	$(call console,test)
+# The everyday run: every test not marked `slow`, across one
+# xdist worker per core (`-n auto`), with NO OPSCONSOLE_TEST_* URL set, so the
+# Postgres, Redis and Qdrant tests skip and nothing waits on a service. This is
+# the fast loop while coding; CI and `make verify` still run every test. It
+# carries no coverage gate on purpose - the floors belong to the full `test`.
+fast:       ## Everyday fast run: non-slow tests in parallel, no backing services
+	$(UV_ROOT) pytest backend/tests -n auto -m "not slow"
+# Prints the slowest tests and fixtures (setup/call/teardown each counted) so a
+# new slow spot is seen and marked `slow` or fixed. Reads the same tree `test`
+# does, with the backing URLs set so the backing tests are timed too, not skipped.
+test-slowest: ## Print the 30 slowest tests and fixtures
+	OPSCONSOLE_TEST_DATABASE_URL=postgresql://opsconsole:opsconsole@localhost:15432/opsconsole \
+	OPSCONSOLE_TEST_REDIS_URL=redis://localhost:16379/15 \
+	OPSCONSOLE_TEST_QDRANT_URL=http://localhost:16333 \
+	$(UV_ROOT) pytest backend/tests --durations=30
 lint:       ## Lint
 	$(UV_ROOT) ruff check --config backend/pyproject.toml .
 	$(call console,lint)

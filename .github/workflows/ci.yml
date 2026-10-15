@@ -21,6 +21,12 @@ jobs:
     # `tests/redaction/test_redis_store.py` cannot silently be taken in CI: those
     # cases prove the TTL and the key shape against Redis itself, and a suite
     # that skipped them here would report green having checked neither.
+    # The three backing services the suite needs. They are service containers
+    # rather than optional local servers so the skips in the Redis, Postgres and
+    # Qdrant suites cannot silently be taken in CI: those cases prove the TTL,
+    # key shape, migrations, constraints and vector round trip against the real
+    # service, and a job that skipped them would report green having checked
+    # none. `make test` sets the same three OPSCONSOLE_TEST_* URLs locally.
     services:
       redis:
         image: redis:7
@@ -30,13 +36,39 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: opsconsole
+          POSTGRES_PASSWORD: opsconsole
+          POSTGRES_DB: opsconsole
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U opsconsole"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      qdrant:
+        # Pinned to the same tag docker-compose.yml runs, so CI and a laptop see
+        # one Qdrant. Its health check is the binary's own `--version`, matching
+        # compose; the client in `tests/cache/test_qdrant_cache.py` tolerates a
+        # cold start.
+        image: qdrant/qdrant:v1.12.4
+        ports: ["6333:6333"]
+        options: >-
+          --health-cmd "/qdrant/qdrant --version"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
     env:
-      # `OPSCONSOLE_TEST_REDIS_URL`, not `OPSCONSOLE_REDIS_URL`: the second is
-      # read by `Settings` itself, so exporting it for the whole job would give
-      # every test that builds an app a Redis map store and a `redis` readiness
-      # probe it never asked for - a suite that behaved one way locally and
-      # another in CI. Database 15, away from the 0 an application would use.
+      # The OPSCONSOLE_TEST_* names, never the OPSCONSOLE_* ones `Settings`
+      # itself reads: exporting those for the whole job would give every test
+      # that builds an app a Redis map store, a Postgres writer and readiness
+      # probes it never asked for - a suite that behaved one way locally and
+      # another in CI. Redis database 15, away from the 0 an application uses.
       OPSCONSOLE_TEST_REDIS_URL: redis://127.0.0.1:6379/15
+      OPSCONSOLE_TEST_DATABASE_URL: postgresql://opsconsole:opsconsole@127.0.0.1:5432/opsconsole
+      OPSCONSOLE_TEST_QDRANT_URL: http://127.0.0.1:6333
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
