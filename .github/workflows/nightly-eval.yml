@@ -9,10 +9,8 @@ name: nightly-eval
 # against - so the job is wired but SKIPPED until that variable is set. See
 # the project notes.
 on:
-  schedule:
-    # 02:00 UTC, mirroring the k3s CronJob's own `0 2 * * *` (see that manifest's
-    # comment on why this is UTC and not the Berlin wall-clock time SPEC names).
-    - cron: "0 2 * * *"
+  # Manual only: evals run on demand, not on a timer. Run it from the Actions tab
+  # or `gh workflow run nightly-eval.yml`.
   workflow_dispatch:
 
 concurrency:
