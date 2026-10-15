@@ -50,3 +50,7 @@ crash.log
 
 # local model weights
 .cache/
+
+# Scratch work, never committed
+/scratch/
+/backend/scratch/
