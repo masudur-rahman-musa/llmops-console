@@ -1,8 +1,7 @@
+import { consolePage } from "@/components/layout/console-page";
 import { ExternalLink } from "@/components/ui/external-link";
 import { LineChart } from "@/components/ui/line-chart";
-import { SourceNotice } from "@/components/ui/source-notice";
-import { Unavailable } from "@/components/ui/unavailable";
-import { getConsolePage } from "@/lib/console-api";
+import { Table } from "@/components/ui/table";
 import { shortSha } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -11,12 +10,7 @@ function seconds(iso: string): number {
   return Date.parse(iso) / 1000;
 }
 
-export default async function QualityPage() {
-  const result = await getConsolePage("quality");
-  if (!result.ok) {
-    return <Unavailable title="Quality" reason={result.reason} />;
-  }
-  const body = result.body;
+export default consolePage("quality", "Quality", (body) => {
   // The chart drops a run whose accuracy is absent or null, and sorts by time itself.
   const accuracy = body.runs.map((run): [number, number] => {
     const value = run.metrics.decision_accuracy;
@@ -24,9 +18,6 @@ export default async function QualityPage() {
   });
   return (
     <>
-      <h1>Quality</h1>
-      <SourceNotice sources={body.sources} />
-
       <LineChart
         title="Decision accuracy"
         points={accuracy}
@@ -34,34 +25,25 @@ export default async function QualityPage() {
       />
 
       <h2>Categories</h2>
-      <div className="table-wrap">
-        <table>
-          <tbody>
-            {body.categories.map((category) => (
-              <tr key={category.category}>
-                <td>{category.category}</td>
-                <td>
-                  {category.passed} of {category.total}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <Table
+        rows={body.categories.map((category) => ({
+          key: category.category,
+          cells: [
+            category.category,
+            <>
+              {category.passed} of {category.total}
+            </>,
+          ],
+        }))}
+      />
 
       <h2>Taxonomy</h2>
-      <div className="table-wrap">
-        <table>
-          <tbody>
-            {body.taxonomy.map((tag) => (
-              <tr key={tag.tag}>
-                <td>{tag.tag}</td>
-                <td>{tag.count}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <Table
+        rows={body.taxonomy.map((tag) => ({
+          key: tag.tag,
+          cells: [tag.tag, tag.count],
+        }))}
+      />
 
       <h2>Blocked releases</h2>
       <ul>
@@ -84,4 +66,4 @@ export default async function QualityPage() {
       </ul>
     </>
   );
-}
+});
