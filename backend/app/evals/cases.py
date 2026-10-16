@@ -52,8 +52,7 @@ from typing import Any, Final
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
-from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH, checked_identifier
-from app.model_routing.errors import IdentifierInvalid
+from app.core.validation import IdentifierInvalid, checked_identifier
 
 MAX_PRINCIPAL_LENGTH: Final[int] = 128
 """The longest `principal_user` a golden line may name.
@@ -170,11 +169,7 @@ def _checked_tool_name(value: str, field: str) -> str:
     row through an anchored `.match`. The inclusive boundary is
     pinned by `test_the_tool_name_length_boundary_is_inclusive`.
     """
-    if len(value) > MAX_IDENTIFIER_LENGTH:
-        raise IdentifierInvalid(f"{field}: longer than {MAX_IDENTIFIER_LENGTH} characters")
-    if IDENTIFIER_PATTERN.fullmatch(value) is None:
-        raise IdentifierInvalid(f"{field}: not a lowercase slug")
-    return value
+    return checked_identifier(value, field)
 
 
 def _checked_principal(value: str) -> str:

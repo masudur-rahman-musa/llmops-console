@@ -71,10 +71,9 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, ConfigDict
 
-from app.core.validation import checked_identifier
+from app.core.validation import IdentifierInvalid, checked_identifier
 from app.evals.cases import EvalCategory
 from app.evals.report import SET_SHA_PATTERN, CaseReport, RunKind, RunReport
-from app.model_routing.errors import IdentifierInvalid
 from app.storage.db import DEFAULT_SCHEMA, checked_schema
 
 EVAL_RUNS: Final[str] = "eval_runs"

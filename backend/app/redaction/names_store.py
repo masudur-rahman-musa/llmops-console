@@ -44,8 +44,7 @@ from typing import Final, Protocol
 import redis
 from redis.typing import EncodableT, FieldT
 
-from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
-from app.model_routing.errors import IdentifierInvalid
+from app.core.validation import checked_identifier
 from app.redaction.errors import DirectoryNameInvalid, DirectoryStoreUnavailable
 
 MIN_DIRECTORY_NAME_CHARS: Final[int] = 2
@@ -320,9 +319,4 @@ def _checked_tenant(tenant: str) -> None:
     (`test_a_tenant_at_the_length_cap_is_accepted`,
     `test_a_tenant_one_character_over_the_cap_is_rejected`).
     """
-    if len(tenant) > MAX_IDENTIFIER_LENGTH:
-        raise IdentifierInvalid(
-            f"tenant: longer than {MAX_IDENTIFIER_LENGTH} characters", param="tenant"
-        )
-    if IDENTIFIER_PATTERN.fullmatch(tenant) is None:
-        raise IdentifierInvalid("tenant: not a valid identifier", param="tenant")
+    checked_identifier(tenant, "tenant", param="tenant")

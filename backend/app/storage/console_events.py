@@ -57,7 +57,7 @@ from psycopg.rows import TupleRow
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, ConfigDict
 
-from app.model_routing.errors import IdentifierInvalid
+from app.core.validation import IdentifierInvalid
 from app.storage.db import DEFAULT_SCHEMA, checked_schema
 
 INCIDENTS: Final[str] = "incidents"

@@ -97,7 +97,7 @@ from urllib.parse import urlparse
 import httpx
 
 from app.core.config import DEFAULT_ROUTING_POLICY_PATH, Settings
-from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
+from app.core.validation import IdentifierInvalid, checked_identifier
 from app.evals.baseline_guard import (
     GUARD_PASSED_LINE,
     MAX_REF_LENGTH,
@@ -143,7 +143,7 @@ from app.evals.tradeoff import (
     load_manifest,
     write_tradeoff,
 )
-from app.model_routing.errors import IdentifierInvalid, PolicyInvalid
+from app.model_routing.errors import PolicyInvalid
 from app.model_routing.policy import Policy, load_policy
 from app.storage.db import build_pool
 from app.storage.eval_store import PostgresEvalStore, rows_from_report
@@ -230,11 +230,7 @@ def _checked_tenant(value: str) -> str:
     `.match`: in Python `$` also matches before a trailing newline (standing
     rule 4), and this value names a directory under `--out`.
     """
-    if len(value) > MAX_IDENTIFIER_LENGTH:
-        raise IdentifierInvalid(f"tenant: longer than {MAX_IDENTIFIER_LENGTH} characters")
-    if IDENTIFIER_PATTERN.fullmatch(value) is None:
-        raise IdentifierInvalid("tenant: not a lowercase slug")
-    return value
+    return checked_identifier(value, "tenant")
 
 
 def _checked_target(value: str) -> str:

@@ -35,9 +35,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, Request
 
 from app.api.deps import _checked_tenant, admin_key
+from app.core.validation import IdentifierInvalid
 from app.model_routing.errors import (
     AliasUnknown,
-    IdentifierInvalid,
     PolicyInvalid,
     ResidencyUnavailable,
 )

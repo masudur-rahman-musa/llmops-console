@@ -53,8 +53,7 @@ from pydantic import BaseModel, ConfigDict
 
 from app.api.deps import admin_key
 from app.core.errors import ProviderError
-from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
-from app.model_routing.errors import IdentifierInvalid
+from app.core.validation import IdentifierInvalid, checked_identifier
 from app.redaction import (
     DirectoryNameInvalid,
     DirectoryStore,
@@ -117,14 +116,7 @@ def checked_tenant(value: str) -> str:
     accepts and the name the request path authenticates cannot disagree. The
     inclusive boundary is `test_a_tenant_at_the_identifier_cap_is_accepted`.
     """
-    if len(value) > MAX_IDENTIFIER_LENGTH:
-        raise IdentifierInvalid(
-            f"{TENANT_FIELD}: longer than {MAX_IDENTIFIER_LENGTH} characters",
-            param=TENANT_FIELD,
-        )
-    if IDENTIFIER_PATTERN.fullmatch(value) is None:
-        raise IdentifierInvalid(f"{TENANT_FIELD}: not a lowercase slug", param=TENANT_FIELD)
-    return value
+    return checked_identifier(value, TENANT_FIELD, param=TENANT_FIELD)
 
 
 def held_names(store: DirectoryStore, tenant: str) -> tuple[str, ...]:

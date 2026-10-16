@@ -43,8 +43,7 @@ from app.cache import (
     RedisResponseCache,
     ResponseCache,
 )
-from app.core.validation import MAX_IDENTIFIER_LENGTH
-from app.model_routing.errors import IdentifierInvalid
+from app.core.validation import MAX_IDENTIFIER_LENGTH, IdentifierInvalid
 from app.providers.base import ChatResponse
 
 from .conftest import OTHER_TENANT, TENANT, cached_answer
@@ -170,6 +169,25 @@ def test_a_tenant_one_character_over_the_cap_is_rejected() -> None:
     with pytest.raises(IdentifierInvalid):
         cache.put(OVER_CAP_TENANT, WELL_FORMED_KEY, cached_answer())
 
+    assert client.calls == []
+
+
+def test_a_collapsed_store_still_rejects_a_bad_tenant() -> None:
+    """Freezes the tenant check across the collapse to `checked_identifier`: a bad
+    tenant must still raise `IdentifierInvalid` carrying `param == "tenant"`, the
+    `VALIDATION` code and a 422, and still refuse before any Redis command - a
+    collapse that passed the wrong `param` or let the value through is caught here."""
+    from app.core.errors import ErrorCode
+    from app.core.validation import IdentifierInvalid as HomeIdentifierInvalid
+
+    cache, client = fake_cache()
+
+    with pytest.raises(HomeIdentifierInvalid) as exc:
+        cache.put("Bad Tenant!", WELL_FORMED_KEY, cached_answer())
+
+    assert exc.value.param == "tenant"
+    assert exc.value.code == ErrorCode.VALIDATION
+    assert exc.value.http_status == 422
     assert client.calls == []
 
 

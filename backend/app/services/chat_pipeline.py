@@ -30,6 +30,7 @@ from app.core.metrics import (
     record_tokens,
 )
 from app.core.tracing import SpanAttributes, annotate, stage_span
+from app.core.validation import IdentifierInvalid
 from app.limits.budget import (
     BudgetDecision,
     BudgetStore,
@@ -43,7 +44,6 @@ from app.limits.budget import (
 from app.limits.cost import COST_QUANTUM
 from app.limits.prices import PriceStore
 from app.limits.ratelimit import SECONDS_PER_MINUTE, RateDimension, RateLimitStore
-from app.model_routing.errors import IdentifierInvalid
 from app.model_routing.policy import DataClass, Policy, PolicyStore, ResidencyMode
 from app.model_routing.resolver import Resolved, resolve
 from app.providers.base import Adapter, ChatResponse, EmbeddingAdapter, EmbeddingRequest, Usage

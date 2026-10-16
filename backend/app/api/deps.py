@@ -43,8 +43,12 @@ from app.core.tracing import (
     request_trace,
     stage_span,
 )
-from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
-from app.model_routing.errors import IdentifierInvalid
+from app.core.validation import (
+    IDENTIFIER_PATTERN,
+    MAX_IDENTIFIER_LENGTH,
+    IdentifierInvalid,
+    checked_identifier,
+)
 from app.model_routing.policy import DataClass
 
 MAX_KEY_LENGTH = 256
@@ -202,13 +206,7 @@ class RequestContext(BaseModel):
 
 def _checked_identifier(value: str, field: str) -> str:
     """Validate one client-supplied header before it is used as a key or a label."""
-    if len(value) > MAX_IDENTIFIER_LENGTH:
-        raise IdentifierInvalid(
-            f"{field}: longer than {MAX_IDENTIFIER_LENGTH} characters", param=field
-        )
-    if IDENTIFIER_PATTERN.fullmatch(value) is None:
-        raise IdentifierInvalid(f"{field}: not a lowercase slug", param=field)
-    return value
+    return checked_identifier(value, field, param=field)
 
 
 def _checked_data_class(value: str | None) -> DataClass:
@@ -326,14 +324,7 @@ def _checked_tenant(value: str) -> str:
     trailing newline out. The inclusive boundary is
     `test_the_tenant_filter_length_boundary_is_inclusive`.
     """
-    if len(value) > MAX_IDENTIFIER_LENGTH:
-        raise IdentifierInvalid(
-            f"{TENANT_PARAM}: longer than {MAX_IDENTIFIER_LENGTH} characters",
-            param=TENANT_PARAM,
-        )
-    if IDENTIFIER_PATTERN.fullmatch(value) is None:
-        raise IdentifierInvalid(f"{TENANT_PARAM}: not a lowercase slug", param=TENANT_PARAM)
-    return value
+    return checked_identifier(value, TENANT_PARAM, param=TENANT_PARAM)
 
 
 def admin_key(request: Request, authorization: Annotated[str | None, Header()] = None) -> None:

@@ -23,7 +23,7 @@ from typing import Final
 
 from pydantic import BaseModel, ConfigDict
 
-from app.model_routing.errors import IdentifierInvalid
+from app.core.validation import IdentifierInvalid
 from app.model_routing.policy import DataClass, Policy
 
 EVAL_DATA_CLASS: Final[DataClass] = DataClass.INTERNAL

@@ -52,10 +52,9 @@ from psycopg import Connection
 from psycopg.rows import TupleRow
 from psycopg_pool import ConnectionPool
 
-from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
+from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH, IdentifierInvalid
 from app.limits.cost import UNPRICED_VERSION
 from app.limits.prices import PriceTable
-from app.model_routing.errors import IdentifierInvalid
 from app.model_routing.policy import Policy, load_policy
 from app.providers.base import Usage
 from app.storage import (

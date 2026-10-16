@@ -50,14 +50,13 @@ from typing import Final
 
 from pydantic import BaseModel, ConfigDict, ValidationError, ValidationInfo, field_validator
 
-from app.core.validation import IDENTIFIER_PATTERN
+from app.core.validation import IDENTIFIER_PATTERN, IdentifierInvalid
 from app.evals.judge import (
     JUDGE_MAX_SCORE,
     JUDGE_MIN_SCORE,
     JudgeClient,
     judge_prompt_version,
 )
-from app.model_routing.errors import IdentifierInvalid
 
 MIN_CALIBRATION_LABELS: Final[int] = 40
 """How many labels a calibration needs, at both ends (decision B).

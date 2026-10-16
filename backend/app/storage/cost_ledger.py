@@ -49,10 +49,9 @@ from psycopg.rows import TupleRow
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, ConfigDict
 
-from app.core.validation import checked_identifier
+from app.core.validation import IdentifierInvalid, checked_identifier
 from app.limits.cost import COST_QUANTUM, cost_for, estimate_tokens
 from app.limits.prices import PriceTable
-from app.model_routing.errors import IdentifierInvalid
 from app.providers.base import Usage
 from app.storage.db import DEFAULT_SCHEMA, checked_schema
 

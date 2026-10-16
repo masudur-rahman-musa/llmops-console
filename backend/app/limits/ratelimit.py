@@ -73,8 +73,7 @@ from typing import Final, Protocol
 
 import redis
 
-from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
-from app.model_routing.errors import IdentifierInvalid
+from app.core.validation import checked_identifier
 
 RATE_LIMIT_KEY_PREFIX: Final[str] = "ratelimit"
 """The first segment of every key a tenant's bucket is stored under.
@@ -172,10 +171,7 @@ def bucket_key(
     namespace rather than a `FLUSHDB` that would delete keys the suite does not
     own.
     """
-    if len(tenant) > MAX_IDENTIFIER_LENGTH:
-        raise IdentifierInvalid(f"tenant: longer than {MAX_IDENTIFIER_LENGTH} characters")
-    if IDENTIFIER_PATTERN.fullmatch(tenant) is None:
-        raise IdentifierInvalid("tenant: not a lowercase slug")
+    checked_identifier(tenant, "tenant")
     return f"{prefix}:{tenant}:{dimension.value}"
 
 

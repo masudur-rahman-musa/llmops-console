@@ -41,8 +41,7 @@ from typing import Final, Protocol
 
 import redis
 
-from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
-from app.model_routing.errors import IdentifierInvalid
+from app.core.validation import IdentifierInvalid, checked_identifier
 from app.redaction.errors import RedactionMapStoreUnavailable
 
 REDACTION_MAP_TTL_SECONDS: Final[int] = 3600
@@ -251,12 +250,7 @@ def _checked_tenant(tenant: str) -> None:
     characters is accepted (`test_a_tenant_at_the_length_cap_is_accepted`,
     `test_a_tenant_one_character_over_the_cap_is_rejected`).
     """
-    if len(tenant) > MAX_IDENTIFIER_LENGTH:
-        raise IdentifierInvalid(
-            f"tenant: longer than {MAX_IDENTIFIER_LENGTH} characters", param="tenant"
-        )
-    if IDENTIFIER_PATTERN.fullmatch(tenant) is None:
-        raise IdentifierInvalid("tenant: not a valid identifier", param="tenant")
+    checked_identifier(tenant, "tenant", param="tenant")
 
 
 def _checked_map_id(map_id: str) -> None:

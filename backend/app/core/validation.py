@@ -56,16 +56,24 @@ class IdentifierInvalid(GatewayError):
     http_status: ClassVar[int] = 422
 
 
-def checked_identifier(value: str, field: str) -> str:
+def checked_identifier(value: str, field: str, *, param: str | None = None) -> str:
     """Validate one client-supplied identifier before it is used as a key.
 
     `re.fullmatch`, so a trailing newline is refused. The
     inclusive boundary at `MAX_IDENTIFIER_LENGTH` and the rejection table are
     pinned by `test_identifier_at_the_maximum_length_is_accepted` and
     `test_identifier_rejection_table`.
+
+    `param` names the request field a rejection points at, for the stores and
+    headers that answer a caller with a 422 naming the bad input; it defaults to
+    `None` for the raisers that do not
+    (`test_checked_identifier_carries_the_param_when_given`,
+    `test_checked_identifier_param_defaults_to_none`).
     """
     if len(value) > MAX_IDENTIFIER_LENGTH:
-        raise IdentifierInvalid(f"{field}: longer than {MAX_IDENTIFIER_LENGTH} characters")
+        raise IdentifierInvalid(
+            f"{field}: longer than {MAX_IDENTIFIER_LENGTH} characters", param=param
+        )
     if IDENTIFIER_PATTERN.fullmatch(value) is None:
-        raise IdentifierInvalid(f"{field}: not a lowercase slug")
+        raise IdentifierInvalid(f"{field}: not a lowercase slug", param=param)
     return value

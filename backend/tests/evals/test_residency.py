@@ -31,13 +31,13 @@ from decimal import Decimal
 
 import pytest
 
+from app.core.validation import IdentifierInvalid
 from app.evals.region_check import (
     EVAL_DATA_CLASS,
     ResidencyVerdict,
     check_residency,
     checked_data_class,
 )
-from app.model_routing.errors import IdentifierInvalid
 from app.model_routing.policy import (
     DataClass,
     DataClassRule,

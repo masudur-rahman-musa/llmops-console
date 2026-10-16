@@ -42,8 +42,7 @@ from psycopg import Connection
 from psycopg.rows import TupleRow
 from psycopg_pool import ConnectionPool
 
-from app.core.validation import MAX_IDENTIFIER_LENGTH
-from app.model_routing.errors import IdentifierInvalid
+from app.core.validation import MAX_IDENTIFIER_LENGTH, IdentifierInvalid
 from app.model_routing.policy import DataClass, Policy, load_policy
 from app.model_routing.resolver import Resolved
 from app.storage import (

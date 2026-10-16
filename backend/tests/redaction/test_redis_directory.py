@@ -44,8 +44,7 @@ from typing import cast
 import pytest
 import redis
 
-from app.core.validation import MAX_IDENTIFIER_LENGTH
-from app.model_routing.errors import IdentifierInvalid
+from app.core.validation import MAX_IDENTIFIER_LENGTH, IdentifierInvalid
 from app.redaction.errors import DirectoryNameInvalid, DirectoryStoreUnavailable
 from app.redaction.names_store import (
     DIRECTORY_KEY_PREFIX,

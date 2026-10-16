@@ -80,7 +80,7 @@ from psycopg.types.json import Jsonb, JsonbBinaryDumper
 from psycopg_pool import ConnectionPool
 
 from app.cli.evals import RUN_KINDS
-from app.core.validation import MAX_IDENTIFIER_LENGTH
+from app.core.validation import MAX_IDENTIFIER_LENGTH, IdentifierInvalid
 from app.evals.assertions import AssertionResult, AssertionStatus, CaseAssertions
 from app.evals.cases import EvalCategory
 from app.evals.judge import JudgeVerdict
@@ -89,7 +89,6 @@ from app.evals.region_check import ResidencyVerdict
 from app.evals.report import REPORT_JSON_NAME, RunCalibration, RunReport, build_report
 from app.evals.runner import CaseRun, RunResult
 from app.evals.target import TurnFailureKind
-from app.model_routing.errors import IdentifierInvalid
 from app.storage.eval_store import (
     MAX_REPORT_PATH_LENGTH,
     MAX_SET_NAME_LENGTH,

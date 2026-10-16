@@ -20,7 +20,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from app.model_routing.errors import IdentifierInvalid
+from app.core.validation import IdentifierInvalid
 from app.providers import base
 from app.providers.base import (
     DEFAULT_MAX_TOKENS,

@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 
 from app.core.errors import ProviderError
-from app.model_routing.errors import IdentifierInvalid
+from app.core.validation import IdentifierInvalid
 from app.providers import anthropic as anthropic_module
 from app.providers.anthropic import from_anthropic, from_anthropic_events, to_anthropic
 from app.providers.base import (

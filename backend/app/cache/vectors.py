@@ -60,8 +60,7 @@ import httpx
 from pydantic import ValidationError
 
 from app.cache.probe import SEMANTIC_THRESHOLD
-from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
-from app.model_routing.errors import IdentifierInvalid
+from app.core.validation import checked_identifier
 from app.providers.base import ChatResponse
 
 SEMANTIC_COLLECTION_PREFIX: Final[str] = "cache_"
@@ -464,9 +463,4 @@ def _checked_tenant(tenant: str) -> None:
     a URL segment, so an unchecked tenant would address another collection or
     another endpoint entirely, and Qdrant has no backstop behind this check.
     """
-    if len(tenant) > MAX_IDENTIFIER_LENGTH:
-        raise IdentifierInvalid(
-            f"tenant: longer than {MAX_IDENTIFIER_LENGTH} characters", param="tenant"
-        )
-    if IDENTIFIER_PATTERN.fullmatch(tenant) is None:
-        raise IdentifierInvalid("tenant: not a valid identifier", param="tenant")
+    checked_identifier(tenant, "tenant", param="tenant")

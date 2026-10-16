@@ -30,7 +30,7 @@ from typing import Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, StrictBool
 
-from app.model_routing.errors import IdentifierInvalid
+from app.core.validation import IdentifierInvalid
 
 DEFAULT_MAX_TOKENS = 4096
 """What `max_tokens` becomes when the caller omits it.

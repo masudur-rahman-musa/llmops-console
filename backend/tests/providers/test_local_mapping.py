@@ -26,7 +26,7 @@ from typing import Any
 import pytest
 
 from app.core.errors import ProviderError
-from app.model_routing.errors import IdentifierInvalid
+from app.core.validation import IdentifierInvalid
 from app.providers.base import (
     DEFAULT_MAX_TOKENS,
     MAX_TOOL_NAME_LENGTH,

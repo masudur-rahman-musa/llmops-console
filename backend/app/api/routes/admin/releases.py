@@ -19,7 +19,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request
 
 from app.api.deps import admin_key
-from app.model_routing.errors import IdentifierInvalid
+from app.core.validation import IdentifierInvalid
 from app.schemas.admin import ReleaseCreate
 from app.storage.console_events import EVAL_RUN_ID_FIELD, ConsoleEventWriter, ReleaseRow
 

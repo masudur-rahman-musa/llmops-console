@@ -11,11 +11,10 @@ from collections.abc import Callable
 
 import pytest
 
-from app.core.validation import MAX_IDENTIFIER_LENGTH
+from app.core.validation import MAX_IDENTIFIER_LENGTH, IdentifierInvalid
 from app.model_routing.errors import (
     AliasUnknown,
     AllProvidersUnavailable,
-    IdentifierInvalid,
     ResidencyUnavailable,
 )
 from app.model_routing.policy import DataClass, Policy, Residency, load_policy

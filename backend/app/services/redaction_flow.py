@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from app.core.errors import ProviderError
-from app.model_routing.errors import IdentifierInvalid
+from app.core.validation import IdentifierInvalid
 from app.model_routing.policy import DataClass, Policy
 from app.redaction import (
     DirectoryStore,

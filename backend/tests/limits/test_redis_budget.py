@@ -54,7 +54,7 @@ from typing import cast
 import pytest
 import redis
 
-from app.core.validation import MAX_IDENTIFIER_LENGTH
+from app.core.validation import MAX_IDENTIFIER_LENGTH, IdentifierInvalid
 from app.limits.budget import (
     BUDGET_KEY_PREFIX,
     BUDGET_KEY_TTL_SECONDS,
@@ -63,7 +63,6 @@ from app.limits.budget import (
     RedisBudgetStore,
     month_key,
 )
-from app.model_routing.errors import IdentifierInvalid
 
 TENANT = "evals"
 OTHER_TENANT = "cuan"

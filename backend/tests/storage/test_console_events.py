@@ -49,7 +49,7 @@ from typing import Any
 
 import pytest
 
-from app.model_routing.errors import IdentifierInvalid
+from app.core.validation import IdentifierInvalid
 from app.storage.console_events import (
     INCIDENT_ID_LENGTH,
     MAX_GIT_SHA_LENGTH,

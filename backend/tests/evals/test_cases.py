@@ -47,7 +47,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from app.core.validation import MAX_IDENTIFIER_LENGTH
+from app.core.validation import MAX_IDENTIFIER_LENGTH, IdentifierInvalid
 from app.evals.cases import (
     MAX_PRINCIPAL_LENGTH,
     PRINCIPAL_PATTERN,
@@ -58,7 +58,6 @@ from app.evals.cases import (
     ExpectedToolCall,
     load_golden_set,
 )
-from app.model_routing.errors import IdentifierInvalid
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
 

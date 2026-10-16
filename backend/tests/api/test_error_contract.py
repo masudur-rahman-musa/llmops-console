@@ -20,10 +20,10 @@ import app.core.http_errors
 import app.model_routing.errors  # noqa: F401
 from app.core.errors import ErrorCode, GatewayError
 from app.core.http_errors import GENERIC_FAILURE_MESSAGE, error_type
+from app.core.validation import IdentifierInvalid
 from app.model_routing.errors import (
     AliasUnknown,
     AllProvidersUnavailable,
-    IdentifierInvalid,
     ResidencyUnavailable,
 )
 

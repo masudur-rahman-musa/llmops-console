@@ -64,9 +64,8 @@ from typing import Final, Protocol
 
 import redis
 
-from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH
+from app.core.validation import IdentifierInvalid, checked_identifier
 from app.limits.cost import COST_QUANTUM
-from app.model_routing.errors import IdentifierInvalid
 
 BUDGET_KEY_PREFIX: Final[str] = "budget"
 """The first segment of every key a monthly counter is stored under.
@@ -168,10 +167,7 @@ def month_key(tenant: str, month: str, *, prefix: str = BUDGET_KEY_PREFIX) -> st
     namespace rather than a `FLUSHDB` that would delete keys the suite does not
     own.
     """
-    if len(tenant) > MAX_IDENTIFIER_LENGTH:
-        raise IdentifierInvalid(f"tenant: longer than {MAX_IDENTIFIER_LENGTH} characters")
-    if IDENTIFIER_PATTERN.fullmatch(tenant) is None:
-        raise IdentifierInvalid("tenant: not a lowercase slug")
+    checked_identifier(tenant, "tenant")
     if MONTH_PATTERN.fullmatch(month) is None:
         raise IdentifierInvalid(f"month: {month!r} is not a YYYY-MM period")
     return f"{prefix}:{tenant}:{month}"

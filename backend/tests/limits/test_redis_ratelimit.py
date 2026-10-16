@@ -64,7 +64,7 @@ from typing import Any, cast
 import pytest
 import redis
 
-from app.core.validation import MAX_IDENTIFIER_LENGTH
+from app.core.validation import MAX_IDENTIFIER_LENGTH, IdentifierInvalid
 from app.limits.ratelimit import (
     RATE_LIMIT_KEY_PREFIX,
     RATE_LIMIT_KEY_TTL_SECONDS,
@@ -74,7 +74,6 @@ from app.limits.ratelimit import (
     Taken,
     bucket_key,
 )
-from app.model_routing.errors import IdentifierInvalid
 
 RATE_LIMIT_LOGGER = "app.limits.ratelimit"
 """Where a swallowed failure is reported. Named so the assertions below count THIS

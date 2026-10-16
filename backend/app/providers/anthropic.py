@@ -39,7 +39,7 @@ from typing import Any
 import httpx
 
 from app.core.errors import ProviderError
-from app.model_routing.errors import IdentifierInvalid
+from app.core.validation import IdentifierInvalid
 from app.providers.base import (
     DEFAULT_MAX_TOKENS,
     ChatMessage,

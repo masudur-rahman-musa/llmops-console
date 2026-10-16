@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.model_routing.errors import IdentifierInvalid
+from app.core.validation import IdentifierInvalid
 from app.providers.azure_openai import (
     AZURE_API_VERSION,
     AZURE_DEPLOYMENT_PATH,
