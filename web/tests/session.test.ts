@@ -120,17 +120,33 @@ describe("session cookie", () => {
     expect(await verifySession(signed, undefined, EXPIRES - 60)).toBe(false);
 
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    // A good read first leaves the "last read was good" state, so the bad read below is the first bad read and must log.
     expect(readSessionSecret({ CONSOLE_SESSION_SECRET: SECRET })).toBe(SECRET);
     expect(error).not.toHaveBeenCalled();
 
-    for (const env of [{ CONSOLE_SESSION_SECRET: short }, { CONSOLE_SESSION_SECRET: undefined }, {}]) {
-      error.mockClear();
-      expect(readSessionSecret(env)).toBeNull();
-      expect(error).toHaveBeenCalledTimes(1);
-      const logged = error.mock.calls[0].map(String).join(" ");
-      expect(logged.startsWith("ERROR")).toBe(true);
-      expect(logged).not.toContain(short);
+    expect(readSessionSecret({ CONSOLE_SESSION_SECRET: short })).toBeNull();
+    expect(error).toHaveBeenCalledTimes(1);
+    const logged = error.mock.calls[0].map(String).join(" ");
+    expect(logged.startsWith("ERROR")).toBe(true);
+    expect(logged).not.toContain(short);
+  });
+
+  it("a steadily bad secret logs once", () => {
+    // Catches a reader that logs on every bad read instead of once per bad spell, or one that never logs again after a good read heals it.
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    // Establish a known "last read was good" state, then measure only the bad reads that follow.
+    expect(readSessionSecret({ CONSOLE_SESSION_SECRET: SECRET })).toBe(SECRET);
+    error.mockClear();
+
+    for (let i = 0; i < 3; i += 1) {
+      expect(readSessionSecret({})).toBeNull();
     }
+    expect(error).toHaveBeenCalledTimes(1);
+
+    // A good read clears the flag, so the next bad read starts a fresh spell and logs again.
+    expect(readSessionSecret({ CONSOLE_SESSION_SECRET: SECRET })).toBe(SECRET);
+    expect(readSessionSecret({})).toBeNull();
+    expect(error).toHaveBeenCalledTimes(2);
   });
 
   it("the ttl is 43200 seconds", () => {

@@ -19,17 +19,28 @@ export function secretIsUsable(secret: string | undefined | null): secret is str
   return typeof secret === "string" && secret.length >= MIN_SECRET_LENGTH;
 }
 
-/** Fails closed: an unset or short secret logs an ERROR and yields no secret. */
+// The middleware reads the secret on every request, so a steadily bad secret
+// would log the same ERROR each time. This flag holds whether the last read was
+// bad: the ERROR fires only when a bad read follows a good one (or the first
+// read), so one bad spell logs once. A good read clears it, so a later bad spell
+// logs again. Pinned by tests/session.test.ts "a steadily bad secret logs once".
+let lastReadWasBad = false;
+
+/** Fails closed: an unset or short secret yields no secret, and logs an ERROR once per bad spell. */
 export function readSessionSecret(
   env: Record<string, string | undefined> = process.env,
 ): string | null {
   const secret = env.CONSOLE_SESSION_SECRET;
   if (secretIsUsable(secret)) {
+    lastReadWasBad = false;
     return secret;
   }
-  console.error(
-    `ERROR CONSOLE_SESSION_SECRET is unset or shorter than ${MIN_SECRET_LENGTH} characters; every login is refused`,
-  );
+  if (!lastReadWasBad) {
+    console.error(
+      `ERROR CONSOLE_SESSION_SECRET is unset or shorter than ${MIN_SECRET_LENGTH} characters; every login is refused`,
+    );
+  }
+  lastReadWasBad = true;
   return null;
 }
 

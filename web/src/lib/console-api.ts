@@ -74,6 +74,15 @@ function baseUrl(raw: string | undefined): string | null {
   }
 }
 
+/**
+ * True when console-api is reachable in principle: a parseable http(s) URL and a
+ * set admin key. Reuses `baseUrl`, so what readyz accepts matches what this
+ * client accepts. Pinned by tests/screens.test.tsx.
+ */
+export function apiIsConfigured(env: Record<string, string | undefined> = process.env): boolean {
+  return baseUrl(env.CONSOLE_API_URL) !== null && Boolean(env.CONSOLE_ADMIN_KEY);
+}
+
 export async function getConsolePage<N extends PageName>(
   name: N,
   deps: ConsoleDeps = {},
