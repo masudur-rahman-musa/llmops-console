@@ -138,7 +138,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     writer and the console reader share, and
     `OPSCONSOLE_PROMETHEUS_URL` the console's Prometheus client. An
     absent switch keeps the twin, which is what lets the suite and a bare local run
-    need no backing service at all.
+    need no backing service at all. Only a local run reaches here without the Redis
+    and Qdrant URLs: `create_app` refuses to build a non-local process when either
+    is missing, so the Redis and Qdrant twins below serve local runs only.
 
     The three Redis readers that never raise (the response cache, the budget store
     and the rate-limit store) and the semantic cache keep that contract: a Redis or
@@ -367,6 +369,27 @@ def create_app(
     `test_create_app_refuses_an_unknown_residency_mode`).
     """
     resolved = settings or Settings()
+    if resolved.env != "local":
+        # Deny by default: only a local run keeps the in-process stand-ins, which
+        # give each copy its own budgets and rate limits. Any other value, the
+        # empty string included, must reach shared Redis and Qdrant or the process
+        # stops here, at build time, naming the missing URL rather than serving one
+        # request with a limit that silently means nothing. Pinned by
+        # test_create_app_refuses_a_non_local_process_without_a_redis_url,
+        # test_create_app_refuses_a_non_local_process_without_a_qdrant_url and
+        # test_create_app_refuses_an_empty_env_without_backing_urls.
+        missing = [
+            name
+            for name, value in (
+                ("OPSCONSOLE_REDIS_URL", resolved.redis_url),
+                ("OPSCONSOLE_QDRANT_URL", resolved.qdrant_url),
+            )
+            if value is None
+        ]
+        if missing:
+            raise ValueError(
+                f"a non-local process (env={resolved.env!r}) needs {' and '.join(missing)}"
+            )
     if resolved.residency_mode is ResidencyMode.RELAXED:
         # Before anything is built, so the line precedes any startup noise.
         logger.warning(RELAXED_RESIDENCY_WARNING, ", ".join(RELAXED_REGIONS))

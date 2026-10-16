@@ -267,3 +267,96 @@ def test_create_app_refuses_an_unknown_residency_mode(monkeypatch: pytest.Monkey
 
     with pytest.raises(ValidationError, match="residency_mode"):
         create_app(environ={})
+
+
+# --- backing-service URLs on a non-local process -------------------
+#
+# Deny-by-default: `local` is the only env where the in-process stand-ins for
+# Redis and Qdrant are allowed to fill in for a missing URL. Any other env, the
+# empty string included, must name both URLs or the factory refuses to start,
+# so a deployment never serves traffic on an in-memory store that loses every
+# map and cache entry a second replica issued.
+
+# A Qdrant nothing listens on, matching the literal the other wiring files use;
+# `create_app` builds no client (the lifespan does), so this is never dialled.
+UNCONNECTED_QDRANT_URL = "http://127.0.0.1:1"
+
+
+def backing_settings(*, env: str, redis_url: str | None, qdrant_url: str | None) -> Settings:
+    """`wiring_settings()` with the env and both backing-service URLs stated.
+
+    Stated rather than left to default: `Settings` reads both URLs from the
+    process environment, and a case that relied on the default would assert the
+    developer's shell rather than the row it names.
+    """
+    return Settings(
+        api_keys=API_KEYS,
+        routing_policy_path=SHIPPED_POLICY_PATH,
+        env=env,
+        redis_url=redis_url,
+        qdrant_url=qdrant_url,
+    )
+
+
+def test_create_app_allows_a_local_process_without_backing_urls() -> None:
+    """Catches a factory that demands both URLs on every env: the whole suite, `make
+    verify` and a bare local run set `env="local"` with no URLs, so demanding them turns
+    every one of those into a boot failure instead of letting the in-process stand-ins fill
+    in."""
+    app = create_app(
+        backing_settings(env="local", redis_url=None, qdrant_url=None),
+        NO_PROVIDER_KEYS,
+    )
+
+    close_adapters(app.state.adapters)
+
+
+def test_create_app_refuses_a_non_local_process_without_a_redis_url() -> None:
+    """Catches a non-local process that boots on the in-process Redis stand-in: a second
+    replica would hold its own half of the maps and answer "no such map" for an id the first
+    issued, a split a one-replica test never sees except at this refusal. The message must
+    name the missing variable so an operator fixes the right one."""
+    with pytest.raises(ValueError, match="OPSCONSOLE_REDIS_URL"):
+        create_app(
+            backing_settings(env="production", redis_url=None, qdrant_url=UNCONNECTED_QDRANT_URL),
+            NO_PROVIDER_KEYS,
+        )
+
+
+def test_create_app_refuses_a_non_local_process_without_a_qdrant_url() -> None:
+    """Catches the same gap for Qdrant: a non-local process on the in-process semantic cache
+    loses every cached entry on restart and shares none across replicas, and the message must
+    name `OPSCONSOLE_QDRANT_URL` rather than the Redis one so the operator sets the variable
+    that is actually missing."""
+    with pytest.raises(ValueError, match="OPSCONSOLE_QDRANT_URL"):
+        create_app(
+            backing_settings(env="production", redis_url=UNCONNECTED_REDIS_URL, qdrant_url=None),
+            NO_PROVIDER_KEYS,
+        )
+
+
+def test_create_app_allows_a_non_local_process_with_both_urls() -> None:
+    """Catches a refusal that fires even when both URLs are set - an env check that forgot to
+    pass when the deny-by-default condition is satisfied - which would make a correctly
+    configured production process unbootable."""
+    app = create_app(
+        backing_settings(
+            env="production",
+            redis_url=UNCONNECTED_REDIS_URL,
+            qdrant_url=UNCONNECTED_QDRANT_URL,
+        ),
+        NO_PROVIDER_KEYS,
+    )
+
+    close_adapters(app.state.adapters)
+
+
+def test_create_app_refuses_an_empty_env_without_backing_urls() -> None:
+    """Catches a check that treats "not local" as "env is truthy": the empty string is not
+    `local`, so it must demand the URLs too, or an env var set to "" quietly keeps the
+    in-process stand-ins on a process that is not local."""
+    with pytest.raises(ValueError):
+        create_app(
+            backing_settings(env="", redis_url=None, qdrant_url=None),
+            NO_PROVIDER_KEYS,
+        )
