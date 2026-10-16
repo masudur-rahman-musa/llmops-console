@@ -34,6 +34,7 @@ from typing import Annotated, Any, Final
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app.core.errors import LibraryInputInvalid
 from app.evals.report import JUDGE_METRIC_NAMES, RunReport
 
 BASELINE_MIN: Final[float] = 0.0
@@ -111,14 +112,16 @@ _Points = Annotated[float, Field(ge=BASELINE_MIN, le=BASELINE_MAX)]
 """A number in the baseline: a percentage in points, bounded inclusively at both ends."""
 
 
-class GateInputInvalid(Exception):
+class GateInputInvalid(LibraryInputInvalid):
     """One of the gate's two input files could not be used, and the message names it.
 
-    `CalibrationSetInvalid`'s shape and its reasons: a plain exception rather than
+    `CalibrationSetInvalid`'s shape and its reasons: a `LibraryInputInvalid`, not
     a `GatewayError`, because an unloadable file is an operator error reported to
     whoever ran the harness and never an answer to a caller, and
-    `tests/gateway/test_error_contract.py` walks `GatewayError.__subclasses__()`
-    asserting one class per wire code.
+    `tests/api/test_error_contract.py` walks `GatewayError.__subclasses__()`
+    asserting one class per wire code - the `LibraryError` hierarchy never enters
+    it (`test_every_library_failure_shares_the_base`). Raised only at load, never
+    converted to HTTP, so the base's 422 mapping stays unused.
 
     Two subclasses rather than one class with a flag, so `cli/evals.py`'s refusal
     block can say which of the two files it refused without parsing the reason.

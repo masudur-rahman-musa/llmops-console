@@ -7,7 +7,7 @@ import time
 from collections.abc import Mapping
 from typing import Any, Literal, assert_never
 
-from app.core.errors import ProviderError
+from app.core.http_errors import as_gateway_error
 from app.core.validation import IdentifierInvalid
 from app.providers.base import (
     ChatMessage,
@@ -320,7 +320,7 @@ def requested_mapping(
     try:
         mapping = store.get(tenant, header)
     except RedactionMapStoreUnavailable as exc:
-        raise ProviderError("the redaction map store is unavailable", retryable=True) from exc
+        raise as_gateway_error(exc, "the redaction map store is unavailable") from exc
     if mapping is None:
         raise IdentifierInvalid(f"{REHYDRATE_HEADER}: no live map", param=REHYDRATE_HEADER)
     return mapping

@@ -52,8 +52,8 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict
 
 from app.api.deps import admin_key
-from app.core.errors import ProviderError
-from app.core.validation import IdentifierInvalid, checked_identifier
+from app.core.http_errors import as_gateway_error
+from app.core.validation import checked_identifier
 from app.redaction import (
     DirectoryNameInvalid,
     DirectoryStore,
@@ -122,10 +122,11 @@ def checked_tenant(value: str) -> str:
 def held_names(store: DirectoryStore, tenant: str) -> tuple[str, ...]:
     """This tenant's current directory, with an unreachable store rendered as a 502.
 
-    `DirectoryStoreUnavailable` is a plain exception, not a `GatewayError`
-    (`ErrorCode.PROVIDER_ERROR` already belongs to `ProviderError` and
-    `test_error_code_set_is_exhaustive` allows one concrete class per code), so
-    letting it escape would answer a 500 with no code. The directory store is an
+    `DirectoryStoreUnavailable` is a `LibraryDependencyUnavailable`, not a
+    `GatewayError` (`ErrorCode.PROVIDER_ERROR` already belongs to `ProviderError`
+    and `test_error_code_set_is_exhaustive` allows one concrete class per code),
+    so letting it escape would answer a 500 with no code. `as_gateway_error`
+    renders it as the retryable 502 its base names. The directory store is an
     outbound dependency like a provider and like the map store, which is why it
     lands on `PROVIDER_ERROR` and why the message is this route's own words: the
     client's name an internal host and port.
@@ -133,7 +134,7 @@ def held_names(store: DirectoryStore, tenant: str) -> tuple[str, ...]:
     try:
         return store.get(tenant)
     except DirectoryStoreUnavailable as exc:
-        raise ProviderError("the directory store is unavailable", retryable=True) from exc
+        raise as_gateway_error(exc, "the directory store is unavailable") from exc
 
 
 router = APIRouter(dependencies=[Depends(admin_key)])
@@ -149,10 +150,11 @@ def push_directory(request: Request, body: DirectoryPush) -> DirectoryPushResult
     was and the store was never asked to write
     (`test_a_push_outside_a_cap_is_422_before_any_store_write`).
 
-    `DirectoryNameInvalid` becomes a 422 `VALIDATION` carrying its own message,
-    which names the field and the cap and never the value. It is deliberately not
-    allowed to escape as a 500: the push is this endpoint's input, so a cap
-    breach is a request-level validation failure.
+    `DirectoryNameInvalid` is a `LibraryInputInvalid`; `as_gateway_error` renders
+    it as a 422 `VALIDATION` carrying its own message, which names the field and
+    the cap and never the value. It is deliberately not allowed to escape as a
+    500: the push is this endpoint's input, so a cap breach is a request-level
+    validation failure.
 
     Declared `def` rather than `async def` like every other route here: hashing
     up to 2000 names is CPU work, and FastAPI runs a `def` route in a worker
@@ -165,12 +167,12 @@ def push_directory(request: Request, body: DirectoryPush) -> DirectoryPushResult
     try:
         checked_entries(body.names, held)
     except DirectoryNameInvalid as exc:
-        raise IdentifierInvalid(str(exc), param=exc.param) from exc
+        raise as_gateway_error(exc, str(exc), param=exc.param) from exc
 
     if body.names:
         try:
             store.put(tenant, body.names)
         except DirectoryStoreUnavailable as exc:
-            raise ProviderError("the directory store is unavailable", retryable=True) from exc
+            raise as_gateway_error(exc, "the directory store is unavailable") from exc
 
     return DirectoryPushResult(stored=True, count=len(held_names(store, tenant)))

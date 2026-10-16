@@ -5,8 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
-from app.core.errors import ProviderError
-from app.core.validation import IdentifierInvalid
+from app.core.http_errors import as_gateway_error
 from app.model_routing.policy import DataClass, Policy
 from app.redaction import (
     DirectoryStore,
@@ -80,7 +79,7 @@ def tenant_directory(store: DirectoryStore, tenant: str) -> NameDirectory:
     try:
         names = store.get(tenant)
     except DirectoryStoreUnavailable as exc:
-        raise ProviderError("the directory store is unavailable", retryable=True) from exc
+        raise as_gateway_error(exc, "the directory store is unavailable") from exc
     return NameDirectory.compile(names)
 
 
@@ -144,21 +143,25 @@ def redact_or_reject(
 ) -> RedactedBatch:
     """`redact_batch`, with the engine's cap rendered as the 422 a client can act on.
 
-    `RedactionInputTooLong` is a plain exception, not a `GatewayError` (an earlier change:
-    `ErrorCode.VALIDATION` already belongs to `IdentifierInvalid` and
+    `RedactionInputTooLong` is a `LibraryInputInvalid`, not a `GatewayError`
+    (`ErrorCode.VALIDATION` already belongs to `IdentifierInvalid` and
     `test_error_code_set_is_exhaustive` allows one class per code), so a route
     that let it escape would answer a 500 with no code. The inline paths have no
     request model to refuse an over-cap string on - the cap belongs to redaction,
     not to the chat or embeddings wire shape - so this is where it becomes a 422
     (`test_a_chat_message_over_the_cap_is_422_with_no_outbound_call`).
 
-    The conversion lives in one place for both routes: two `except` blocks would
-    be two chances to answer differently for the same refusal.
+    `as_gateway_error` reads the base and returns the 422 `IdentifierInvalid` it
+    names, so the status is not hand-picked here
+    (`test_the_converter_maps_an_input_invalid_to_validation`). The conversion
+    lives in one place for both routes: two `except` blocks would be two chances
+    to answer differently for the same refusal.
     """
     try:
         return redact_batch(texts, directory)
     except RedactionInputTooLong as exc:
-        raise IdentifierInvalid(
+        raise as_gateway_error(
+            exc,
             f"{param}: a string longer than {exc.limit} characters cannot be redacted",
             param=param,
         ) from exc
@@ -183,25 +186,26 @@ def redaction_applies(policy: Policy, tenant: str, data_class: DataClass) -> boo
 def filed_map_id(store: RedactionMapStore, tenant: str, mapping: Mapping[str, str]) -> str:
     """File one map, with an unreachable store rendered as the 502 a client can act on.
 
-    `RedactionMapStoreUnavailable` is a plain exception, not a `GatewayError`
-    (`ErrorCode.PROVIDER_ERROR` already belongs to `ProviderError` and
-    `test_error_code_set_is_exhaustive` allows one concrete class per code), so a
-    route that let it escape would answer a 500 with no code at all and a caller
-    could not tell a dependency outage from a bug in its own request. The map
-    store is an outbound dependency like a provider, which is why it lands on
+    `RedactionMapStoreUnavailable` is a `LibraryDependencyUnavailable`, not a
+    `GatewayError` (`ErrorCode.PROVIDER_ERROR` already belongs to `ProviderError`
+    and `test_error_code_set_is_exhaustive` allows one concrete class per code),
+    so a route that let it escape would answer a 500 with no code at all and a
+    caller could not tell a dependency outage from a bug in its own request. The
+    map store is an outbound dependency like a provider, which is why it lands on
     `PROVIDER_ERROR` rather than on a new code.
 
-    The message is this route's own words. The client's carry an internal host
-    and port, and they stay in the chained cause where the log line reads them
+    `as_gateway_error` does the conversion, with the message this route's own
+    words. The client's carry an internal host and port, and they stay in the
+    chained cause where the log line reads them, never in the converted error
     (`test_a_store_that_cannot_be_reached_is_502_with_a_typed_code`,
     `test_a_store_failure_does_not_put_the_clients_words_in_front_of_a_caller`).
 
-    `retryable=True` classifies the failure rather than asking for anything: an
-    unreachable Redis is the transient class. Nothing acts on it here - this route
-    has one store and no second candidate to move to - and the routes' fallback
-    loop reads the flag on a PROVIDER call, which this is not.
+    The converter sets `retryable=True`, classifying the failure rather than
+    asking for anything: an unreachable Redis is the transient class. Nothing
+    acts on it here - this route has one store and no second candidate to move to
+    - and the routes' fallback loop reads the flag on a PROVIDER call, not here.
     """
     try:
         return store.put(tenant, mapping)
     except RedactionMapStoreUnavailable as exc:
-        raise ProviderError("the redaction map store is unavailable", retryable=True) from exc
+        raise as_gateway_error(exc, "the redaction map store is unavailable") from exc

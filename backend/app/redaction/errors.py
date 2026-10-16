@@ -1,6 +1,6 @@
 """The typed failures the redaction engine, its map store and its directory raise.
 
-Neither is a `GatewayError`. The nine
+None is a `GatewayError`. The nine
 codes in `app.core.errors.ErrorCode` are a closed set and
 `test_error_code_set_is_exhaustive` asserts exactly one concrete `GatewayError`
 subclass per code; `ErrorCode.VALIDATION` already belongs to
@@ -8,6 +8,13 @@ subclass per code; `ErrorCode.VALIDATION` already belongs to
 `app.core.errors.ProviderError`, so a second class carrying either would
 fail that test (`test_the_unavailable_failure_is_not_a_gateway_error`).
 `PolicyInvalid` in the routing package is the same shape for the same reason.
+
+The four here are `LibraryError` subclasses so each maps to its HTTP answer in
+one place: a cap failure is a `LibraryInputInvalid` (422, `VALIDATION`), an
+unreachable store a `LibraryDependencyUnavailable` (502, `PROVIDER_ERROR`), and
+`app.core.http_errors.as_gateway_error` converts either
+(`test_every_library_failure_shares_the_base`). a design note records the second
+hierarchy.
 
 The engine is a pure library with no HTTP boundary of its own. An earlier change turns an
 oversized body into a 422 in its request model, which imports
@@ -19,8 +26,10 @@ directory failures land the same way: a cap becomes a 422 on
 
 from __future__ import annotations
 
+from app.core.errors import LibraryDependencyUnavailable, LibraryInputInvalid
 
-class RedactionInputTooLong(Exception):
+
+class RedactionInputTooLong(LibraryInputInvalid):
     """Text longer than `MAX_REDACTION_INPUT_CHARS` was handed to `redact`.
 
     Raised before any detector runs, so an oversized input costs one length
@@ -35,7 +44,7 @@ class RedactionInputTooLong(Exception):
         self.limit = limit
 
 
-class RedactionMapStoreUnavailable(Exception):
+class RedactionMapStoreUnavailable(LibraryDependencyUnavailable):
     """The map store could not be reached, on the read path or on the write path.
 
     Raised by `RedisRedactionMapStore` in place of every `redis.RedisError`, and
@@ -58,7 +67,7 @@ class RedactionMapStoreUnavailable(Exception):
     """
 
 
-class DirectoryNameInvalid(Exception):
+class DirectoryNameInvalid(LibraryInputInvalid):
     """A pushed directory name, or the size of the push, broke one of the three caps.
 
     One class for all three caps rather than three, because the caller acts on
@@ -86,7 +95,7 @@ class DirectoryNameInvalid(Exception):
         self.param = "names"
 
 
-class DirectoryStoreUnavailable(Exception):
+class DirectoryStoreUnavailable(LibraryDependencyUnavailable):
     """The directory store could not be reached, on the read path or on the write path.
 
     Raised by `RedisDirectoryStore` in place of every `redis.RedisError`, and

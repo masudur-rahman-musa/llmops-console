@@ -52,6 +52,7 @@ from typing import Any, Final
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
+from app.core.errors import LibraryInputInvalid
 from app.core.validation import IdentifierInvalid, checked_identifier
 
 MAX_PRINCIPAL_LENGTH: Final[int] = 128
@@ -240,15 +241,17 @@ class EvalCase(BaseModel):
         return self
 
 
-class EvalSetInvalid(Exception):
+class EvalSetInvalid(LibraryInputInvalid):
     """A golden set could not be loaded.
 
-    A plain exception rather than a `GatewayError`: an unloadable set is an
+    A `LibraryInputInvalid`, not a `GatewayError`: an unloadable set is an
     operator error reported to whoever ran the harness, never an answer to a
     caller, so it carries no wire code. `PolicyInvalid` is the same shape for the
-    same reason, and `tests/gateway/test_error_contract.py` walks
-    `GatewayError.__subclasses__()` asserting exactly one class per code - a
-    codeless subclass would break that set.
+    same reason, and `tests/api/test_error_contract.py` walks
+    `GatewayError.__subclasses__()` asserting exactly one class per code - the
+    second hierarchy a `LibraryError` sits in never enters that set
+    (`test_every_library_failure_shares_the_base`). It is raised only at load and
+    never converted to HTTP, so the base's 422 mapping stays unused here.
 
     `line` is the 1-based FILE line of the offending line, or `None` when the
     file itself is at fault. That is the number an author counts to in an editor,

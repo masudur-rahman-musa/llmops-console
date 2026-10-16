@@ -174,3 +174,48 @@ class ProviderError(GatewayError):
         super().__init__(message, param=param)
         self.retryable = retryable
         self.provider_message = provider_message
+
+
+class LibraryError(Exception):
+    """Base for a failure raised by a pure library - redaction, pricing, evals.
+
+    A SECOND hierarchy on purpose, deliberately NOT a `GatewayError`. The nine
+    codes above are a closed set and `test_error_code_set_is_exhaustive` allows
+    exactly one concrete `GatewayError` per code; `VALIDATION` and
+    `PROVIDER_ERROR` already have theirs (`app.core.validation.IdentifierInvalid`
+    and `ProviderError`), so a library failure cannot be a `GatewayError`
+    carrying either (`test_the_library_base_is_not_a_gateway_error`). The two
+    hierarchies stay apart and `app.core.http_errors.as_gateway_error` joins
+    them. a design note records this.
+
+    `code` and `http_status` are set by the two middle bases below that have an
+    HTTP answer; a direct subclass (`app.evals.calibration.CalibrationRefused`)
+    sets neither, because it is neither a bad input nor a store outage.
+    """
+
+    code: ClassVar[ErrorCode]
+    http_status: ClassVar[int]
+
+
+class LibraryInputInvalid(LibraryError):
+    """A library rejected its input. The 422 `VALIDATION` answer, named once.
+
+    Where a route converts one, it becomes `IdentifierInvalid` - code
+    `VALIDATION`, 422 - so the status lives here rather than at each call site
+    (`test_input_invalid_names_validation_422`).
+    """
+
+    code: ClassVar[ErrorCode] = ErrorCode.VALIDATION
+    http_status: ClassVar[int] = 422
+
+
+class LibraryDependencyUnavailable(LibraryError):
+    """A library's backing store could not be reached. The 502, named once.
+
+    Where a route converts one, it becomes a retryable `ProviderError` - code
+    `PROVIDER_ERROR`, 502 - the same code an unreachable provider lands on
+    (`test_dependency_unavailable_names_provider_error_502`).
+    """
+
+    code: ClassVar[ErrorCode] = ErrorCode.PROVIDER_ERROR
+    http_status: ClassVar[int] = 502

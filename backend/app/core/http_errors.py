@@ -41,12 +41,50 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.core.errors import ErrorCode, GatewayError
+from app.core.errors import (
+    ErrorCode,
+    GatewayError,
+    LibraryDependencyUnavailable,
+    LibraryError,
+    LibraryInputInvalid,
+    ProviderError,
+)
 from app.core.metrics import record_failure
 from app.core.tracing import record_error_code
 from app.core.validation import IdentifierInvalid
 
 logger = logging.getLogger(__name__)
+
+
+def as_gateway_error(
+    error: LibraryError, message: str, *, param: str | None = None
+) -> GatewayError:
+    """Turn a library failure into the gateway error that carries its HTTP answer.
+
+    The status lives on the library error's middle base, read here once, so a
+    route no longer hand-picks a 422 or a 502 at each call site: a
+    `LibraryInputInvalid` becomes `IdentifierInvalid` (422, `VALIDATION`) and a
+    `LibraryDependencyUnavailable` a retryable `ProviderError` (502,
+    `PROVIDER_ERROR`) (`test_the_converter_maps_an_input_invalid_to_validation`,
+    `test_the_converter_maps_a_dependency_outage_to_a_retryable_502`).
+
+    `message` is the ROUTE's own words, never the library exception's: a store
+    failure's text names an internal host and port, and it stays in the chained
+    cause the caller passes `raise ... from exc` rather than reaching a client
+    (`test_the_converter_maps_a_dependency_outage_to_a_retryable_502` pins the
+    message as exactly the words passed).
+
+    `retryable=True` classifies the outage as the transient class, the same
+    verdict the three store conversions set before this converter replaced them.
+    A `LibraryError` with no HTTP mapping (`CalibrationRefused`) is never
+    converted and raises `TypeError` rather than inventing a status.
+    """
+    if isinstance(error, LibraryInputInvalid):
+        return IdentifierInvalid(message, param=param)
+    if isinstance(error, LibraryDependencyUnavailable):
+        return ProviderError(message, param=param, retryable=True)
+    raise TypeError(f"{type(error).__name__} carries no HTTP mapping")
+
 
 ERROR_TYPE_BY_STATUS: dict[int, str] = {
     401: "authentication_error",

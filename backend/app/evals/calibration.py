@@ -50,6 +50,7 @@ from typing import Final
 
 from pydantic import BaseModel, ConfigDict, ValidationError, ValidationInfo, field_validator
 
+from app.core.errors import LibraryError, LibraryInputInvalid
 from app.core.validation import IDENTIFIER_PATTERN, IdentifierInvalid
 from app.evals.judge import (
     JUDGE_MAX_SCORE,
@@ -150,14 +151,16 @@ distinction a design note draws one level down: "nothing measured this" is not
 "everything failed it" (`test_a_constant_table_reports_no_kappa_and_is_not_trusted`)."""
 
 
-class CalibrationSetInvalid(Exception):
+class CalibrationSetInvalid(LibraryInputInvalid):
     """A labels file could not be loaded.
 
-    `EvalSetInvalid`'s shape and its reasons: a plain exception rather than a
+    `EvalSetInvalid`'s shape and its reasons: a `LibraryInputInvalid`, not a
     `GatewayError`, because an unloadable file is an operator error reported to
     whoever ran the harness and never an answer to a caller, and
-    `tests/gateway/test_error_contract.py` walks `GatewayError.__subclasses__()`
-    asserting one class per wire code.
+    `tests/api/test_error_contract.py` walks `GatewayError.__subclasses__()`
+    asserting one class per wire code - the `LibraryError` hierarchy never enters
+    it (`test_every_library_failure_shares_the_base`). Raised only at load, never
+    converted to HTTP, so the base's 422 mapping stays unused.
 
     `line` is the 1-based FILE line, comments and blank lines included, or `None`
     when the file itself is at fault - which is what the
@@ -173,13 +176,17 @@ class CalibrationSetInvalid(Exception):
         super().__init__(f"{location}: {reason}")
 
 
-class CalibrationRefused(Exception):
+class CalibrationRefused(LibraryError):
     """Too few labels survived the judge for a calibration to mean anything.
 
     Separate from `CalibrationSetInvalid` because the file was fine: what failed
     is the judge, and the operator's next move is to look at the gateway rather
     than at the file (decision B,
     `test_seven_unscorable_labels_of_forty_six_refuses_and_writes_nothing`).
+
+    A `LibraryError` directly, under neither middle base: it is neither a bad
+    input nor a store outage, so it carries no HTTP mapping and the converter
+    never sees it (`test_every_library_failure_shares_the_base`).
     """
 
 

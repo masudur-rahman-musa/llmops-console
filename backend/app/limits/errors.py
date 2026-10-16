@@ -2,8 +2,10 @@
 
 `PriceTableInvalid` is the shape `app.model_routing.errors.PolicyInvalid` set:
 a rejected `prices.yaml` is an operator error reported to whoever loaded or
-reloaded it, never an answer to a caller, so it is a plain exception rather than
-a `GatewayError` carrying a wire code the handler could use.
+reloaded it, never an answer to a caller, so it is NOT a `GatewayError`
+carrying a wire code the handler could use. It is a `LibraryInputInvalid` - a
+bad input, like every load-time file failure in the evals package - but it is
+raised only at load and never converted to HTTP, so that mapping stays unused.
 
 `PriceTableInvalid` is still the only class HERE, and it is still load-only, but
 this package now raises on a request from TWO seams, both of them key builders
@@ -32,8 +34,10 @@ this module's first paragraph draws.
 
 from __future__ import annotations
 
+from app.core.errors import LibraryInputInvalid
 
-class PriceTableInvalid(Exception):
+
+class PriceTableInvalid(LibraryInputInvalid):
     """The price table could not be read, parsed or validated.
 
     Raised only at LOAD, and its message names the offending field path so an
