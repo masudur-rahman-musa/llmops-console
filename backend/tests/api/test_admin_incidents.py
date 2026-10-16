@@ -191,8 +191,10 @@ def unstored_run_client() -> Iterator[TestClient]:
         admin_key_sha256=sha256_hex(ADMIN_KEY),
     )
     app = create_app(settings, NO_PROVIDER_KEYS)
-    app.state.console_events = NoRunsConsoleEventWriter()
     with TestClient(app) as client:
+        # After the lifespan is entered, which is where the writer is now built;
+        # a swap before startup would be overwritten.
+        app.state.console_events = NoRunsConsoleEventWriter()
         yield client
 
 

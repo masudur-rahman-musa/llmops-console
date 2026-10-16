@@ -176,8 +176,9 @@ def test_create_app_keeps_the_in_process_store_without_a_redis_url() -> None:
     turns every one of them into a connection error at import time rather than a 503."""
     app = create_app(store_settings(redis_url=None), NO_PROVIDER_KEYS)
 
-    assert isinstance(app.state.redaction_map_store, InProcessRedactionMapStore)
-    close_adapters(app.state.adapters)
+    # The store is built on lifespan startup now, so enter it first.
+    with TestClient(app):
+        assert isinstance(app.state.redaction_map_store, InProcessRedactionMapStore)
 
 
 def test_create_app_uses_the_redis_store_when_a_redis_url_is_configured() -> None:
@@ -187,8 +188,8 @@ def test_create_app_uses_the_redis_store_when_a_redis_url_is_configured() -> Non
     one replica can see except at the wiring."""
     app = create_app(store_settings(redis_url=UNCONNECTED_REDIS_URL), NO_PROVIDER_KEYS)
 
-    assert isinstance(app.state.redaction_map_store, RedisRedactionMapStore)
-    close_adapters(app.state.adapters)
+    with TestClient(app):
+        assert isinstance(app.state.redaction_map_store, RedisRedactionMapStore)
 
 
 # --- the residency mode --------------------------------------------

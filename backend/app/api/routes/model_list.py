@@ -22,12 +22,11 @@ reason: a breaker must not make a catalogue flicker.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict
 
-from app.api.deps import Context
+from app.api.deps import Context, PolicyDep, ResidencyModeDep
 from app.model_routing.errors import AliasUnknown, ResidencyUnavailable
-from app.model_routing.policy import PolicyStore, ResidencyMode
 from app.model_routing.resolver import resolve
 
 OWNER = "opsconsole"
@@ -58,11 +57,9 @@ router = APIRouter()
 
 
 @router.get("/v1/models")
-def list_models(request: Request, context: Context) -> ModelList:
+def list_models(context: Context, store: PolicyDep, mode: ResidencyModeDep) -> ModelList:
     """List the aliases that resolve for this tenant and data class, in policy order."""
-    store: PolicyStore = request.app.state.policy
     policy = store.policy
-    mode: ResidencyMode = request.app.state.settings.residency_mode
     listed: list[Model] = []
     for alias in policy.aliases:
         try:

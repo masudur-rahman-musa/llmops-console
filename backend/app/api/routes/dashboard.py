@@ -33,8 +33,7 @@ from typing import Annotated, Final
 
 from fastapi import APIRouter, Depends, Query, Request
 
-from app.api.deps import _checked_tenant, admin_key
-from app.limits.prices import PriceStore
+from app.api.deps import PricesDep, _checked_tenant, admin_key
 from app.schemas.dashboard import (
     BlockedItem,
     Circuit,
@@ -126,12 +125,13 @@ def home(request: Request) -> HomePage:
 
 
 @router.get(CONSOLE_COST)
-def cost(request: Request, days: Days = DEFAULT_DAYS, tenant: str | None = None) -> CostPage:
+def cost(
+    request: Request, prices: PricesDep, days: Days = DEFAULT_DAYS, tenant: str | None = None
+) -> CostPage:
     """The rollup's days, estimated cache savings, budgets and cost per request."""
     if tenant is not None:
         _checked_tenant(tenant)
     now = datetime.now(UTC)
-    prices: PriceStore = request.app.state.prices
     postgres, read = _postgres(
         request,
         "cost",

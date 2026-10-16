@@ -99,9 +99,11 @@ def slo_wired(admin_settings: Settings) -> Iterator[SloWired]:
     app = create_app(admin_settings, NO_PROVIDER_KEYS)
     reader = StubReader()
     prom = SloPromStub()
-    app.state.console_reader = reader
-    app.state.prometheus = prom.client()
     with TestClient(app) as client:
+        # After the lifespan is entered: a swap before startup would be
+        # overwritten by the real reader and Prometheus client the lifespan builds.
+        app.state.console_reader = reader
+        app.state.prometheus = prom.client()
         yield SloWired(client=client, app=app, reader=reader, prom=prom, slo_prom=prom)
 
 

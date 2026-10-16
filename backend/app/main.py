@@ -34,8 +34,6 @@ from app.cache import (
     InProcessSemanticCache,
     QdrantSemanticCache,
     RedisResponseCache,
-    ResponseCache,
-    SemanticCache,
 )
 from app.core.clients import PROBE_TIMEOUT_SECONDS, build_redis_client
 from app.core.config import Settings
@@ -50,11 +48,10 @@ from app.core.tracing import (
     parent_context,
     start_root_span,
 )
-from app.limits.budget import BudgetStore, InProcessBudgetStore, RedisBudgetStore
+from app.limits.budget import InProcessBudgetStore, RedisBudgetStore
 from app.limits.prices import PriceStore
 from app.limits.ratelimit import (
     InProcessRateLimitStore,
-    RateLimitStore,
     RedisRateLimitStore,
 )
 from app.model_routing.policy import PolicyStore, ResidencyMode
@@ -63,28 +60,22 @@ from app.providers.breaker import CircuitBreaker
 from app.providers.factory import build_adapters
 from app.providers.factory import close_adapters as close_adapters
 from app.redaction import (
-    DirectoryStore,
     InProcessDirectoryStore,
     InProcessRedactionMapStore,
-    RedactionMapStore,
     RedisDirectoryStore,
     RedisRedactionMapStore,
 )
 from app.services.prometheus_reads import PrometheusClient, build_prometheus_http
 from app.storage import (
-    ConsoleEventWriter,
-    CostLedgerWriter,
     InMemoryConsoleEventWriter,
     InMemoryCostLedgerWriter,
     InMemoryResidencyLogWriter,
     PostgresConsoleEventWriter,
     PostgresCostLedgerWriter,
     PostgresResidencyLogWriter,
-    ResidencyLogWriter,
     build_pool,
 )
 from app.storage.dashboard_reads import (
-    ConsoleReader,
     PostgresConsoleReader,
     UnconfiguredConsoleReader,
 )
@@ -125,19 +116,109 @@ request and would bury itself (`test_create_app_warns_once_under_relaxed_residen
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Close the adapter set, and the console's Prometheus client, on shutdown.
+    """Open the backing-service clients and the stores over them on startup, close on shutdown.
 
-    Nothing is built here: the key store, the policy and the adapters are built
-    in `create_app`, so a misconfiguration stops the process from starting rather
-    than surfacing on the first request. This is only the other end of that.
+    Everything here runs when the process starts serving, not when `create_app`
+    builds the app, so importing `app.main` and building the app opens no socket
+    (`test_building_the_app_opens_no_client`, `test_clients_are_built_on_startup`).
+    The key store, the policy, the prices, the breaker and the adapters are built
+    in `create_app` instead: they open no connection, and a malformed config file
+    should stop the process before it serves rather than on a live request.
+
+    One Redis client, one Qdrant client and one Postgres pool are built here and
+    shared by the stores, caches, writers and the readiness probes, so a
+    deployment opens one connection set per service and the probe that checks a
+    service runs over the very client the routes use
+    (`test_one_redis_one_qdrant_one_pool_are_shared`,
+    `test_readyz_probes_run_over_the_shared_clients`). Each is settings-driven on
+    the switch its plan fixed: `OPSCONSOLE_REDIS_URL` gives the five Redis-backed
+    stores a shared client and an in-process twin otherwise (an earlier change,
+    15a, 15b), `OPSCONSOLE_QDRANT_URL` the semantic cache,
+    `OPSCONSOLE_DATABASE_URL` the one pool both Postgres writers, the console event
+    writer and the console reader share, and
+    `OPSCONSOLE_PROMETHEUS_URL` the console's Prometheus client. An
+    absent switch keeps the twin, which is what lets the suite and a bare local run
+    need no backing service at all.
+
+    The three Redis readers that never raise (the response cache, the budget store
+    and the rate-limit store) and the semantic cache keep that contract: a Redis or
+    Qdrant outage is a miss, not a failed request. The migration is NOT applied
+    here (`make migrate` is a deploy step, so replicas coming up together do not
+    race the same DDL).
+
+    `register_probes` runs last, once the shared clients are on `app.state`, and
+    the four clients all close on shutdown (`test_clients_are_closed_on_shutdown`).
     """
+    resolved: Settings = app.state.settings
+
+    redis_client = (
+        build_redis_client(resolved.redis_url) if resolved.redis_url is not None else None
+    )
+    app.state.redis_client = redis_client
+    app.state.redaction_map_store = (
+        RedisRedactionMapStore(redis_client)
+        if redis_client is not None
+        else InProcessRedactionMapStore()
+    )
+    app.state.directory_store = (
+        RedisDirectoryStore(redis_client) if redis_client is not None else InProcessDirectoryStore()
+    )
+    app.state.response_cache = (
+        RedisResponseCache(redis_client) if redis_client is not None else InProcessResponseCache()
+    )
+    app.state.budget_store = (
+        RedisBudgetStore(redis_client) if redis_client is not None else InProcessBudgetStore()
+    )
+    app.state.rate_limit_store = (
+        RedisRateLimitStore(redis_client) if redis_client is not None else InProcessRateLimitStore()
+    )
+
+    qdrant_client = (
+        build_qdrant_data_client(resolved.qdrant_url) if resolved.qdrant_url is not None else None
+    )
+    app.state.qdrant_client = qdrant_client
+    app.state.semantic_cache = (
+        QdrantSemanticCache(qdrant_client)
+        if qdrant_client is not None
+        else InProcessSemanticCache()
+    )
+
+    pool = build_pool(resolved.database_url) if resolved.database_url is not None else None
+    app.state.db_pool = pool
+    app.state.residency_log = (
+        PostgresResidencyLogWriter(pool) if pool is not None else InMemoryResidencyLogWriter()
+    )
+    app.state.cost_ledger = (
+        PostgresCostLedgerWriter(pool) if pool is not None else InMemoryCostLedgerWriter()
+    )
+    app.state.console_events = (
+        PostgresConsoleEventWriter(pool) if pool is not None else InMemoryConsoleEventWriter()
+    )
+    app.state.console_reader = (
+        PostgresConsoleReader(pool) if pool is not None else UnconfiguredConsoleReader()
+    )
+
+    prometheus = (
+        PrometheusClient(build_prometheus_http(resolved.prometheus_url))
+        if resolved.prometheus_url is not None
+        else None
+    )
+    app.state.prometheus = prometheus
+
+    register_probes(app)
+
     try:
         yield
     finally:
         close_adapters(app.state.adapters)
-        prometheus: PrometheusClient | None = app.state.prometheus
         if prometheus is not None:
             prometheus.close()
+        if pool is not None:
+            pool.close()
+        if redis_client is not None:
+            redis_client.close()
+        if qdrant_client is not None:
+            qdrant_client.close()
         flush_tracing()
 
 
@@ -262,101 +343,20 @@ def create_app(
     suite that would make a real billed call cannot pass locally and fail in CI.
     Pinned by `test_create_app_reads_keys_only_from_the_given_environ`.
 
-    The redaction map store is settings-driven:
-    `OPSCONSOLE_REDIS_URL` set gives every replica the same maps through
-    `RedisRedactionMapStore`, and absent keeps `InProcessRedactionMapStore`, which
-    files them in this process only and is what lets the
-    suite and a bare local run need no backing service. Pinned by
-    `test_create_app_keeps_the_in_process_store_without_a_redis_url` and
-    `test_create_app_uses_the_redis_store_when_a_redis_url_is_configured`.
-
-    The tenant directory store is built from the SAME client and on the same
-    switch: one `redis.Redis` per app, so a deployment with Redis
-    configured opens one connection pool rather than two for what is one
-    dependency, and the readiness probe that already checks Redis covers both
-    stores. Redis decodes nothing for either - the map store stores JSON and the
-    directory store decodes its own hash values.
-
-    The exact-match response cache is built from that SAME client and on the same
-    switch: `RedisResponseCache` when Redis is configured,
-    `InProcessResponseCache` otherwise, so a bare local run and the suite need no
-    backing service and still take the cache path
-    (`test_create_app_keeps_the_in_process_cache_without_a_redis_url`,
-    `test_create_app_uses_the_redis_cache_when_a_redis_url_is_configured`). It is
-    the third reader of one connection pool, and unlike the two stores above it
-    never raises: a Redis outage is a miss on this seam, not a failed request.
-
-    The monthly budget counter is built from that same client and on the same
-    switch: `RedisBudgetStore` when Redis is configured, so every
-    replica adds to one total per tenant, and `InProcessBudgetStore` otherwise,
-    which counts in this process only and is what lets the suite enforce a cap
-    with no backing service
-    (`test_create_app_keeps_the_in_process_budget_store_without_a_redis_url`,
-    `test_create_app_uses_the_redis_budget_store_when_a_redis_url_is_configured`).
-    Like the response cache and unlike the two stores above it, it never raises:
-    a Redis outage leaves the counter unknown, and an unknown counter serves the
-    request.
-
-    The two rate-limit buckets are built from that same client and on the same
-    switch: `RedisRateLimitStore` when Redis is configured, so two
-    replicas cannot each grant a tenant the full `rpm`, and
-    `InProcessRateLimitStore` otherwise, which is what lets the suite and a bare
-    local run enforce a ceiling with no backing service
-    (`test_create_app_keeps_the_in_process_rate_limit_store_without_a_redis_url`,
-    `test_create_app_uses_the_redis_rate_limit_store_when_a_redis_url_is_configured`).
-    It never raises either: a limiter that cannot answer serves the request.
-
-    The semantic cache is settings-driven on its OWN switch, `OPSCONSOLE_QDRANT_URL`: configured builds `QdrantSemanticCache` over a bounded `httpx`
-    client, absent builds `InProcessSemanticCache`, so the suite and a bare local
-    run take the semantic path with no Qdrant anywhere
-    (`test_create_app_keeps_the_in_process_semantic_cache_without_a_qdrant_url`,
-    `test_create_app_uses_the_qdrant_semantic_cache_when_a_qdrant_url_is_configured`).
-    A different switch from the three Redis readers above because it is a
-    different service; like the response cache and unlike the two stores, it never
-    raises, so an unreachable Qdrant is a miss and not a failed request.
+    The clients that open a connection - the Redis client, the Qdrant client, the
+    Postgres pool and the Prometheus client - and the stores, caches, writers and
+    readers built over them are NOT built here: `lifespan` builds them on startup
+    and closes them on shutdown, so building the app opens no socket (an earlier change,
+    `test_building_the_app_opens_no_client`). `register_probes` runs there too,
+    over those shared clients. A route reaches each through a typed dependency in
+    `app.api.deps` rather than off `app.state`.
 
     The price table is built here for the reason the key store and the policy are:
     a malformed `prices.yaml` stops the process from starting rather than
     surfacing on a live request that then cannot be priced
     (`test_create_app_refuses_a_malformed_prices_file`,
-    `test_the_price_store_is_built_over_the_configured_path`). A route reads one
-    snapshot per request from `app.state.prices`, exactly as it reads the policy.
-
-    The residency log writer is settings-driven for the same reason and by the
-    same rule: `OPSCONSOLE_DATABASE_URL` set builds `PostgresResidencyLogWriter`
-    over a pool, absent builds `InMemoryResidencyLogWriter`, which files rows in
-    this process and is what lets the suite and a bare local run open no
-    connection at all
-    (`test_the_app_builds_the_in_process_writer_without_a_database_url`). The
-    migration is NOT applied here: `make migrate` is a deploy step, so that
-    replicas coming up together do not race each other over the same DDL.
-
-    The cost ledger writer takes that same switch and that same pool (an earlier change
-    decision D): ONE `app.state.db_pool` serves both Postgres writers, so a
-    deployment opens one set of connections for what is one dependency and the
-    `postgres` readiness probe that already exists covers both
-    (`test_both_postgres_writers_share_one_pool`,
-    `test_the_app_builds_the_in_memory_cost_ledger_without_a_database_url`). The
-    argument is the one that gives the three Redis readers one client above.
-
-    The console event writer is the third on that same pool and the same switch. It is what `/admin/incidents` and `/admin/releases`
-    write through, so the in-memory branch is the one that keeps those routes
-    answering on a laptop with no Postgres at all - at the cost that an incident
-    recorded there is lost at exit, which is what the writer's own docstring says
-    it is (`test_the_routes_answer_with_no_database_url_configured`).
-
-    The console reader takes that same pool and the same switch: a
-    `PostgresConsoleReader` over it, or `UnconfiguredConsoleReader`, which the
-    `/console/*` routes read as `postgres: unconfigured` and never call. The
-    Prometheus client is built only from `OPSCONSOLE_PROMETHEUS_URL`; absent leaves
-    `app.state.prometheus` as `None` and every metric field unconfigured
-    (`test_with_nothing_configured_every_route_is_200_and_both_sources_unconfigured`).
-    Neither registers a readiness probe.
-
-    `register_probes` runs last of the state-building steps, because the probes it
-    registers close over the adapter mapping and the settings built above; what it
-    registers is decided by which backing services are configured
-    (`test_create_app_registers_the_probes_its_settings_configure`).
+    `test_the_price_store_is_built_over_the_configured_path`). It opens no socket,
+    which is why it stays here while the connection-backed stores move.
 
     `OPSCONSOLE_RESIDENCY_MODE=relaxed` logs `RELAXED_RESIDENCY_WARNING` here, once
     and before any state is built. An unknown value never gets
@@ -378,62 +378,7 @@ def create_app(
     app.state.provider_environ = os.environ if environ is None else environ
     app.state.adapters = build_adapters(app.state.policy.policy, app.state.provider_environ)
     app.state.breaker = CircuitBreaker()
-    redis_client = (
-        build_redis_client(resolved.redis_url) if resolved.redis_url is not None else None
-    )
-    store: RedactionMapStore = (
-        RedisRedactionMapStore(redis_client)
-        if redis_client is not None
-        else InProcessRedactionMapStore()
-    )
-    app.state.redaction_map_store = store
-    directory: DirectoryStore = (
-        RedisDirectoryStore(redis_client) if redis_client is not None else InProcessDirectoryStore()
-    )
-    app.state.directory_store = directory
-    response_cache: ResponseCache = (
-        RedisResponseCache(redis_client) if redis_client is not None else InProcessResponseCache()
-    )
-    app.state.response_cache = response_cache
-    budget_store: BudgetStore = (
-        RedisBudgetStore(redis_client) if redis_client is not None else InProcessBudgetStore()
-    )
-    app.state.budget_store = budget_store
-    rate_limit_store: RateLimitStore = (
-        RedisRateLimitStore(redis_client) if redis_client is not None else InProcessRateLimitStore()
-    )
-    app.state.rate_limit_store = rate_limit_store
-    semantic_cache: SemanticCache = (
-        QdrantSemanticCache(build_qdrant_data_client(resolved.qdrant_url))
-        if resolved.qdrant_url is not None
-        else InProcessSemanticCache()
-    )
-    app.state.semantic_cache = semantic_cache
     app.state.prices = PriceStore(resolved.prices_path)
-    pool = build_pool(resolved.database_url) if resolved.database_url is not None else None
-    app.state.db_pool = pool
-    residency_log: ResidencyLogWriter = (
-        PostgresResidencyLogWriter(pool) if pool is not None else InMemoryResidencyLogWriter()
-    )
-    app.state.residency_log = residency_log
-    cost_ledger: CostLedgerWriter = (
-        PostgresCostLedgerWriter(pool) if pool is not None else InMemoryCostLedgerWriter()
-    )
-    app.state.cost_ledger = cost_ledger
-    console_events: ConsoleEventWriter = (
-        PostgresConsoleEventWriter(pool) if pool is not None else InMemoryConsoleEventWriter()
-    )
-    app.state.console_events = console_events
-    console_reader: ConsoleReader = (
-        PostgresConsoleReader(pool) if pool is not None else UnconfiguredConsoleReader()
-    )
-    app.state.console_reader = console_reader
-    app.state.prometheus = (
-        PrometheusClient(build_prometheus_http(resolved.prometheus_url))
-        if resolved.prometheus_url is not None
-        else None
-    )
-    register_probes(app)
     register_error_handlers(app)
     install_exporter(resolved)
     app.add_middleware(TracingMiddleware)

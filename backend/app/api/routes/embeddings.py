@@ -7,7 +7,7 @@ from typing import cast
 
 from fastapi import APIRouter, Request, Response
 
-from app.api.deps import Context
+from app.api.deps import AppStateDep, Context
 from app.core.errors import ProviderError
 from app.core.metrics import record_redactions, record_tokens
 from app.core.tracing import SpanAttributes, annotate, stage_span
@@ -58,6 +58,7 @@ def create_embeddings(
     context: Context,
     body: EmbeddingsRequest,
     response: Response,
+    state: AppStateDep,
 ) -> EmbeddingsResponse:
     """Resolve the alias, then walk the allowed providers that can embed until one does.
 
@@ -110,13 +111,13 @@ def create_embeddings(
     the adapters are synchronous `httpx` clients, so FastAPI runs this in a
     worker thread instead of blocking the event loop for the whole provider call.
     """
-    check_rate_limit(request.app.state, context)
-    check_budget(request.app.state, context, override=request.headers.get(BUDGET_OVERRIDE_HEADER))
+    check_rate_limit(state, context)
+    check_budget(state, context, override=request.headers.get(BUDGET_OVERRIDE_HEADER))
 
-    store: PolicyStore = request.app.state.policy
-    adapters: Mapping[str, Adapter] = request.app.state.adapters
-    breaker: CircuitBreaker = request.app.state.breaker
-    mode: ResidencyMode = request.app.state.settings.residency_mode
+    store: PolicyStore = state.policy
+    adapters: Mapping[str, Adapter] = state.adapters
+    breaker: CircuitBreaker = state.breaker
+    mode: ResidencyMode = state.settings.residency_mode
     scope = request.scope
 
     with stage_span(scope, ROUTE_SPAN):
@@ -141,7 +142,7 @@ def create_embeddings(
         # down `public` traffic that never reads a name. Compiled once for the
         # whole batch, which is why it is not inside
         # `redact_batch`.
-        directory = tenant_directory(request.app.state.directory_store, context.tenant)
+        directory = tenant_directory(state.directory_store, context.tenant)
         with stage_span(scope, REDACT_SPAN):
             batch = redact_or_reject(texts, param="input", directory=directory)
         texts, redacted = batch.texts, batch.redacted
@@ -180,7 +181,7 @@ def create_embeddings(
         failed=attempt,
         policy=store.policy,
         data_class=context.data_class,
-        log=request.app.state.residency_log,
+        log=state.residency_log,
     )
     record_tokens(
         tenant=context.tenant,
@@ -190,7 +191,7 @@ def create_embeddings(
     )
     response.headers.update(gateway_headers(chosen, context.trace_id, redacted=redacted))
     response.headers[COST_HEADER] = book_cost(
-        request.app.state,
+        state,
         context,
         alias=body.model,
         chosen=chosen,

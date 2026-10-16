@@ -29,7 +29,7 @@ nothing listens on, which fails immediately rather than after the timeout.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
 import httpx
@@ -57,7 +57,7 @@ from app.core.clients import (
     build_redis_client,
 )
 from app.core.config import Settings
-from app.main import create_app
+from app.main import build_qdrant_data_client, create_app
 from app.providers.base import Adapter
 
 from .conftest import (
@@ -193,6 +193,22 @@ class FakeConnection:
         return self
 
 
+class FakePool:
+    """A stand-in for the shared `ConnectionPool` the postgres probe now borrows from.
+
+    `connection()` is the pool's context manager: it hands back whatever the
+    `connect` callable makes (a `FakeConnection`, or a raise for the refused-
+    connection row), so the probe's `with pool.connection() as conn:` behaves
+    exactly as it did when it was handed a connect callable. It opens no socket.
+    """
+
+    def __init__(self, connect: Callable[[], FakeConnection]) -> None:
+        self._connect = connect
+
+    def connection(self) -> FakeConnection:
+        return self._connect()
+
+
 POSTGRES_CASES: list[tuple[str, Exception | None, Exception | None, bool]] = [
     ("a reachable database", None, None, True),
     ("a refused connection", RuntimeError("connection refused"), None, False),
@@ -221,7 +237,7 @@ def test_the_postgres_probe_answers_a_bool_for_every_connection(
             raise connect_error
         return connection
 
-    probe = postgres_probe(connect)
+    probe = postgres_probe(FakePool(connect))
 
     assert probe() is expected
 
@@ -232,7 +248,7 @@ def test_the_postgres_probe_runs_a_statement_rather_than_only_connecting() -> No
     statement that comes back distinguishes it."""
     connection = FakeConnection()
 
-    probe = postgres_probe(lambda: connection)
+    probe = postgres_probe(FakePool(lambda: connection))
 
     assert probe() is True
     assert connection.statements == ["SELECT 1"]
@@ -244,7 +260,7 @@ def test_the_postgres_probe_releases_the_connection_even_when_the_statement_fail
     reporting the outage it caused."""
     connection = FakeConnection(error=RuntimeError("terminating connection"))
 
-    probe = postgres_probe(lambda: connection)
+    probe = postgres_probe(FakePool(lambda: connection))
 
     assert probe() is False
     assert connection.exited == 1
@@ -494,11 +510,15 @@ def bare_app(
     database_url: str | None = None,
     qdrant_url: str | None = None,
 ) -> FastAPI:
-    """The three pieces of state `register_probes` reads, and nothing else.
+    """The state `register_probes` reads, built by hand, and nothing else.
 
-    Built by hand rather than by `create_app`, so this group measures
-    `register_probes` alone: a factory that registered the probes itself could
+    Built without `create_app` or its lifespan, so this group measures
+    `register_probes` alone: a lifespan that registered the probes itself could
     otherwise make these cases pass with the function under test doing nothing.
+    Since an earlier change the probes run over the SHARED clients on `app.state`, so those
+    are put here too - the real lazy Redis and Qdrant clients (neither opens a
+    socket until asked), and a `FakePool` stand-in that opens no connection, since
+    no case in this group runs the postgres probe.
     """
     app = FastAPI()
     app.state.settings = probe_settings(
@@ -506,6 +526,11 @@ def bare_app(
     )
     app.state.adapters = adapters(ProbeAdapter("anthropic"))
     app.state.probes = ProbeRegistry()
+    app.state.redis_client = build_redis_client(redis_url) if redis_url is not None else None
+    app.state.qdrant_client = (
+        build_qdrant_data_client(qdrant_url) if qdrant_url is not None else None
+    )
+    app.state.db_pool = FakePool(FakeConnection) if database_url is not None else None
     return app
 
 
@@ -561,12 +586,14 @@ def test_the_registered_redis_probe_is_wired_to_the_configured_redis() -> None:
 
 
 def test_create_app_registers_the_probes_its_settings_configure() -> None:
-    """Catches a factory that builds `probes.py` and never calls it: `/readyz` would then
+    """Catches a lifespan that builds `probes.py` and never calls it: `/readyz` would then
     be 200 while checking nothing at all, which is the failure decision C's named probe
-    set exists to make visible."""
+    set exists to make visible. The probes register on lifespan startup now, so
+    the client is entered before the registry is read."""
     app = create_app(probe_settings(redis_url=UNREACHABLE_REDIS_URL), NO_PROVIDER_KEYS)
 
-    assert probe_names(app.state.probes) == {REDIS_PROBE, PROVIDER_PROBE}
+    with TestClient(app):
+        assert probe_names(app.state.probes) == {REDIS_PROBE, PROVIDER_PROBE}
 
 
 # --------------------------------------------------------------------------

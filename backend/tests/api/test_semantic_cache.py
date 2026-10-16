@@ -70,7 +70,7 @@ from app.core.clients import PROBE_TIMEOUT_SECONDS
 from app.core.config import Settings
 from app.core.errors import ProviderError
 from app.core.metrics import SEMANTIC_CACHE_KIND
-from app.main import build_qdrant_data_client, close_adapters, create_app
+from app.main import build_qdrant_data_client, create_app
 from app.providers.base import (
     Adapter,
     ChatRequest,
@@ -1246,8 +1246,9 @@ def test_create_app_keeps_the_in_process_semantic_cache_without_a_qdrant_url() -
     turns every one of them into a connection error at process start rather than a miss."""
     app = create_app(wiring_settings(qdrant_url=None), NO_PROVIDER_KEYS)
 
-    assert isinstance(app.state.semantic_cache, InProcessSemanticCache)
-    close_adapters(app.state.adapters)
+    # The cache is built on lifespan startup now, so enter it first.
+    with TestClient(app):
+        assert isinstance(app.state.semantic_cache, InProcessSemanticCache)
 
 
 def test_create_app_uses_the_qdrant_semantic_cache_when_a_qdrant_url_is_configured() -> None:
@@ -1257,8 +1258,8 @@ def test_create_app_uses_the_qdrant_semantic_cache_when_a_qdrant_url_is_configur
     function of how the load balancer felt - invisible to every test with one replica."""
     app = create_app(wiring_settings(qdrant_url=UNCONNECTED_QDRANT_URL), NO_PROVIDER_KEYS)
 
-    assert isinstance(app.state.semantic_cache, QdrantSemanticCache)
-    close_adapters(app.state.adapters)
+    with TestClient(app):
+        assert isinstance(app.state.semantic_cache, QdrantSemanticCache)
 
 
 def test_the_semantic_cache_client_bounds_every_phase_of_the_call() -> None:

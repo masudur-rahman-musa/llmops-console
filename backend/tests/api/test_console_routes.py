@@ -378,9 +378,12 @@ def wired(admin_settings: Settings) -> Iterator[Wired]:
     app = create_app(admin_settings, NO_PROVIDER_KEYS)
     reader = StubReader()
     prom = PromStub()
-    app.state.console_reader = reader
-    app.state.prometheus = prom.client()
     with TestClient(app) as client:
+        # After the lifespan is entered, which is where the real reader and
+        # Prometheus client are now built; swapping before would be overwritten
+        # on startup.
+        app.state.console_reader = reader
+        app.state.prometheus = prom.client()
         yield Wired(client=client, app=app, reader=reader, prom=prom)
 
 

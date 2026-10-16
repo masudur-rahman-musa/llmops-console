@@ -1099,9 +1099,11 @@ def test_the_app_builds_the_in_memory_cost_ledger_without_a_database_url(
 
     app = create_app(settings, NO_PROVIDER_KEYS)
 
-    assert isinstance(app.state.cost_ledger, InMemoryCostLedgerWriter)
-    assert app.state.db_pool is None
-    close_adapters(app.state.adapters)
+    # The ledger is built on lifespan startup now: with no database URL
+    # the lifespan builds the in-memory writer and opens no pool.
+    with TestClient(app):
+        assert isinstance(app.state.cost_ledger, InMemoryCostLedgerWriter)
+        assert app.state.db_pool is None
 
 
 def test_both_postgres_writers_share_one_pool() -> None:
@@ -1118,14 +1120,13 @@ def test_both_postgres_writers_share_one_pool() -> None:
 
     app = create_app(settings, NO_PROVIDER_KEYS)
 
-    try:
+    # The pool and both writers are built on lifespan startup now, and
+    # the lifespan closes the pool and adapters on exit.
+    with TestClient(app):
         pool = app.state.db_pool
         assert pool is not None
         assert app.state.residency_log._pool is pool
         assert app.state.cost_ledger._pool is pool
-    finally:
-        app.state.db_pool.close()
-        close_adapters(app.state.adapters)
 
 
 def test_create_app_refuses_a_malformed_prices_file(tmp_path: Path) -> None:

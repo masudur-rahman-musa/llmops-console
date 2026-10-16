@@ -17,12 +17,11 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 
-from app.api.deps import admin_key
+from app.api.deps import ConsoleEventsDep, admin_key
 from app.schemas.admin import IncidentCreate, IncidentCreated, IncidentResolve
 from app.storage.console_events import (
-    ConsoleEventWriter,
     IncidentRow,
     checked_incident_id,
 )
@@ -35,18 +34,11 @@ ADMIN_INCIDENT = "/admin/incidents/{incident_id}"
 """Where one is resolved. Pinned by the same case."""
 
 
-def _console_events(request: Request) -> ConsoleEventWriter:
-    """The writer `create_app` built: Postgres when a `database_url` is configured,
-    in-memory otherwise."""
-    writer: ConsoleEventWriter = request.app.state.console_events
-    return writer
-
-
 router = APIRouter(dependencies=[Depends(admin_key)])
 
 
 @router.post(ADMIN_INCIDENTS, status_code=201)
-def record_incident(request: Request, body: IncidentCreate) -> IncidentCreated:
+def record_incident(body: IncidentCreate, writer: ConsoleEventsDep) -> IncidentCreated:
     """Record one incident and answer the id it was filed under.
 
     201 rather than 200: this creates a record the caller can address afterwards,
@@ -74,12 +66,14 @@ def record_incident(request: Request, body: IncidentCreate) -> IncidentCreated:
         summary=body.summary,
         postmortem_url=body.postmortem_url,
     )
-    _console_events(request).write_incident(row)
+    writer.write_incident(row)
     return IncidentCreated(id=row.id)
 
 
 @router.patch(ADMIN_INCIDENT)
-def resolve_incident(request: Request, incident_id: str, body: IncidentResolve) -> IncidentCreated:
+def resolve_incident(
+    incident_id: str, body: IncidentResolve, writer: ConsoleEventsDep
+) -> IncidentCreated:
     """Close one open incident, or refuse with the reason it could not be closed.
 
     The path parameter is the one place a client string takes the shape of an
@@ -99,5 +93,5 @@ def resolve_incident(request: Request, incident_id: str, body: IncidentResolve) 
     and a caller scripting both reads one field from both.
     """
     checked_incident_id(incident_id)
-    _console_events(request).resolve_incident(incident_id, body.resolved_at)
+    writer.resolve_incident(incident_id, body.resolved_at)
     return IncidentCreated(id=incident_id)

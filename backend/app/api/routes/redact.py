@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request
 
-from app.api.deps import Context
+from app.api.deps import Context, DirectoryStoreDep, RedactionMapStoreDep
 from app.core.metrics import record_redactions
 from app.core.tracing import SpanAttributes, annotate, stage_span
-from app.redaction import RedactionMapStore
 from app.schemas.redact import RedactMessage, RedactRequest, RedactResponse
 from app.services.redaction_flow import REDACT_SPAN, filed_map_id, redact_batch, tenant_directory
 
@@ -24,6 +23,8 @@ def create_redaction(
     request: Request,
     context: Context,
     body: RedactRequest,
+    maps: RedactionMapStoreDep,
+    directory_store: DirectoryStoreDep,
 ) -> RedactResponse:
     """Redact the body under one map, file the map for the tenant, answer both.
 
@@ -42,8 +43,7 @@ def create_redaction(
     is CPU work over the whole body, so a coroutine would hold the event loop for
     the length of the scan instead of running in a worker thread.
     """
-    maps: RedactionMapStore = request.app.state.redaction_map_store
-    directory = tenant_directory(request.app.state.directory_store, context.tenant)
+    directory = tenant_directory(directory_store, context.tenant)
     data_class = body.data_class if body.data_class is not None else context.data_class
 
     with stage_span(request.scope, REDACT_SPAN):

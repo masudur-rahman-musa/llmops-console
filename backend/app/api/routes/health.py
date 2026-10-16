@@ -69,20 +69,15 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterator, Mapping
-from typing import Final
+from contextlib import AbstractContextManager
+from typing import Final, Protocol
 
 import httpx
 from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
-from app.core.clients import (
-    SupportsExecute,
-    SupportsPing,
-    build_postgres_connect,
-    build_qdrant_client,
-    build_redis_client,
-)
+from app.core.clients import SupportsExecute, SupportsPing
 from app.core.metrics import registry
 from app.model_routing.policy import ResidencyMode
 from app.providers.base import Adapter
@@ -166,18 +161,34 @@ def redis_probe(client: SupportsPing) -> Probe:
     return probe
 
 
-def postgres_probe(connect: Callable[[], SupportsExecute]) -> Probe:
-    """A probe that opens a connection, runs `SELECT 1`, and releases it either way.
+class SupportsConnection(Protocol):
+    """A connection pool the Postgres probe borrows one connection from.
 
-    The connection is opened per call rather than held, because a probe holding
-    an idle connection through an outage is a probe that reports on a socket
-    rather than on a server. `with` is what releases it on the failing path too
+    Structural, so the shared `psycopg_pool.ConnectionPool` satisfies it without
+    this module depending on that class, and a recording double satisfies it
+    without a live server. `connection()` is the pool's own context manager: it
+    checks a connection out, yields it, and returns it to the pool on exit, which
+    is what keeps the probe from leaking a connection on the failing path too.
+    """
+
+    def connection(self) -> AbstractContextManager[SupportsExecute]: ...
+
+
+def postgres_probe(pool: SupportsConnection) -> Probe:
+    """A probe that borrows a pooled connection, runs `SELECT 1`, and returns it either way.
+
+    The connection is borrowed from the SHARED pool per call rather than held,
+    because a probe holding an idle connection through an outage is a probe that
+    reports on a socket rather than on a server. The pool's `connection()` context
+    manager is what returns it on the failing path too
     (`test_the_postgres_probe_releases_the_connection_even_when_the_statement_fails`).
+    One pool serves the writers and this probe, so a down database is what makes
+    this probe fail.
     """
 
     def probe() -> bool:
         try:
-            with connect() as connection:
+            with pool.connection() as connection:
                 connection.execute(POSTGRES_PROBE_STATEMENT)
         except Exception:
             logger.warning("readiness: postgres probe failed", exc_info=True)
@@ -234,12 +245,20 @@ def provider_probe(adapters: Mapping[str, Adapter]) -> Probe:
 
 
 def register_probes(app: FastAPI) -> None:
-    """Register the probes this app's settings configure, plus the provider probe.
+    """Register a probe over each shared client the lifespan built, plus the provider probe.
 
-    Reads `app.state.settings`, `app.state.adapters` and `app.state.probes`, so it
-    is callable against any app carrying those three and is exercised against a
-    hand-built one rather than only through `create_app`
+    Run by `lifespan` once the shared clients are on `app.state`, so each store
+    probe runs over the very `redis.Redis`, Qdrant `httpx.Client` or Postgres pool
+    the stores, caches and writers use - not a second one minted here (an earlier change,
+    `test_readyz_probes_run_over_the_shared_clients`). Registration is still
+    configured-only: a client exists only when its URL is
+    set, so a store probe exists exactly when its service is configured and the
+    provider probe is always registered
     (`test_register_probes_registers_the_configured_stores_and_always_the_provider`).
+
+    Reads `app.state.settings`, `app.state.adapters`, `app.state.probes` and the
+    shared clients, so it is callable against any app carrying those and is
+    exercised against a hand-built one rather than only through the lifespan.
 
     The provider probe closes over the adapter MAPPING rather than over a copy of
     its values, so a policy reload that rebuilds the adapters in place
@@ -249,13 +268,11 @@ def register_probes(app: FastAPI) -> None:
     registry_: ProbeRegistry = app.state.probes
 
     if settings.redis_url is not None:
-        registry_.register(REDIS_PROBE, redis_probe(build_redis_client(settings.redis_url)))
+        registry_.register(REDIS_PROBE, redis_probe(app.state.redis_client))
     if settings.database_url is not None:
-        registry_.register(
-            POSTGRES_PROBE, postgres_probe(build_postgres_connect(settings.database_url))
-        )
+        registry_.register(POSTGRES_PROBE, postgres_probe(app.state.db_pool))
     if settings.qdrant_url is not None:
-        registry_.register(QDRANT_PROBE, qdrant_probe(build_qdrant_client(), settings.qdrant_url))
+        registry_.register(QDRANT_PROBE, qdrant_probe(app.state.qdrant_client, settings.qdrant_url))
     registry_.register(PROVIDER_PROBE, provider_probe(app.state.adapters))
 
 

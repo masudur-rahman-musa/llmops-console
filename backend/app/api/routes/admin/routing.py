@@ -34,14 +34,14 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
 
-from app.api.deps import _checked_tenant, admin_key
+from app.api.deps import PolicyDep, ResidencyModeDep, _checked_tenant, admin_key
 from app.core.validation import IdentifierInvalid
 from app.model_routing.errors import (
     AliasUnknown,
     PolicyInvalid,
     ResidencyUnavailable,
 )
-from app.model_routing.policy import DataClass, Policy, PolicyStore, ResidencyMode
+from app.model_routing.policy import DataClass, Policy, ResidencyMode
 from app.model_routing.resolver import resolve
 from app.schemas.admin import AliasView, ReloadResult, ResolvedEntry, RoutingView, TenantView
 from app.services.routing_reload import rebuild_adapter_set
@@ -86,7 +86,9 @@ router = APIRouter(dependencies=[Depends(admin_key)])
 
 
 @router.get(ADMIN_ROUTING)
-def routing_view(request: Request, tenant: Annotated[str | None, Query()] = None) -> RoutingView:
+def routing_view(
+    store: PolicyDep, mode: ResidencyModeDep, tenant: Annotated[str | None, Query()] = None
+) -> RoutingView:
     """Every tenant's resolved routing, or one tenant's when `?tenant=` names one.
 
     Declared `def` rather than `async def`: the matrix is tenants x aliases x data
@@ -98,9 +100,7 @@ def routing_view(request: Request, tenant: Annotated[str | None, Query()] = None
     if tenant is not None:
         _checked_tenant(tenant)
 
-    store: PolicyStore = request.app.state.policy
     policy = store.policy
-    mode: ResidencyMode = request.app.state.settings.residency_mode
     names = [tenant] if tenant is not None else list(policy.tenants)
     return RoutingView(
         tenants=tuple(_tenant_view(policy, name, mode) for name in names if name in policy.tenants)
@@ -108,7 +108,7 @@ def routing_view(request: Request, tenant: Annotated[str | None, Query()] = None
 
 
 @router.post(ADMIN_ROUTING_RELOAD)
-def reload_routing(request: Request) -> ReloadResult:
+def reload_routing(request: Request, store: PolicyDep) -> ReloadResult:
     """Re-read `routing.yaml`, swap the snapshot, and rebuild the adapter set.
 
     The order is the whole safety property. `PolicyStore.reload` parses into a new
@@ -124,7 +124,6 @@ def reload_routing(request: Request) -> ReloadResult:
     request-level validation failure rather than a gateway fault (an earlier change
     decision D, `test_an_invalid_policy_on_reload_is_422_naming_the_field`).
     """
-    store: PolicyStore = request.app.state.policy
     try:
         store.reload()
     except PolicyInvalid as exc:

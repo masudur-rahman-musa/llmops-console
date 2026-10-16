@@ -469,4 +469,7 @@ def test_the_app_builds_the_in_process_writer_without_a_database_url(
 
     app = create_app(settings, NO_PROVIDER_KEYS)
 
-    assert isinstance(app.state.residency_log, InMemoryResidencyLogWriter)
+    # The writer is built on lifespan startup now: with no database URL
+    # the lifespan builds the in-memory writer and opens no pool.
+    with TestClient(app):
+        assert isinstance(app.state.residency_log, InMemoryResidencyLogWriter)

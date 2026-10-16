@@ -32,6 +32,7 @@ from typing import Annotated, Protocol
 
 from fastapi import Depends, Header, Request
 from pydantic import BaseModel, ConfigDict
+from starlette.datastructures import State
 from starlette.types import Scope
 
 from app.core.config import Settings
@@ -49,7 +50,10 @@ from app.core.validation import (
     IdentifierInvalid,
     checked_identifier,
 )
-from app.model_routing.policy import DataClass
+from app.limits.prices import PriceStore
+from app.model_routing.policy import DataClass, PolicyStore, ResidencyMode
+from app.redaction import DirectoryStore, RedactionMapStore
+from app.storage import ConsoleEventWriter
 
 MAX_KEY_LENGTH = 256
 """Longest bearer key the gateway will hash. The value is pinned by
@@ -351,3 +355,73 @@ def admin_key(request: Request, authorization: Annotated[str | None, Header()] =
     presented = hashlib.sha256(key.encode("utf-8")).hexdigest() if key is not None else ""
     if not key or not hmac.compare_digest(settings.admin_key_sha256, presented):
         raise Unauthorized("no usable admin key was presented")
+
+
+# --- typed state dependencies --------------------------------------
+#
+# Every `/v1`, `/admin` and `/console` route reaches the clients and stores the
+# lifespan built through one of these getters instead of reading
+# `request.app.state.<name>` by hand. A route takes the matching `*Dep` alias as a
+# parameter; a test swaps what the route sees with
+# `app.dependency_overrides[get_<name>]` rather than by mutating `app.state`
+# (`test_a_route_reads_its_client_through_a_dependency`). The getters live here,
+# not in the route files, so a scan of those files finds no `app.state` read left
+# (`test_routes_do_not_read_app_state_by_hand`).
+
+
+def get_state(request: Request) -> State:
+    """The app's whole state bag, as a typed dependency.
+
+    The chat and embeddings routes hand this to the chat-pipeline functions
+    (`check_rate_limit`, `check_budget`, `book_cost`, the token and cost sinks),
+    which each take the whole `State` and are not part of an earlier change's change.
+    Reaching it through a dependency rather than `request.app.state` is what keeps
+    those two routes free of a hand read while leaving those functions untouched.
+    """
+    state: State = request.app.state
+    return state
+
+
+def get_policy(request: Request) -> PolicyStore:
+    """The routing policy snapshot store, built in `create_app`."""
+    policy: PolicyStore = request.app.state.policy
+    return policy
+
+
+def get_residency_mode(request: Request) -> ResidencyMode:
+    """This process's residency mode, read off the settings `create_app` built."""
+    settings: Settings = request.app.state.settings
+    return settings.residency_mode
+
+
+def get_prices(request: Request) -> PriceStore:
+    """The price table store, built in `create_app`."""
+    prices: PriceStore = request.app.state.prices
+    return prices
+
+
+def get_redaction_map_store(request: Request) -> RedactionMapStore:
+    """The redaction map store the lifespan built (Redis-backed or in-process)."""
+    store: RedactionMapStore = request.app.state.redaction_map_store
+    return store
+
+
+def get_directory_store(request: Request) -> DirectoryStore:
+    """The tenant directory store the lifespan built (Redis-backed or in-process)."""
+    store: DirectoryStore = request.app.state.directory_store
+    return store
+
+
+def get_console_events(request: Request) -> ConsoleEventWriter:
+    """The console event writer the lifespan built (Postgres-backed or in-memory)."""
+    writer: ConsoleEventWriter = request.app.state.console_events
+    return writer
+
+
+AppStateDep = Annotated[State, Depends(get_state)]
+PolicyDep = Annotated[PolicyStore, Depends(get_policy)]
+ResidencyModeDep = Annotated[ResidencyMode, Depends(get_residency_mode)]
+PricesDep = Annotated[PriceStore, Depends(get_prices)]
+RedactionMapStoreDep = Annotated[RedactionMapStore, Depends(get_redaction_map_store)]
+DirectoryStoreDep = Annotated[DirectoryStore, Depends(get_directory_store)]
+ConsoleEventsDep = Annotated[ConsoleEventWriter, Depends(get_console_events)]

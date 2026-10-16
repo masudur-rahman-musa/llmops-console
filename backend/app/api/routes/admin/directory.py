@@ -48,10 +48,10 @@ was the router rule and not the policy.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict
 
-from app.api.deps import admin_key
+from app.api.deps import DirectoryStoreDep, admin_key
 from app.core.http_errors import as_gateway_error
 from app.core.validation import checked_identifier
 from app.redaction import (
@@ -141,7 +141,7 @@ router = APIRouter(dependencies=[Depends(admin_key)])
 
 
 @router.post(ADMIN_DIRECTORY)
-def push_directory(request: Request, body: DirectoryPush) -> DirectoryPushResult:
+def push_directory(body: DirectoryPush, store: DirectoryStoreDep) -> DirectoryPushResult:
     """Merge the pushed names into that tenant's directory and answer how many it holds.
 
     The order is the safety property. The tenant is validated, the tenant's
@@ -160,7 +160,6 @@ def push_directory(request: Request, body: DirectoryPush) -> DirectoryPushResult
     up to 2000 names is CPU work, and FastAPI runs a `def` route in a worker
     thread rather than on the event loop.
     """
-    store: DirectoryStore = request.app.state.directory_store
     tenant = checked_tenant(body.tenant)
     held = held_names(store, tenant)
 

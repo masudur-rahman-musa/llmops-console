@@ -9,19 +9,20 @@ admin key authorises nobody (`test_every_console_event_route_is_401_without_an_a
 `test_admin_routes_reject_every_caller_when_no_admin_key_is_configured`). Not
 counted by the request metrics, traced, and cluster-internal.
 
-The console event writer is read straight off `app.state` here rather than
-through `incidents._console_events`: a route never imports a sibling route
-(`tests/api/test_route_layering.py`), and the accessor is a single state read.
+The console event writer arrives through the `ConsoleEventsDep` dependency
+(`app.api.deps.get_console_events`), the same one `/admin/incidents` takes, so a
+route never imports a sibling route (`tests/api/test_route_layering.py`) and
+never reaches into state by hand.
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 
-from app.api.deps import admin_key
+from app.api.deps import ConsoleEventsDep, admin_key
 from app.core.validation import IdentifierInvalid
 from app.schemas.admin import ReleaseCreate
-from app.storage.console_events import EVAL_RUN_ID_FIELD, ConsoleEventWriter, ReleaseRow
+from app.storage.console_events import EVAL_RUN_ID_FIELD, ReleaseRow
 
 ADMIN_RELEASES = "/admin/releases"
 """Where a deploy is recorded. Pinned against the mounted route by
@@ -32,7 +33,7 @@ router = APIRouter(dependencies=[Depends(admin_key)])
 
 
 @router.post(ADMIN_RELEASES, status_code=201)
-def record_release(request: Request, body: ReleaseCreate) -> ReleaseCreate:
+def record_release(body: ReleaseCreate, writer: ConsoleEventsDep) -> ReleaseCreate:
     """Record one deploy of one sha.
 
     A named `eval_run_id` is checked for EXISTENCE before the insert. The column is
@@ -50,7 +51,6 @@ def record_release(request: Request, body: ReleaseCreate) -> ReleaseCreate:
     Echoes the body rather than an id: the key is `(git_sha, deployed_at)`, both of
     which the caller sent, so there is nothing here it does not already know.
     """
-    writer: ConsoleEventWriter = request.app.state.console_events
     if body.eval_run_id is not None and not writer.eval_run_exists(body.eval_run_id):
         raise IdentifierInvalid(
             f"{EVAL_RUN_ID_FIELD}: no eval run carries this id", param=EVAL_RUN_ID_FIELD

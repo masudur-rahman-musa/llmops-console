@@ -70,7 +70,7 @@ from app.limits.budget import (
     current_month,
     to_micro_usd,
 )
-from app.main import close_adapters, create_app
+from app.main import create_app
 from app.model_routing.policy import Policy
 from app.providers.base import Adapter
 from app.services.chat_pipeline import (
@@ -835,8 +835,9 @@ def test_create_app_keeps_the_in_process_budget_store_without_a_redis_url() -> N
     request into an `AttributeError` with no code."""
     app = create_app(wiring_settings(redis_url=None), NO_PROVIDER_KEYS)
 
-    assert isinstance(app.state.budget_store, InProcessBudgetStore)
-    close_adapters(app.state.adapters)
+    # The store is built on lifespan startup now, so enter it first.
+    with TestClient(app):
+        assert isinstance(app.state.budget_store, InProcessBudgetStore)
 
 
 def test_create_app_uses_the_redis_budget_store_when_a_redis_url_is_configured() -> None:
@@ -846,5 +847,5 @@ def test_create_app_uses_the_redis_budget_store_when_a_redis_url_is_configured()
     it except here at the wiring."""
     app = create_app(wiring_settings(redis_url=UNCONNECTED_REDIS_URL), NO_PROVIDER_KEYS)
 
-    assert isinstance(app.state.budget_store, RedisBudgetStore)
-    close_adapters(app.state.adapters)
+    with TestClient(app):
+        assert isinstance(app.state.budget_store, RedisBudgetStore)

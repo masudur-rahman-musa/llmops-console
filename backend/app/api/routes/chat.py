@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import StreamingResponse
 
-from app.api.deps import Context
+from app.api.deps import AppStateDep, Context
 from app.cache import (
     CACHE_HEADER,
     ResponseCache,
@@ -73,6 +73,7 @@ def create_chat_completion(
     context: Context,
     body: ChatCompletionRequest,
     response: Response,
+    state: AppStateDep,
 ) -> ChatCompletion | StreamingResponse:
     """Resolve the alias, then walk the allowed candidates until one answers.
 
@@ -157,21 +158,21 @@ def create_chat_completion(
     `async def` would block the event loop for the whole provider call, and would
     hold it for the whole length of a stream.
     """
-    check_rate_limit(request.app.state, context)
-    check_budget(request.app.state, context, override=request.headers.get(BUDGET_OVERRIDE_HEADER))
+    check_rate_limit(state, context)
+    check_budget(state, context, override=request.headers.get(BUDGET_OVERRIDE_HEADER))
 
-    store: PolicyStore = request.app.state.policy
-    adapters: Mapping[str, Adapter] = request.app.state.adapters
-    breaker: CircuitBreaker = request.app.state.breaker
+    store: PolicyStore = state.policy
+    adapters: Mapping[str, Adapter] = state.adapters
+    breaker: CircuitBreaker = state.breaker
     scope = request.scope
 
-    cache: ResponseCache = request.app.state.response_cache
-    semantic_cache: SemanticCache = request.app.state.semantic_cache
-    mode: ResidencyMode = request.app.state.settings.residency_mode
+    cache: ResponseCache = state.response_cache
+    semantic_cache: SemanticCache = state.semantic_cache
+    mode: ResidencyMode = state.settings.residency_mode
 
     allowed = allowed_by_header(request.headers.get(CACHE_HEADER))
     mapping = requested_mapping(
-        request.app.state.redaction_map_store,
+        state.redaction_map_store,
         context.tenant,
         request.headers.get(REHYDRATE_HEADER),
     )
@@ -197,7 +198,7 @@ def create_chat_completion(
             gateway_headers(candidates[0], context.trace_id, redacted=False, cache=CACHE_STATUS_HIT)
         )
         response.headers[COST_HEADER] = book_cost(
-            request.app.state,
+            state,
             context,
             alias=body.model,
             chosen=candidates[0],
@@ -206,9 +207,7 @@ def create_chat_completion(
         )
         return to_wire(rehydrated(hit, mapping), body.model)
 
-    outbound, redacted = _redacted(
-        scope, store.policy, context, body, request.app.state.directory_store
-    )
+    outbound, redacted = _redacted(scope, store.policy, context, body, state.directory_store)
     annotate(scope, SpanAttributes(redacted=redacted))
 
     vector: tuple[float, ...] | None = None
@@ -243,7 +242,7 @@ def create_chat_completion(
                 )
             )
             response.headers[COST_HEADER] = book_cost(
-                request.app.state,
+                state,
                 context,
                 alias=body.model,
                 chosen=candidates[0],
@@ -264,10 +263,10 @@ def create_chat_completion(
                         outbound,
                         chosen,
                         headers,
-                        _token_sink(request.app.state, context, alias=body.model, chosen=chosen),
+                        _token_sink(state, context, alias=body.model, chosen=chosen),
                         mapping=mapping,
                         on_unreported_usage=_estimated_cost_sink(
-                            request.app.state,
+                            state,
                             context,
                             alias=body.model,
                             chosen=chosen,
@@ -291,7 +290,7 @@ def create_chat_completion(
             failed=attempt,
             policy=store.policy,
             data_class=context.data_class,
-            log=request.app.state.residency_log,
+            log=state.residency_log,
         )
         if body.stream:
             return streamed
@@ -321,7 +320,7 @@ def create_chat_completion(
         # After `record_served`, and last: `book_cost` is the closing loop's other
         # half and the only place this route prices anything.
         response.headers[COST_HEADER] = book_cost(
-            request.app.state,
+            state,
             context,
             alias=body.model,
             chosen=chosen,
