@@ -1,4 +1,4 @@
-.PHONY: help setup run test fast test-slowest lint typecheck format verify eval infra-check k8s-check k8s-aws-check k8s-server-check server-secrets server-helpdesk-data k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate purge-residency refresh-rollup secrets-encrypt secrets-decrypt secrets-check load
+.PHONY: help setup run test fast test-slowest lint typecheck format verify security eval infra-check k8s-check k8s-aws-check k8s-server-check server-secrets server-helpdesk-data k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate purge-residency refresh-rollup secrets-encrypt secrets-decrypt secrets-check load
 
 # The console's checks run through pnpm, and are skipped only in a checkout that
 # has no web, so the intended gate stays visible in this file. The
@@ -72,7 +72,25 @@ typecheck:  ## Static types
 	$(call console,typecheck)
 format:     ## Auto-format
 	$(UV_ROOT) ruff format --config backend/pyproject.toml .
-verify: format lint typecheck test   ## The full gate, in order
+# The three security checks CI runs, with the same tool versions, so a green
+# laptop run means a green CI `security` job (it runs only this target).
+# - gitleaks scans every commit of the mounted repo. It runs through docker
+#   because nobody installs it locally. The image is pinned by tag AND digest,
+#   and the tag is written out literally: `infra/tests/ci/test_ci_workflow.py`
+#   compares it to the pre-commit hook's `rev:`. No
+#   staging-area flag: those belong to the local hook.
+# - pip-audit reads the locked Python set. `--locked` audits what the repo pins,
+#   `--all-groups` takes the dev and test trees too, `--no-emit-project` keeps
+#   the unhashed editable entry out of a `--require-hashes` read. The file lands
+#   in the gitignored `backend/scratch/`, so a run leaves nothing at the root.
+# - pnpm audit covers the console.
+security:   ## Secret scan over all history, Python and console dependency audits
+	docker run --rm -v "$(CURDIR):/repo" -w /repo zricethezav/gitleaks:v8.24.3@sha256:e1b35e12a8c6fa8901f060459cfb6b2fc4c484d3afbe3b029733a3bbfab07055 git --redact --exit-code 1 .
+	mkdir -p backend/scratch
+	uv export --project backend --format requirements-txt --locked --no-emit-project --all-groups -o backend/scratch/requirements-audit.txt
+	uvx --from pip-audit==2.9.0 pip-audit --strict --require-hashes --disable-pip -r backend/scratch/requirements-audit.txt
+	$(call console,audit)
+verify: format lint typecheck test security   ## The full gate, in order
 # The ledger's schema is applied by a deploy STEP, never on app start: replicas
 # coming up together would otherwise race each other over the same DDL, and
 # nobody would get to read the migration before it ran. Both targets answer a
