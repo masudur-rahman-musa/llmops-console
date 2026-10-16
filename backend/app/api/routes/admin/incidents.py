@@ -17,9 +17,9 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 
-from app.api.deps import ConsoleEventsDep, admin_key
+from app.api.deps import ConsoleEventsDep
 from app.schemas.admin import IncidentCreate, IncidentCreated, IncidentResolve
 from app.storage.console_events import (
     IncidentRow,
@@ -34,7 +34,7 @@ ADMIN_INCIDENT = "/admin/incidents/{incident_id}"
 """Where one is resolved. Pinned by the same case."""
 
 
-router = APIRouter(dependencies=[Depends(admin_key)])
+router = APIRouter()
 
 
 @router.post(ADMIN_INCIDENTS, status_code=201)

@@ -17,9 +17,9 @@ never reaches into state by hand.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 
-from app.api.deps import ConsoleEventsDep, admin_key
+from app.api.deps import ConsoleEventsDep
 from app.core.validation import IdentifierInvalid
 from app.schemas.admin import ReleaseCreate
 from app.storage.console_events import EVAL_RUN_ID_FIELD, ReleaseRow
@@ -29,7 +29,7 @@ ADMIN_RELEASES = "/admin/releases"
 `test_the_admin_console_event_paths_and_statuses_are_pinned`."""
 
 
-router = APIRouter(dependencies=[Depends(admin_key)])
+router = APIRouter()
 
 
 @router.post(ADMIN_RELEASES, status_code=201)

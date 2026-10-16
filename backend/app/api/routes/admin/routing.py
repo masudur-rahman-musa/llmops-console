@@ -32,9 +32,9 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Query, Request
 
-from app.api.deps import PolicyDep, ResidencyModeDep, _checked_tenant, admin_key
+from app.api.deps import PolicyDep, ResidencyModeDep, _checked_tenant
 from app.core.validation import IdentifierInvalid
 from app.model_routing.errors import (
     AliasUnknown,
@@ -82,7 +82,7 @@ def _tenant_view(policy: Policy, tenant: str, mode: ResidencyMode) -> TenantView
     return TenantView(tenant=tenant, entries=tuple(entries))
 
 
-router = APIRouter(dependencies=[Depends(admin_key)])
+router = APIRouter()
 
 
 @router.get(ADMIN_ROUTING)

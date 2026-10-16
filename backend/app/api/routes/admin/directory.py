@@ -48,10 +48,10 @@ was the router rule and not the policy.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict
 
-from app.api.deps import DirectoryStoreDep, admin_key
+from app.api.deps import DirectoryStoreDep
 from app.core.http_errors import as_gateway_error
 from app.core.validation import checked_identifier
 from app.redaction import (
@@ -137,7 +137,7 @@ def held_names(store: DirectoryStore, tenant: str) -> tuple[str, ...]:
         raise as_gateway_error(exc, "the directory store is unavailable") from exc
 
 
-router = APIRouter(dependencies=[Depends(admin_key)])
+router = APIRouter()
 
 
 @router.post(ADMIN_DIRECTORY)

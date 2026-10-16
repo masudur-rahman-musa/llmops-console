@@ -31,9 +31,9 @@ import time
 from datetime import UTC, datetime
 from typing import Annotated, Final
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Query, Request
 
-from app.api.deps import PricesDep, _checked_tenant, admin_key
+from app.api.deps import PricesDep, _checked_tenant
 from app.schemas.dashboard import (
     BlockedItem,
     Circuit,
@@ -95,7 +95,7 @@ skipped rather than guessed at (`test_the_reliability_body_reads_the_named_serie
 Days = Annotated[int, Query(ge=MIN_DAYS, le=MAX_DAYS)]
 
 
-router = APIRouter(dependencies=[Depends(admin_key)])
+router = APIRouter()
 
 
 @router.get(CONSOLE_HOME)
