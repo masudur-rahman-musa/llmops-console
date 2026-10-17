@@ -284,3 +284,65 @@ def test_one_trial_failure_reopens_it_and_restarts_the_thirty_seconds() -> None:
 
     clock.now = FAILURE_WINDOW_SECONDS + 1.0 + HALF_OPEN_AFTER_SECONDS
     assert breaker.state(PROVIDER) is CircuitState.HALF_OPEN
+
+
+# --------------------------------------------------------------------------
+# single-trial half-open
+# --------------------------------------------------------------------------
+
+
+def test_half_open_hands_the_trial_to_only_the_first_caller() -> None:
+    """Catches an allows() that lets every HALF_OPEN caller through instead of
+    exactly one: under concurrent load the second caller would reach a provider
+    that is still recovering, defeating the purpose of the single-probe design."""
+    clock = ManualClock()
+    breaker = opened_breaker(clock)
+
+    clock.now = HALF_OPEN_AFTER_SECONDS
+
+    first = breaker.allows(PROVIDER)
+    second = breaker.allows(PROVIDER)
+
+    assert first is True
+    assert second is False
+    assert breaker.state(PROVIDER) is CircuitState.HALF_OPEN
+
+
+def test_the_claimed_trial_still_closes_and_reopens_the_breaker() -> None:
+    """Catches an implementation where claiming the trial token breaks the normal
+    success/failure resolution path: a trial that can never close or reopen the
+    breaker would leave a provider stuck in HALF_OPEN forever."""
+    clock = ManualClock()
+
+    # success path
+    breaker = opened_breaker(clock)
+    clock.now = HALF_OPEN_AFTER_SECONDS
+    breaker.allows(PROVIDER)  # claim the trial
+    breaker.record_success(PROVIDER)
+    assert breaker.state(PROVIDER) is CircuitState.CLOSED
+
+    # failure path — fresh breaker
+    clock2 = ManualClock()
+    breaker2 = opened_breaker(clock2)
+    clock2.now = HALF_OPEN_AFTER_SECONDS
+    breaker2.allows(PROVIDER)  # claim the trial
+    breaker2.record_failure(PROVIDER)
+    assert breaker2.state(PROVIDER) is CircuitState.OPEN
+    assert breaker2.allows(PROVIDER) is False
+
+
+def test_an_unresolved_trial_is_re_offered_after_thirty_seconds() -> None:
+    """Catches an implementation that holds the trial token forever when the
+    caller that claimed it never calls record_success or record_failure: the
+    provider would be permanently stuck at one refused request per window with
+    no way to recover, because no new trial is ever offered."""
+    clock = ManualClock()
+    breaker = opened_breaker(clock)
+
+    clock.now = HALF_OPEN_AFTER_SECONDS
+    assert breaker.allows(PROVIDER) is True  # first caller claims the trial
+    assert breaker.allows(PROVIDER) is False  # trial in flight, second refused
+
+    # no success or failure recorded — trial left dangling
+    clock.now = HALF_OPEN_AFTER_SECONDS + HALF_OPEN_AFTER_SECONDS
+    assert breaker.allows(PROVIDER) is True  # re-offered after another 30s

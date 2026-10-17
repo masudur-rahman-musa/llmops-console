@@ -34,10 +34,11 @@ worse than each replica learning within five requests of its own that a provider
 is down. The gateway runs one replica today; the ADR says what changes when it
 does not.
 
-**Half-open is not serialised.** Two threads that both read HALF_OPEN are both
-let through as the trial, so a recovering provider can get two requests instead of
-one. Accepted: the alternative is holding a lock across a sixty-second network
-call. The lock below guards the RECORD only, never a provider call.
+**Half-open hands the trial to the first caller only.** `allows()` claims the
+trial inside the lock so only the first HALF_OPEN caller gets True; every later
+caller is refused until the trial resolves or `HALF_OPEN_AFTER_SECONDS` passes
+with no resolution. The lock guards the RECORD only, never a provider call
+(`test_half_open_hands_the_trial_to_only_the_first_caller`).
 """
 
 from __future__ import annotations
@@ -83,6 +84,7 @@ class _Record:
 
     failures: deque[float] = field(default_factory=deque)
     opened_at: float | None = None
+    trial_claimed_at: float | None = None
 
 
 class CircuitBreaker:
@@ -111,8 +113,36 @@ class CircuitBreaker:
             return self._state(record, self._clock())
 
     def allows(self, provider: str) -> bool:
-        """Whether a route may dial this provider. False only while OPEN."""
-        return self.state(provider) is not CircuitState.OPEN
+        """Whether a route may dial this provider.
+
+        While CLOSED: True. While OPEN: False. While HALF_OPEN: True for the
+        first caller only; every later caller gets False until the trial
+        resolves or `HALF_OPEN_AFTER_SECONDS` passes with no resolution, at
+        which point the trial is re-offered. The claim happens inside the lock
+        so two concurrent callers cannot both win it.
+
+        Pins: `test_half_open_hands_the_trial_to_only_the_first_caller`,
+              `test_an_unresolved_trial_is_re_offered_after_thirty_seconds`.
+        """
+        now = self._clock()
+        with self._lock:
+            record = self._records.get(provider)
+            if record is None:
+                return True
+            state = self._state(record, now)
+            if state is CircuitState.CLOSED:
+                return True
+            if state is CircuitState.OPEN:
+                return False
+            # HALF_OPEN: hand the trial to the first caller, then refuse until
+            # it is resolved or the re-arm window passes.
+            if (
+                record.trial_claimed_at is None
+                or now - record.trial_claimed_at >= HALF_OPEN_AFTER_SECONDS
+            ):
+                record.trial_claimed_at = now
+                return True
+            return False
 
     def record_success(self, provider: str) -> None:
         """Resolve a TRIAL. A success on a closed breaker changes nothing at all.
@@ -157,6 +187,7 @@ class CircuitBreaker:
             if record.opened_at is not None:
                 if self._state(record, now) is CircuitState.HALF_OPEN:
                     self._open(record, now)
+                    record.trial_claimed_at = None
                 return
             self._prune(record, now)
             record.failures.append(now)
