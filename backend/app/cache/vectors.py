@@ -53,14 +53,16 @@ from __future__ import annotations
 
 import json
 import math
+import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Final, Protocol
 
 import httpx
 from pydantic import ValidationError
 
 from app.cache.probe import SEMANTIC_THRESHOLD
+from app.cache.store import RESPONSE_CACHE_TTL_SECONDS
 from app.core.validation import checked_identifier
 from app.providers.base import ChatResponse
 
@@ -162,9 +164,9 @@ class InProcessSemanticCache:
     (plan decision D, the same arrangement 13a decision C chose for the exact
     tier), so neither needs a backing service to exercise the cosine rule.
 
-    Two replicas do not share it, and nothing expires: for a cache that costs a
-    hit rate rather than correctness, and a process that has been up long enough
-    for the memory to matter is a process the semantic tier was not sized for.
+    Two replicas do not share it. Entries expire after `RESPONSE_CACHE_TTL_SECONDS`
+    (the same boundary the exact tier uses) checked on every read with the injected
+    clock, so neither a sweeper nor a background task is needed.
     Which implementation a deployment gets is decided by `create_app`
     (`test_create_app_keeps_the_in_process_semantic_cache_without_a_qdrant_url`).
 
@@ -172,11 +174,17 @@ class InProcessSemanticCache:
     contents of one tenant's entries are scanned per search, which is the wrong
     algorithm at any real scale and exactly right for a fallback whose purpose is
     to let the tests and a laptop run the same code path as the cluster.
+
+    `clock` defaults to `time.monotonic` rather than `time.time`: a wall clock
+    stepped backwards by NTP would resurrect an expired entry, and monotonic time
+    cannot be stepped. The default exists so `create_app` can build one with no
+    arguments (`test_the_in_process_clock_parameter_has_a_default`).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
         self._entries: dict[
-            str, list[tuple[tuple[float, ...], str, str, str, str, str, str, ChatResponse]]
+            str, list[tuple[tuple[float, ...], str, str, str, str, str, str, float, ChatResponse]]
         ] = {}
 
     def search(
@@ -199,7 +207,13 @@ class InProcessSemanticCache:
         depends on insertion order and would serve a worse answer than the one
         held - the pair of orders in
         `test_the_nearest_of_two_eligible_neighbours_is_the_one_returned`.
+
+        `>` and not `>=` on the TTL check: the entry is still readable at exactly
+        `RESPONSE_CACHE_TTL_SECONDS` and gone the second after
+        (`test_an_entry_is_readable_up_to_and_including_the_ttl`,
+        `test_an_entry_is_a_miss_one_second_past_the_ttl`).
         """
+        now = self._clock()
         best: tuple[float, ChatResponse] | None = None
         for (
             stored_vector,
@@ -209,8 +223,11 @@ class InProcessSemanticCache:
             stored_provider,
             stored_region,
             stored_data_class,
+            stored_at,
             answer,
         ) in self._entries.get(tenant, []):
+            if now - stored_at > RESPONSE_CACHE_TTL_SECONDS:
+                continue
             if (
                 stored_alias,
                 stored_system,
@@ -256,6 +273,7 @@ class InProcessSemanticCache:
                 provider,
                 region,
                 data_class,
+                self._clock(),
                 answer,
             )
         )
@@ -280,13 +298,26 @@ class QdrantSemanticCache:
     `collection_prefix` exists for the suite: per-test isolation is a namespace
     rather than a sweep that would delete collections this suite does not own. The default is the shipped one, exercised by
     `test_a_tenants_collection_is_the_prefix_and_the_tenant`.
+
+    `clock` defaults to `time.time` (wall clock) rather than `time.monotonic`:
+    the `stored_at` stamp is written by one replica and read back by any other,
+    so it has to survive process restarts and cross a network boundary.
+    Monotonic time is per-process and would make every entry written by one
+    replica expired on the first read by a second. The default exists so
+    `create_app` can build one with a client and no clock
+    (`test_the_qdrant_clock_parameter_has_a_default`).
     """
 
     def __init__(
-        self, client: httpx.Client, *, collection_prefix: str = SEMANTIC_COLLECTION_PREFIX
+        self,
+        client: httpx.Client,
+        *,
+        collection_prefix: str = SEMANTIC_COLLECTION_PREFIX,
+        clock: Callable[[], float] = time.time,
     ) -> None:
         self._client = client
         self._collection_prefix = collection_prefix
+        self._clock = clock
 
     def collection(self, tenant: str) -> str:
         """The collection one tenant's entries live in.
@@ -323,6 +354,7 @@ class QdrantSemanticCache:
         whichever way the server rounds its own.
         """
         _checked_tenant(tenant)
+        now = self._clock()
         found = self._post(
             f"/collections/{self.collection(tenant)}/points/search",
             {
@@ -338,6 +370,10 @@ class QdrantSemanticCache:
                         {"key": "provider", "match": {"value": provider}},
                         {"key": "region", "match": {"value": region}},
                         {"key": "data_class", "match": {"value": data_class}},
+                        {
+                            "key": "stored_at",
+                            "range": {"gte": now - RESPONSE_CACHE_TTL_SECONDS},
+                        },
                     ]
                 },
             },
@@ -390,6 +426,7 @@ class QdrantSemanticCache:
                             "provider": provider,
                             "region": region,
                             "data_class": data_class,
+                            "stored_at": self._clock(),
                             _ANSWER_FIELD: answer.model_dump_json(),
                         },
                     }

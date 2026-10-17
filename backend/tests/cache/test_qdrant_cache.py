@@ -48,10 +48,11 @@ from __future__ import annotations
 import httpx
 import pytest
 
+from app.cache.store import RESPONSE_CACHE_TTL_SECONDS
 from app.cache.vectors import QdrantSemanticCache
 from app.providers.base import ChatResponse
 
-from .conftest import OTHER_TENANT, TENANT, cached_answer
+from .conftest import OTHER_TENANT, START, TENANT, FakeClock, cached_answer
 from .test_vectors import (
     ABOVE_THRESHOLD,
     ALIAS,
@@ -598,3 +599,27 @@ def test_a_put_payload_carries_provider_region_and_data_class() -> None:
     assert payload.get("provider") == PROVIDER
     assert payload.get("region") == REGION
     assert payload.get("data_class") == DATA_CLASS
+
+
+@pytest.mark.db
+def test_an_entry_past_the_ttl_is_not_served_by_a_real_qdrant(
+    qdrant_client: httpx.Client, collection_prefix: str
+) -> None:
+    """Catches an implementation that passes the boundary test in Python only: the Qdrant
+    `range` filter on `stored_at` must actually drop an over-age point server-side, not just
+    the Python-side check in the in-process tier."""
+    clocked_cache = QdrantSemanticCache(
+        qdrant_client, collection_prefix=collection_prefix, clock=FakeClock(START)
+    )
+
+    # Write at t0, read at t0 — entry is 0 seconds old, must hit.
+    stored = put(clocked_cache)
+    assert find(clocked_cache) == stored
+
+    # Advance to TTL+1: entry is now over-age, Qdrant range filter must drop it.
+    clocked_cache._clock.now = START + RESPONSE_CACHE_TTL_SECONDS + 1  # type: ignore[attr-defined]
+    assert find(clocked_cache) is None
+
+    # Write a fresh entry at the advanced clock moment; it is 0 seconds old and must hit.
+    fresh = put(clocked_cache, answer=cached_answer(content="fresh answer"))
+    assert find(clocked_cache) == fresh

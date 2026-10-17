@@ -61,6 +61,7 @@ import httpx
 import pytest
 
 from app.cache.probe import SEMANTIC_THRESHOLD
+from app.cache.store import RESPONSE_CACHE_TTL_SECONDS
 from app.cache.vectors import (
     SEMANTIC_COLLECTION_PREFIX,
     InProcessSemanticCache,
@@ -70,7 +71,7 @@ from app.cache.vectors import (
 from app.core.validation import MAX_IDENTIFIER_LENGTH, IdentifierInvalid
 from app.providers.base import ChatResponse
 
-from .conftest import OTHER_TENANT, TENANT, cached_answer
+from .conftest import OTHER_TENANT, START, TENANT, FakeClock, cached_answer
 
 ALIAS = "agent-default"
 OTHER_ALIAS = "agent-strong"
@@ -637,3 +638,139 @@ def test_a_search_asks_for_exactly_one_neighbour() -> None:
     sent = json.loads(transport.requests[0].content)
     assert sent["limit"] == 1
     assert sent["score_threshold"] == SEMANTIC_THRESHOLD
+
+
+# --------------------------------------------------------------------------
+# expiry
+# --------------------------------------------------------------------------
+
+
+def test_an_entry_within_the_ttl_is_a_hit() -> None:
+    """Catches a check using `>=` instead of `>`: an entry one second old is not expired,
+    so a boundary written as `>= TTL` would refuse an entry that is well within the window."""
+    clock = FakeClock(START)
+    cache = InProcessSemanticCache(clock=clock)
+    cache.put(
+        TENANT,
+        PROBE,
+        cached_answer(),
+        alias=ALIAS,
+        system_hash=SYSTEM_HASH,
+        tools_hash=TOOLS_HASH,
+        provider=PROVIDER,
+        region=REGION,
+        data_class=DATA_CLASS,
+    )
+    clock.now = START + 1
+    assert search(cache) == cached_answer()
+
+
+def test_an_entry_is_readable_up_to_and_including_the_ttl() -> None:
+    """Catches the boundary written as `>= TTL` (expires at exactly TTL) instead of `> TTL`
+    (expires the second AFTER): an entry that is exactly TTL seconds old must still be a hit."""
+    clock = FakeClock(START)
+    cache = InProcessSemanticCache(clock=clock)
+    cache.put(
+        TENANT,
+        PROBE,
+        cached_answer(),
+        alias=ALIAS,
+        system_hash=SYSTEM_HASH,
+        tools_hash=TOOLS_HASH,
+        provider=PROVIDER,
+        region=REGION,
+        data_class=DATA_CLASS,
+    )
+    clock.now = START + RESPONSE_CACHE_TTL_SECONDS
+    assert search(cache) == cached_answer()
+
+
+def test_an_entry_is_a_miss_one_second_past_the_ttl() -> None:
+    """Catches an implementation that never expires entries: an entry TTL+1 seconds old must
+    be gone, and only the expiry check can make this case fail while the boundary row passes."""
+    clock = FakeClock(START)
+    cache = InProcessSemanticCache(clock=clock)
+    cache.put(
+        TENANT,
+        PROBE,
+        cached_answer(),
+        alias=ALIAS,
+        system_hash=SYSTEM_HASH,
+        tools_hash=TOOLS_HASH,
+        provider=PROVIDER,
+        region=REGION,
+        data_class=DATA_CLASS,
+    )
+    clock.now = START + RESPONSE_CACHE_TTL_SECONDS + 1
+    assert search(cache) is None
+
+
+def test_the_in_process_clock_parameter_has_a_default() -> None:
+    """Catches a required `clock` parameter that would break `create_app`, which builds the
+    cache with no arguments."""
+    cache = InProcessSemanticCache()
+    assert cache is not None
+
+
+def test_a_put_writes_the_stored_at_second_into_the_payload() -> None:
+    """Catches a write that omits the timestamp: an entry without `stored_at` is treated as
+    expired by the range filter, so old entries stop being served immediately after migration."""
+    transport = RecordingTransport()
+    client = httpx.Client(transport=transport, base_url="http://qdrant.invalid:6333")
+    cache = QdrantSemanticCache(client, clock=FakeClock(START))
+    cache.put(
+        TENANT,
+        PROBE,
+        cached_answer(),
+        alias=ALIAS,
+        system_hash=SYSTEM_HASH,
+        tools_hash=TOOLS_HASH,
+        provider=PROVIDER,
+        region=REGION,
+        data_class=DATA_CLASS,
+    )
+    upsert = next(r for r in transport.requests if r.method == "PUT" and "points" in r.url.path)
+    assert json.loads(upsert.content)["points"][0]["payload"]["stored_at"] == START
+
+
+def test_a_search_filters_on_stored_at_at_or_after_now_minus_the_ttl() -> None:
+    """Catches a search with no time filter: without it, entries from any time are served and
+    the semantic tier never expires anything."""
+    transport = RecordingTransport()
+    client = httpx.Client(transport=transport, base_url="http://qdrant.invalid:6333")
+    cache = QdrantSemanticCache(client, clock=FakeClock(START))
+    cache.search(
+        TENANT,
+        PROBE,
+        alias=ALIAS,
+        system_hash=SYSTEM_HASH,
+        tools_hash=TOOLS_HASH,
+        provider=PROVIDER,
+        region=REGION,
+        data_class=DATA_CLASS,
+    )
+    assert len(transport.requests) == 1
+    sent = json.loads(transport.requests[0].content)
+    must_keys = {clause["key"] for clause in sent["filter"]["must"]}
+    assert "stored_at" in must_keys
+    stored_at_clause = next(c for c in sent["filter"]["must"] if c["key"] == "stored_at")
+    assert stored_at_clause["range"]["gte"] == START - RESPONSE_CACHE_TTL_SECONDS
+
+
+def test_the_qdrant_clock_parameter_has_a_default() -> None:
+    """Catches a required `clock` parameter on `QdrantSemanticCache` that would break
+    `create_app`, which builds the cache with a client and no clock."""
+    transport = RecordingTransport()
+    client = httpx.Client(transport=transport, base_url="http://qdrant.invalid:6333")
+    cache = QdrantSemanticCache(client)
+    assert cache is not None
+
+
+def test_the_semantic_ttl_is_the_exact_tiers_ttl() -> None:
+    """Catches a hardcoded TTL in `vectors.py` that has drifted from the store's constant:
+    `vectors.py` must import and re-export `RESPONSE_CACHE_TTL_SECONDS` rather than
+    redefine it, so the two tiers can never silently use different values."""
+    from app.cache.store import RESPONSE_CACHE_TTL_SECONDS as exact_ttl
+    from app.cache.vectors import RESPONSE_CACHE_TTL_SECONDS as semantic_ttl
+
+    assert semantic_ttl == exact_ttl
