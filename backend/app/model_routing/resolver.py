@@ -118,13 +118,16 @@ def resolve(
         alias, policy.aliases[alias].candidates
     )
 
-    rule = tenant_config.data_class_rules.get(requested_class)
-    allowed = set(rule.allow_regions) if rule is not None else set()
+    allowed = set(tenant_config.allowed_regions(requested_class))
     if tenant_config.residency is Residency.EU:
         # The outer clamp. A data class rule may name a non-EU region, and for an
         # EU tenant that region still does not survive.
         allowed &= set(policy.eu_regions)
-    if mode is ResidencyMode.RELAXED and rule is not None and requested_class is not DataClass.PII:
+    if (
+        mode is ResidencyMode.RELAXED
+        and requested_class in tenant_config.data_class_rules
+        and requested_class is not DataClass.PII
+    ):
         # The one branch in this module that ADDS a region, and the reason the
         # residency property test calls `resolve()` without a mode: under the
         # default it cannot run at all. Deliberately AFTER the clamp, because a

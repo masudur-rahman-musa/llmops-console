@@ -90,8 +90,7 @@ def check_residency(
     if regime is None:
         raise IdentifierInvalid(f"tenant: {tenant!r} is not defined by this policy")
 
-    rule = regime.data_class_rules.get(data_class)
-    allowed = rule.allow_regions if rule is not None else ()
+    allowed = regime.allowed_regions(data_class)
     return ResidencyVerdict(
         case_id=case_id,
         tenant=tenant,

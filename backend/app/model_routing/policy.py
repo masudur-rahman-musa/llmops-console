@@ -136,6 +136,20 @@ class Tenant(_Frozen):
     rate_limit: RateLimit
     overrides: Mapping[str, tuple[Candidate, ...]] = {}
 
+    def allowed_regions(self, data_class: DataClass) -> tuple[str, ...]:
+        """The raw allow list for one data class, or `()` when no rule exists.
+
+        Deny by default: a missing rule returns an empty tuple, never a widened
+        set. Both the resolver and the eval residency check call this instead of
+        reading `data_class_rules` directly, so the reading lives once.
+
+        The resolver applies its EU clamp and relaxed-mode union on top of this
+        value; the eval check uses it raw. Neither caller changes the return value
+        itself, pinned by `test_the_gateway_and_the_eval_check_read_the_same_rule`.
+        """
+        rule = self.data_class_rules.get(data_class)
+        return rule.allow_regions if rule is not None else ()
+
 
 class Policy(_Frozen):
     """A whole routing policy, validated as one document."""
