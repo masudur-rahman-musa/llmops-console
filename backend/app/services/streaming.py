@@ -118,9 +118,9 @@ def sse_frames(
     able to `close()` it: that is what releases the provider stream when the
     client goes away, and an `Iterator` does not promise the method.
 
-    A sync generator, deliberately: FastAPI iterates it in a worker thread, so a
-    provider that pauses between events holds a thread rather than the event
-    loop, exactly as the non-streaming path is already handled.
+    A sync generator, deliberately: the chat route runs it inside
+    `asyncio.to_thread`, so a provider that pauses between events
+    holds a worker thread rather than the event loop.
 
     `on_unreported_usage` is called with the characters this generator actually
     SENT, and only when the stream ended without a `UsageTotal` event - a typed
