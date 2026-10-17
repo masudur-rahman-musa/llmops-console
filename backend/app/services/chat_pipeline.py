@@ -806,7 +806,12 @@ def store_answer(cache: ResponseCache, tenant: str, key: str | None, answer: Cha
 
 
 def requested_key(
-    body: ChatCompletionRequest, tenant: str, chosen: Resolved, *, allow_header: bool
+    body: ChatCompletionRequest,
+    tenant: str,
+    chosen: Resolved,
+    *,
+    allow_header: bool,
+    data_class: str,
 ) -> str | None:
     """The cache key for this request, or `None` when it may not be cached (#22).
 
@@ -815,6 +820,10 @@ def requested_key(
     `candidates[0]` and the write uses whatever candidate actually served
     (decision B), and that resolved model is the only argument that differs
     between the two calls.
+
+    `data_class` is keyword-only and required: a default would let a call site
+    quietly omit it and serve a cached answer across data-handling boundaries,
+    which is the exact failure an earlier change adds it to prevent.
 
     The body is the INBOUND one, before redaction (decision A). The redacted text
     depends on the tenant's directory, so keying on the outbound body would
@@ -827,6 +836,9 @@ def requested_key(
     return cache_key(
         tenant=tenant,
         alias=body.model,
+        provider=chosen.provider,
+        region=chosen.region,
+        data_class=data_class,
         model=chosen.model,
         messages=dumped["messages"],
         tools=dumped.get("tools"),
@@ -929,6 +941,9 @@ def semantic_answer(
     alias: str,
     system_hash: str,
     tools_hash: str,
+    provider: str,
+    region: str,
+    data_class: str,
 ) -> ChatResponse | None:
     """The stored answer to a question near enough to this one, or `None`.
 
@@ -936,6 +951,10 @@ def semantic_answer(
     embedding did not happen, which is a miss without a lookup - the same shape
     `cached_answer` has for a `None` key, and the reason the route needs no
     second eligibility test at the write.
+
+    `provider`, `region` and `data_class` are required keyword args: a
+    cached answer is only served where it could have been made, so the lookup
+    must filter on where and how this request would be made.
 
     The `except Exception` is the route's own backstop rather than a duplicate of
     the store's, for the reason `cached_answer` states: `app.cache`
@@ -946,7 +965,14 @@ def semantic_answer(
         return None
     try:
         return cache.search(
-            tenant, vector, alias=alias, system_hash=system_hash, tools_hash=tools_hash
+            tenant,
+            vector,
+            alias=alias,
+            system_hash=system_hash,
+            tools_hash=tools_hash,
+            provider=provider,
+            region=region,
+            data_class=data_class,
         )
     except Exception:
         return None
@@ -961,12 +987,19 @@ def store_probe(
     alias: str,
     system_hash: str,
     tools_hash: str,
+    provider: str,
+    region: str,
+    data_class: str,
 ) -> None:
     """File this answer under the vector the lookup already paid for, or do nothing.
 
     The vector is the LOOKUP's, reused rather than embedded a second time (plan
     13c decision H): two calls double the cost of every miss and can disagree if
     the model behind the `embed` alias changes between them.
+
+    `provider`, `region` and `data_class` are required keyword args: a
+    cached answer is only served where it could have been made, so the stored
+    entry must carry where and how it was made.
 
     Guarded for the reason `store_answer` is guarded, and it is the sharper one:
     this runs after a provider has answered and been paid, so an escaping failure
@@ -977,7 +1010,15 @@ def store_probe(
         return
     try:
         cache.put(
-            tenant, vector, answer, alias=alias, system_hash=system_hash, tools_hash=tools_hash
+            tenant,
+            vector,
+            answer,
+            alias=alias,
+            system_hash=system_hash,
+            tools_hash=tools_hash,
+            provider=provider,
+            region=region,
+            data_class=data_class,
         )
     except Exception:
         return
@@ -1195,7 +1236,13 @@ def complete_chat(
     label_candidate(scope, body.model, candidates[0])
 
     with stage_span(scope, CACHE_SPAN):
-        key = requested_key(body, context.tenant, candidates[0], allow_header=allowed)
+        key = requested_key(
+            body,
+            context.tenant,
+            candidates[0],
+            allow_header=allowed,
+            data_class=context.data_class.value,
+        )
         hit = cached_answer(clients.response_cache, context.tenant, key)
     if hit is not None:
         label_candidate(scope, body.model, candidates[0], cache=CACHE_STATUS_HIT)
@@ -1235,6 +1282,9 @@ def complete_chat(
                 alias=body.model,
                 system_hash=system_hash(outbound),
                 tools_hash=tools_hash(outbound),
+                provider=candidates[0].provider,
+                region=candidates[0].region,
+                data_class=context.data_class.value,
             )
         if near is not None:
             label_candidate(scope, body.model, candidates[0], cache=CACHE_STATUS_SEMANTIC)
@@ -1311,7 +1361,13 @@ def complete_chat(
         store_answer(
             clients.response_cache,
             context.tenant,
-            requested_key(body, context.tenant, chosen, allow_header=allowed),
+            requested_key(
+                body,
+                context.tenant,
+                chosen,
+                allow_header=allowed,
+                data_class=context.data_class.value,
+            ),
             answer,
         )
         store_probe(
@@ -1322,6 +1378,9 @@ def complete_chat(
             alias=body.model,
             system_hash=system_hash(outbound),
             tools_hash=tools_hash(outbound),
+            provider=chosen.provider,
+            region=chosen.region,
+            data_class=context.data_class.value,
         )
         headers[COST_HEADER] = book_cost(
             clients,

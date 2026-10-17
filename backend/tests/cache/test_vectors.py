@@ -31,9 +31,11 @@ Contract this file assumes (the implementation follows it):
 
     class SemanticCache(Protocol):
         def search(self, tenant: str, vector: Sequence[float], *, alias: str,
-                   system_hash: str, tools_hash: str) -> ChatResponse | None: ...
+                   system_hash: str, tools_hash: str, provider: str,
+                   region: str, data_class: str) -> ChatResponse | None: ...
         def put(self, tenant: str, vector: Sequence[float], answer: ChatResponse, *,
-                alias: str, system_hash: str, tools_hash: str) -> None: ...
+                alias: str, system_hash: str, tools_hash: str, provider: str,
+                region: str, data_class: str) -> None: ...
 
     class InProcessSemanticCache:
         def __init__(self) -> None: ...
@@ -76,6 +78,12 @@ SYSTEM_HASH = "0" * 64
 OTHER_SYSTEM_HASH = "1" * 64
 TOOLS_HASH = "2" * 64
 OTHER_TOOLS_HASH = "3" * 64
+PROVIDER = "anthropic"
+OTHER_PROVIDER = "openai"
+REGION = "eu"
+OTHER_REGION = "us"
+DATA_CLASS = "public"
+OTHER_DATA_CLASS = "pii"
 
 # --------------------------------------------------------------------------
 # vectors whose cosine against PROBE is an exact float
@@ -141,6 +149,9 @@ def stored(
     alias: str = ALIAS,
     system_hash: str = SYSTEM_HASH,
     tools_hash: str = TOOLS_HASH,
+    provider: str = PROVIDER,
+    region: str = REGION,
+    data_class: str = DATA_CLASS,
 ) -> InProcessSemanticCache:
     """A cache holding one entry, defaulting to the probe vector and the base filters."""
     cache = InProcessSemanticCache()
@@ -151,6 +162,9 @@ def stored(
         alias=alias,
         system_hash=system_hash,
         tools_hash=tools_hash,
+        provider=provider,
+        region=region,
+        data_class=data_class,
     )
     return cache
 
@@ -163,13 +177,25 @@ def search(
     alias: str = ALIAS,
     system_hash: str = SYSTEM_HASH,
     tools_hash: str = TOOLS_HASH,
+    provider: str = PROVIDER,
+    region: str = REGION,
+    data_class: str = DATA_CLASS,
 ) -> ChatResponse | None:
     """One search with the base arrangement, so a row changes exactly what it names.
 
     Annotated against the Protocol rather than the class, so a signature that
     drifts from `SemanticCache` is a `mypy --strict` error in every case below.
     """
-    return cache.search(tenant, vector, alias=alias, system_hash=system_hash, tools_hash=tools_hash)
+    return cache.search(
+        tenant,
+        vector,
+        alias=alias,
+        system_hash=system_hash,
+        tools_hash=tools_hash,
+        provider=provider,
+        region=region,
+        data_class=data_class,
+    )
 
 
 def test_a_stored_answer_round_trips_on_an_identical_vector() -> None:
@@ -231,7 +257,15 @@ def test_the_nearest_of_two_eligible_neighbours_is_the_one_returned(
         order.reverse()
     for vector, answer in order:
         cache.put(
-            TENANT, vector, answer, alias=ALIAS, system_hash=SYSTEM_HASH, tools_hash=TOOLS_HASH
+            TENANT,
+            vector,
+            answer,
+            alias=ALIAS,
+            system_hash=SYSTEM_HASH,
+            tools_hash=TOOLS_HASH,
+            provider=PROVIDER,
+            region=REGION,
+            data_class=DATA_CLASS,
         )
 
     assert search(cache) == near
@@ -241,27 +275,47 @@ def test_the_nearest_of_two_eligible_neighbours_is_the_one_returned(
 # the three filter fields, one miss each at cosine 1.0
 # --------------------------------------------------------------------------
 
-FILTER_ROWS: list[tuple[str, str, str, str]] = [
-    ("a different alias", OTHER_ALIAS, SYSTEM_HASH, TOOLS_HASH),
-    ("a different system hash", ALIAS, OTHER_SYSTEM_HASH, TOOLS_HASH),
-    ("a different tools hash", ALIAS, SYSTEM_HASH, OTHER_TOOLS_HASH),
+FILTER_ROWS: list[tuple[str, str, str, str, str, str, str]] = [
+    ("a different alias", OTHER_ALIAS, SYSTEM_HASH, TOOLS_HASH, PROVIDER, REGION, DATA_CLASS),
+    ("a different system hash", ALIAS, OTHER_SYSTEM_HASH, TOOLS_HASH, PROVIDER, REGION, DATA_CLASS),
+    ("a different tools hash", ALIAS, SYSTEM_HASH, OTHER_TOOLS_HASH, PROVIDER, REGION, DATA_CLASS),
+    ("a different provider", ALIAS, SYSTEM_HASH, TOOLS_HASH, OTHER_PROVIDER, REGION, DATA_CLASS),
+    ("a different region", ALIAS, SYSTEM_HASH, TOOLS_HASH, PROVIDER, OTHER_REGION, DATA_CLASS),
+    ("a different data class", ALIAS, SYSTEM_HASH, TOOLS_HASH, PROVIDER, REGION, OTHER_DATA_CLASS),
 ]
 
 
 @pytest.mark.parametrize(
-    ("case", "alias", "system_hash", "tools_hash"),
+    ("case", "alias", "system_hash", "tools_hash", "provider", "region", "data_class"),
     FILTER_ROWS,
     ids=[row[0] for row in FILTER_ROWS],
 )
 def test_a_query_differing_in_one_filter_field_misses_at_cosine_one(
-    case: str, alias: str, system_hash: str, tools_hash: str
+    case: str,
+    alias: str,
+    system_hash: str,
+    tools_hash: str,
+    provider: str,
+    region: str,
+    data_class: str,
 ) -> None:
-    """Catches a query built over two of the three payload fields, one row per field: the
+    """Catches a query built over a subset of the six payload fields, one row per field: the
     vector is IDENTICAL to the stored one, so similarity cannot be what refuses it and the
     row for the dropped field is the only thing that reddens. A dropped filter serves
     another conversation's answer - a different system prompt's, a different alias's, a
-    different tool set's - and the nearest neighbour will happily be one (plan §5)."""
-    assert search(stored(), alias=alias, system_hash=system_hash, tools_hash=tools_hash) is None
+    different provider's - and the nearest neighbour will happily be one (plan §5)."""
+    assert (
+        search(
+            stored(),
+            alias=alias,
+            system_hash=system_hash,
+            tools_hash=tools_hash,
+            provider=provider,
+            region=region,
+            data_class=data_class,
+        )
+        is None
+    )
 
 
 def test_a_query_matching_all_three_filters_hits_at_cosine_one() -> None:
@@ -270,6 +324,27 @@ def test_a_query_matching_all_three_filters_hits_at_cosine_one() -> None:
     asserts a miss, so a search returning `None` unconditionally passes all three, and this
     is the row that separates the two readings."""
     assert search(stored()) == cached_answer()
+
+
+def test_an_answer_made_under_another_provider_is_not_served() -> None:
+    """Catches a filter that does not include the provider field: an answer stored under
+    `anthropic` would be served to a request destined for `openai` -- same alias, hashes,
+    region and data class -- silently handing back a different provider's output."""
+    assert search(stored(provider=OTHER_PROVIDER), provider=PROVIDER) is None
+
+
+def test_an_answer_made_in_another_region_is_not_served() -> None:
+    """Catches a filter that does not include the region field: an answer stored for the
+    `us` region would be served to an `eu` request, violating the residency rule the filter
+    exists to enforce -- the region is the only thing that differs."""
+    assert search(stored(region=OTHER_REGION), region=REGION) is None
+
+
+def test_an_answer_made_for_another_data_class_is_not_served() -> None:
+    """Catches a filter that does not include the data_class field: a `pii` answer would
+    be served to a `public` request -- or vice versa -- meaning the data-class scoping
+    rule is silently bypassed whenever the vector happens to match."""
+    assert search(stored(data_class=OTHER_DATA_CLASS), data_class=DATA_CLASS) is None
 
 
 # --------------------------------------------------------------------------
@@ -286,9 +361,27 @@ def test_one_tenant_cannot_read_another_tenants_live_entry() -> None:
     mine = cached_answer(content="the answer for evals")
     theirs = cached_answer(content="the answer for cuan")
     cache = InProcessSemanticCache()
-    cache.put(TENANT, PROBE, mine, alias=ALIAS, system_hash=SYSTEM_HASH, tools_hash=TOOLS_HASH)
     cache.put(
-        OTHER_TENANT, PROBE, theirs, alias=ALIAS, system_hash=SYSTEM_HASH, tools_hash=TOOLS_HASH
+        TENANT,
+        PROBE,
+        mine,
+        alias=ALIAS,
+        system_hash=SYSTEM_HASH,
+        tools_hash=TOOLS_HASH,
+        provider=PROVIDER,
+        region=REGION,
+        data_class=DATA_CLASS,
+    )
+    cache.put(
+        OTHER_TENANT,
+        PROBE,
+        theirs,
+        alias=ALIAS,
+        system_hash=SYSTEM_HASH,
+        tools_hash=TOOLS_HASH,
+        provider=PROVIDER,
+        region=REGION,
+        data_class=DATA_CLASS,
     )
 
     assert search(cache, tenant=TENANT) == mine
@@ -393,7 +486,16 @@ def test_search_refuses_a_malformed_tenant_before_touching_qdrant(case: str, ten
     cache, transport = qdrant_cache()
 
     with pytest.raises(IdentifierInvalid):
-        cache.search(tenant, PROBE, alias=ALIAS, system_hash=SYSTEM_HASH, tools_hash=TOOLS_HASH)
+        cache.search(
+            tenant,
+            PROBE,
+            alias=ALIAS,
+            system_hash=SYSTEM_HASH,
+            tools_hash=TOOLS_HASH,
+            provider=PROVIDER,
+            region=REGION,
+            data_class=DATA_CLASS,
+        )
 
     assert transport.requests == []
 
@@ -413,6 +515,9 @@ def test_put_refuses_a_malformed_tenant_before_touching_qdrant(case: str, tenant
             alias=ALIAS,
             system_hash=SYSTEM_HASH,
             tools_hash=TOOLS_HASH,
+            provider=PROVIDER,
+            region=REGION,
+            data_class=DATA_CLASS,
         )
 
     assert transport.requests == []
@@ -427,7 +532,14 @@ def test_a_tenant_at_the_length_cap_is_accepted() -> None:
     cache, transport = qdrant_cache()
 
     result = cache.search(
-        MAX_TENANT, PROBE, alias=ALIAS, system_hash=SYSTEM_HASH, tools_hash=TOOLS_HASH
+        MAX_TENANT,
+        PROBE,
+        alias=ALIAS,
+        system_hash=SYSTEM_HASH,
+        tools_hash=TOOLS_HASH,
+        provider=PROVIDER,
+        region=REGION,
+        data_class=DATA_CLASS,
     )
 
     assert result is None
@@ -441,7 +553,14 @@ def test_a_tenant_one_character_over_the_cap_is_rejected() -> None:
 
     with pytest.raises(IdentifierInvalid):
         cache.search(
-            OVER_CAP_TENANT, PROBE, alias=ALIAS, system_hash=SYSTEM_HASH, tools_hash=TOOLS_HASH
+            OVER_CAP_TENANT,
+            PROBE,
+            alias=ALIAS,
+            system_hash=SYSTEM_HASH,
+            tools_hash=TOOLS_HASH,
+            provider=PROVIDER,
+            region=REGION,
+            data_class=DATA_CLASS,
         )
 
     assert transport.requests == []
@@ -503,7 +622,16 @@ def test_a_search_asks_for_exactly_one_neighbour() -> None:
     index and the Python-side one is what pins the published number."""
     cache, transport = qdrant_cache()
 
-    cache.search(TENANT, PROBE, alias=ALIAS, system_hash=SYSTEM_HASH, tools_hash=TOOLS_HASH)
+    cache.search(
+        TENANT,
+        PROBE,
+        alias=ALIAS,
+        system_hash=SYSTEM_HASH,
+        tools_hash=TOOLS_HASH,
+        provider=PROVIDER,
+        region=REGION,
+        data_class=DATA_CLASS,
+    )
 
     assert len(transport.requests) == 1
     sent = json.loads(transport.requests[0].content)

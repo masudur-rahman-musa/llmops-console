@@ -6,12 +6,13 @@ someone who has read the exact tier can read this one. Three things about it
 follow from what a VECTOR cache is, and each is what its tests are arranged
 around.
 
-**A neighbour is comparable before it is near.** Every query carries three
-payload filters beside the vector - the alias, the system hash and the tools
-hash - so a search is "the nearest neighbour among the entries that are exactly
-comparable" and never "the nearest neighbour, hopefully comparable". A query
-short one filter serves another conversation's answer, and the nearest neighbour
-will happily be one, which is why each field has its own miss case at cosine 1.0
+**A neighbour is comparable before it is near.** Every query carries six
+payload filters beside the vector - the alias, the system hash, the tools
+hash, the provider, the region and the data class - so a search is "the nearest
+neighbour among the entries that are exactly comparable" and never "the nearest
+neighbour, hopefully comparable". A query short one filter serves another
+conversation's answer, and the nearest neighbour will happily be one, which is
+why each field has its own miss case at cosine 1.0
 (`test_a_query_differing_in_one_filter_field_misses_at_cosine_one`, in
 tests/cache/test_vectors.py and again against a real Qdrant in
 tests/cache/test_qdrant_cache.py) rather than a sample.
@@ -115,10 +116,11 @@ class SemanticCache(Protocol):
     failure: it is a programming error at the call site, and the route never
     reaches it with anything but the tenant `gateway/context.py` authenticated.
 
-    `alias`, `system_hash` and `tools_hash` are keyword-only on both methods, for
-    the reason the exact tier's `allow_header` is: three same-typed strings in a
-    row are two mistakes waiting, and a search that swapped two of them would
-    filter on values no entry carries and simply never hit.
+    `alias`, `system_hash`, `tools_hash`, `provider`, `region` and `data_class`
+    are keyword-only on both methods, for the reason the exact tier's
+    `allow_header` is: six same-typed strings in a row are five mistakes waiting,
+    and a search that swapped two of them would filter on values no entry carries
+    and simply never hit.
     """
 
     def search(
@@ -129,6 +131,9 @@ class SemanticCache(Protocol):
         alias: str,
         system_hash: str,
         tools_hash: str,
+        provider: str,
+        region: str,
+        data_class: str,
     ) -> ChatResponse | None:
         """The nearest comparable answer at or above the threshold, or `None`."""
         ...
@@ -142,6 +147,9 @@ class SemanticCache(Protocol):
         alias: str,
         system_hash: str,
         tools_hash: str,
+        provider: str,
+        region: str,
+        data_class: str,
     ) -> None:
         """File one answer under this tenant, this probe vector and these filters."""
         ...
@@ -167,7 +175,9 @@ class InProcessSemanticCache:
     """
 
     def __init__(self) -> None:
-        self._entries: dict[str, list[tuple[tuple[float, ...], str, str, str, ChatResponse]]] = {}
+        self._entries: dict[
+            str, list[tuple[tuple[float, ...], str, str, str, str, str, str, ChatResponse]]
+        ] = {}
 
     def search(
         self,
@@ -177,10 +187,13 @@ class InProcessSemanticCache:
         alias: str,
         system_hash: str,
         tools_hash: str,
+        provider: str,
+        region: str,
+        data_class: str,
     ) -> ChatResponse | None:
         """The nearest comparable entry at or above `SEMANTIC_THRESHOLD`, or `None`.
 
-        Comparable means all three filters match exactly; near means
+        Comparable means all six filters match exactly; near means
         `>= SEMANTIC_THRESHOLD`, inclusive. The best score is tracked rather than
         the first one over the line, because "the first entry over the threshold"
         depends on insertion order and would serve a worse answer than the one
@@ -188,10 +201,24 @@ class InProcessSemanticCache:
         `test_the_nearest_of_two_eligible_neighbours_is_the_one_returned`.
         """
         best: tuple[float, ChatResponse] | None = None
-        for stored_vector, stored_alias, stored_system, stored_tools, answer in self._entries.get(
-            tenant, []
-        ):
-            if (stored_alias, stored_system, stored_tools) != (alias, system_hash, tools_hash):
+        for (
+            stored_vector,
+            stored_alias,
+            stored_system,
+            stored_tools,
+            stored_provider,
+            stored_region,
+            stored_data_class,
+            answer,
+        ) in self._entries.get(tenant, []):
+            if (
+                stored_alias,
+                stored_system,
+                stored_tools,
+                stored_provider,
+                stored_region,
+                stored_data_class,
+            ) != (alias, system_hash, tools_hash, provider, region, data_class):
                 continue
             score = _cosine(vector, stored_vector)
             if score < SEMANTIC_THRESHOLD:
@@ -209,6 +236,9 @@ class InProcessSemanticCache:
         alias: str,
         system_hash: str,
         tools_hash: str,
+        provider: str,
+        region: str,
+        data_class: str,
     ) -> None:
         """Append one entry to this tenant's list.
 
@@ -223,6 +253,9 @@ class InProcessSemanticCache:
                 alias,
                 system_hash,
                 tools_hash,
+                provider,
+                region,
+                data_class,
                 answer,
             )
         )
@@ -272,6 +305,9 @@ class QdrantSemanticCache:
         alias: str,
         system_hash: str,
         tools_hash: str,
+        provider: str,
+        region: str,
+        data_class: str,
     ) -> ChatResponse | None:
         """The nearest comparable answer at or above the threshold, or `None`.
 
@@ -299,6 +335,9 @@ class QdrantSemanticCache:
                         {"key": "alias", "match": {"value": alias}},
                         {"key": "system_hash", "match": {"value": system_hash}},
                         {"key": "tools_hash", "match": {"value": tools_hash}},
+                        {"key": "provider", "match": {"value": provider}},
+                        {"key": "region", "match": {"value": region}},
+                        {"key": "data_class", "match": {"value": data_class}},
                     ]
                 },
             },
@@ -319,6 +358,9 @@ class QdrantSemanticCache:
         alias: str,
         system_hash: str,
         tools_hash: str,
+        provider: str,
+        region: str,
+        data_class: str,
     ) -> None:
         """File one answer in this tenant's collection, creating it if this is the first.
 
@@ -345,6 +387,9 @@ class QdrantSemanticCache:
                             "alias": alias,
                             "system_hash": system_hash,
                             "tools_hash": tools_hash,
+                            "provider": provider,
+                            "region": region,
+                            "data_class": data_class,
                             _ANSWER_FIELD: answer.model_dump_json(),
                         },
                     }

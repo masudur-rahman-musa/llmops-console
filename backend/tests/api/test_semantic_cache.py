@@ -359,6 +359,9 @@ class BrokenSemanticCache:
         alias: str,
         system_hash: str,
         tools_hash: str,
+        provider: str,
+        region: str,
+        data_class: str,
     ) -> ChatResponse | None:
         self.searches += 1
         if self.on_search:
@@ -374,6 +377,9 @@ class BrokenSemanticCache:
         alias: str,
         system_hash: str,
         tools_hash: str,
+        provider: str,
+        region: str,
+        data_class: str,
     ) -> None:
         self.puts += 1
         if self.on_put:

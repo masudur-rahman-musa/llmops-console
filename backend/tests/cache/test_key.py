@@ -129,6 +129,9 @@ def key_for(
     tools: Sequence[Mapping[str, object]] | None = None,
     response_format: Mapping[str, object] | None = None,
     temperature: float | None = BASE_TEMPERATURE,
+    provider: str = "anthropic",
+    region: str = "eu",
+    data_class: str = "public",
 ) -> str:
     """The key for the baseline request with the named fields replaced.
 
@@ -145,6 +148,9 @@ def key_for(
         tools=tools,
         response_format=response_format,
         temperature=temperature,
+        provider=provider,
+        region=region,
+        data_class=data_class,
     )
     return key
 
@@ -180,6 +186,9 @@ FIELD_ROWS: list[tuple[str, dict[str, Any]]] = [
     ("tools", {"tools": list(BASE_TOOLS)}),
     ("response_format", {"response_format": dict(BASE_RESPONSE_FORMAT)}),
     ("temperature", {"temperature": 1.0}),
+    ("provider", {"provider": "openai"}),
+    ("region", {"region": "us"}),
+    ("data_class", {"data_class": "pii"}),
 ]
 
 
@@ -194,16 +203,38 @@ def test_changing_one_keyed_field_changes_the_key(field: str, override: dict[str
     assert key_for(**override) != key_for()
 
 
-def test_the_seven_field_variants_all_key_differently_from_each_other() -> None:
+def test_the_ten_field_variants_all_key_differently_from_each_other() -> None:
     """Catches a digest that collapses two fields into one input (`tenant + alias`
     concatenated, `model` written into the same slot as `alias`): each row above only
     proves the field is read at all, and two fields sharing a slot would still differ from
     the baseline while making a request for another tenant collide with one for another
-    alias."""
+    alias. The ten variants now include provider, region and data_class."""
     keys = {field: key_for(**override) for field, override in FIELD_ROWS}
 
     assert len(set(keys.values())) == len(FIELD_ROWS)
     assert key_for() not in set(keys.values())
+
+
+def test_changing_the_provider_changes_the_key() -> None:
+    """Catches a key built without the provider field: a cached answer made via `anthropic`
+    would be served to a request routed to `openai`, silently, whenever the messages and
+    model are the same -- meaning a different provider's output is returned as if it were
+    this provider's."""
+    assert key_for(provider="openai") != key_for()
+
+
+def test_changing_the_region_changes_the_key() -> None:
+    """Catches a key built without the region field: an answer made under the EU region
+    would be served to a request destined for US, violating the residency rule the key
+    exists to enforce -- a cached answer is only served where it could have been made."""
+    assert key_for(region="us") != key_for()
+
+
+def test_changing_the_data_class_changes_the_key() -> None:
+    """Catches a key built without the data_class field: a `public` answer would be served
+    to a `pii` request, meaning PII-scoped traffic could receive a response that was
+    produced under a weaker data-class rule."""
+    assert key_for(data_class="pii") != key_for()
 
 
 # --------------------------------------------------------------------------

@@ -4,12 +4,13 @@ Two pure functions and four constants. Nothing here talks to a store, reads a
 policy or knows an adapter exists, which is what lets `tests/cache/test_key.py`
 run with no app and no backing service.
 
-**The key is a digest of seven fields** (the design): the tenant, the alias the
-caller named, the model the resolver picked, the messages, the tools, the
-response format and the temperature. A key over six of them serves a WRONG
-answer to a request that differs by the seventh, so each field has its own row in
-`test_changing_one_keyed_field_changes_the_key` rather than a sample, and
-`test_the_seven_field_variants_all_key_differently_from_each_other` is what
+**The key is a digest of ten fields** (the design): the tenant, the alias the
+caller named, the provider that served it, the region that provider is in, the
+data class of the request, the model the resolver picked, the messages, the
+tools, the response format and the temperature. A key over nine of them serves a
+WRONG answer to a request that differs by the tenth, so each field has its own
+row in `test_changing_one_keyed_field_changes_the_key` rather than a sample, and
+`test_the_ten_field_variants_all_key_differently_from_each_other` is what
 catches two of them sharing a slot.
 
 Both the tenant and the resolved model are in there for reasons worth stating.
@@ -99,18 +100,28 @@ def cache_key(
     *,
     tenant: str,
     alias: str,
+    provider: str,
+    region: str,
+    data_class: str,
     model: str,
     messages: Sequence[Mapping[str, object]],
     tools: Sequence[Mapping[str, object]] | None,
     response_format: Mapping[str, object] | None,
     temperature: float | None,
 ) -> str:
-    """The sha256 of the design's seven fields, as 64 lowercase hex characters.
+    """The sha256 of the design's ten fields, as 64 lowercase hex characters.
 
-    Keyword-only, and every argument required. A default on any of the seven
+    Keyword-only, and every argument required. A default on any of the ten
     would let a call site key a request without one of its fields simply by
     forgetting it - the exact failure `test_changing_one_keyed_field_changes_the_key`
     exists to catch, and one that a default would hide from that table.
+
+    `provider`, `region` and `data_class` are the three new fields added by an earlier change:
+    a cached answer is served only where it could have been made, so the key must
+    include where it was made (provider and region) and under which data-handling
+    rule (data_class). Pinned by `test_changing_the_provider_changes_the_key`,
+    `test_changing_the_region_changes_the_key` and
+    `test_changing_the_data_class_changes_the_key`.
 
     `messages`, `tools` and `response_format` arrive as the JSON-able structures
     the route holds after `body.model_dump(mode="json", exclude_none=True)`,
@@ -126,6 +137,9 @@ def cache_key(
         {
             "tenant": tenant,
             "alias": alias,
+            "provider": provider,
+            "region": region,
+            "data_class": data_class,
             "model": model,
             "messages": list(messages),
             "tools": None if tools is None else list(tools),

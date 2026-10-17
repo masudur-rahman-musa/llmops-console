@@ -1060,6 +1060,9 @@ class SilentSemanticCache:
         alias: str,
         system_hash: str,
         tools_hash: str,
+        provider: str,
+        region: str,
+        data_class: str,
     ) -> ChatResponse | None:
         return None
 
@@ -1072,6 +1075,9 @@ class SilentSemanticCache:
         alias: str,
         system_hash: str,
         tools_hash: str,
+        provider: str,
+        region: str,
+        data_class: str,
     ) -> None:
         return None
 

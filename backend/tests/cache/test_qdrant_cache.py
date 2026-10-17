@@ -56,8 +56,11 @@ from .test_vectors import (
     ABOVE_THRESHOLD,
     ALIAS,
     BELOW_THRESHOLD,
+    DATA_CLASS,
     FILTER_ROWS,
     PROBE,
+    PROVIDER,
+    REGION,
     SYSTEM_HASH,
     TOOLS_HASH,
 )
@@ -112,7 +115,14 @@ def test_a_search_against_an_unreachable_qdrant_is_a_miss(case: str, error: Exce
     the first row and drops the other three."""
     assert (
         cache_over(raising(error)).search(
-            TENANT, PROBE, alias=ALIAS, system_hash=SYSTEM_HASH, tools_hash=TOOLS_HASH
+            TENANT,
+            PROBE,
+            alias=ALIAS,
+            system_hash=SYSTEM_HASH,
+            tools_hash=TOOLS_HASH,
+            provider=PROVIDER,
+            region=REGION,
+            data_class=DATA_CLASS,
         )
         is None
     )
@@ -132,6 +142,9 @@ def test_a_put_against_an_unreachable_qdrant_is_swallowed(case: str, error: Exce
         alias=ALIAS,
         system_hash=SYSTEM_HASH,
         tools_hash=TOOLS_HASH,
+        provider=PROVIDER,
+        region=REGION,
+        data_class=DATA_CLASS,
     )
 
 
@@ -141,11 +154,14 @@ def hit_body(payload: object) -> dict[str, object]:
 
 
 def readable_payload() -> dict[str, object]:
-    """The payload a healthy entry carries: the three filters and a neutral answer as JSON."""
+    """The payload a healthy entry carries: the six filters and a neutral answer as JSON."""
     return {
         "alias": ALIAS,
         "system_hash": SYSTEM_HASH,
         "tools_hash": TOOLS_HASH,
+        "provider": PROVIDER,
+        "region": REGION,
+        "data_class": DATA_CLASS,
         "answer": cached_answer().model_dump_json(),
     }
 
@@ -171,7 +187,14 @@ def test_a_non_2xx_answer_to_a_search_is_a_miss(case: str, status: int) -> None:
     this path."""
     assert (
         cache_over(answering(status, hit_body(readable_payload()))).search(
-            TENANT, PROBE, alias=ALIAS, system_hash=SYSTEM_HASH, tools_hash=TOOLS_HASH
+            TENANT,
+            PROBE,
+            alias=ALIAS,
+            system_hash=SYSTEM_HASH,
+            tools_hash=TOOLS_HASH,
+            provider=PROVIDER,
+            region=REGION,
+            data_class=DATA_CLASS,
         )
         is None
     )
@@ -190,6 +213,9 @@ def test_a_non_2xx_answer_to_a_put_is_swallowed(case: str, status: int) -> None:
         alias=ALIAS,
         system_hash=SYSTEM_HASH,
         tools_hash=TOOLS_HASH,
+        provider=PROVIDER,
+        region=REGION,
+        data_class=DATA_CLASS,
     )
 
 
@@ -231,7 +257,14 @@ def test_a_stored_payload_this_build_cannot_read_is_a_miss(case: str, payload: o
     1.0, so the threshold cannot be what makes any of them absent."""
     assert (
         cache_over(answering(200, hit_body(payload))).search(
-            TENANT, PROBE, alias=ALIAS, system_hash=SYSTEM_HASH, tools_hash=TOOLS_HASH
+            TENANT,
+            PROBE,
+            alias=ALIAS,
+            system_hash=SYSTEM_HASH,
+            tools_hash=TOOLS_HASH,
+            provider=PROVIDER,
+            region=REGION,
+            data_class=DATA_CLASS,
         )
         is None
     )
@@ -273,10 +306,23 @@ def put(
     alias: str = ALIAS,
     system_hash: str = SYSTEM_HASH,
     tools_hash: str = TOOLS_HASH,
+    provider: str = PROVIDER,
+    region: str = REGION,
+    data_class: str = DATA_CLASS,
 ) -> ChatResponse:
     """Store one entry with the base arrangement and hand back what was stored."""
     stored = cached_answer() if answer is None else answer
-    cache.put(tenant, vector, stored, alias=alias, system_hash=system_hash, tools_hash=tools_hash)
+    cache.put(
+        tenant,
+        vector,
+        stored,
+        alias=alias,
+        system_hash=system_hash,
+        tools_hash=tools_hash,
+        provider=provider,
+        region=region,
+        data_class=data_class,
+    )
     return stored
 
 
@@ -288,9 +334,21 @@ def find(
     alias: str = ALIAS,
     system_hash: str = SYSTEM_HASH,
     tools_hash: str = TOOLS_HASH,
+    provider: str = PROVIDER,
+    region: str = REGION,
+    data_class: str = DATA_CLASS,
 ) -> ChatResponse | None:
     """One search with the base arrangement, so a case changes exactly what it names."""
-    return cache.search(tenant, vector, alias=alias, system_hash=system_hash, tools_hash=tools_hash)
+    return cache.search(
+        tenant,
+        vector,
+        alias=alias,
+        system_hash=system_hash,
+        tools_hash=tools_hash,
+        provider=provider,
+        region=region,
+        data_class=data_class,
+    )
 
 
 def collection_config(client: httpx.Client, name: str) -> httpx.Response:
@@ -390,21 +448,39 @@ def test_a_neighbour_below_the_threshold_is_a_miss(cache: QdrantSemanticCache) -
 
 
 @pytest.mark.parametrize(
-    ("case", "alias", "system_hash", "tools_hash"),
+    ("case", "alias", "system_hash", "tools_hash", "provider", "region", "data_class"),
     FILTER_ROWS,
     ids=[row[0] for row in FILTER_ROWS],
 )
 def test_a_query_differing_in_one_filter_field_misses_at_cosine_one(
-    cache: QdrantSemanticCache, case: str, alias: str, system_hash: str, tools_hash: str
+    cache: QdrantSemanticCache,
+    case: str,
+    alias: str,
+    system_hash: str,
+    tools_hash: str,
+    provider: str,
+    region: str,
+    data_class: str,
 ) -> None:
-    """Catches a Qdrant filter built over two of the three payload fields, one row per
-    field - the in-process implementation can hold all three and this one still send a
+    """Catches a Qdrant filter built over fewer than all six payload fields, one row per
+    field - the in-process implementation can hold all six and this one could still send a
     `must` clause short. The query vector is IDENTICAL to the stored one, so the score
     cannot be what refuses it, and a dropped clause means the nearest neighbour is another
     conversation's answer (plan §5)."""
     put(cache)
 
-    assert find(cache, alias=alias, system_hash=system_hash, tools_hash=tools_hash) is None
+    assert (
+        find(
+            cache,
+            alias=alias,
+            system_hash=system_hash,
+            tools_hash=tools_hash,
+            provider=provider,
+            region=region,
+            data_class=data_class,
+        )
+        is None
+    )
 
 
 def test_a_query_matching_all_three_filters_hits_at_cosine_one(
@@ -445,3 +521,80 @@ def test_a_tenant_with_nothing_stored_cannot_read_a_live_entry(
     put(cache, tenant=OTHER_TENANT, answer=cached_answer(content="the answer for cuan"))
 
     assert find(cache, tenant=TENANT) is None
+
+
+# --------------------------------------------------------------------------
+# new filter fields: provider, region, data_class
+# --------------------------------------------------------------------------
+
+
+def test_the_search_filters_on_provider_region_and_data_class() -> None:
+    """Catches a search request that omits one of the three new `must` clauses: a filter
+    without provider allows an answer made via a different provider to be served; without
+    region it crosses a data-residency boundary; without data_class it hands a PII answer
+    to a public caller. All three must appear in the Qdrant `filter.must` list."""
+    from .test_vectors import RecordingTransport
+
+    transport = RecordingTransport()
+    import json
+
+    import httpx
+
+    client = httpx.Client(transport=transport, base_url="http://qdrant.invalid:6333")
+    cache = QdrantSemanticCache(client)
+
+    cache.search(
+        TENANT,
+        PROBE,
+        alias=ALIAS,
+        system_hash=SYSTEM_HASH,
+        tools_hash=TOOLS_HASH,
+        provider=PROVIDER,
+        region=REGION,
+        data_class=DATA_CLASS,
+    )
+
+    assert len(transport.requests) == 1
+    sent = json.loads(transport.requests[0].content)
+    must_keys = {clause["key"] for clause in sent["filter"]["must"]}
+    assert "provider" in must_keys
+    assert "region" in must_keys
+    assert "data_class" in must_keys
+
+
+def test_a_put_payload_carries_provider_region_and_data_class() -> None:
+    """Catches a write that omits provider, region or data_class from the Qdrant payload:
+    if the payload is missing one of them, the search filter for that field can never match
+    and the tier stores answers it can never serve -- filling Qdrant with unreachable entries
+    while every request misses."""
+    from .test_vectors import RecordingTransport
+
+    transport = RecordingTransport()
+    import json
+
+    import httpx
+
+    client = httpx.Client(transport=transport, base_url="http://qdrant.invalid:6333")
+    cache = QdrantSemanticCache(client)
+
+    cache.put(
+        TENANT,
+        PROBE,
+        cached_answer(),
+        alias=ALIAS,
+        system_hash=SYSTEM_HASH,
+        tools_hash=TOOLS_HASH,
+        provider=PROVIDER,
+        region=REGION,
+        data_class=DATA_CLASS,
+    )
+
+    # Two requests: the collection existence check and then the upsert.
+    upsert_request = next(
+        r for r in transport.requests if r.method == "PUT" and "points" in r.url.path
+    )
+    body = json.loads(upsert_request.content)
+    payload = body["points"][0]["payload"]
+    assert payload.get("provider") == PROVIDER
+    assert payload.get("region") == REGION
+    assert payload.get("data_class") == DATA_CLASS
