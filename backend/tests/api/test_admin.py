@@ -561,3 +561,128 @@ def test_a_reload_leaves_the_new_adapter_set_callable(tmp_path: Path) -> None:
         assert http_client_of(dropped).is_closed
         # And the app still serves under the new snapshot.
         assert listed_aliases(built.client) == ["agent-default", "embed"]
+
+
+# --- an earlier change: reload swaps the three together as one atomic runtime ----------
+
+
+def test_a_reload_hands_one_request_the_same_policy_adapters_and_breaker(
+    tmp_path: Path,
+) -> None:
+    """Catches an implementation that hands a request a new policy but old adapters
+    after a reload (or vice versa): by taking one runtime object BEFORE the reload
+    and one AFTER, and asserting that the pre-reload runtime still carries the old
+    three pieces while the post-reload one carries the new three, we prove the swap
+    is atomic — removing the atomic-swap control would let the two runtimes share
+    some pieces.
+    """
+    from app.services.routing_reload import RoutingRuntime, RoutingRuntimeStore
+
+    with admin_app_on(tmp_path, WITH_ANTHROPIC_KEY) as built:
+        store: RoutingRuntimeStore = built.app.state.routing_store
+
+        runtime_before: RoutingRuntime = store.acquire()
+        assert "anthropic" in runtime_before.adapters
+
+        rewrite_policy(
+            built.policy_path,
+            lambda document: document["providers"]["anthropic"].update({"enabled": False}),
+        )
+        response = built.client.post(ADMIN_ROUTING_RELOAD, headers=ADMIN_HEADERS)
+        assert response.status_code == 200, response.text
+
+        runtime_after: RoutingRuntime = store.acquire()
+
+        # The old runtime still has anthropic everywhere.
+        assert "anthropic" in runtime_before.policy.providers
+        assert "anthropic" in runtime_before.adapters
+        assert runtime_before.breaker is not runtime_after.breaker
+
+        # The new runtime has anthropic disabled and no adapter for it.
+        assert not runtime_after.policy.providers["anthropic"].enabled
+        assert "anthropic" not in runtime_after.adapters
+
+        store.release(runtime_before)
+        store.release(runtime_after)
+
+
+def test_dropped_adapters_close_only_after_the_last_request_holding_them_finishes(
+    tmp_path: Path,
+) -> None:
+    """Catches an implementation that closes dropped adapters immediately on reload
+    even when a request is still using them: the test holds a runtime across the
+    reload and asserts the adapter is still open, then releases the hold and
+    asserts the adapter is now closed.
+    """
+    from app.services.routing_reload import RoutingRuntimeStore
+
+    with admin_app_on(tmp_path, WITH_ANTHROPIC_KEY) as built:
+        store: RoutingRuntimeStore = built.app.state.routing_store
+
+        runtime = store.acquire()
+        held_adapter = runtime.adapters["anthropic"]
+
+        rewrite_policy(
+            built.policy_path,
+            lambda document: document["providers"]["anthropic"].update({"enabled": False}),
+        )
+        response = built.client.post(ADMIN_ROUTING_RELOAD, headers=ADMIN_HEADERS)
+        assert response.status_code == 200, response.text
+
+        # While the hold is open the adapter must still be alive.
+        assert not http_client_of(held_adapter).is_closed
+
+        store.release(runtime)
+
+        # Once the last holder released, the adapter must be closed.
+        assert http_client_of(held_adapter).is_closed
+
+
+def test_a_reload_with_nothing_in_flight_closes_the_dropped_adapters_at_once(
+    tmp_path: Path,
+) -> None:
+    """Catches an implementation that defers closing dropped adapters even when no
+    request holds them: with nothing acquired, the reload itself must close the
+    dropped adapter immediately, so a close that only fires on release would leave
+    this adapter open.
+    """
+    with admin_app_on(tmp_path, WITH_ANTHROPIC_KEY) as built:
+        dropped = built.app.state.adapters["anthropic"]
+
+        rewrite_policy(
+            built.policy_path,
+            lambda document: document["providers"]["anthropic"].update({"enabled": False}),
+        )
+        response = built.client.post(ADMIN_ROUTING_RELOAD, headers=ADMIN_HEADERS)
+        assert response.status_code == 200, response.text
+
+        # No hold was open, so the close must have happened during the reload.
+        assert http_client_of(dropped).is_closed
+
+
+def test_a_failed_reload_closes_nothing_and_keeps_the_runtime(tmp_path: Path) -> None:
+    """Catches an implementation that clears or closes the current adapter set before
+    it validates the new policy: after a 422 the held adapter must still be open,
+    and the breaker on app.state must be the same object the held runtime carries.
+    """
+    from app.services.routing_reload import RoutingRuntimeStore
+
+    with admin_app_on(tmp_path, WITH_ANTHROPIC_KEY) as built:
+        store: RoutingRuntimeStore = built.app.state.routing_store
+        runtime = store.acquire()
+
+        built.policy_path.write_text("aliases: not-a-mapping-of-aliases\n", encoding="utf-8")
+        assert_error_body(
+            built.client.post(ADMIN_ROUTING_RELOAD, headers=ADMIN_HEADERS),
+            status=422,
+            code="VALIDATION",
+        )
+
+        # The adapters on app.state must be the same objects as in the held runtime.
+        assert built.app.state.adapters is runtime.adapters
+        # The held adapter is still open.
+        assert not http_client_of(runtime.adapters["anthropic"]).is_closed
+        # The breaker on app.state is the same object the held runtime carries.
+        assert built.app.state.breaker is runtime.breaker
+
+        store.release(runtime)

@@ -36,7 +36,7 @@ from app.model_routing.policy import ResidencyMode
 from app.providers.base import Adapter
 from app.redaction import InProcessRedactionMapStore, RedisRedactionMapStore
 
-from .conftest import API_KEYS, NO_PROVIDER_KEYS, SHIPPED_POLICY_PATH, StubAdapter
+from .conftest import API_KEYS, NO_PROVIDER_KEYS, SHIPPED_POLICY_PATH, TEST_KEYS, StubAdapter
 
 # The variable the shipped `routing.yaml` names for the enabled US Anthropic
 # provider, and a value that is not a key: nothing here ever sends it anywhere.
@@ -360,3 +360,27 @@ def test_create_app_refuses_an_empty_env_without_backing_urls() -> None:
             backing_settings(env="", redis_url=None, qdrant_url=None),
             NO_PROVIDER_KEYS,
         )
+
+
+# --- an earlier change: the lease middleware releases every hold after the response ----
+
+
+def test_a_finished_request_leaves_no_routing_lease_open() -> None:
+    """Catches an implementation where the middleware acquires a runtime lease but
+    never releases it: after a complete response the store must show zero open
+    leases, so a missing release call (or a release that only runs on error paths)
+    would leave the count above zero and trigger this failure.
+    """
+    from app.services.routing_reload import RoutingRuntimeStore
+
+    app = create_app(wiring_settings(), NO_PROVIDER_KEYS)
+    with TestClient(app) as client:
+        store: RoutingRuntimeStore = app.state.routing_store
+        client.get(
+            "/v1/models",
+            headers={
+                "Authorization": f"Bearer {TEST_KEYS['nordlicht']}",
+                "X-Tenant": "nordlicht",
+            },
+        )
+        assert store.lease_count == 0

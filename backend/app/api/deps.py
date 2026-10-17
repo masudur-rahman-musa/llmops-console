@@ -53,6 +53,7 @@ from app.limits.prices import PriceStore
 from app.model_routing.policy import DataClass, PolicyStore, ResidencyMode
 from app.redaction import DirectoryStore, RedactionMapStore
 from app.services.chat_pipeline import Clients
+from app.services.routing_reload import RUNTIME_SCOPE_KEY, RoutingRuntime
 from app.storage import ConsoleEventWriter
 
 MAX_KEY_LENGTH = 256
@@ -358,17 +359,22 @@ def get_clients(request: Request) -> Clients:
     `complete_chat` / `embed_texts`.  Building it here keeps those routes free
     of any `request.app.state` read and lets tests override it with
     `app.dependency_overrides[get_clients]`.
+
+    `policy`, `adapters` and `breaker` come from the `RoutingRuntime` the
+    middleware leased for this request, so they are always from the same reload
+    generation (`test_a_reload_hands_one_request_the_same_policy_adapters_and_breaker`).
     """
     state = request.app.state
+    runtime: RoutingRuntime = request.scope[RUNTIME_SCOPE_KEY]
     return Clients(
-        policy=state.policy,
+        policy=runtime.policy,
         rate_limit_store=state.rate_limit_store,
         budget_store=state.budget_store,
         settings=state.settings,
         cost_ledger=state.cost_ledger,
         prices=state.prices,
-        adapters=state.adapters,
-        breaker=state.breaker,
+        adapters=runtime.adapters,
+        breaker=runtime.breaker,
         response_cache=state.response_cache,
         semantic_cache=state.semantic_cache,
         redaction_map_store=state.redaction_map_store,

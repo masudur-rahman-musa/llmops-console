@@ -52,7 +52,7 @@ from app.limits.cost import COST_QUANTUM
 from app.limits.prices import PriceStore
 from app.limits.ratelimit import SECONDS_PER_MINUTE, RateDimension, RateLimitStore
 from app.model_routing.errors import AllProvidersUnavailable
-from app.model_routing.policy import DataClass, Policy, PolicyStore, ResidencyMode
+from app.model_routing.policy import DataClass, Policy, ResidencyMode
 from app.model_routing.resolver import Resolved, resolve
 from app.providers.base import Adapter, ChatResponse, EmbeddingAdapter, EmbeddingRequest, Usage
 from app.providers.breaker import CircuitBreaker
@@ -89,7 +89,7 @@ class Clients:
     builds one per request from `request.app.state`.
     """
 
-    policy: PolicyStore
+    policy: Policy
     rate_limit_store: RateLimitStore
     budget_store: BudgetStore
     settings: Settings
@@ -386,8 +386,8 @@ def check_rate_limit(clients: Clients, context: RequestContext) -> None:
     reached - which keeps the two ceilings independent of the order they are
     checked in.
     """
-    store: PolicyStore = clients.policy
-    tenant_policy = store.policy.tenants.get(context.tenant)
+    policy: Policy = clients.policy
+    tenant_policy = policy.tenants.get(context.tenant)
     if tenant_policy is None:
         return
     limits: RateLimitStore = clients.rate_limit_store
@@ -445,8 +445,8 @@ def debit_tokens(clients: Clients, context: RequestContext, *, row: CostLedgerRo
     the tenant was validated by `Context` before the key was built.
     """
     limits: RateLimitStore = clients.rate_limit_store
-    store: PolicyStore = clients.policy
-    tenant_policy = store.policy.tenants.get(context.tenant)
+    policy: Policy = clients.policy
+    tenant_policy = policy.tenants.get(context.tenant)
     if tenant_policy is None:
         return
     limit = tenant_policy.rate_limit
@@ -490,8 +490,8 @@ def check_budget(clients: Clients, context: RequestContext, *, override: str | N
     override is even considered, so a tenant running on a standing override is
     still visible in the log every request.
     """
-    store: PolicyStore = clients.policy
-    tenant_policy = store.policy.tenants.get(context.tenant)
+    policy: Policy = clients.policy
+    tenant_policy = policy.tenants.get(context.tenant)
     if tenant_policy is None:
         return
     budget_store: BudgetStore = clients.budget_store
@@ -545,10 +545,10 @@ def debit_budget(clients: Clients, context: RequestContext, *, usd: Decimal) -> 
     every other emission, and the tenant was validated by `Context` before the
     key was built.
     """
-    store: PolicyStore = clients.policy
+    policy: Policy = clients.policy
     budget_store: BudgetStore = clients.budget_store
     total = budget_store.debit(context.tenant, current_month(), to_micro_usd(usd))
-    tenant_policy = store.policy.tenants.get(context.tenant)
+    tenant_policy = policy.tenants.get(context.tenant)
     if total is None or tenant_policy is None:
         return
     record_budget_ratio(
@@ -1185,7 +1185,7 @@ def complete_chat(
 
     with stage_span(scope, ROUTE_SPAN):
         candidates = resolve(
-            clients.policy.policy,
+            clients.policy,
             context.tenant,
             body.model,
             context.data_class.value,
@@ -1213,17 +1213,15 @@ def complete_chat(
         )
         return ChatResult(body=to_wire(rehydrated(hit, mapping), body.model), headers=headers)
 
-    outbound, redacted = _redacted(
-        scope, clients.policy.policy, context, body, clients.directory_store
-    )
+    outbound, redacted = _redacted(scope, clients.policy, context, body, clients.directory_store)
     annotate(scope, SpanAttributes(redacted=redacted))
 
     vector: tuple[float, ...] | None = None
-    if semantic_eligible(body, alias=clients.policy.policy.aliases[body.model]):
+    if semantic_eligible(body, alias=clients.policy.aliases[body.model]):
         with stage_span(scope, SEMANTIC_SPAN):
             vector = embedded_probe(
                 probe_text(outbound),
-                policy=clients.policy.policy,
+                policy=clients.policy,
                 adapters=clients.adapters,
                 breaker=clients.breaker,
                 tenant=context.tenant,
@@ -1285,7 +1283,7 @@ def complete_chat(
                 alias=body.model,
                 chosen=chosen,
                 failed=failed_so_far,
-                policy=clients.policy.policy,
+                policy=clients.policy,
                 data_class=context.data_class,
                 log=clients.residency_log,
             )
@@ -1299,7 +1297,7 @@ def complete_chat(
             alias=body.model,
             chosen=chosen,
             failed=failed_so_far,
-            policy=clients.policy.policy,
+            policy=clients.policy,
             data_class=context.data_class,
             log=clients.residency_log,
         )

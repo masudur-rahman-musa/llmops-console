@@ -86,7 +86,7 @@ def embed_texts(
 
     with stage_span(scope, ROUTE_SPAN):
         candidates = resolve(
-            clients.policy.policy,
+            clients.policy,
             context.tenant,
             body.model,
             context.data_class.value,
@@ -100,7 +100,7 @@ def embed_texts(
 
     texts = body.texts
     redacted = False
-    if redaction_applies(clients.policy.policy, context.tenant, context.data_class):
+    if redaction_applies(clients.policy, context.tenant, context.data_class):
         directory = tenant_directory(clients.directory_store, context.tenant)
         with stage_span(scope, REDACT_SPAN):
             batch = redact_or_reject(texts, param="input", directory=directory)
@@ -130,7 +130,7 @@ def embed_texts(
         alias=body.model,
         chosen=chosen,
         failed=failed,
-        policy=clients.policy.policy,
+        policy=clients.policy,
         data_class=context.data_class,
         log=clients.residency_log,
     )

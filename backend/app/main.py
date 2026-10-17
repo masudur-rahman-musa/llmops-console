@@ -66,6 +66,7 @@ from app.redaction import (
     RedisRedactionMapStore,
 )
 from app.services.prometheus_reads import PrometheusClient, build_prometheus_http
+from app.services.routing_reload import RUNTIME_SCOPE_KEY, RoutingRuntimeStore
 from app.storage import (
     InMemoryConsoleEventWriter,
     InMemoryCostLedgerWriter,
@@ -79,6 +80,33 @@ from app.storage.dashboard_reads import (
     PostgresConsoleReader,
     UnconfiguredConsoleReader,
 )
+
+
+class RoutingLeaseMiddleware:
+    """Take one `RoutingRuntime` per HTTP request; release it after the last byte.
+
+    Pure ASGI, for the same reason `TracingMiddleware` is: the `finally` fires
+    after the full response body, including every frame of a streamed reply, so
+    the lease covers the whole request and the adapter set is never closed while
+    a request still holds it
+    (`test_dropped_adapters_close_only_after_the_last_request_holding_them_finishes`).
+    """
+
+    def __init__(self, app: ASGIApp, store: RoutingRuntimeStore) -> None:
+        self.app = app
+        self._store = store
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Lease one runtime for the request; release it unconditionally after."""
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        runtime = self._store.acquire()
+        scope[RUNTIME_SCOPE_KEY] = runtime
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            self._store.release(runtime)
 
 
 def build_qdrant_data_client(base_url: str) -> httpx.Client:
@@ -402,8 +430,11 @@ def create_app(
     app.state.adapters = build_adapters(app.state.policy.policy, app.state.provider_environ)
     app.state.breaker = CircuitBreaker()
     app.state.prices = PriceStore(resolved.prices_path)
+    routing_store = RoutingRuntimeStore(app.state)
+    app.state.routing_store = routing_store
     register_error_handlers(app)
     install_exporter(resolved)
+    app.add_middleware(RoutingLeaseMiddleware, store=routing_store)
     app.add_middleware(TracingMiddleware)
     include_routers(app)
     return app

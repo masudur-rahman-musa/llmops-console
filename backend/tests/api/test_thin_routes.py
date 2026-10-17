@@ -229,7 +229,7 @@ def test_complete_chat_returns_a_stream_plan_for_a_streamed_body_and_a_chat_resu
     with TestClient(app) as client:
         state = client.app.state  # type: ignore[attr-defined]
         clients = Clients(
-            policy=state.policy,
+            policy=state.policy.policy,
             rate_limit_store=state.rate_limit_store,
             budget_store=state.budget_store,
             settings=state.settings,
@@ -296,7 +296,7 @@ def test_embed_texts_returns_a_result_the_route_only_wraps(settings: Settings) -
     with TestClient(app) as client:
         state = client.app.state  # type: ignore[attr-defined]
         clients = Clients(
-            policy=state.policy,
+            policy=state.policy.policy,
             rate_limit_store=state.rate_limit_store,
             budget_store=state.budget_store,
             settings=state.settings,

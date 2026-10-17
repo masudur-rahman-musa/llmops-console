@@ -20,10 +20,10 @@ against the resolver's own `MAX_IDENTIFIER_LENGTH` and `IDENTIFIER_PATTERN` by
 `test_the_tenant_filter_rejection_table`). A valid but unknown tenant is an empty
 view rather than an error (`test_an_unknown_but_valid_tenant_is_an_empty_view`).
 
-Reload parses before it rebinds, which `PolicyStore.reload` already guarantees,
-then rebuilds the adapter set and breaker (`services.routing_reload`). A rejected
-file is 422 `VALIDATION` carrying the field path `PolicyInvalid` already names,
-and the previous snapshot goes on serving
+Reload delegates entirely to `RoutingRuntimeStore.reload`, which parses the new
+policy, builds new adapters and a new breaker, and swaps all three atomically
+under one lock. A file that does not parse raises `PolicyInvalid` before any
+state is touched, so the previous set goes on serving.
 (`test_an_invalid_policy_on_reload_is_422_naming_the_field`,
 `test_a_failed_reload_keeps_the_previous_policy_serving`).
 """
@@ -44,7 +44,7 @@ from app.model_routing.errors import (
 from app.model_routing.policy import DataClass, Policy, ResidencyMode
 from app.model_routing.resolver import resolve
 from app.schemas.admin import AliasView, ReloadResult, ResolvedEntry, RoutingView, TenantView
-from app.services.routing_reload import rebuild_adapter_set
+from app.services.routing_reload import RoutingRuntimeStore
 
 ADMIN_ROUTING = "/admin/routing"
 """The resolved-routing view. Pinned against the mounted route by
@@ -109,14 +109,13 @@ def routing_view(
 
 @router.post(ADMIN_ROUTING_RELOAD)
 def reload_routing(request: Request, store: PolicyDep) -> ReloadResult:
-    """Re-read `routing.yaml`, swap the snapshot, and rebuild the adapter set.
+    """Re-read `routing.yaml`, swap the policy, adapters and breaker as one, close the old set.
 
-    The order is the whole safety property. `PolicyStore.reload` parses into a new
-    `Policy` before it rebinds, so a file that does not validate leaves the
-    previous snapshot serving and nothing here has touched the adapters yet
-    (`test_a_failed_reload_keeps_the_previous_policy_serving`). Only once the new
-    snapshot is in place does `rebuild_adapter_set` rebuild the adapters from it,
-    swap them in, and close the PREVIOUS set.
+    `RoutingRuntimeStore.reload` parses the new policy outside the lock, so a
+    file that does not parse raises `PolicyInvalid` before any state is touched.
+    Under the lock it builds new adapters and a new breaker, then swaps all three
+    atomically - so `acquire()` always sees either the fully old or the fully new
+    set, never a mix (`test_a_reload_hands_one_request_the_same_policy_adapters_and_breaker`).
 
     `PolicyInvalid` becomes a 422 `VALIDATION` carrying the message the loader
     built, which names the field path. The exception is deliberately not allowed
@@ -124,9 +123,9 @@ def reload_routing(request: Request, store: PolicyDep) -> ReloadResult:
     request-level validation failure rather than a gateway fault (an earlier change
     decision D, `test_an_invalid_policy_on_reload_is_422_naming_the_field`).
     """
+    routing_store: RoutingRuntimeStore = request.app.state.routing_store
     try:
-        store.reload()
+        providers = routing_store.reload(request.app.state.provider_environ)
     except PolicyInvalid as exc:
         raise IdentifierInvalid(str(exc), param="routing.yaml") from exc
-
-    return ReloadResult(reloaded=True, providers=rebuild_adapter_set(request.app))
+    return ReloadResult(reloaded=True, providers=providers)
