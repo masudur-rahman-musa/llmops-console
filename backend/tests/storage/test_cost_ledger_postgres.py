@@ -41,9 +41,8 @@ from typing import Any
 import pytest
 from psycopg import sql
 
-from app.cli.ledger import refresh_daily_rollup
 from app.storage import CostLedgerRow, PostgresCostLedgerWriter
-from app.storage.cost_ledger import COST_LEDGER, COST_LEDGER_DAILY
+from app.storage.cost_ledger import COST_LEDGER, COST_LEDGER_DAILY, refresh_daily_rollup
 
 from .conftest import Pool, requires_postgres
 

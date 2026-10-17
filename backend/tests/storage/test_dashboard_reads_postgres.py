@@ -35,22 +35,24 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 
 from app.limits.prices import PriceTable, load_prices
-from app.storage.dashboard_reads import (
-    ROW_LIMIT,
+from app.schemas.dashboard import (
     AliasCost,
-    BlockedRelease,
     CategoryCount,
     CostDay,
     EvalRunSummary,
-    HomeRead,
     Incident,
     LastEval,
-    PostgresConsoleReader,
     RegionCount,
     Release,
     ReleaseMarker,
     Saving,
     TagCount,
+)
+from app.storage.dashboard_reads import (
+    ROW_LIMIT,
+    BlockedRelease,
+    HomeRead,
+    PostgresConsoleReader,
 )
 
 from .conftest import Pool, requires_postgres

@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from typing import Final, Protocol
 
@@ -40,10 +39,8 @@ from psycopg.rows import TupleRow
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, ConfigDict
 
-from app.core.metrics import record_residency_violation
 from app.core.validation import checked_identifier
-from app.model_routing.policy import DataClass, Policy, Residency
-from app.model_routing.resolver import Resolved
+from app.model_routing.policy import DataClass
 from app.storage.db import DEFAULT_SCHEMA, checked_schema
 
 logger = logging.getLogger(__name__)
@@ -98,35 +95,6 @@ class ResidencyLogRow(BaseModel):
     provider: str
     region: str
     allowed: bool
-
-
-def region_allowed(policy: Policy, tenant: str, data_class: DataClass, region: str) -> bool:
-    r"""Does this tenant's policy permit this data class in this region.
-
-    The same narrowing `routing/resolver.py` performs when it builds the
-    candidate list: the data class rule's `allow_regions`, intersected with
-    `policy.eu_regions` when the tenant's residency is EU. Deny by default at
-    both levels - an unknown tenant and a data class with no rule each allow
-    nothing, never the union of anything else.
-
-    Duplicated from the resolver rather than shared with it on purpose. Extracting
-    a helper would mean editing `routing/resolver.py`, and that module is the one
-    the residency property test proves; a log that could change the resolver in
-    order to describe it is not evidence. What keeps the two honest is that this
-    function is only ever asked about a region the resolver ALREADY returned, so
-    a disagreement between them shows up as an `allowed=false` row and an alert
-    rather than as a silent pass. The rows are
-    `test_region_allowed_over_the_shipped_policy` and
-    `test_a_data_class_with_no_rule_allows_nothing`.
-    """
-    tenant_config = policy.tenants.get(tenant)
-    if tenant_config is None:
-        return False
-    rule = tenant_config.data_class_rules.get(data_class)
-    allowed = set(rule.allow_regions) if rule is not None else set()
-    if tenant_config.residency is Residency.EU:
-        allowed &= set(policy.eu_regions)
-    return region in allowed
 
 
 class ResidencyLogWriter(Protocol):
@@ -272,57 +240,76 @@ class PostgresResidencyLogWriter:
             logger.exception("residency log partition %s could not be created", name)
 
 
-def _utcnow() -> datetime:
-    """Wall clock, in UTC and timezone-aware.
+def _day_of(partition: str) -> date | None:
+    """The day a partition name encodes, or `None` if it does not encode one.
 
-    The partition a row lands in is chosen from this, so a naive local stamp
-    would file an evening request under the wrong day for half the world
-    (`test_the_row_is_stamped_from_the_injected_clock`).
+    `None` is what keeps `residency_log_default` alive: it is a child of the
+    parent table with no day in its name, and a purge that dropped what it could
+    not date would remove the backstop, so the next refused `CREATE` would lose
+    its row instead of misfiling it
+    (`test_the_default_partition_is_never_dropped`).
     """
-    return datetime.now(tz=UTC)
-
-
-def record_residency(
-    log: ResidencyLogWriter,
-    *,
-    policy: Policy,
-    tenant: str,
-    data_class: DataClass,
-    alias: str,
-    chosen: Resolved,
-    now: Callable[[], datetime] = _utcnow,
-) -> None:
-    """Write the row for the candidate that served. Never raises.
-
-    Called once per served request, from `services/chat_pipeline.py::record_served`,
-    which both the chat paths and `/v1/embeddings` go through at the moment the
-    serving candidate is known - and, on a stream, before the first frame is on
-    the wire.
-
-    `allowed` is computed here from `policy`. A `false` row moves
-    `gateway_residency_violations_total` and nothing else does: a 451 is the
-    resolver refusing CORRECTLY and is counted by `gateway_requests_total`
-    instead, which is what makes the violation counter
-    permanently zero by construction and alertable at greater than zero.
-
-    The write is guarded (decision D): an exception is logged and the request is
-    unchanged on all three paths. The counter moves before the write, so a
-    violation is still visible when the database is the thing that is broken.
-    """
-    row = ResidencyLogRow(
-        ts=now(),
-        tenant=tenant,
-        data_class=data_class,
-        alias=alias,
-        provider=chosen.provider,
-        region=chosen.region,
-        allowed=region_allowed(policy, tenant, data_class, chosen.region),
-    )
-    if not row.allowed:
-        record_residency_violation(tenant=tenant)
+    prefix = f"{RESIDENCY_LOG}_"
+    if not partition.startswith(prefix):
+        return None
     try:
-        log.write(row)
-    except Exception:
-        logger.exception(
-            "residency log write failed for tenant %s, provider %s", tenant, chosen.provider
-        )
+        return datetime.strptime(partition[len(prefix) :], PARTITION_DAY_FORMAT).date()
+    except ValueError:
+        return None
+
+
+def _partition_names(conn: Connection[TupleRow], schema: str) -> list[str]:
+    """Every child of `residency_log` in this schema, the DEFAULT one included."""
+    rows = conn.execute(
+        """
+        select child.relname
+        from pg_inherits i
+        join pg_class parent on parent.oid = i.inhparent
+        join pg_class child on child.oid = i.inhrelid
+        join pg_namespace n on n.oid = parent.relnamespace
+        where n.nspname = %s and parent.relname = %s
+        """,
+        (schema, RESIDENCY_LOG),
+    ).fetchall()
+    return [str(row[0]) for row in rows]
+
+
+def purge_partitions(
+    conn: Connection[TupleRow],
+    *,
+    schema: str = DEFAULT_SCHEMA,
+    today: date,
+    retention_days: int = RESIDENCY_LOG_RETENTION_DAYS,
+) -> tuple[str, ...]:
+    """Drop the day partitions older than the retention, and answer what was dropped.
+
+    The boundary is inclusive-keep: `today - retention_days` STAYS and
+    `today - retention_days - 1` goes, asserted pair by pair in
+    `test_the_purge_boundary_is_inclusive_keep`. Both directions of an off-by-one
+    here are real damage - one destroys a day of evidence inside the retention
+    the project promised, the other keeps everything forever.
+
+    `today` is a parameter rather than a clock read so a caller can say which day
+    it means; `retention_days` is one so an operator can run a shorter retention
+    deliberately, and `make purge-residency` passes neither, which is why the
+    default is checked against the published constant
+    (`test_the_shipped_retention_is_the_purges_default`).
+
+    Answers only the partitions it actually dropped, sorted: the CronJob that
+    will call this logs the answer, and an operator asking what happened to last
+    quarter's rows has to be told the truth.
+
+    DROP rather than DELETE, which is the reason the table is partitioned at all:
+    dropping ninety days is a catalogue update, deleting the same rows is a table
+    rewrite and a vacuum on the hot write path.
+    """
+    checked = checked_schema(schema)
+    cutoff = today - timedelta(days=retention_days)
+    dropped: list[str] = []
+    for name in _partition_names(conn, checked):
+        day = _day_of(name)
+        if day is None or day >= cutoff:
+            continue
+        conn.execute(sql.SQL("DROP TABLE {}").format(sql.Identifier(checked, name)))
+        dropped.append(name)
+    return tuple(sorted(dropped))

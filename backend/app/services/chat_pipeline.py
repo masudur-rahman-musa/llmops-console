@@ -59,6 +59,7 @@ from app.providers.breaker import CircuitBreaker
 from app.redaction import DirectoryStore, RedactionMapStore
 from app.schemas.chat import ChatCompletion, ChatCompletionRequest
 from app.schemas.embeddings import MAX_EMBEDDING_INPUT_CHARS
+from app.services.ledger import record_cost, record_residency
 from app.services.redaction_flow import (
     REDACT_SPAN,
     redact_or_reject,
@@ -76,8 +77,6 @@ from app.storage import (
     CostLedgerRow,
     CostLedgerWriter,
     ResidencyLogWriter,
-    record_cost,
-    record_residency,
 )
 
 

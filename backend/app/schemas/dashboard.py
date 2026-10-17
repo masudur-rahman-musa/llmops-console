@@ -3,31 +3,17 @@
 **Sources are flags, never errors**. Every page body carries
 `sources: {postgres, prometheus}`, each `ok`, `unconfigured` or `error`, so a
 source that is down empties its own fields while the route stays 200 and the
-other source still renders. The read models each page composes
-(`LastEval`, `CostDay`, ...) live in `app.storage.dashboard_reads`.
+other source still renders. The read models each page composes are defined here;
+`app.storage.dashboard_reads` imports them from here.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict
-
-from app.storage.dashboard_reads import (
-    AliasCost,
-    CategoryCount,
-    CostDay,
-    EvalRunSummary,
-    Incident,
-    LastEval,
-    RegionCount,
-    Regression,
-    Release,
-    ReleaseMarker,
-    Saving,
-    TagCount,
-)
 
 
 class SourceState(StrEnum):
@@ -38,6 +24,99 @@ class SourceState(StrEnum):
 
 class _Body(BaseModel):
     model_config = ConfigDict(frozen=True)
+
+
+# --- read models: the shapes Postgres rows become, used by storage and page bodies ---
+
+
+class LastEval(_Body):
+    id: str
+    finished_at: datetime
+    passed: bool
+    decision_accuracy: float | None
+
+
+class CostDay(_Body):
+    day: date
+    tenant: str
+    provider: str
+    requests: int
+    cached_requests: int
+    cost_usd: float
+
+
+class Saving(_Body):
+    day: date
+    tenant: str
+    saved_usd: float
+
+
+class AliasCost(_Body):
+    alias: str
+    cost_usd: float
+
+
+class EvalRunSummary(_Body):
+    id: str
+    started_at: datetime
+    run_kind: str
+    git_sha: str | None
+    passed: bool
+    metrics: dict[str, Any]
+
+
+class ReleaseMarker(_Body):
+    git_sha: str
+    deployed_at: datetime
+    status: str
+
+
+class CategoryCount(_Body):
+    category: str
+    passed: int
+    total: int
+
+
+class TagCount(_Body):
+    tag: str
+    count: int
+
+
+class RegionCount(_Body):
+    tenant: str
+    region: str
+    provider: str
+    requests: int
+
+
+class Regression(_Body):
+    metric: str
+    value: float
+    previous: float
+
+
+class Incident(_Body):
+    id: str
+    started_at: datetime
+    resolved_at: datetime | None
+    severity: str
+    title: str
+    summary: str
+    postmortem_url: str | None
+    open: bool
+
+
+class Release(_Body):
+    git_sha: str
+    deployed_at: datetime
+    status: str
+    pr_url: str | None
+    eval_run_id: str | None
+    eval_passed: bool | None
+    decision_accuracy: float | None
+
+
+# --- page bodies ---
 
 
 class Sources(_Body):

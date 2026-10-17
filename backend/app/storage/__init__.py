@@ -39,9 +39,6 @@ from app.storage.cost_ledger import (
 from app.storage.cost_ledger import (
     PostgresCostLedgerWriter as PostgresCostLedgerWriter,
 )
-from app.storage.cost_ledger import (
-    record_cost as record_cost,
-)
 from app.storage.db import (
     DEFAULT_SCHEMA as DEFAULT_SCHEMA,
 )
@@ -68,10 +65,4 @@ from app.storage.residency_log import (
 )
 from app.storage.residency_log import (
     partition_name as partition_name,
-)
-from app.storage.residency_log import (
-    record_residency as record_residency,
-)
-from app.storage.residency_log import (
-    region_allowed as region_allowed,
 )

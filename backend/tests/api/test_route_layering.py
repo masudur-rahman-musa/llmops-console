@@ -147,3 +147,145 @@ def test_the_admin_routes_are_split() -> None:
     routes_dir = app_dir / "api" / "routes"
     for leaf in ("dashboard.py", "health.py", "model_list.py"):
         assert (routes_dir / leaf).is_file(), f"expected route file {routes_dir / leaf}"
+
+
+# ---------------------------------------------------------------------------
+# An earlier change: storage-only-data
+# ---------------------------------------------------------------------------
+
+_COST_RESIDENCY_NAMES = ("record_cost", "record_residency", "region_allowed")
+
+
+def test_storage_holds_no_cost_or_residency_decision() -> None:
+    """Catches an impl that leaves record_cost, record_residency or region_allowed
+    importable from app.storage or its sub-modules."""
+    cost_ledger = importlib.import_module("app.storage.cost_ledger")
+    residency_log = importlib.import_module("app.storage.residency_log")
+    storage = importlib.import_module("app.storage")
+
+    assert not hasattr(cost_ledger, "record_cost"), (
+        "app.storage.cost_ledger must not expose record_cost"
+    )
+    assert not hasattr(residency_log, "record_residency"), (
+        "app.storage.residency_log must not expose record_residency"
+    )
+    assert not hasattr(residency_log, "region_allowed"), (
+        "app.storage.residency_log must not expose region_allowed"
+    )
+    for name in _COST_RESIDENCY_NAMES:
+        assert not hasattr(storage, name), f"app.storage must not re-export {name}"
+
+
+def test_the_cost_and_residency_recording_lives_in_the_service() -> None:
+    """Catches an impl that did not move record_cost, record_residency and
+    region_allowed into app.services.ledger."""
+    ledger = importlib.import_module("app.services.ledger")
+    for name in _COST_RESIDENCY_NAMES:
+        assert hasattr(ledger, name), f"app.services.ledger must define {name}"
+
+
+def test_the_ledger_cli_runs_no_sql() -> None:
+    """Catches an impl where app/cli/ledger.py still contains raw SQL strings or
+    direct connection calls instead of delegating to the storage modules."""
+    app_dir = Path(app.__file__).parent
+    cli_ledger_path = app_dir / "cli" / "ledger.py"
+    source = cli_ledger_path.read_text()
+    tree = ast.parse(source)
+
+    # Check no raw SQL patterns appear as string literals in the source text.
+    for banned in ("DROP TABLE", "REFRESH"):
+        assert banned not in source, f"app/cli/ledger.py must not contain raw SQL string {banned!r}"
+
+    # Check no sql.SQL(...) attribute calls exist.
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "sql"
+            and node.attr == "SQL"
+        ):
+            raise AssertionError(
+                "app/cli/ledger.py must not call sql.SQL; delegate to storage modules"
+            )
+
+    # Check no conn.execute(...) calls exist.
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "conn"
+            and node.attr == "execute"
+        ):
+            raise AssertionError(
+                "app/cli/ledger.py must not call conn.execute; delegate to storage modules"
+            )
+
+    # purge_partitions must import from app.storage.residency_log.
+    purge_from_residency = False
+    refresh_from_cost = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "app.storage.residency_log":
+            for alias in node.names:
+                if alias.name == "purge_partitions":
+                    purge_from_residency = True
+        if isinstance(node, ast.ImportFrom) and node.module == "app.storage.cost_ledger":
+            for alias in node.names:
+                if alias.name == "refresh_daily_rollup":
+                    refresh_from_cost = True
+
+    assert purge_from_residency, (
+        "app/cli/ledger.py must import purge_partitions from app.storage.residency_log"
+    )
+    assert refresh_from_cost, (
+        "app/cli/ledger.py must import refresh_daily_rollup from app.storage.cost_ledger"
+    )
+
+
+_DASHBOARD_MODEL_NAMES = (
+    "LastEval",
+    "CostDay",
+    "Saving",
+    "AliasCost",
+    "EvalRunSummary",
+    "ReleaseMarker",
+    "CategoryCount",
+    "TagCount",
+    "RegionCount",
+    "Regression",
+    "Incident",
+    "Release",
+)
+
+
+def test_the_console_read_models_live_in_schemas() -> None:
+    """Catches an impl that left the console read models defined in
+    app.storage.dashboard_reads instead of moving them to app.schemas.dashboard."""
+    schemas_mod = importlib.import_module("app.schemas.dashboard")
+    storage_mod = importlib.import_module("app.storage.dashboard_reads")
+
+    for name in _DASHBOARD_MODEL_NAMES:
+        # Must be reachable from schemas.
+        assert hasattr(schemas_mod, name), f"{name} must be defined in app.schemas.dashboard"
+        obj = getattr(schemas_mod, name)
+        assert getattr(obj, "__module__", "").startswith("app.schemas.dashboard"), (
+            f"{name}.__module__ must be app.schemas.dashboard, got {obj.__module__!r}"
+        )
+
+        # Must NOT be defined in storage.
+        if hasattr(storage_mod, name):
+            obj_storage = getattr(storage_mod, name)
+            assert not getattr(obj_storage, "__module__", "").startswith(
+                "app.storage.dashboard_reads"
+            ), f"{name} must not be defined in app.storage.dashboard_reads"
+
+
+def test_schemas_dashboard_imports_no_storage() -> None:
+    """Catches an impl where app/schemas/dashboard.py still imports from app.storage,
+    meaning the read models were not moved out of storage."""
+    app_dir = Path(app.__file__).parent
+    schemas_dashboard_path = app_dir / "schemas" / "dashboard.py"
+    imported = _imported_modules(schemas_dashboard_path)
+    for module in imported:
+        assert not (module == "app.storage" or module.startswith("app.storage.")), (
+            f"app/schemas/dashboard.py must not import from app.storage; found: {module}"
+        )

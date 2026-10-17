@@ -47,6 +47,20 @@ from pydantic import BaseModel, ConfigDict
 from app.limits.cost import cost_for
 from app.limits.prices import PriceTable
 from app.providers.base import Usage
+from app.schemas.dashboard import (
+    AliasCost,
+    CategoryCount,
+    CostDay,
+    EvalRunSummary,
+    Incident,
+    LastEval,
+    RegionCount,
+    Regression,
+    Release,
+    ReleaseMarker,
+    Saving,
+    TagCount,
+)
 from app.storage.db import DEFAULT_SCHEMA, checked_schema
 
 ROW_LIMIT: Final[int] = 100
@@ -79,13 +93,6 @@ class _Read(BaseModel):
     model_config = ConfigDict(frozen=True)
 
 
-class LastEval(_Read):
-    id: str
-    finished_at: datetime
-    passed: bool
-    decision_accuracy: float | None
-
-
 class HomeRead(_Read):
     requests_today: int
     cost_usd_today: float
@@ -94,58 +101,12 @@ class HomeRead(_Read):
     open_incidents: int
 
 
-class CostDay(_Read):
-    day: date
-    tenant: str
-    provider: str
-    requests: int
-    cached_requests: int
-    cost_usd: float
-
-
-class Saving(_Read):
-    day: date
-    tenant: str
-    saved_usd: float
-
-
-class AliasCost(_Read):
-    alias: str
-    cost_usd: float
-
-
 class CostRead(_Read):
     rollup_populated: bool
     days: tuple[CostDay, ...]
     savings: tuple[Saving, ...]
     savings_usd_total: float
     cost_per_request: tuple[AliasCost, ...]
-
-
-class EvalRunSummary(_Read):
-    id: str
-    started_at: datetime
-    run_kind: str
-    git_sha: str | None
-    passed: bool
-    metrics: dict[str, Any]
-
-
-class ReleaseMarker(_Read):
-    git_sha: str
-    deployed_at: datetime
-    status: str
-
-
-class CategoryCount(_Read):
-    category: str
-    passed: int
-    total: int
-
-
-class TagCount(_Read):
-    tag: str
-    count: int
 
 
 class BlockedRelease(_Read):
@@ -172,43 +133,9 @@ class QualityRead(_Read):
     blocked: tuple[BlockedRelease, ...]
 
 
-class RegionCount(_Read):
-    tenant: str
-    region: str
-    provider: str
-    requests: int
-
-
 class ResidencyRead(_Read):
     by_region: tuple[RegionCount, ...]
     violations: int
-
-
-class Incident(_Read):
-    id: str
-    started_at: datetime
-    resolved_at: datetime | None
-    severity: str
-    title: str
-    summary: str
-    postmortem_url: str | None
-    open: bool
-
-
-class Release(_Read):
-    git_sha: str
-    deployed_at: datetime
-    status: str
-    pr_url: str | None
-    eval_run_id: str | None
-    eval_passed: bool | None
-    decision_accuracy: float | None
-
-
-class Regression(_Read):
-    metric: str
-    value: float
-    previous: float
 
 
 def _number(value: object) -> float | None:

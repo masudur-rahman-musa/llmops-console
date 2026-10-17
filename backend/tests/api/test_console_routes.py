@@ -50,6 +50,20 @@ from app.core.validation import MAX_IDENTIFIER_LENGTH
 from app.limits.budget import current_month
 from app.limits.prices import PriceTable
 from app.main import create_app
+from app.schemas.dashboard import (
+    AliasCost,
+    CategoryCount,
+    CostDay,
+    EvalRunSummary,
+    Incident,
+    LastEval,
+    RegionCount,
+    Regression,
+    Release,
+    ReleaseMarker,
+    Saving,
+    TagCount,
+)
 from app.services.prometheus_reads import (
     AVAILABILITY_BUDGET_QUERY,
     CIRCUITS_QUERY,
@@ -63,23 +77,11 @@ from app.services.prometheus_reads import (
 )
 from app.storage.dashboard_reads import (
     HIGHER_IS_BETTER_METRICS,
-    AliasCost,
     BlockedRelease,
-    CategoryCount,
-    CostDay,
     CostRead,
-    EvalRunSummary,
     HomeRead,
-    Incident,
-    LastEval,
     QualityRead,
-    RegionCount,
-    Regression,
-    Release,
-    ReleaseMarker,
     ResidencyRead,
-    Saving,
-    TagCount,
     UnconfiguredConsoleReader,
     regressed_metrics,
 )

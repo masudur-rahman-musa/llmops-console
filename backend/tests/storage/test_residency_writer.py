@@ -45,14 +45,13 @@ from psycopg_pool import ConnectionPool
 from app.core.validation import MAX_IDENTIFIER_LENGTH, IdentifierInvalid
 from app.model_routing.policy import DataClass, Policy, load_policy
 from app.model_routing.resolver import Resolved
+from app.services.ledger import record_residency, region_allowed
 from app.storage import (
     RESIDENCY_LOG_RETENTION_DAYS,
     InMemoryResidencyLogWriter,
     PostgresResidencyLogWriter,
     ResidencyLogRow,
     ResidencyLogWriter,
-    record_residency,
-    region_allowed,
 )
 from app.storage.residency_log import partition_name
 
@@ -211,12 +210,13 @@ def test_the_public_names_are_exported_from_the_package() -> None:
     app.py` and the chat route import from `app.storage`, so a missing export is an
     ImportError at process start rather than a failure in one test."""
     from app import storage
+    from app.services import ledger
 
     assert storage.ResidencyLogRow is ResidencyLogRow
     assert storage.InMemoryResidencyLogWriter is InMemoryResidencyLogWriter
     assert storage.PostgresResidencyLogWriter is PostgresResidencyLogWriter
-    assert storage.record_residency is record_residency
-    assert storage.region_allowed is region_allowed
+    assert ledger.record_residency is record_residency
+    assert ledger.region_allowed is region_allowed
     assert storage.RESIDENCY_LOG_RETENTION_DAYS == RESIDENCY_LOG_RETENTION_DAYS
 
 

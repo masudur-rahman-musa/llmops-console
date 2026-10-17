@@ -39,8 +39,7 @@ from __future__ import annotations
 import logging
 import re
 import threading
-from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 from typing import Final, Protocol
 
@@ -50,9 +49,7 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, ConfigDict
 
 from app.core.validation import IdentifierInvalid, checked_identifier
-from app.limits.cost import COST_QUANTUM, cost_for, estimate_tokens
-from app.limits.prices import PriceTable
-from app.providers.base import Usage
+from app.limits.cost import COST_QUANTUM
 from app.storage.db import DEFAULT_SCHEMA, checked_schema
 
 logger = logging.getLogger(__name__)
@@ -289,107 +286,53 @@ def _checked_price_version(value: str) -> str:
     return value
 
 
-def _utcnow() -> datetime:
-    """Wall clock, in UTC and timezone-aware.
-
-    The DAY `cost_ledger_daily` groups by comes from this, so a naive local stamp
-    would file an evening request under the wrong day for half the world
-    (`test_the_row_names_what_served_and_is_stamped_from_the_injected_clock`).
-    """
-    return datetime.now(tz=UTC)
-
-
-def record_cost(
-    ledger: CostLedgerWriter,
+def refresh_daily_rollup(
+    pool: ConnectionPool[Connection[TupleRow]],
     *,
-    table: PriceTable,
-    tenant: str,
-    alias: str,
-    provider: str,
-    model: str,
-    region: str,
-    usage: Usage | None,
-    prompt_chars: int = 0,
-    completion_chars: int = 0,
-    cached: bool,
-    session: str | None,
-    trace_id: str,
-    price_key: str,
-    now: Callable[[], datetime] = _utcnow,
-) -> CostLedgerRow:
-    """Price one request, write its row, and answer the row. Never raises.
+    schema: str = DEFAULT_SCHEMA,
+) -> bool:
+    """Refresh `cost_ledger_daily`, and answer whether it went CONCURRENTLY.
 
-    `price_key` is the `provider/model` key `Adapter.price_key` builds from the
-    POLICY provider name, which is what keeps two rows of the same provider kind
-    priced apart; it is passed rather than rebuilt here so the key the price came
-    from and the key the adapter published cannot drift.
+    Two shapes, and which one runs is not a preference. A materialised view that
+    has never been populated CANNOT be refreshed concurrently, so a command that
+    always used `CONCURRENTLY` would fail on exactly the database where it is run
+    for the first time; one that never used it takes an `ACCESS EXCLUSIVE` lock
+    for the length of every later refresh, and the console reads nothing while it
+    is held. So the first refresh is the plain one and every later refresh is
+    concurrent, decided from `pg_class.relispopulated` rather than from a flag
+    someone has to set. Both are idempotent - the second answers the same rows as
+    the first - and the pair is
+    `test_the_first_refresh_populates_and_the_second_runs_concurrently`.
 
-    `usage` is what the provider reported and `None` is the absent case, in which
-    the token counts on the row are ESTIMATED from the two character counts and
-    the row carries `estimated=true`. The tokens stored are the ones the cost was
-    computed from either way, so a row's cost can always be re-derived from the
-    row (`test_absent_usage_is_priced_from_the_characters_and_flagged_estimated`).
+    Takes the POOL rather than a connection, unlike `purge_partitions`:
+    `REFRESH MATERIALIZED VIEW CONCURRENTLY` cannot run inside a transaction
+    block and psycopg opens one on the first statement, so the code that borrows
+    the connection has to be the code that sets autocommit.
 
-    A key the table does not price costs `0.000000` with the literal version
-    `unpriced` and never raises - `app.limits.cost` is where that decision
-    lives, and this function inherits it: a model added to `routing.yaml` and not
-    to `prices.yaml` must not be able to change a status code.
-
-    `cached` is what the row records AND what decides the cost: a request served
-    from a cache costs `CACHED_COST_USD` and keeps everything else the pricing
-    produced - the replayed answer's tokens, the price version in force and the
-    `estimated` flag that version came with. The rule
-    lives here rather than in the route for the reason decision C above gives: a
-    route computing a zero would be the caller-supplied cost this function
-    refuses. Pinned by
-    `test_a_cached_request_is_booked_at_zero_with_the_price_version_in_force` and
-    `test_a_cached_row_keeps_the_replayed_answers_token_counts`.
-
-    The row is RETURNED so that the header the request
-    answers, the counter it moves and the row it files are one number computed
-    once. It is answered even when the write failed: the header describes what the
-    request COST, not what the database managed to keep, and the paragraph above
-    already says the ledger is a lower bound during an incident. Pinned by
-    `test_record_cost_answers_the_row_it_wrote` and
-    `test_record_cost_answers_the_row_even_when_the_write_failed`.
-
-    The write is guarded (decision E): an exception is logged and the request is
-    unchanged.
+    The concurrent refresh is also what a UNIQUE index over the whole group key
+    buys: without one PostgreSQL refuses it at runtime, and only at runtime.
     """
-    at = now()
-    cost = cost_for(
-        table,
-        price_key,
-        at,
-        usage=usage,
-        prompt_chars=prompt_chars,
-        completion_chars=completion_chars,
-    )
-    if usage is None:
-        input_tokens = estimate_tokens(prompt_chars)
-        output_tokens = estimate_tokens(completion_chars)
-    else:
-        input_tokens = usage.prompt_tokens
-        output_tokens = usage.completion_tokens
-
-    row = CostLedgerRow(
-        ts=at,
-        tenant=tenant,
-        alias=alias,
-        provider=provider,
-        model=model,
-        region=region,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        cached=cached,
-        cost_usd=CACHED_COST_USD if cached else cost.usd,
-        price_version=cost.price_version,
-        estimated=cost.estimated,
-        session=session,
-        trace_id=trace_id,
-    )
-    try:
-        ledger.write(row)
-    except Exception:
-        logger.exception("cost ledger write failed for tenant %s, model %s", tenant, model)
-    return row
+    checked = checked_schema(schema)
+    with pool.connection() as conn:
+        conn.autocommit = True
+        row = conn.execute(
+            """
+            select c.relispopulated
+            from pg_class c
+            join pg_namespace n on n.oid = c.relnamespace
+            where n.nspname = %s and c.relname = %s
+            """,
+            (checked, COST_LEDGER_DAILY),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError(
+                f"{checked}.{COST_LEDGER_DAILY} does not exist; run `make migrate` first"
+            )
+        concurrently = bool(row[0])
+        statement = (
+            "REFRESH MATERIALIZED VIEW CONCURRENTLY {}"
+            if concurrently
+            else "REFRESH MATERIALIZED VIEW {}"
+        )
+        conn.execute(sql.SQL(statement).format(sql.Identifier(checked, COST_LEDGER_DAILY)))
+    return concurrently
