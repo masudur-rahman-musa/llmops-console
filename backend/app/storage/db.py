@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Final, NamedTuple
 
 from psycopg import Connection, sql
+from psycopg.conninfo import make_conninfo
 from psycopg.rows import TupleRow
 from psycopg_pool import ConnectionPool
 
@@ -153,10 +154,10 @@ def build_pool(database_url: str) -> ConnectionPool[Connection[TupleRow]]:
     - `statement_timeout` in the conninfo: 2000 ms — PostgreSQL cancels any
       statement that runs longer than 2 seconds, so a stuck query gives up fast.
     """
-    conninfo = (
-        f"{database_url} "
-        f"connect_timeout={int(DB_CONNECT_TIMEOUT)} "
-        f"options='-c statement_timeout={STATEMENT_TIMEOUT_MS}ms'"
+    conninfo = make_conninfo(
+        database_url,
+        connect_timeout=int(DB_CONNECT_TIMEOUT),
+        options=f"-c statement_timeout={STATEMENT_TIMEOUT_MS}ms",
     )
     return ConnectionPool(
         conninfo,

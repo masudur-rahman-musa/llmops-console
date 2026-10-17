@@ -652,7 +652,6 @@ def test_check_policy_models_priced_names_every_unpriced_model() -> None:
         }
     )
 
-
     with pytest.raises(PolicyInvalid) as excinfo:
         check_policy_models_priced(policy, table)
 

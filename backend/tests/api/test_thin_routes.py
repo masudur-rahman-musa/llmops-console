@@ -216,8 +216,7 @@ def test_complete_chat_returns_a_stream_plan_for_a_streamed_body_and_a_chat_resu
     """Catches an implementation where complete_chat always returns the same
     type regardless of the stream flag, or returns a raw FastAPI response
     instead of the plain result types."""
-    from tests.api.conftest import NO_PROVIDER_KEYS, StubAdapter
-
+    from api.conftest import NO_PROVIDER_KEYS, StubAdapter
     from app.main import create_app
     from app.model_routing.policy import DataClass
     from app.schemas.chat import ChatCompletionRequest
@@ -283,8 +282,7 @@ def test_complete_chat_returns_a_stream_plan_for_a_streamed_body_and_a_chat_resu
 def test_embed_texts_returns_a_result_the_route_only_wraps(settings: Settings) -> None:
     """Catches an implementation where embed_texts returns a raw Response or
     StreamingResponse instead of a plain EmbeddingsResult with body and headers."""
-    from tests.api.conftest import EMBED_PROVIDER, NO_PROVIDER_KEYS, EmbeddingStubAdapter
-
+    from api.conftest import EMBED_PROVIDER, NO_PROVIDER_KEYS, EmbeddingStubAdapter
     from app.main import create_app
     from app.model_routing.policy import DataClass
     from app.schemas.embeddings import EmbeddingsRequest
@@ -340,7 +338,7 @@ def test_each_of_the_two_routes_makes_exactly_one_service_call(
     """Catches an implementation where a route calls the service function more
     than once per request, or calls it zero times and builds the pipeline
     inline instead."""
-    from tests.api.conftest import (
+    from api.conftest import (
         CHAT,
         EMBEDDINGS,
         TEST_KEYS,
