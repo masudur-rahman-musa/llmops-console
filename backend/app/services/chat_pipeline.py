@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import cast
 
-from starlette.datastructures import State
 from starlette.types import Scope
 
-from app.api.deps import RequestContext
 from app.cache import (
     CACHE_ALLOW,
     CACHE_HEADER,
@@ -17,12 +16,20 @@ from app.cache import (
     SemanticCache,
     cache_key,
     is_cacheable,
+    probe_text,
+    semantic_eligible,
+    system_hash,
+    tools_hash,
 )
 from app.core.config import Settings
+from app.core.context import RequestContext
 from app.core.errors import BudgetExceeded, ProviderError, RateLimited
 from app.core.metrics import (
+    EXACT_CACHE_KIND,
+    SEMANTIC_CACHE_KIND,
     label_resolution,
     record_budget_ratio,
+    record_cache_hit,
     record_circuit_state,
     record_cost_usd,
     record_fallback,
@@ -44,18 +51,26 @@ from app.limits.budget import (
 from app.limits.cost import COST_QUANTUM
 from app.limits.prices import PriceStore
 from app.limits.ratelimit import SECONDS_PER_MINUTE, RateDimension, RateLimitStore
+from app.model_routing.errors import AllProvidersUnavailable
 from app.model_routing.policy import DataClass, Policy, PolicyStore, ResidencyMode
 from app.model_routing.resolver import Resolved, resolve
 from app.providers.base import Adapter, ChatResponse, EmbeddingAdapter, EmbeddingRequest, Usage
 from app.providers.breaker import CircuitBreaker
-from app.redaction import DirectoryStore
-from app.schemas.chat import ChatCompletionRequest
+from app.redaction import DirectoryStore, RedactionMapStore
+from app.schemas.chat import ChatCompletion, ChatCompletionRequest
 from app.schemas.embeddings import MAX_EMBEDDING_INPUT_CHARS
 from app.services.redaction_flow import (
     REDACT_SPAN,
     redact_or_reject,
     redaction_applies,
     tenant_directory,
+)
+from app.services.streaming import StreamPlan, _streamed
+from app.services.wire_mapping import (
+    rehydrated,
+    requested_mapping,
+    to_neutral,
+    to_wire,
 )
 from app.storage import (
     CostLedgerRow,
@@ -64,6 +79,44 @@ from app.storage import (
     record_cost,
     record_residency,
 )
+
+
+@dataclass(frozen=True)
+class Clients:
+    """All the stores and clients the chat and embeddings flows read.
+
+    Passed in place of Starlette `State` so the service functions take plain
+    typed inputs and import nothing from the API layer.  `deps.get_clients`
+    builds one per request from `request.app.state`.
+    """
+
+    policy: PolicyStore
+    rate_limit_store: RateLimitStore
+    budget_store: BudgetStore
+    settings: Settings
+    cost_ledger: CostLedgerWriter
+    prices: PriceStore
+    adapters: Mapping[str, Adapter]
+    breaker: CircuitBreaker
+    response_cache: ResponseCache
+    semantic_cache: SemanticCache
+    redaction_map_store: RedactionMapStore
+    directory_store: DirectoryStore
+    residency_log: ResidencyLogWriter
+
+
+@dataclass
+class ChatResult:
+    """What `complete_chat` hands back for a non-streaming request.
+
+    `body` is the response the route returns; `headers` are all seven
+    `X-Gateway-*` headers including `X-Gateway-Cost-USD`.  The route does
+    `response.headers.update(result.headers)` and returns `result.body`.
+    """
+
+    body: ChatCompletion
+    headers: dict[str, str]
+
 
 CACHE_STATUS_MISS = "miss"
 
@@ -303,7 +356,7 @@ costs (`test_the_check_takes_one_from_each_bucket_at_the_tenants_own_ceiling`).
 """
 
 
-def check_rate_limit(state: State, context: RequestContext) -> None:
+def check_rate_limit(clients: Clients, context: RequestContext) -> None:
     """Refuse this request if the tenant has spent its minute's requests or tokens (#28).
 
     Called at the top of BOTH routes and immediately BEFORE `check_budget`, after
@@ -334,11 +387,11 @@ def check_rate_limit(state: State, context: RequestContext) -> None:
     reached - which keeps the two ceilings independent of the order they are
     checked in.
     """
-    store: PolicyStore = state.policy
+    store: PolicyStore = clients.policy
     tenant_policy = store.policy.tenants.get(context.tenant)
     if tenant_policy is None:
         return
-    limits: RateLimitStore = state.rate_limit_store
+    limits: RateLimitStore = clients.rate_limit_store
     limit = tenant_policy.rate_limit
     requests = limits.take(
         context.tenant,
@@ -366,7 +419,7 @@ def check_rate_limit(state: State, context: RequestContext) -> None:
         )
 
 
-def debit_tokens(state: State, context: RequestContext, *, row: CostLedgerRow) -> None:
+def debit_tokens(clients: Clients, context: RequestContext, *, row: CostLedgerRow) -> None:
     """Take one served request's tokens out of its tenant's minute.
 
     Called from `book_cost` and from nowhere else, beside `debit_budget`, which
@@ -392,8 +445,8 @@ def debit_tokens(state: State, context: RequestContext, *, row: CostLedgerRow) -
     cannot change the answer - the store swallows every `redis.RedisError`, and
     the tenant was validated by `Context` before the key was built.
     """
-    limits: RateLimitStore = state.rate_limit_store
-    store: PolicyStore = state.policy
+    limits: RateLimitStore = clients.rate_limit_store
+    store: PolicyStore = clients.policy
     tenant_policy = store.policy.tenants.get(context.tenant)
     if tenant_policy is None:
         return
@@ -408,7 +461,7 @@ def debit_tokens(state: State, context: RequestContext, *, row: CostLedgerRow) -
     )
 
 
-def check_budget(state: State, context: RequestContext, *, override: str | None) -> None:
+def check_budget(clients: Clients, context: RequestContext, *, override: str | None) -> None:
     """Refuse this request if the tenant has already spent its month, and warn it near.
 
     Called at the top of BOTH routes, after `Context` has authenticated the
@@ -438,11 +491,11 @@ def check_budget(state: State, context: RequestContext, *, override: str | None)
     override is even considered, so a tenant running on a standing override is
     still visible in the log every request.
     """
-    store: PolicyStore = state.policy
+    store: PolicyStore = clients.policy
     tenant_policy = store.policy.tenants.get(context.tenant)
     if tenant_policy is None:
         return
-    budget_store: BudgetStore = state.budget_store
+    budget_store: BudgetStore = clients.budget_store
     month = current_month()
     spent = budget_store.spend(context.tenant, month)
     if spent is None:
@@ -454,7 +507,7 @@ def check_budget(state: State, context: RequestContext, *, override: str | None)
     warn_budget(tenant=context.tenant, spend_micro_usd=spent, cap_micro_usd=cap)
     if decision is not BudgetDecision.REJECT:
         return
-    settings: Settings = state.settings
+    settings: Settings = clients.settings
     if verify_override(
         override, tenant=context.tenant, month=month, secret=settings.budget_override_secret
     ):
@@ -465,7 +518,7 @@ def check_budget(state: State, context: RequestContext, *, override: str | None)
     )
 
 
-def debit_budget(state: State, context: RequestContext, *, usd: Decimal) -> None:
+def debit_budget(clients: Clients, context: RequestContext, *, usd: Decimal) -> None:
     """Add one served request's cost to its tenant's month, and republish the gauge.
 
     Called from `book_cost` and from nowhere else, which is what makes criterion
@@ -493,8 +546,8 @@ def debit_budget(state: State, context: RequestContext, *, usd: Decimal) -> None
     every other emission, and the tenant was validated by `Context` before the
     key was built.
     """
-    store: PolicyStore = state.policy
-    budget_store: BudgetStore = state.budget_store
+    store: PolicyStore = clients.policy
+    budget_store: BudgetStore = clients.budget_store
     total = budget_store.debit(context.tenant, current_month(), to_micro_usd(usd))
     tenant_policy = store.policy.tenants.get(context.tenant)
     if total is None or tenant_policy is None:
@@ -508,7 +561,7 @@ def debit_budget(state: State, context: RequestContext, *, usd: Decimal) -> None
 
 
 def book_cost(
-    state: State,
+    clients: Clients,
     context: RequestContext,
     *,
     alias: str,
@@ -561,9 +614,9 @@ def book_cost(
     so a request is refused on what was already spent when it arrived and not on
     a total this call has just changed.
     """
-    ledger: CostLedgerWriter = state.cost_ledger
-    prices: PriceStore = state.prices
-    adapters: Mapping[str, Adapter] = state.adapters
+    ledger: CostLedgerWriter = clients.cost_ledger
+    prices: PriceStore = clients.prices
+    adapters: Mapping[str, Adapter] = clients.adapters
     row = record_cost(
         ledger,
         table=prices.table,
@@ -583,8 +636,8 @@ def book_cost(
     record_cost_usd(
         tenant=context.tenant, provider=chosen.provider, model=chosen.model, usd=row.cost_usd
     )
-    debit_budget(state, context, usd=row.cost_usd)
-    debit_tokens(state, context, row=row)
+    debit_budget(clients, context, usd=row.cost_usd)
+    debit_tokens(clients, context, row=row)
     return cost_header_value(row.cost_usd)
 
 
@@ -932,7 +985,7 @@ def store_probe(
 
 
 def _token_sink(
-    state: State, context: RequestContext, *, alias: str, chosen: Resolved
+    clients: Clients, context: RequestContext, *, alias: str, chosen: Resolved
 ) -> Callable[[Usage], None]:
     """The callback a stream books its tokens AND its cost through when the usage arrives.
 
@@ -961,13 +1014,13 @@ def _token_sink(
             prompt_tokens=usage.prompt_tokens,
             completion_tokens=usage.completion_tokens,
         )
-        book_cost(state, context, alias=alias, chosen=chosen, usage=usage, cached=False)
+        book_cost(clients, context, alias=alias, chosen=chosen, usage=usage, cached=False)
 
     return sink
 
 
 def _estimated_cost_sink(
-    state: State, context: RequestContext, *, alias: str, chosen: Resolved, prompt_chars: int
+    clients: Clients, context: RequestContext, *, alias: str, chosen: Resolved, prompt_chars: int
 ) -> Callable[[int], None]:
     """The callback a stream books an ESTIMATED row through when it reported no usage.
 
@@ -991,7 +1044,7 @@ def _estimated_cost_sink(
 
     def sink(completion_chars: int) -> None:
         book_cost(
-            state,
+            clients,
             context,
             alias=alias,
             chosen=chosen,
@@ -1068,3 +1121,219 @@ def _redacted(
         for message, content in zip(body.messages, batch.texts, strict=True)
     )
     return body.model_copy(update={"messages": rebuilt}), batch.redacted
+
+
+def walk_candidates[T](
+    candidates: tuple[Resolved, ...],
+    breaker: CircuitBreaker,
+    call: Callable[[Resolved], T],
+) -> T:
+    """Try each candidate in order, moving on only on a retryable failure.
+
+    A retryable failure is absorbed into the breaker and the next candidate is
+    tried. A non-retryable failure or the last candidate's failure is re-raised
+    so the caller gets the actual error. An empty tuple raises
+    `AllProvidersUnavailable` immediately.
+
+    This is the one fallback loop for every path: chat, streaming chat,
+    embeddings, and the semantic probe all call it so the retry rule is written
+    once (`test_walk_candidates_*` pins each case).
+    """
+    if not candidates:
+        raise AllProvidersUnavailable("no candidates: the resolver answered an empty tuple")
+    last = len(candidates) - 1
+    for attempt, chosen in enumerate(candidates):
+        try:
+            return call(chosen)
+        except ProviderError as exc:
+            absorb_failure(breaker, chosen.provider, exc)
+            if not exc.retryable or attempt == last:
+                raise
+    # Unreachable: the loop returns or re-raises on every path while
+    # candidates is non-empty. Typed as AllProvidersUnavailable so a future
+    # code path that lands here is a 503 and not an unhandled AssertionError.
+    raise AllProvidersUnavailable(  # pragma: no cover
+        "no candidate served (internal error)"
+    )
+
+
+def complete_chat(
+    clients: Clients,
+    context: RequestContext,
+    body: ChatCompletionRequest,
+    scope: Scope,
+    *,
+    budget_override: str | None = None,
+    cache_header: str | None = None,
+    rehydrate_header: str | None = None,
+) -> ChatResult | StreamPlan:
+    """Run the full chat pipeline and return a plain result.
+
+    The route calls this once, then wraps the result into an HTTP response.
+    All pipeline logic lives here: rate limit, budget, resolution, both cache
+    tiers, redaction, the fallback loop, cost booking.  The route adds nothing
+    except the HTTP layer (response headers, streaming setup).
+
+    Returns `ChatResult` for a non-streaming body, `StreamPlan` for a streaming one
+    (see `test_complete_chat_returns_a_stream_plan_...` in test_thin_routes.py).
+    """
+    check_rate_limit(clients, context)
+    check_budget(clients, context, override=budget_override)
+
+    mode: ResidencyMode = clients.settings.residency_mode
+    allowed = allowed_by_header(cache_header)
+    mapping = requested_mapping(clients.redaction_map_store, context.tenant, rehydrate_header)
+
+    with stage_span(scope, ROUTE_SPAN):
+        candidates = resolve(
+            clients.policy.policy,
+            context.tenant,
+            body.model,
+            context.data_class.value,
+            is_healthy=health_seam(clients.breaker, lambda provider: provider in clients.adapters),
+            mode=mode,
+        )
+    label_candidate(scope, body.model, candidates[0])
+
+    with stage_span(scope, CACHE_SPAN):
+        key = requested_key(body, context.tenant, candidates[0], allow_header=allowed)
+        hit = cached_answer(clients.response_cache, context.tenant, key)
+    if hit is not None:
+        label_candidate(scope, body.model, candidates[0], cache=CACHE_STATUS_HIT)
+        record_cache_hit(tenant=context.tenant, kind=EXACT_CACHE_KIND)
+        headers = gateway_headers(
+            candidates[0], context.trace_id, redacted=False, cache=CACHE_STATUS_HIT
+        )
+        headers[COST_HEADER] = book_cost(
+            clients,
+            context,
+            alias=body.model,
+            chosen=candidates[0],
+            usage=hit.usage,
+            cached=True,
+        )
+        return ChatResult(body=to_wire(rehydrated(hit, mapping), body.model), headers=headers)
+
+    outbound, redacted = _redacted(
+        scope, clients.policy.policy, context, body, clients.directory_store
+    )
+    annotate(scope, SpanAttributes(redacted=redacted))
+
+    vector: tuple[float, ...] | None = None
+    if semantic_eligible(body, alias=clients.policy.policy.aliases[body.model]):
+        with stage_span(scope, SEMANTIC_SPAN):
+            vector = embedded_probe(
+                probe_text(outbound),
+                policy=clients.policy.policy,
+                adapters=clients.adapters,
+                breaker=clients.breaker,
+                tenant=context.tenant,
+                data_class=context.data_class,
+                mode=mode,
+            )
+            near = semantic_answer(
+                clients.semantic_cache,
+                context.tenant,
+                vector,
+                alias=body.model,
+                system_hash=system_hash(outbound),
+                tools_hash=tools_hash(outbound),
+            )
+        if near is not None:
+            label_candidate(scope, body.model, candidates[0], cache=CACHE_STATUS_SEMANTIC)
+            record_cache_hit(tenant=context.tenant, kind=SEMANTIC_CACHE_KIND)
+            headers = gateway_headers(
+                candidates[0], context.trace_id, redacted=redacted, cache=CACHE_STATUS_SEMANTIC
+            )
+            headers[COST_HEADER] = book_cost(
+                clients,
+                context,
+                alias=body.model,
+                chosen=candidates[0],
+                usage=near.usage,
+                cached=True,
+            )
+            return ChatResult(body=to_wire(rehydrated(near, mapping), body.model), headers=headers)
+
+    _call_count: list[int] = [0]
+
+    def provider_call(chosen: Resolved) -> ChatResult | StreamPlan:
+        failed_so_far = _call_count[0]
+        _call_count[0] += 1
+        label_candidate(scope, body.model, chosen)
+        headers = gateway_headers(chosen, context.trace_id, redacted=redacted)
+        if body.stream:
+            with stage_span(scope, provider_span_name(chosen.provider)):
+                plan = _streamed(
+                    clients.adapters[chosen.provider],
+                    outbound,
+                    chosen,
+                    headers,
+                    _token_sink(clients, context, alias=body.model, chosen=chosen),
+                    mapping=mapping,
+                    on_unreported_usage=_estimated_cost_sink(
+                        clients,
+                        context,
+                        alias=body.model,
+                        chosen=chosen,
+                        prompt_chars=prompt_characters(outbound),
+                    ),
+                )
+            record_served(
+                scope,
+                clients.breaker,
+                tenant=context.tenant,
+                alias=body.model,
+                chosen=chosen,
+                failed=failed_so_far,
+                policy=clients.policy.policy,
+                data_class=context.data_class,
+                log=clients.residency_log,
+            )
+            return plan
+        with stage_span(scope, provider_span_name(chosen.provider)):
+            answer = clients.adapters[chosen.provider].chat(to_neutral(outbound, chosen.model))
+        record_served(
+            scope,
+            clients.breaker,
+            tenant=context.tenant,
+            alias=body.model,
+            chosen=chosen,
+            failed=failed_so_far,
+            policy=clients.policy.policy,
+            data_class=context.data_class,
+            log=clients.residency_log,
+        )
+        record_tokens(
+            tenant=context.tenant,
+            provider=chosen.provider,
+            model=chosen.model,
+            prompt_tokens=answer.usage.prompt_tokens,
+            completion_tokens=answer.usage.completion_tokens,
+        )
+        store_answer(
+            clients.response_cache,
+            context.tenant,
+            requested_key(body, context.tenant, chosen, allow_header=allowed),
+            answer,
+        )
+        store_probe(
+            clients.semantic_cache,
+            context.tenant,
+            vector,
+            answer,
+            alias=body.model,
+            system_hash=system_hash(outbound),
+            tools_hash=tools_hash(outbound),
+        )
+        headers[COST_HEADER] = book_cost(
+            clients,
+            context,
+            alias=body.model,
+            chosen=chosen,
+            usage=answer.usage,
+            cached=False,
+        )
+        return ChatResult(body=to_wire(rehydrated(answer, mapping), body.model), headers=headers)
+
+    return walk_candidates(candidates, clients.breaker, provider_call)

@@ -52,8 +52,9 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from prometheus_client import CollectorRegistry
 
-from app.api.deps import MAX_KEY_LENGTH, RequestContext, request_context
+from app.api.deps import MAX_KEY_LENGTH, request_context
 from app.core.config import Settings
+from app.core.context import RequestContext
 from app.core.errors import ProviderError
 from app.core.metrics import registry
 from app.core.tracing import tracer_provider

@@ -31,11 +31,10 @@ import secrets
 from typing import Annotated, Protocol
 
 from fastapi import Depends, Header, Request
-from pydantic import BaseModel, ConfigDict
-from starlette.datastructures import State
 from starlette.types import Scope
 
 from app.core.config import Settings
+from app.core.context import RequestContext
 from app.core.errors import TenantMismatch, Unauthorized
 from app.core.metrics import label_tenant
 from app.core.tracing import (
@@ -53,6 +52,7 @@ from app.core.validation import (
 from app.limits.prices import PriceStore
 from app.model_routing.policy import DataClass, PolicyStore, ResidencyMode
 from app.redaction import DirectoryStore, RedactionMapStore
+from app.services.chat_pipeline import Clients
 from app.storage import ConsoleEventWriter
 
 MAX_KEY_LENGTH = 256
@@ -188,24 +188,6 @@ def emitted_trace_id(scope: Scope) -> str:
     if record is None:
         return secrets.token_hex(16)
     return format(record.span.get_span_context().trace_id, "032x")
-
-
-class RequestContext(BaseModel):
-    """The identity and labels every later stage of a request reads.
-
-    No user identity, by construction: a tenant, an optional session and a trace
-    id are the only things here, which is what keeps telemetry free of it.
-    `test_context_carries_the_authenticated_tenant` compares the field set
-    exactly, so a field added here goes red rather than quietly reaching a trace;
-    that red is the invariant, not a stale expectation to update.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    tenant: str
-    data_class: DataClass
-    session: str | None
-    trace_id: str
 
 
 def _checked_identifier(value: str, field: str) -> str:
@@ -369,17 +351,30 @@ def admin_key(request: Request, authorization: Annotated[str | None, Header()] =
 # (`test_routes_do_not_read_app_state_by_hand`).
 
 
-def get_state(request: Request) -> State:
-    """The app's whole state bag, as a typed dependency.
+def get_clients(request: Request) -> Clients:
+    """All the stores and clients the chat and embeddings pipeline reads.
 
-    The chat and embeddings routes hand this to the chat-pipeline functions
-    (`check_rate_limit`, `check_budget`, `book_cost`, the token and cost sinks),
-    which each take the whole `State` and are not part of an earlier change's change.
-    Reaching it through a dependency rather than `request.app.state` is what keeps
-    those two routes free of a hand read while leaving those functions untouched.
+    The chat and embeddings routes take this as `ClientsDep` and pass it to
+    `complete_chat` / `embed_texts`.  Building it here keeps those routes free
+    of any `request.app.state` read and lets tests override it with
+    `app.dependency_overrides[get_clients]`.
     """
-    state: State = request.app.state
-    return state
+    state = request.app.state
+    return Clients(
+        policy=state.policy,
+        rate_limit_store=state.rate_limit_store,
+        budget_store=state.budget_store,
+        settings=state.settings,
+        cost_ledger=state.cost_ledger,
+        prices=state.prices,
+        adapters=state.adapters,
+        breaker=state.breaker,
+        response_cache=state.response_cache,
+        semantic_cache=state.semantic_cache,
+        redaction_map_store=state.redaction_map_store,
+        directory_store=state.directory_store,
+        residency_log=state.residency_log,
+    )
 
 
 def get_policy(request: Request) -> PolicyStore:
@@ -418,7 +413,7 @@ def get_console_events(request: Request) -> ConsoleEventWriter:
     return writer
 
 
-AppStateDep = Annotated[State, Depends(get_state)]
+ClientsDep = Annotated[Clients, Depends(get_clients)]
 PolicyDep = Annotated[PolicyStore, Depends(get_policy)]
 ResidencyModeDep = Annotated[ResidencyMode, Depends(get_residency_mode)]
 PricesDep = Annotated[PriceStore, Depends(get_prices)]

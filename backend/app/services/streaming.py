@@ -6,9 +6,8 @@ import json
 import secrets
 import time
 from collections.abc import Callable, Generator, Iterator, Mapping
+from dataclasses import dataclass
 from itertools import chain
-
-from fastapi.responses import StreamingResponse
 
 from app.core.errors import GatewayError, ProviderError
 from app.core.http_errors import error_body
@@ -36,6 +35,23 @@ pins the absence."""
 
 
 SSE_HEADERS: Mapping[str, str] = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+
+
+@dataclass
+class StreamPlan:
+    """What `_streamed` hands back so the HTTP layer can build the response.
+
+    `frames` is the generator `sse_frames` produces; `media_type` and `headers`
+    are what the route needs to build an HTTP streaming response. Keeping them
+    together lets the route hold one thing instead of three, and keeps
+    the HTTP response type out of the service layer entirely.
+    """
+
+    frames: Generator[str, None, None]
+    media_type: str
+    headers: dict[str, str]
+
+
 """The two headers a streamed answer needs beyond the six of #9.
 
 Both exist to stop something between the gateway and the client holding the
@@ -230,19 +246,22 @@ def _streamed(
     *,
     mapping: Mapping[str, str] | None = None,
     on_unreported_usage: Callable[[int], None] | None = None,
-) -> StreamingResponse:
-    """Open the stream, pull its first event, and only then answer 200.
+) -> StreamPlan:
+    """Open the stream, pull its first event, and return the plan for the route.
 
-    The eager first event is the whole point. `StreamingResponse` sends the
-    status the moment it is returned, so anything the adapter raises after that
-    can only be an error frame inside a 200 - which an SDK reports to its caller
-    as a parse failure rather than as the provider outage it was. Pulling one
-    event here keeps every pre-stream failure a typed HTTP error the existing
+    The eager first event is the whole point. The HTTP layer sends the status
+    the moment the response is returned, so anything the adapter raises after
+    that can only be an error frame inside a 200 - which an SDK reports to its
+    caller as a parse failure rather than as the provider outage it was. Pulling
+    one event here keeps every pre-stream failure a typed HTTP error the existing
     handlers render (`test_a_provider_failure_before_the_first_event_is_502_with_no_stream`).
 
     A stream that opens and ends without a single event is a provider failure
     too, not a `StopIteration` for the last-resort handler to turn into a 500
     with no code (`test_a_stream_that_opens_and_yields_nothing_is_502`).
+
+    Returns a `StreamPlan` so the route builds the HTTP response and the
+    response type stays out of the service layer (§3.3).
     """
     events = adapter.stream_chat(to_neutral(body, chosen.model))
     first = next(events, None)
@@ -252,8 +271,8 @@ def _streamed(
             retryable=False,
         )
 
-    return StreamingResponse(
-        sse_frames(
+    return StreamPlan(
+        frames=sse_frames(
             first,
             events,
             body.model,
