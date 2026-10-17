@@ -22,8 +22,14 @@ from typing import Protocol
 import pytest
 
 from app.limits.errors import PriceTableInvalid
-from app.limits.prices import PriceStore, load_prices, price_for
-from app.model_routing.policy import Policy, load_policy
+from app.limits.prices import PriceStore, PriceTable, load_prices, price_for
+from app.model_routing.errors import PolicyInvalid
+from app.model_routing.policy import (
+    Policy,
+    check_policy_models_priced,
+    load_policy,
+    reachable_price_keys,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SHIPPED_PRICES_PATH = REPO_ROOT / "config" / "prices.yaml"
@@ -487,24 +493,6 @@ def test_a_failed_reload_keeps_the_previous_price_table(
 # --- the shipped file ---------------------------------------------------------
 
 
-def reachable_price_keys(policy: Policy) -> set[str]:
-    """Every `provider/model` pair the policy can resolve to.
-
-    Both sources, because a tenant override introduces a pair that need appear in
-    no alias: the resolver uses an override in place of the alias's own candidate
-    list, so a pair reachable only that way is just as billable.
-    """
-    keys: set[str] = set()
-    for alias in policy.aliases.values():
-        for candidate in alias.candidates:
-            keys.add(f"{candidate.provider}/{candidate.model}")
-    for tenant in policy.tenants.values():
-        for candidates in tenant.overrides.values():
-            for candidate in candidates:
-                keys.add(f"{candidate.provider}/{candidate.model}")
-    return keys
-
-
 def test_the_shipped_price_file_loads() -> None:
     """Catches a `prices.yaml` shipped in a shape the schema refuses - the one file no
     test would otherwise validate, because an operator never edits it in a unit test -
@@ -534,6 +522,143 @@ def test_the_shipped_prices_cover_every_pair_the_shipped_routing_can_resolve() -
     assert reachable <= set(table.prices), (
         f"unpriced pairs reachable from routing.yaml: {sorted(reachable - set(table.prices))}"
     )
+
+
+# --- load-time coverage check ---
+
+
+def _minimal_policy_with_override() -> Policy:
+    """One alias with one candidate, plus one tenant whose override introduces a
+    second `provider/model` pair that the alias candidates do not carry.
+
+    The override pair is the whole reason `reachable_price_keys` must walk
+    tenant overrides and not just alias candidates.
+    """
+    return Policy.model_validate(
+        {
+            "providers": {
+                "prov-a": {
+                    "kind": "openai_compatible",
+                    "region": "us",
+                    "base_url": "http://x",
+                },
+                "prov-b": {
+                    "kind": "openai_compatible",
+                    "region": "us",
+                    "base_url": "http://x",
+                },
+            },
+            "eu_regions": [],
+            "aliases": {
+                "my-alias": {
+                    "candidates": [
+                        {"provider": "prov-a", "model": "model-x"},
+                    ],
+                },
+            },
+            "tenants": {
+                "t1": {
+                    "residency": "any",
+                    "data_class_rules": {
+                        "public": {"allow_regions": ["us"]},
+                    },
+                    "budget_usd_month": "10.00",
+                    "rate_limit": {"rpm": 60, "tpm": 60000},
+                    "overrides": {
+                        "my-alias": [
+                            {"provider": "prov-b", "model": "override-model"},
+                        ],
+                    },
+                },
+            },
+        }
+    )
+
+
+def test_reachable_price_keys_covers_alias_and_override_keys() -> None:
+    """Catches an implementation of `reachable_price_keys` that walks alias
+    candidates only and skips tenant overrides, so the pair that is reachable
+    ONLY through a tenant override is missing from the returned set."""
+    policy = _minimal_policy_with_override()
+    result = reachable_price_keys(policy)
+
+    assert result == {"prov-a/model-x", "prov-b/override-model"}
+
+
+def test_check_policy_models_priced_passes_when_every_routed_model_is_priced() -> None:
+    """Catches an implementation of `check_policy_models_priced` that raises even
+    when every reachable pair is present in the price table, making the app
+    unbootable on a correctly priced policy."""
+
+    policy = load_policy(SHIPPED_POLICY_PATH)
+    table = load_prices(SHIPPED_PRICES_PATH)
+
+    # Must not raise.
+    check_policy_models_priced(policy, table)
+
+
+def test_check_policy_models_priced_names_every_unpriced_model() -> None:
+    """Catches an implementation of `check_policy_models_priced` that raises with
+    only the first missing key, or with a message that omits the key strings
+    entirely, making it impossible for an operator to find which model is
+    unpriced without bisecting the policy file by hand."""
+    policy = Policy.model_validate(
+        {
+            "providers": {
+                "prov-a": {
+                    "kind": "openai_compatible",
+                    "region": "us",
+                    "base_url": "http://x",
+                },
+                "prov-b": {
+                    "kind": "openai_compatible",
+                    "region": "us",
+                    "base_url": "http://x",
+                },
+            },
+            "eu_regions": [],
+            "aliases": {
+                "my-alias": {
+                    "candidates": [
+                        {"provider": "prov-a", "model": "model-x"},
+                        {"provider": "prov-b", "model": "model-y"},
+                    ],
+                },
+            },
+            "tenants": {
+                "t1": {
+                    "residency": "any",
+                    "data_class_rules": {
+                        "public": {"allow_regions": ["us"]},
+                    },
+                    "budget_usd_month": "10.00",
+                    "rate_limit": {"rpm": 60, "tpm": 60000},
+                },
+            },
+        }
+    )
+    # A price table that covers neither model the policy routes to.
+    table = PriceTable.model_validate(
+        {
+            "prices": {
+                "prov-a/some-other-model": [
+                    {
+                        "effective_from": "2025-01-01",
+                        "input_usd_per_1m": "1.00",
+                        "output_usd_per_1m": "2.00",
+                    }
+                ]
+            }
+        }
+    )
+
+
+    with pytest.raises(PolicyInvalid) as excinfo:
+        check_policy_models_priced(policy, table)
+
+    message = str(excinfo.value)
+    assert "prov-a/model-x" in message
+    assert "prov-b/model-y" in message
 
 
 SELF_HOSTED_PROVIDERS = ["local", "vllm"]

@@ -660,6 +660,29 @@ def test_a_reload_with_nothing_in_flight_closes_the_dropped_adapters_at_once(
         assert http_client_of(dropped).is_closed
 
 
+def test_a_reload_that_introduces_an_unpriced_model_is_422_and_keeps_the_old_policy(
+    tmp_path: Path,
+) -> None:
+    """Catches a reload that swaps the policy before checking price coverage, so an
+    operator who adds a candidate with a made-up model id gets a broken gateway
+    instead of a 422 that leaves the old policy serving."""
+    with admin_app_on(tmp_path) as built:
+        before = listed_aliases(built.client)
+
+        rewrite_policy(
+            built.policy_path,
+            lambda document: document["aliases"]["agent-default"]["candidates"].append(
+                {"provider": "local", "model": "model-that-has-no-price"}
+            ),
+        )
+
+        response = built.client.post(ADMIN_ROUTING_RELOAD, headers=ADMIN_HEADERS)
+        assert_error_body(response, status=422, code="VALIDATION")
+        assert "local/model-that-has-no-price" in response.json()["error"]["message"]
+
+        assert listed_aliases(built.client) == before
+
+
 def test_a_failed_reload_closes_nothing_and_keeps_the_runtime(tmp_path: Path) -> None:
     """Catches an implementation that clears or closes the current adapter set before
     it validates the new policy: after a 422 the held adapter must still be open,

@@ -365,6 +365,42 @@ def test_create_app_refuses_an_empty_env_without_backing_urls() -> None:
 # --- an earlier change: the lease middleware releases every hold after the response ----
 
 
+def test_boot_refuses_a_policy_that_routes_to_an_unpriced_model(tmp_path: Path) -> None:
+    """Catches a `create_app` that skips the price-coverage check at boot, so a
+    policy that routes to a model with no price row starts the process cleanly and
+    silently books every request to that model as `unpriced`."""
+    from app.model_routing.errors import PolicyInvalid
+
+    policy_yaml = tmp_path / "routing.yaml"
+    policy_yaml.write_text(
+        """\
+providers:
+  anthropic:
+    kind: anthropic
+    region: us
+    base_url: https://api.anthropic.com
+eu_regions: []
+aliases:
+  my-alias:
+    candidates:
+      - {provider: anthropic, model: model-not-in-price-table}
+tenants:
+  t1:
+    residency: any
+    data_class_rules:
+      public: {allow_regions: [us]}
+    budget_usd_month: "10.00"
+    rate_limit: {rpm: 60, tpm: 60000}
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PolicyInvalid) as excinfo:
+        create_app(Settings(api_keys=API_KEYS, routing_policy_path=policy_yaml), NO_PROVIDER_KEYS)
+
+    assert "model-not-in-price-table" in str(excinfo.value)
+
+
 def test_a_finished_request_leaves_no_routing_lease_open() -> None:
     """Catches an implementation where the middleware acquires a runtime lease but
     never releases it: after a complete response the store must show zero open

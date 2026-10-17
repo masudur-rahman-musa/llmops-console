@@ -22,7 +22,7 @@ from dataclasses import dataclass
 
 from starlette.datastructures import State
 
-from app.model_routing.policy import Policy, PolicyStore, load_policy
+from app.model_routing.policy import Policy, PolicyStore, check_policy_models_priced, load_policy
 from app.providers.base import Adapter
 from app.providers.breaker import CircuitBreaker
 from app.providers.factory import build_adapters, close_adapters
@@ -130,7 +130,9 @@ class RoutingRuntimeStore:
         """
         policy_store: PolicyStore = self._state.policy
         # Parse OUTSIDE the lock: raises PolicyInvalid without changing state.
+        # The price-coverage check runs here too, for the same reason.
         new_policy = load_policy(policy_store._path)
+        check_policy_models_priced(new_policy, self._state.prices.table)
 
         to_close: Mapping[str, Adapter] | None = None
         with self._lock:

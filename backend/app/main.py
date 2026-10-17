@@ -55,7 +55,7 @@ from app.limits.ratelimit import (
     InProcessRateLimitStore,
     RedisRateLimitStore,
 )
-from app.model_routing.policy import PolicyStore, ResidencyMode
+from app.model_routing.policy import PolicyStore, ResidencyMode, check_policy_models_priced
 from app.model_routing.resolver import RELAXED_REGIONS
 from app.providers.breaker import CircuitBreaker
 from app.providers.factory import build_adapters
@@ -432,6 +432,7 @@ def create_app(
     app.state.adapters = build_adapters(app.state.policy.policy, app.state.provider_environ)
     app.state.breaker = CircuitBreaker()
     app.state.prices = PriceStore(resolved.prices_path)
+    check_policy_models_priced(app.state.policy.policy, app.state.prices.table)
     app.state.provider_limiter = build_provider_limiter()
     routing_store = RoutingRuntimeStore(app.state)
     app.state.routing_store = routing_store

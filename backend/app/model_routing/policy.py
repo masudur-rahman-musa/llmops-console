@@ -19,7 +19,7 @@ from collections.abc import Mapping
 from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -29,6 +29,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 # policy keep resolving and `routing.yaml` stays the home of the policy types.
 from app.core.config import ResidencyMode as ResidencyMode
 from app.model_routing.errors import PolicyInvalid
+
+if TYPE_CHECKING:
+    from app.limits.prices import PriceTable
 
 
 class DataClass(StrEnum):
@@ -241,3 +244,41 @@ class PolicyStore:
     def reload(self) -> None:
         """Re-read the file and swap the snapshot, or raise and keep the old one."""
         self._policy = load_policy(self._path)
+
+
+def reachable_price_keys(policy: Policy) -> set[str]:
+    """Every `provider/model` pair the policy can resolve to.
+
+    Both sources, because a tenant override introduces a pair that need appear in
+    no alias: the resolver uses an override in place of the alias's own candidate
+    list, so a pair reachable only that way is just as billable. Pinned by
+    `test_reachable_price_keys_covers_alias_and_override_keys`.
+    """
+    keys: set[str] = set()
+    for alias in policy.aliases.values():
+        for candidate in alias.candidates:
+            keys.add(f"{candidate.provider}/{candidate.model}")
+    for tenant in policy.tenants.values():
+        for candidates in tenant.overrides.values():
+            for candidate in candidates:
+                keys.add(f"{candidate.provider}/{candidate.model}")
+    return keys
+
+
+def check_policy_models_priced(policy: Policy, table: PriceTable) -> None:
+    """Raise `PolicyInvalid` if any pair the policy can reach has no price row.
+
+    Both sources are checked: alias candidates and tenant overrides. A pair with
+    no price row would be booked `unpriced` on every request that reaches it,
+    silently filling the ledger with rows that cost nothing. Called at load time
+    (in `create_app`) and at reload time (in `RoutingRuntimeStore.reload`), so
+    the case can only be reached through a deliberate policy change after boot.
+
+    The unhappy path names all missing pairs in one message, sorted, so an
+    operator can fix all of them in one edit rather than learning about them one
+    reload at a time. Pinned by
+    `test_check_policy_models_priced_names_every_unpriced_model`.
+    """
+    missing = sorted(reachable_price_keys(policy) - set(table.prices))
+    if missing:
+        raise PolicyInvalid(f"unpriced models reachable from the policy: {', '.join(missing)}")
