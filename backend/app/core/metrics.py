@@ -206,6 +206,18 @@ BUDGET_RATIO = Gauge(
     registry=_registry,
 )
 
+LEDGER_WRITES = Counter(
+    "gateway_ledger_writes_total",
+    "Cost-ledger rows handled by the background writer, by result.",
+    ("result",),
+    registry=_registry,
+)
+"""Three `result` values: `ok` (inserted), `error` (insert failed), `dropped`
+(queue was full). The counter stays flat when the database is healthy, which
+is the easy case to miss; `ok` is what a dashboard uses to confirm the ledger
+is keeping up. Pinned by `test_the_ledger_queue_size_is_exactly_10000` and the
+off-path ledger tests."""
+
 
 def registry() -> CollectorRegistry:
     """The one registry this process exposes, holding this gateway's families only."""
@@ -530,6 +542,18 @@ def record_failure(scope: Scope, error: GatewayError) -> None:
             return
         if error.code in PROVIDER_FAILURE_CODES and record.provider != UNSET_LABEL:
             PROVIDER_ERRORS.labels(provider=record.provider, code=error.code.value).inc()
+
+
+def record_ledger_write(*, result: str) -> None:
+    """Count one ledger write by its outcome: `ok`, `error` or `dropped`.
+
+    Called by the background worker in `storage/cost_ledger.py` after each
+    attempt, so the counter moves on the worker thread, not on the route.
+    Guarded the same way every other emission is, so a labelling bug cannot
+    fail a background thread.
+    """
+    with _guarded("ledger write"):
+        LEDGER_WRITES.labels(result=result).inc()
 
 
 def record_residency_violation(*, tenant: str) -> None:

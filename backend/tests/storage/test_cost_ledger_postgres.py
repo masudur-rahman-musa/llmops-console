@@ -166,7 +166,9 @@ def test_every_column_round_trips_through_the_shipped_migration(
     timestamp stored without its zone, and an `estimated` column defaulting to false -
     which would make every estimate look measured - because both flags are asserted at
     the value the row carried."""
-    PostgresCostLedgerWriter(pool, schema=migrated_schema).write(a_row(estimated=True))
+    writer = PostgresCostLedgerWriter(pool, schema=migrated_schema)
+    writer.write(a_row(estimated=True))
+    writer.flush()
 
     assert ledger_rows(pool, migrated_schema) == [
         (
@@ -199,7 +201,9 @@ def test_the_cost_reads_back_exactly_at_six_decimal_places(
     same. The exponent is asserted because `Decimal("1234.5678910") == COST`, so equality
     alone cannot see a scale that changed; the type is asserted because a `float` coming
     back would compare equal to a `Decimal` for kinder numbers than this one."""
-    PostgresCostLedgerWriter(pool, schema=migrated_schema).write(a_row())
+    writer = PostgresCostLedgerWriter(pool, schema=migrated_schema)
+    writer.write(a_row())
+    writer.flush()
 
     stored = ledger_rows(pool, migrated_schema)[0][LEDGER_COLUMNS.index("cost_usd")]
 
@@ -216,7 +220,9 @@ def test_a_null_session_and_a_cached_row_round_trip(pool: Pool, migrated_schema:
     an empty string on the way. `cached=True` is carried in the same row because the
     rollup counts cached requests separately, so a boolean bound positionally into the
     wrong column would make every cached request look uncached."""
-    PostgresCostLedgerWriter(pool, schema=migrated_schema).write(a_row(session=None, cached=True))
+    writer = PostgresCostLedgerWriter(pool, schema=migrated_schema)
+    writer.write(a_row(session=None, cached=True))
+    writer.flush()
 
     row = ledger_rows(pool, migrated_schema)[0]
 
@@ -249,6 +255,7 @@ def test_rows_sharing_the_whole_group_key_become_one_rollup_row(
             trace_id="ffffffffffffffffffffffffffffffff",
         )
     )
+    writer.flush()
 
     refresh_daily_rollup(pool, schema=migrated_schema)
 
@@ -296,6 +303,7 @@ def test_rows_differing_in_any_group_column_are_kept_apart(
     writer = PostgresCostLedgerWriter(pool, schema=migrated_schema)
     writer.write(a_row())
     writer.write(a_row(**difference))
+    writer.flush()
 
     refresh_daily_rollup(pool, schema=migrated_schema)
 
@@ -318,6 +326,7 @@ def test_the_first_refresh_populates_and_the_second_runs_concurrently(
     writer = PostgresCostLedgerWriter(pool, schema=migrated_schema)
     writer.write(a_row())
     writer.write(a_row(ts=NEXT_DAY))
+    writer.flush()
 
     first_was_concurrent = refresh_daily_rollup(pool, schema=migrated_schema)
     after_first = rollup_rows(pool, migrated_schema)

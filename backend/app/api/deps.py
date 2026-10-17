@@ -24,6 +24,7 @@ position, rather than surfacing as a puzzling 401 at request time
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import re
@@ -419,6 +420,18 @@ def get_console_events(request: Request) -> ConsoleEventWriter:
     return writer
 
 
+def get_provider_limiter(request: Request) -> asyncio.Semaphore:
+    """The provider concurrency semaphore `create_app` built.
+
+    The chat and embeddings routes use this to bound how many provider calls run
+    at once, so one slow provider fills only its own pool and cannot stall other
+    tenants. Tests override this dep to inject a spy or a fake limiter.
+    """
+
+    limiter: asyncio.Semaphore = request.app.state.provider_limiter
+    return limiter
+
+
 ClientsDep = Annotated[Clients, Depends(get_clients)]
 PolicyDep = Annotated[PolicyStore, Depends(get_policy)]
 ResidencyModeDep = Annotated[ResidencyMode, Depends(get_residency_mode)]
@@ -426,3 +439,4 @@ PricesDep = Annotated[PriceStore, Depends(get_prices)]
 RedactionMapStoreDep = Annotated[RedactionMapStore, Depends(get_redaction_map_store)]
 DirectoryStoreDep = Annotated[DirectoryStore, Depends(get_directory_store)]
 ConsoleEventsDep = Annotated[ConsoleEventWriter, Depends(get_console_events)]
+ProviderLimiterDep = Annotated[asyncio.Semaphore, Depends(get_provider_limiter)]

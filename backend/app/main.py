@@ -36,6 +36,7 @@ from app.cache import (
     RedisResponseCache,
 )
 from app.core.clients import PROBE_TIMEOUT_SECONDS, build_redis_client
+from app.core.concurrency import build_provider_limiter
 from app.core.config import Settings
 from app.core.http_errors import register_error_handlers
 from app.core.metrics import observe_request, start_request
@@ -244,6 +245,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if prometheus is not None:
             prometheus.close()
         if pool is not None:
+            app.state.cost_ledger.close()
             pool.close()
         if redis_client is not None:
             redis_client.close()
@@ -430,6 +432,7 @@ def create_app(
     app.state.adapters = build_adapters(app.state.policy.policy, app.state.provider_environ)
     app.state.breaker = CircuitBreaker()
     app.state.prices = PriceStore(resolved.prices_path)
+    app.state.provider_limiter = build_provider_limiter()
     routing_store = RoutingRuntimeStore(app.state)
     app.state.routing_store = routing_store
     register_error_handlers(app)

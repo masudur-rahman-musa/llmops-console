@@ -37,6 +37,7 @@ rather than in production.
 from __future__ import annotations
 
 import logging
+import queue
 import re
 import threading
 from datetime import datetime
@@ -48,6 +49,7 @@ from psycopg.rows import TupleRow
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, ConfigDict
 
+from app.core.metrics import record_ledger_write
 from app.core.validation import IdentifierInvalid, checked_identifier
 from app.limits.cost import COST_QUANTUM
 from app.storage.db import DEFAULT_SCHEMA, checked_schema
@@ -117,6 +119,18 @@ as a literal, so the zero has the same exponent every other cost on the table
 has. Pinned by `test_a_cached_request_is_booked_at_zero_with_the_price_version_in_force`
 and `test_a_cached_row_keeps_the_replayed_answers_token_counts`.
 """
+
+LEDGER_QUEUE_SIZE: Final[int] = 10000
+"""How many rows the background queue may hold before new ones are dropped.
+
+Decided without asking: 10 000 absorbs a burst of concurrent requests
+without growing without bound. A full queue means the database cannot keep up;
+the row is counted as `dropped` and the chat reply still succeeds. Pinned by
+`test_the_ledger_queue_size_is_exactly_10000`.
+"""
+
+_SENTINEL: object = object()
+"""Put on the queue to tell the worker thread to drain and stop."""
 
 
 class CostLedgerRow(BaseModel):
@@ -196,21 +210,19 @@ class InMemoryCostLedgerWriter:
 
 
 class PostgresCostLedgerWriter:
-    """One INSERT per row, over a pooled connection. No DDL, ever.
+    """One INSERT per row via a bounded background queue. No DDL, ever.
 
-    Unpartitioned (decision A), so unlike `PostgresResidencyLogWriter` there is
-    no create-on-demand path and no per-day cache: the write is one statement on
-    one borrowed connection.
+    An earlier change: `write` enqueues and returns at once so a slow or stuck database
+    cannot hold a chat reply. A daemon thread drains the queue and does the
+    actual INSERT; a full queue drops the row and counts it as `dropped` rather
+    than blocking. Each outcome — ok, error, dropped — increments
+    `gateway_ledger_writes_total{result}`.
 
-    Every pre-check runs BEFORE the borrow. Each value becomes
-    a bound parameter, so the checks are not what stands between the ledger and
-    an injection; they are what keeps the AUDIT TABLE honest. `tenant`, `alias`,
-    `provider`, `region` and `session` are strings a request can influence and are
-    held to the resolver's identifier rule, `model` to this module's wider one
-    (decision D), `trace_id` to 32 lowercase hex, and `price_version` to its cap.
-    `test_write_refuses_a_malformed_identifier_before_any_sql` asserts that no
-    connection was even borrowed, which is the difference between a refused row
-    and a row half-written.
+    Pre-checks still run BEFORE enqueuing. A row that fails
+    a pre-check is still raised immediately, because a malformed row is a bug
+    in the caller, not a database slowdown. `write` is the only method the
+    `CostLedgerWriter` protocol requires; `flush` and `close` are extras the
+    app's shutdown and the tests use.
     """
 
     def __init__(
@@ -221,9 +233,22 @@ class PostgresCostLedgerWriter:
     ) -> None:
         self._pool = pool
         self._schema = checked_schema(schema)
+        self._queue: queue.Queue[CostLedgerRow | object] = queue.Queue(maxsize=LEDGER_QUEUE_SIZE)
+        self._worker = threading.Thread(target=self._run, daemon=True, name="ledger-writer")
+        self._worker.start()
+
+    # ------------------------------------------------------------------
+    # public interface
+    # ------------------------------------------------------------------
 
     def write(self, row: CostLedgerRow) -> None:
-        """Write one row. Raises only on a value that fails a pre-check."""
+        """Enqueue one row. Raises only on a value that fails a pre-check.
+
+        Pre-checks run here on the caller's thread so a malformed row is
+        refused immediately with no silent loss. The INSERT is deferred to
+        the background worker, so this call returns without waiting for the
+        database.
+        """
         checked_identifier(row.tenant, "tenant")
         checked_identifier(row.alias, "alias")
         checked_identifier(row.provider, "provider")
@@ -234,32 +259,82 @@ class PostgresCostLedgerWriter:
         _checked_trace_id(row.trace_id)
         _checked_price_version(row.price_version)
 
-        with self._pool.connection() as conn:
-            conn.execute(
-                sql.SQL(
-                    "INSERT INTO {} ("
-                    "ts, tenant, alias, provider, model, region, input_tokens, "
-                    "output_tokens, cached, cost_usd, price_version, estimated, "
-                    "session, trace_id) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-                ).format(sql.Identifier(self._schema, COST_LEDGER)),
-                (
-                    row.ts,
-                    row.tenant,
-                    row.alias,
-                    row.provider,
-                    row.model,
-                    row.region,
-                    row.input_tokens,
-                    row.output_tokens,
-                    row.cached,
-                    row.cost_usd,
-                    row.price_version,
-                    row.estimated,
-                    row.session,
-                    row.trace_id,
-                ),
-            )
+        try:
+            self._queue.put_nowait(row)
+        except queue.Full:
+            record_ledger_write(result="dropped")
+
+    def flush(self) -> None:
+        """Block until every row currently in the queue has been processed.
+
+        Sends a sentinel and waits for it to come back through the worker,
+        so every row ahead of it is either inserted or counted as an error
+        before this returns. Useful in tests and in shutdown sequences where
+        the caller needs a clean queue before reading back from the database.
+        """
+        done = threading.Event()
+        self._queue.put(done)
+        done.wait()
+
+    def close(self) -> None:
+        """Drain the queue then stop the worker thread.
+
+        Sends the module-level sentinel and joins the thread, which means this
+        call blocks until every pending row has been attempted. Safe to call
+        more than once; the second call joins a thread that is already done.
+        """
+        self._queue.put(_SENTINEL)
+        self._worker.join()
+
+    # ------------------------------------------------------------------
+    # background worker
+    # ------------------------------------------------------------------
+
+    def _run(self) -> None:
+        """Drain the queue until the sentinel arrives."""
+        while True:
+            item = self._queue.get()
+            if item is _SENTINEL:
+                break
+            if isinstance(item, threading.Event):
+                # flush() barrier: signal the waiter and keep running.
+                item.set()
+                continue
+            self._insert(item)
+
+    def _insert(self, row: CostLedgerRow) -> None:
+        """Insert one row and count the outcome. Never raises."""
+        try:
+            with self._pool.connection() as conn:
+                conn.execute(
+                    sql.SQL(
+                        "INSERT INTO {} ("
+                        "ts, tenant, alias, provider, model, region, input_tokens, "
+                        "output_tokens, cached, cost_usd, price_version, estimated, "
+                        "session, trace_id) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                    ).format(sql.Identifier(self._schema, COST_LEDGER)),
+                    (
+                        row.ts,
+                        row.tenant,
+                        row.alias,
+                        row.provider,
+                        row.model,
+                        row.region,
+                        row.input_tokens,
+                        row.output_tokens,
+                        row.cached,
+                        row.cost_usd,
+                        row.price_version,
+                        row.estimated,
+                        row.session,
+                        row.trace_id,
+                    ),
+                )
+            record_ledger_write(result="ok")
+        except Exception:
+            logger.exception("ledger write failed; row for tenant=%s dropped", row.tenant)
+            record_ledger_write(result="error")
 
 
 def _checked_model(value: str) -> str:

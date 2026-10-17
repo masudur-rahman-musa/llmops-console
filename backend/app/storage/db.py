@@ -75,6 +75,33 @@ MAX_POOL_SIZE: Final[int] = 4
 request, and a pool larger than the worker threads that can be in flight only
 holds idle server-side sessions open. Pinned by `test_the_pool_is_bounded`."""
 
+POOL_WAIT_TIMEOUT: Final[float] = 2.0
+"""Seconds to wait for a free connection before raising.
+
+A saturated pool would otherwise hold a request indefinitely, masking the
+saturation as a slow response. Two seconds is generous for the one short INSERT
+this pool is used for; if a connection is not free in two seconds, the database
+is the problem and the caller should know. Pinned by
+`test_the_pool_wait_timeout_is_exactly_2_seconds`.
+"""
+
+DB_CONNECT_TIMEOUT: Final[float] = 5.0
+"""Seconds to wait for a new TCP connection to PostgreSQL.
+
+Matches the design's adapter connect timeout: an unanswered TCP open is a dead
+host, and five seconds is already generous. Used in `connect_timeout` of the
+psycopg conninfo, not the pool wait.
+"""
+
+STATEMENT_TIMEOUT_MS: Final[int] = 2000
+"""Maximum milliseconds any one statement may run before PostgreSQL cancels it.
+
+Set as `options='-c statement_timeout=2000ms'` in the conninfo so every
+connection from the pool carries it, not just one. Pinned by
+`test_the_statement_timeout_is_two_seconds` and
+`test_a_statement_past_the_timeout_is_cancelled`.
+"""
+
 
 class Migration(NamedTuple):
     """One `.sql` file: its version, which is the file stem, and its text."""
@@ -122,8 +149,32 @@ def _rendered(text: str, schema: str) -> sql.SQL:
 
 
 def build_pool(database_url: str) -> ConnectionPool[Connection[TupleRow]]:
-    """An opened connection pool for the residency log and the ledger plans after it."""
-    return ConnectionPool(database_url, min_size=MIN_POOL_SIZE, max_size=MAX_POOL_SIZE, open=True)
+    """An opened connection pool for the residency log and the cost ledger.
+
+    Three timeouts:
+    - `timeout` (pool wait): 2 s — a connection not free in 2 s means the pool
+      is saturated; the caller gets an error rather than waiting indefinitely.
+    - `connect_timeout` in the conninfo: 5 s — matches the design's adapter connect
+      timeout; an unanswered TCP open is a dead host.
+    - `statement_timeout` in the conninfo: 2000 ms — PostgreSQL cancels any
+      statement that runs longer than 2 seconds, so a stuck query gives up fast.
+
+    Pinned by `test_the_pool_is_bounded`, `test_the_pool_wait_timeout_is_exactly_2_seconds`,
+    `test_the_statement_timeout_is_two_seconds`, and
+    `test_a_statement_past_the_timeout_is_cancelled`.
+    """
+    conninfo = (
+        f"{database_url} "
+        f"connect_timeout={int(DB_CONNECT_TIMEOUT)} "
+        f"options='-c statement_timeout={STATEMENT_TIMEOUT_MS}ms'"
+    )
+    return ConnectionPool(
+        conninfo,
+        min_size=MIN_POOL_SIZE,
+        max_size=MAX_POOL_SIZE,
+        open=True,
+        timeout=POOL_WAIT_TIMEOUT,
+    )
 
 
 def apply_migrations(

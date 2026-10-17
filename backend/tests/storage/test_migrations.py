@@ -31,6 +31,7 @@ from app.storage.db import (
     MAX_SCHEMA_LENGTH,
     MIGRATIONS,
     MIN_POOL_SIZE,
+    POOL_WAIT_TIMEOUT,
     SCHEMA_PATTERN,
     apply_migrations,
     checked_schema,
@@ -122,8 +123,12 @@ def test_the_pool_is_bounded() -> None:
     there is a global, and a gateway scaled to eight replicas holding a pool each is
     what starves the readiness probes - which open their own connection precisely so
     they report on the server rather than on the pool. Asserted exactly, because a
-    range would admit the default this case exists to catch."""
+    range would admit the default this case exists to catch.
+
+    An earlier change also adds `POOL_WAIT_TIMEOUT`: a caller that cannot get a connection
+    in 2.0 seconds gets an error rather than waiting indefinitely."""
     assert (MIN_POOL_SIZE, MAX_POOL_SIZE) == (1, 4)
+    assert POOL_WAIT_TIMEOUT == 2.0
 
 
 def test_a_schema_name_longer_than_postgres_allows_is_refused() -> None:
