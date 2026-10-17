@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 SLO_WINDOW: Final[str] = "30d"
 """The window every SLO row reports, matching the `[30d]` in each budget query; it
-never follows `days` (`test_slos_rows_are_availability_latency_residency_in_order`)."""
+never follows `days`."""
 
 
 def postgres[T](
@@ -80,7 +80,7 @@ def budgets(request: Request, tenant: str | None) -> tuple[Budget, ...]:
 
     Read from neither source: the counter is the budget store the chat route
     debits, so this answers even with Postgres down. An unknown spend (a Redis
-    outage) is `null` rather than zero (`test_budgets_read_the_policy_cap_and_the_store_spend`).
+    outage) is `null` rather than zero.
     """
     store: PolicyStore = request.app.state.policy
     policy = store.policy
@@ -108,12 +108,10 @@ def slos(client: PrometheusClient) -> tuple[Slo, ...]:
     """The three gateway-measured SLO budgets over the fixed `SLO_WINDOW`.
 
     No traffic makes both ratios `0 / 0`, which Prometheus answers `NaN` and the
-    client drops, so an empty result is `null` rather than a full budget
-    (`test_nan_gives_null_observed_and_budget`). An overspent budget stays negative
-    (`test_an_overspent_budget_is_negative_and_unclamped`). A failure raises
+    client drops, so an empty result is `null` rather than a full budget. An overspent budget stays
+    negative. A failure raises
     `PrometheusError` into the page's one `_prometheus` read, which empties `slos`
-    with everything else
-    (`test_a_failing_budget_query_is_200_with_empty_slos_prometheus_error_and_an_error_log`).
+    with everything else.
     """
     bad = first(client.instant_query(AVAILABILITY_BUDGET_QUERY))
     under = first(client.instant_query(LATENCY_BUDGET_QUERY))

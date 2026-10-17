@@ -3,41 +3,36 @@ r"""Incidents and releases: the two console records a human and CI write by hand
 Every other table in `storage/` is filled by a code path. These two are filled
 through `/admin/incidents` and `/admin/releases`, so the values arriving here are
 typed by an operator or pasted by a CI job rather than produced by the gateway,
-and a project rule applies to all seven of them: each is pre-checked against
+and all seven are held to one rule: each is pre-checked against
 this module's own constant BEFORE any statement runs, and each refusal names its
 field in `IdentifierInvalid.param`, which is what the route copies into the
 `param` a 422 body carries. The inclusive boundaries are
-tests/storage/test_console_events.py's seven tables.
+pinned in the storage tests.
 
-**An incident is born open** (the design). `resolved_at` is the one nullable
+**An incident is born open**. `resolved_at` is the one nullable
 timestamp and a NULL there IS "open", so there is no status column that can
 disagree with it. `write_incident` takes a row whose `resolved_at` is whatever
 the caller built; the ROUTE is what never offers the field, and
-`resolve_incident` is the only way one gets set
-(`test_the_incident_post_returns_a_thirty_two_hex_id_and_never_sets_resolved_at`,
-`test_an_open_incident_stores_a_null_resolved_at_and_the_patch_sets_it`).
+`resolve_incident` is the only way one gets set.
 
-**Resolving is not idempotent** (decision E). `resolve_incident` raises
+**Resolving is not idempotent**. `resolve_incident` raises
 `IdentifierInvalid` for an id no row carries and for an incident already
 resolved, with a DIFFERENT message for each, because a mistyped id that answers
 200 tells an operator an incident is closed while it is still open, and a second
 resolve that succeeds overwrites the one timestamp a postmortem's duration is
 computed from. The two messages are the only thing telling the failures apart:
 both are `VALIDATION` naming `id`, since
-`ErrorCode.VALIDATION` is fixed at 422 and `tests/gateway/test_error_contract.py`
-pins one class and one status per code. Pinned by
-`test_resolving_an_unknown_id_and_an_already_resolved_incident`.
+`ErrorCode.VALIDATION` is fixed at 422 and the error contract tests
+pin one class and one status per code.
 
 **`eval_run_exists` is a pre-check, not a caught error.** `releases.eval_run_id`
 is a foreign key, so an id no run carries would surface as an integrity error the
 route could only render as a 500. The route asks this question first; the writer
 that can answer it is the Postgres one, and the in-memory writer answers True for
-everything because it has no `eval_runs` to consult - the trade decision C makes,
-so a laptop with no `database_url` keeps every admin route answering
-(`test_the_in_memory_writer_answers_that_every_eval_run_exists`,
-`test_a_release_naming_an_unstored_run_is_422_validation_naming_eval_run_id`).
+everything because it has no `eval_runs` to consult - the trade this makes,
+so a laptop with no `database_url` keeps every admin route answering.
 The FK stays on the table regardless, for the writers that never come through
-this module (`test_a_release_naming_an_unstored_run_is_refused_by_the_foreign_key`).
+this module.
 
 The writer shape - Protocol, in-memory, Postgres over the app's one pool - is the
 one `cost_ledger.py` fixes, and `_checked_length` below is this module's version
@@ -61,8 +56,8 @@ from app.core.validation import IdentifierInvalid
 from app.storage.db import DEFAULT_SCHEMA, checked_schema
 
 INCIDENTS: Final[str] = "incidents"
-"""One of the two tables `migrations/004_console_events.sql` creates. Pinned
-against the migration by `test_the_migration_creates_both_tables_in_the_schema`."""
+"""One of the two tables `migrations/004_console_events.sql` creates. A test checks
+the names against the migration."""
 
 RELEASES: Final[str] = "releases"
 """The other one, pinned by the same case."""
@@ -75,47 +70,41 @@ imported because `storage/eval_store.py` is the layer ABOVE this one."""
 SEVERITIES: Final[frozenset[str]] = frozenset({"sev1", "sev2", "sev3"})
 """The closed severity vocabulary, spelled in lowercase exactly as the table's
 `incidents_severity_check` spells it. Compared as a set membership rather than
-case-insensitively, so `SEV1` is refused here as it would be there
-(`test_the_severity_table`)."""
+case-insensitively, so `SEV1` is refused here as it would be there."""
 
 RELEASE_STATUSES: Final[frozenset[str]] = frozenset({"deployed", "rolled_back", "blocked"})
-"""The closed release vocabulary, matching `releases_status_check`
-(`test_the_status_table`)."""
+"""The closed release vocabulary, matching `releases_status_check`."""
 
 MAX_TITLE_LENGTH: Final[int] = 200
 """A headline an operator types, capped so an unbounded `text` column cannot take
-whatever a paste carries. Pinned inclusively by
-`test_the_title_length_boundary_is_inclusive`."""
+whatever a paste carries. The boundary is
+pinned inclusively in the tests."""
 
 MAX_SUMMARY_LENGTH: Final[int] = 4000
 """What happened, in a paragraph or several. Twenty times the title's cap and a
-separate constant, because one shared checker would refuse a legal summary
-(`test_the_summary_length_boundary_is_inclusive`)."""
+separate constant, because one shared checker would refuse a legal summary."""
 
 MAX_URL_LENGTH: Final[int] = 500
-"""The cap on `postmortem_url` and `pr_url` alike
-(`test_the_url_length_boundary_is_inclusive`)."""
+"""The cap on `postmortem_url` and `pr_url` alike."""
 
 URL_SCHEME: Final[str] = "https://"
 """The only scheme either URL field may carry. The console renders both as links
 an operator clicks, so `file://` and a plain `http://` are refused rather than
 normalised; the check is a prefix test against this literal, so an uppercased
-`HTTPS://` is refused too (`test_the_url_length_boundary_is_inclusive`)."""
+`HTTPS://` is refused too."""
 
 MIN_GIT_SHA_LENGTH: Final[int] = 7
 """The shortest abbreviated sha a release may name. Six is ambiguous in a
 repository of this size, and git's own default abbreviation is seven."""
 
 MAX_GIT_SHA_LENGTH: Final[int] = 40
-"""A full sha-1. Both bounds pinned inclusively by
-`test_the_git_sha_boundaries_are_inclusive`."""
+"""A full sha-1. Both bounds are pinned inclusively in the tests."""
 
 INCIDENT_ID_LENGTH: Final[int] = 32
-"""A `uuid4` hex: 16 bytes, 32 characters. Pinned by
-`test_the_incident_id_is_exactly_thirty_two_hex`."""
+"""A `uuid4` hex: 16 bytes, 32 characters."""
 
 GIT_SHA_PATTERN: Final[re.Pattern[str]] = re.compile(r"[0-9a-f]+")
-"""Lowercase hex, matched with `re.fullmatch`. The length rule
+"""Lowercase hex, matched with `re.fullmatch` (so a trailing newline is refused). The length rule
 is the constants above rather than the pattern, because the field has two bounds
 rather than one; the pattern is what refuses an uppercase sha and a trailing
 newline, which a length check at the same total length cannot see."""
@@ -135,18 +124,17 @@ EVAL_RUN_ID_FIELD: Final[str] = "eval_run_id"
 
 UNKNOWN_INCIDENT_MESSAGE: Final[str] = f"{INCIDENT_ID_FIELD}: no incident carries this id"
 """One of the two `PATCH` refusals. Both are 422 `VALIDATION` naming `id`
-(deviation 1), so the MESSAGE is the only thing telling them apart on the wire;
-`test_patching_a_resolved_incident_is_422_validation_with_its_own_message`
-asserts the two are different rather than asserting either text."""
+so the MESSAGE is the only thing telling them apart on the wire;
+a test asserts the two are different rather than asserting either text."""
 
 ALREADY_RESOLVED_MESSAGE: Final[str] = f"{INCIDENT_ID_FIELD}: this incident is already resolved"
-"""The other one. Resolving twice is a mistake rather than a no-op (decision E):
+"""The other one. Resolving twice is a mistake rather than a no-op:
 the second call would otherwise overwrite the timestamp a postmortem's duration
 is computed from."""
 
 
 class IncidentRow(BaseModel):
-    """One incident, as it is written: the design's columns and nothing else.
+    """One incident, as it is written: the spec's columns and nothing else.
 
     Frozen, for the reason `CostLedgerRow` is: the same object is handed to a
     writer and read back from one, and `resolve_incident` therefore REPLACES a
@@ -169,9 +157,9 @@ class IncidentRow(BaseModel):
 
 
 class ReleaseRow(BaseModel):
-    """One deploy of one sha (the design).
+    """One deploy of one sha.
 
-    Not one sha: `(git_sha, deployed_at)` is the key (decision B), so a rollback
+    Not one sha: `(git_sha, deployed_at)` is the key, so a rollback
     that re-deploys an earlier sha is a second row rather than an overwrite of the
     first deploy's time.
 
@@ -222,13 +210,13 @@ class ConsoleEventWriter(Protocol):
 class InMemoryConsoleEventWriter:
     """Both records in this process's memory, in the order written.
 
-    What a gateway with no `OPSCONSOLE_DATABASE_URL` builds (decision C), the same
+    What a gateway with no `OPSCONSOLE_DATABASE_URL` builds, the same
     trade `InMemoryCostLedgerWriter` and `InMemoryResidencyLogWriter` make. It is
     not a store: a restart loses every incident recorded on a laptop, which is the
     accepted cost of keeping the admin routes answering without Postgres.
 
     Two lists rather than one, kept apart so the timeline cannot render a deploy
-    as an outage (`test_the_in_memory_writer_files_and_reads_back_both_rows`).
+    as an outage.
     Incidents are keyed by nothing: `resolve_incident` scans, because the list is
     a session's worth of rows and an index here would be state to keep correct for
     no gain.
@@ -282,7 +270,7 @@ class InMemoryConsoleEventWriter:
     def eval_run_exists(self, eval_run_id: str) -> bool:
         """True for any well-formed id: this writer has no `eval_runs` to consult.
 
-        Deliberate rather than accidental (decision C). Answering False would turn
+        Deliberate rather than accidental. Answering False would turn
         every `POST /admin/releases` naming a run into a 422 on exactly the
         configuration this writer exists to serve. The shape is still checked, so
         a malformed id is refused here as it would be against Postgres.
@@ -304,7 +292,7 @@ class PostgresConsoleEventWriter:
     connection would let a second PATCH land between them and make "already
     resolved" a race. The UPDATE matching no row is what distinguishes the two
     failures, and the SELECT is what tells "no such incident" from "this one was
-    already closed" (`test_an_open_incident_stores_a_null_resolved_at_and_the_patch_sets_it`).
+    already closed".
     """
 
     def __init__(
@@ -458,7 +446,7 @@ def checked_git_sha(value: str) -> str:
 def checked_incident_id(value: str) -> str:
     """An incident id, exactly `INCIDENT_ID_LENGTH` lowercase hex characters.
 
-    Decision A makes the id server-generated, so the `PATCH` path parameter is the
+    The id is server-generated, so the `PATCH` path parameter is the
     only place a client string takes this shape and the only place this runs on
     input someone typed.
     """

@@ -3,13 +3,13 @@
 Two tiers, four files, and the same division in each: a PURE half saying what
 counts as a repeat, and a STORE half saying where the answer waits.
 
-The exact tier (#22) is `key.py` - the sha256 over the design's seven fields and
+The exact tier is `key.py` - the sha256 over the request's keyed fields and
 the eligibility predicate, with no store and no HTTP surface anywhere near it -
 over `store.py`, a `ResponseCache` Protocol with an in-process implementation
 and a Redis one, picked by `OPSCONSOLE_REDIS_URL` in `create_app`, holding the
 NEUTRAL `ChatResponse` for twenty-four hours.
 
-The semantic tier (#23) is `probe.py` - what is embedded, the two hashes the query
+The semantic tier is `probe.py` - what is embedded, the two hashes the query
 filters on, the fixed 0.97 threshold and the eligibility predicate's four refusals, the
 per-alias switch among them - over `vectors.py`, a `SemanticCache` Protocol with an
 in-process implementation and a Qdrant one, holding the same neutral `ChatResponse` in

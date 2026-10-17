@@ -25,15 +25,14 @@ from typing import ClassVar
 from app.core.errors import ErrorCode, GatewayError
 
 MAX_IDENTIFIER_LENGTH = 64
-"""Longest tenant or alias a request may name. Pinned by `test_max_identifier_length_is_pinned`."""
+"""Longest tenant or alias a request may name."""
 
 IDENTIFIER_PATTERN = re.compile(r"[a-z0-9]+(?:[-_][a-z0-9]+)*")
 """Lowercase slug, matched with `re.fullmatch`.
 
 `.match` with `^...$` would accept a trailing newline, and these strings become
-dictionary keys, metric labels and cache key parts. The rejection table in
-`test_identifier_rejection_table` covers a trailing newline, a trailing CRLF and
-a trailing space.
+dictionary keys, metric labels and cache key parts. The tests cover a trailing newline, a trailing
+CRLF and a trailing space.
 """
 
 
@@ -60,15 +59,11 @@ def checked_identifier(value: str, field: str, *, param: str | None = None) -> s
     """Validate one client-supplied identifier before it is used as a key.
 
     `re.fullmatch`, so a trailing newline is refused. The
-    inclusive boundary at `MAX_IDENTIFIER_LENGTH` and the rejection table are
-    pinned by `test_identifier_at_the_maximum_length_is_accepted` and
-    `test_identifier_rejection_table`.
+    inclusive boundary at `MAX_IDENTIFIER_LENGTH` is allowed.
 
     `param` names the request field a rejection points at, for the stores and
     headers that answer a caller with a 422 naming the bad input; it defaults to
-    `None` for the raisers that do not
-    (`test_checked_identifier_carries_the_param_when_given`,
-    `test_checked_identifier_param_defaults_to_none`).
+    `None` for the raisers that do not.
     """
     if len(value) > MAX_IDENTIFIER_LENGTH:
         raise IdentifierInvalid(

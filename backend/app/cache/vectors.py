@@ -3,8 +3,7 @@
 The shape mirrors `cache/store.py` on purpose - a Protocol, an in-process
 implementation and a real one, picked in `create_app` by `OPSCONSOLE_QDRANT_URL` - so
 someone who has read the exact tier can read this one. Three things about it
-follow from what a VECTOR cache is, and each is what its tests are arranged
-around.
+follow from what a VECTOR cache is.
 
 **A neighbour is comparable before it is near.** Every query carries six
 payload filters beside the vector - the alias, the system hash, the tools
@@ -12,33 +11,25 @@ hash, the provider, the region and the data class - so a search is "the nearest
 neighbour among the entries that are exactly comparable" and never "the nearest
 neighbour, hopefully comparable". A query short one filter serves another
 conversation's answer, and the nearest neighbour will happily be one, which is
-why each field has its own miss case at cosine 1.0
-(`test_a_query_differing_in_one_filter_field_misses_at_cosine_one`, in
-tests/cache/test_vectors.py and again against a real Qdrant in
-tests/cache/test_qdrant_cache.py) rather than a sample.
+why each field has its own miss case at cosine 1.0 rather than a sample.
 
-**Near enough is `>= SEMANTIC_THRESHOLD`, inclusive**
-(`test_a_neighbour_at_exactly_the_threshold_is_a_hit`,
-`test_a_neighbour_one_hundredth_under_the_threshold_is_a_miss`). The comparison
+**Near enough is `>= SEMANTIC_THRESHOLD`, inclusive**. The comparison
 is made here in Python as well as sent to Qdrant as a `score_threshold`, so the
 published number is the shipped one whichever way the server rounds its own
 comparison.
 
 **A tenant is a COLLECTION, not a filter.** `cache_{tenant}`, created on the
-first write with the size of the vector being written (plan decision F: swapping
+first write with the size of the vector being written (swapping
 the model behind the `embed` alias is then a `routing.yaml` change and not a code
 change). One tenant reading another's answer is the failure this tier must not
 have, and a separate collection is the one arrangement a dropped `must` clause
-cannot undo (`test_one_tenant_cannot_read_another_tenants_live_entry`).
+cannot undo.
 
-Nothing here raises for a store reason (plan decision G), exactly as
+Nothing here raises for a store reason, exactly as
 `cache/store.py` does not: an unreachable Qdrant, a non-2xx answer and a stored
 payload this build cannot read are each a MISS, and a failed write is swallowed
-after the caller has already been served
-(`test_a_search_against_an_unreachable_qdrant_is_a_miss`,
-`test_a_non_2xx_answer_to_a_search_is_a_miss`,
-`test_a_stored_payload_this_build_cannot_read_is_a_miss`, and their `put` twins).
-A malformed tenant is the one exception and is not a store failure: it raises
+after the caller has already been served. A malformed tenant is the one
+exception and is not a store failure: it raises
 `IdentifierInvalid` before any request is sent, because Qdrant
 is an unsized store and there is no backstop behind that check.
 
@@ -71,8 +62,7 @@ SEMANTIC_COLLECTION_PREFIX: Final[str] = "cache_"
 
 A running gateway's entries are addressed by this string, so renaming it orphans
 every collection already created and turns a warm tier into a day of misses
-nobody sees as a failure; pinned by
-`test_the_collection_prefix_is_the_published_one`."""
+nobody sees as a failure."""
 
 _QDRANT_DISTANCE: Final[str] = "Cosine"
 """The distance every collection this class creates is configured with.
@@ -80,26 +70,21 @@ _QDRANT_DISTANCE: Final[str] = "Cosine"
 Qdrant's own spelling, and not a choice: `SEMANTIC_THRESHOLD` is a COSINE
 similarity, so a collection created with `Dot` or `Euclid` would return scores on
 a different scale and the threshold would silently mean something else while
-every round trip still passed. Pinned against a real server by
-`test_the_collection_is_created_on_the_first_write_with_the_written_vector_size`."""
+every round trip still passed."""
 
 _SEARCH_LIMIT: Final[int] = 1
 """How many neighbours a search asks for.
 
 One, because a search wants the nearest comparable entry and nothing else does
 anything with the rest; asking for more would only move the choice of "nearest"
-from the server into this module. Pinned by
-`test_a_search_asks_for_exactly_one_neighbour`."""
+from the server into this module."""
 
 _ANSWER_FIELD: Final[str] = "answer"
 """The payload key a stored `ChatResponse` travels under, as JSON.
 
 Named rather than repeated, because the write and the read have to agree on it or
 every entry is written and then found unreadable - a tier that stores everything
-and serves nothing, with no failure anywhere to see. The read side is pinned by
-`test_a_stored_payload_this_build_cannot_read_is_a_miss`'s "a payload written by
-a build that had no answer field" row and the pair is closed by
-`test_a_stored_answer_round_trips_through_qdrant`."""
+and serves nothing, with no failure anywhere to see."""
 
 
 class SemanticCache(Protocol):
@@ -116,7 +101,7 @@ class SemanticCache(Protocol):
     The tenant still has to be well formed - a malformed one raises
     `IdentifierInvalid` BEFORE any effect. That is not a store
     failure: it is a programming error at the call site, and the route never
-    reaches it with anything but the tenant `gateway/context.py` authenticated.
+    reaches it with anything but the tenant `app/core/context.py` authenticated.
 
     `alias`, `system_hash`, `tools_hash`, `provider`, `region` and `data_class`
     are keyword-only on both methods, for the reason the exact tier's
@@ -161,14 +146,13 @@ class InProcessSemanticCache:
     """A `SemanticCache` holding every vector in one process's memory.
 
     What a bare local run and the suite get when no Qdrant URL is configured
-    (plan decision D, the same arrangement 13a decision C chose for the exact
-    tier), so neither needs a backing service to exercise the cosine rule.
+    (the same arrangement the exact tier uses), so neither needs a backing service
+    to exercise the cosine rule.
 
     Two replicas do not share it. Entries expire after `RESPONSE_CACHE_TTL_SECONDS`
     (the same boundary the exact tier uses) checked on every read with the injected
     clock, so neither a sweeper nor a background task is needed.
-    Which implementation a deployment gets is decided by `create_app`
-    (`test_create_app_keeps_the_in_process_semantic_cache_without_a_qdrant_url`).
+    Which implementation a deployment gets is decided by `create_app`.
 
     The arithmetic is deliberately plain Python and not a library: the whole
     contents of one tenant's entries are scanned per search, which is the wrong
@@ -178,7 +162,7 @@ class InProcessSemanticCache:
     `clock` defaults to `time.monotonic` rather than `time.time`: a wall clock
     stepped backwards by NTP would resurrect an expired entry, and monotonic time
     cannot be stepped. The default exists so `create_app` can build one with no
-    arguments (`test_the_in_process_clock_parameter_has_a_default`).
+    arguments.
     """
 
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
@@ -205,13 +189,10 @@ class InProcessSemanticCache:
         `>= SEMANTIC_THRESHOLD`, inclusive. The best score is tracked rather than
         the first one over the line, because "the first entry over the threshold"
         depends on insertion order and would serve a worse answer than the one
-        held - the pair of orders in
-        `test_the_nearest_of_two_eligible_neighbours_is_the_one_returned`.
+        held.
 
         `>` and not `>=` on the TTL check: the entry is still readable at exactly
-        `RESPONSE_CACHE_TTL_SECONDS` and gone the second after
-        (`test_an_entry_is_readable_up_to_and_including_the_ttl`,
-        `test_an_entry_is_a_miss_one_second_past_the_ttl`).
+        `RESPONSE_CACHE_TTL_SECONDS` and gone the second after.
         """
         now = self._clock()
         best: tuple[float, ChatResponse] | None = None
@@ -284,28 +265,25 @@ class QdrantSemanticCache:
 
     What the gateway ships with once a Qdrant URL is configured. The client
     carries the base URL, so this class sends relative paths and holds no
-    endpoint of its own; it is the same `httpx` the readiness probe an earlier change
-    shipped already talks to Qdrant with, rather than a new dependency (plan
-    decision A, a project rule).
+    endpoint of its own; it is the same `httpx` the readiness probe
+    already talks to Qdrant with, rather than a new dependency.
 
     One tenant is one collection, created LAZILY on the first write with the size
-    of the vector being written and cosine distance (plan decision F). A search
+    of the vector being written and cosine distance. A search
     creates nothing: every tenant's first semantic request arrives before there
     is a collection to query, so the 404 that comes back is the hot path and not
-    an edge case (`test_a_search_before_any_write_creates_no_collection`,
-    `test_a_search_before_any_write_is_a_miss`).
+    an edge case.
 
     `collection_prefix` exists for the suite: per-test isolation is a namespace
-    rather than a sweep that would delete collections this suite does not own. The default is the shipped one, exercised by
-    `test_a_tenants_collection_is_the_prefix_and_the_tenant`.
+    rather than a sweep that would delete collections this suite does not own.
+    The default is the shipped one.
 
     `clock` defaults to `time.time` (wall clock) rather than `time.monotonic`:
     the `stored_at` stamp is written by one replica and read back by any other,
     so it has to survive process restarts and cross a network boundary.
     Monotonic time is per-process and would make every entry written by one
     replica expired on the first read by a second. The default exists so
-    `create_app` can build one with a client and no clock
-    (`test_the_qdrant_clock_parameter_has_a_default`).
+    `create_app` can build one with a client and no clock.
     """
 
     def __init__(
@@ -323,8 +301,7 @@ class QdrantSemanticCache:
         """The collection one tenant's entries live in.
 
         Public because an operator's tooling, the lazy-creation test and every
-        later migration all address entries by this name
-        (`test_a_tenants_collection_is_the_prefix_and_the_tenant`).
+        later migration all address entries by this name.
         """
         return f"{self._collection_prefix}{tenant}"
 
@@ -438,8 +415,7 @@ class QdrantSemanticCache:
         """Create this tenant's collection if Qdrant does not already hold it.
 
         The existence check is what keeps a second write from recreating the
-        collection and dropping everything in it
-        (`test_a_second_write_to_the_same_tenant_creates_nothing`). A create that
+        collection and dropping everything in it. A create that
         loses a race with another replica's create answers a non-2xx, which is
         swallowed like every other store failure: the upsert that follows lands
         in the collection the other replica made.
@@ -478,8 +454,7 @@ def _readable_body(answered: httpx.Response) -> dict[str, object] | None:
     `is_success` rather than `raise_for_status()`: a 404 is what Qdrant returns
     for a tenant that has never had an answer cached, so the FIRST semantic
     request every tenant makes takes this path and an exception there would be an
-    incident report per new tenant
-    (`test_a_non_2xx_answer_to_a_search_is_a_miss`, whose 404 row is that one).
+    incident report per new tenant.
     """
     if not answered.is_success:
         return None
@@ -495,8 +470,7 @@ def _answer_of(hit: object) -> ChatResponse | None:
 
     Every shape an older or a foreign writer can leave behind is absent rather
     than an exception: no payload at all, a payload with no answer field, an
-    answer that is not JSON, and one this build's model cannot validate
-    (`test_a_stored_payload_this_build_cannot_read_is_a_miss`, four rows). An
+    answer that is not JSON, and one this build's model cannot validate. An
     entry this build cannot use is a miss, not a 500.
     """
     if not isinstance(hit, dict):
@@ -518,10 +492,8 @@ def _cosine(left: Sequence[float], right: Sequence[float]) -> float:
 
     Two pairs have no angle between them and are scored as far apart rather than
     raising: vectors of different lengths, which is what a query built by a
-    different embedding model than the stored entry is
-    (`test_vectors_of_different_lengths_are_not_comparable`), and a zero vector,
-    whose norm makes the quotient undefined
-    (`test_a_zero_vector_is_never_a_hit`). Qdrant refuses both at the collection
+    different embedding model than the stored entry is, and a zero vector,
+    whose norm makes the quotient undefined. Qdrant refuses both at the collection
     boundary; this implementation has no schema, so it refuses them here.
     """
     if len(left) != len(right):
@@ -538,10 +510,9 @@ def _checked_tenant(tenant: str) -> None:
     """Refuse a tenant that may not shape a collection name, before any request is sent.
 
     The gateway's own identifier rules, imported rather than restated, so the
-    name this cache accepts and the name `gateway/context.py` authenticated can
+    name this cache accepts and the name `app/core/context.py` authenticated can
     never disagree. Inclusive at the cap: exactly `MAX_IDENTIFIER_LENGTH`
-    characters is accepted (`test_a_tenant_at_the_length_cap_is_accepted`,
-    `test_a_tenant_one_character_over_the_cap_is_rejected`). A collection name is
+    characters is accepted. A collection name is
     a URL segment, so an unchecked tenant would address another collection or
     another endpoint entirely, and Qdrant has no backstop behind this check.
     """

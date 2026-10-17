@@ -6,7 +6,7 @@ import type { Slo } from "@/features/reliability/guards";
 
 export const dynamic = "force-dynamic";
 
-/** The objective as the project notes states it. */
+/** The objective as the reliability doc states it. */
 function objective(slo: Slo): string {
   if (slo.name === "availability") {
     return percent(slo.objective);

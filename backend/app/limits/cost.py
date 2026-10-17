@@ -50,20 +50,17 @@ UNPRICED_VERSION = "unpriced"
 """The price version a request gets when the table does not price its key.
 
 A literal string rather than an empty version or a `None`, so the rows are
-findable with one equality in SQL. Pinned exactly by
-`test_an_unpriced_key_costs_zero_and_does_not_raise`."""
+findable with one equality in SQL."""
 
 PRICE_UNIT_TOKENS = Decimal(1_000_000)
 """Prices are published per 1,000,000 tokens, so that is what the table holds and
-this is the divisor. Pinned exactly by `test_input_and_output_are_priced_per_1m`."""
+this is the divisor."""
 
 COST_QUANTUM = Decimal("0.000001")
-"""Six decimal places, `ROUND_HALF_UP`. Pinned exactly, as a string, by
-`test_the_cost_is_quantized_to_exactly_six_decimal_places`."""
+"""Six decimal places, `ROUND_HALF_UP`."""
 
 CHARS_PER_ESTIMATED_TOKEN = 4
-"""The estimator's whole model: four characters to a token, both directions.
-Pinned exactly by `test_absent_usage_is_estimated_from_characters`."""
+"""The estimator's whole model: four characters to a token, both directions."""
 
 
 class Cost(BaseModel):

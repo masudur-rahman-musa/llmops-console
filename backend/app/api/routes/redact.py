@@ -11,8 +11,7 @@ from app.schemas.redact import RedactMessage, RedactRequest, RedactResponse
 from app.services.redaction_flow import REDACT_SPAN, filed_map_id, redact_batch, tenant_directory
 
 REDACT = "/v1/redact"
-"""The published route path. Pinned against the mounted route by
-`test_the_route_path_is_the_published_one`."""
+"""The published route path."""
 
 
 router = APIRouter()
@@ -31,11 +30,10 @@ def create_redaction(
     The tenant is the AUTHENTICATED one from `context`, never the `X-Tenant`
     header on its own: the map holds raw personal data, so filing it under a name
     the client merely claimed would be the store's one unacceptable failure. The
-    header is checked against the key before this runs
-    (`test_a_tenant_that_does_not_match_the_key_is_403`).
+    header is checked against the key before this runs.
 
     The class is the body's when it carries one and `X-Data-Class` otherwise
-    (decision E), and the answer echoes whichever applied. It is a label on this
+    and the answer echoes whichever applied. It is a label on this
     call rather than a control: what the class decides is the INLINE path, and
     this route redacts either way.
 

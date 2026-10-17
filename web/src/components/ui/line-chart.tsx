@@ -9,7 +9,7 @@ function scale(value: number, min: number, max: number, from: number, to: number
 }
 
 /**
- * A server-rendered line chart: no client script, no library (decision B).
+ * A server-rendered line chart: no client script, no library.
  * Non-finite points are dropped first; nothing left renders `No data.`. Each
  * marker is the only `<line>` it draws. Pinned by tests/chart.test.tsx.
  */

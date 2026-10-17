@@ -2,7 +2,7 @@
 
 Redaction is only half a control. `redact` turns values into `<KIND_N>`
 placeholders and hands back the map that inverts them; something has to hold that
-map for the hour in which a caller may want its text back (#20, an earlier change). This
+map for the hour in which a caller may want its text back. This
 module is that seam and nothing else - it does not redact, and it never looks
 inside a mapping it is given.
 
@@ -10,14 +10,11 @@ Two things are deliberate here rather than incidental.
 
 The key is `(tenant, map_id)`, not the id alone. A map holds the raw personal
 data a request carried, so a tenant reading another tenant's map is the one
-failure this store must not have; pinned by
-`test_one_tenant_cannot_read_another_tenants_map`, which reads with an id that is
-genuinely valid for the other tenant so "unknown id" cannot be what makes it
-pass.
+failure this store must not have.
 
 The clock is injected. The TTL boundary is a criterion with an exact number on
-it, and a test that pinned it by sleeping for an hour is not a test - `FakeClock`
-in `tests/redaction/test_store.py` moves time by hand, and the pair at
+it, and a test that pinned it by sleeping for an hour is not a test - a fake clock
+moves time by hand, and the pair at
 `REDACTION_MAP_TTL_SECONDS` and one second past it is what pins `>` where `>=`
 would be wrong.
 
@@ -47,9 +44,7 @@ from app.redaction.errors import RedactionMapStoreUnavailable
 REDACTION_MAP_TTL_SECONDS: Final[int] = 3600
 """How long a placeholder map stays readable, in seconds (the design's one hour).
 
-Pinned exactly by `test_the_ttl_is_exactly_one_hour` and bracketed by
-`test_a_map_is_readable_up_to_and_including_the_ttl` and
-`test_a_map_is_gone_past_the_ttl`. The boundary is inclusive: a map is still
+ The boundary is inclusive: a map is still
 there at exactly this many seconds and gone one second later."""
 
 REDACTION_MAP_ID_BYTES: Final[int] = 16
@@ -57,18 +52,14 @@ REDACTION_MAP_ID_BYTES: Final[int] = 16
 
 A map id is the only thing standing between a caller and the raw values behind
 someone else's placeholders, so it is drawn from `secrets` and never from a
-counter or a hash of the mapping. Pinned exactly by
-`test_the_id_is_exactly_sixteen_random_bytes`, with the rendered length pinned
-against both this constant and the literal 32 by
-`test_an_id_is_thirty_two_lowercase_hex_characters`."""
+counter or a hash of the mapping."""
 
 
 class RedactionMapStore(Protocol):
     """Put a placeholder map away under a tenant; read it back by id until it expires.
 
     The contract is two methods and one rule: `get` answers `None` for an id this
-    tenant did not write or whose map has expired, and raises for neither
-    (`test_an_unknown_id_answers_absent_rather_than_raising`). A store that raised
+    tenant did not write or whose map has expired, and raises for neither. A store that raised
     would make "expired" and "wrong tenant" distinguishable from the outside,
     which is exactly the difference a caller must not be able to measure.
     """
@@ -89,12 +80,12 @@ class InProcessRedactionMapStore:
     a sweeper, so there is no background task and no lock. That leaves expired
     entries occupying memory until someone asks for them, which is the trade a
     single G0 node can afford and a reason this implementation is not the one
-    that ships past an earlier change.
+    that ships.
 
     `clock` defaults to `time.monotonic` rather than `time.time`: a wall clock
     stepped backwards by NTP would resurrect an expired map, and monotonic time
     cannot be stepped. The default exists so `create_app` can build one with no
-    arguments (`test_the_clock_parameter_has_a_default`).
+    arguments.
     """
 
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
@@ -107,7 +98,7 @@ class InProcessRedactionMapStore:
         The mapping is copied, so a caller that goes on to mutate what it handed
         over cannot change what a later `get` answers. The id is drawn fresh
         every call, so two identical mappings stored at the same instant get
-        different ids (`test_two_maps_never_share_an_id`).
+        different ids.
         """
         map_id = secrets.token_hex(REDACTION_MAP_ID_BYTES)
         self._maps[(tenant, map_id)] = (self._clock(), dict(mapping))
@@ -133,8 +124,7 @@ REDACTION_MAP_KEY_PREFIX: Final[str] = "redaction"
 """The first segment of every Redis key a map is stored under.
 
 A live gateway's maps are addressed by this string, so renaming it orphans every
-map a caller is still holding an id for; pinned by
-`test_the_key_prefix_is_the_published_one`."""
+map a caller is still holding an id for."""
 
 MAP_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"[0-9a-f]{32}")
 r"""What a map id must look like before it is allowed to shape a Redis key.
@@ -144,14 +134,14 @@ r"""What a map id must look like before it is allowed to shape a Redis key.
 before a trailing newline, so `match` would let `<32 hex>\n` through and put a
 caller-controlled line break into a key. The rejection table - 31, 33,
 uppercase, non-hex, a trailing newline, a trailing CRLF, a trailing space, a
-colon and a glob character - is
-`test_get_refuses_a_malformed_map_id_before_touching_redis`."""
+colon and a glob character - is all refused."""
 
 
 class RedisRedactionMapStore:
     """A `RedactionMapStore` keeping maps in Redis, where every replica can read them.
 
-    The implementation the gateway ships with once `OPSCONSOLE_REDIS_URL` is set. It differs from `InProcessRedactionMapStore` in three
+    The implementation the gateway ships with once `OPSCONSOLE_REDIS_URL` is set. It differs from
+    `InProcessRedactionMapStore` in three
     ways that matter.
 
     Expiry is the server's. The key is written by `SET ... EX`, which carries
@@ -159,8 +149,7 @@ class RedisRedactionMapStore:
     Redis whether or not anyone asks for it again and there is no window in
     which a map exists without its expiry. (`SETEX` says the same thing and is
     deprecated in the installed client.) The TTL is read back off the server
-    rather than slept for
-    (`test_the_key_expires_after_exactly_the_published_ttl`). There is no clock
+    rather than slept for. There is no clock
     to inject here, which is why this class takes none.
 
     Both key segments are pre-checked before any command is sent (standing rule
@@ -170,20 +159,14 @@ class RedisRedactionMapStore:
     `IDENTIFIER_PATTERN` and `MAX_IDENTIFIER_LENGTH`, `map_id` against
     `MAP_ID_PATTERN`. A rejected value raises `IdentifierInvalid` and Redis is
     never called at all, which is what the tests assert rather than "no key
-    exists afterwards"
-    (`test_put_refuses_a_malformed_tenant_before_touching_redis`,
-    `test_get_refuses_a_malformed_tenant_before_touching_redis`,
-    `test_get_refuses_a_malformed_map_id_before_touching_redis`).
+    exists afterwards".
 
     Every `redis.RedisError` becomes `RedactionMapStoreUnavailable`, chained. A
     store that is down is an outbound dependency failing, not a missing map, so
-    `get` raises rather than answering `None`
-    (`test_a_get_against_an_unreachable_redis_raises_the_typed_failure`).
+    `get` raises rather than answering `None`.
 
     `key_prefix` exists for the suite: per-test isolation is a namespace rather
-    than a `FLUSHDB` that would delete keys this suite does not own (standing
-    rule 7). The default is the shipped one, exercised by
-    `test_the_default_prefix_is_the_one_the_key_is_written_under`.
+    than a `FLUSHDB` that would delete keys this suite does not own. The default is the shipped one.
 
     Not annotated `redis.Redis[bytes]`: the installed client is not generic at
     runtime, so a parametrised annotation fails `mypy --strict` with `type-arg`.
@@ -197,8 +180,7 @@ class RedisRedactionMapStore:
         """The Redis key one tenant's map is stored under.
 
         Public because it is what a migration, an operator's `SCAN` and the test
-        that reads the key back all depend on
-        (`test_the_key_carries_the_prefix_the_tenant_and_the_id`).
+        that reads the key back all depend on.
         """
         return f"{self._key_prefix}:{tenant}:{map_id}"
 
@@ -207,7 +189,7 @@ class RedisRedactionMapStore:
 
         The id is drawn from `secrets` exactly as the in-process store draws it,
         so two identical mappings stored at the same instant get different ids
-        and neither overwrites the other (`test_two_maps_never_share_an_id`).
+        and neither overwrites the other.
         """
         _checked_tenant(tenant)
         map_id = secrets.token_hex(REDACTION_MAP_ID_BYTES)
@@ -226,8 +208,7 @@ class RedisRedactionMapStore:
 
         `None` covers an id nobody wrote, an id that has expired, and an id that
         is live for a DIFFERENT tenant - the last because the tenant is part of
-        the key, so the read simply misses
-        (`test_one_tenant_cannot_read_another_tenants_live_map`).
+        the key, so the read simply misses.
         """
         _checked_tenant(tenant)
         _checked_map_id(map_id)
@@ -245,10 +226,9 @@ def _checked_tenant(tenant: str) -> None:
     """Refuse a tenant that may not shape a key, before any command is sent.
 
     The gateway's own identifier rules, imported rather than restated, so the
-    name a key store accepts and the name `gateway/context.py` authenticated can
+    name a key store accepts and the name the request context authenticated can
     never disagree. Inclusive at the cap: exactly `MAX_IDENTIFIER_LENGTH`
-    characters is accepted (`test_a_tenant_at_the_length_cap_is_accepted`,
-    `test_a_tenant_one_character_over_the_cap_is_rejected`).
+    characters is accepted.
     """
     checked_identifier(tenant, "tenant", param="tenant")
 

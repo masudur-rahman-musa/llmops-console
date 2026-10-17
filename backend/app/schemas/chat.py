@@ -13,16 +13,14 @@ COMPLETION_OBJECT: Literal["chat.completion"] = "chat.completion"
 
 CHUNK_OBJECT: Literal["chat.completion.chunk"] = "chat.completion.chunk"
 """The same discriminator for a streamed frame. A client reads the answer out of
-`choices[].delta` rather than `choices[].message` when it sees this
-(`test_every_chunk_carries_the_alias_and_one_id`)."""
+`choices[].delta` rather than `choices[].message` when it sees this."""
 
 
 class _Wire(BaseModel):
     """A model on the published API boundary: frozen, and unknown fields rejected.
 
     Rejected rather than ignored: a misspelled `max_token`
-    becomes a 422 naming the field instead of a silently applied default
-    (`test_unknown_body_field_is_422`).
+    becomes a 422 naming the field instead of a silently applied default.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -77,7 +75,7 @@ class WireMessage(_Wire):
     The rules exist because the alternative is letting the provider judge the
     conversation: a tool result with no id, or a tool call hung off a user turn,
     would come back as a provider 400 the caller cannot act on instead of a 422
-    naming what is wrong (`test_incoherent_message_is_422`).
+    naming what is wrong.
     """
 
     role: Literal["system", "user", "assistant", "tool"]
@@ -101,7 +99,6 @@ class WireMessage(_Wire):
             # Empty, not merely absent: Anthropic rejects an empty text block, so
             # `{"role": "user", "content": ""}` would leave as a 502 carrying the
             # provider's refusal of what is plainly the caller's own mistake
-            # (`test_incoherent_message_is_422`, the empty-content rows).
             raise ValueError("content is required unless the turn carries tool_calls")
         return self
 
@@ -112,10 +109,8 @@ class StreamOptions(_Wire):
     The OpenAI SDK sends this field on every streamed request, so refusing it
     outright through `extra="forbid"` would break a client that did nothing
     wrong. `false` is refused instead, with a 422 that says why: usage is
-    returned on every stream (the design) because the ledger prices from it, so
-    honouring `false` would be a promise the gateway does not keep (an earlier change
-    decision D). Both halves are pinned - `test_include_usage_false_is_422` and
-    `test_include_usage_true_is_accepted`.
+    returned on every stream because the ledger prices from it, so
+    honouring `false` would be a promise the gateway does not keep.
     """
 
     include_usage: bool = True
@@ -145,7 +140,7 @@ class ChatCompletionRequest(_Wire):
 
     `model` is an alias, not a provider model id; the resolver checks its shape
     before any lookup, so a malformed one is a 422 rather than a 404 claiming the
-    name does not exist (`test_a_malformed_alias_is_422_not_404`).
+    name does not exist.
     """
 
     model: str
@@ -195,7 +190,7 @@ class CompletionUsage(BaseModel):
     """What the call consumed, carried through from the adapter and never zero-filled.
 
     The ledger prices from these three numbers, so a zero books a real, billed
-    call as free (`test_usage_is_carried_through_unchanged`).
+    call as free.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -223,7 +218,7 @@ class WireToolCallChunk(_Wire):
 
     `index` is what an OpenAI client assembles a multi-call answer by, and it is
     the provider's own position rather than this frame's: hardcoding 0 merges two
-    calls of one answer into one (`test_streamed_tool_call_is_one_whole_delta`).
+    calls of one answer into one.
     """
 
     index: int
@@ -238,8 +233,7 @@ class ChunkDelta(BaseModel):
     Optional because a frame carries exactly one kind of news: the opening role,
     a fragment of text, a completed tool call, or - on the frame that closes the
     answer - nothing at all beside the `finish_reason` above it. `role` rides the
-    first frame only; repeating it is read as a second message
-    (`test_first_chunk_carries_the_assistant_role`).
+    first frame only; repeating it is read as a second message.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -265,8 +259,7 @@ class ChatCompletionChunk(BaseModel):
     `usage` is null on every frame but the last, which carries it with an EMPTY
     `choices`: that is where an OpenAI-compatible client looks for it, and it is
     the number the ledger will price from, so it is carried from the provider and
-    never zero-filled
-    (`test_usage_chunk_is_last_and_carries_the_fixture_numbers_exactly`).
+    never zero-filled.
     """
 
     model_config = ConfigDict(frozen=True)

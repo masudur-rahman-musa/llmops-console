@@ -30,9 +30,8 @@ SSE_MEDIA_TYPE = "text/event-stream"
 DONE_SENTINEL = "[DONE]"
 """The payload of the frame that ends a complete stream, spelled as OpenAI
 publishes it. An SDK reads until it arrives, so its ABSENCE is what reports a
-truncated stream; `test_a_stream_ends_with_done` pins the
-whole final line and `test_a_failure_after_the_first_event_emits_an_error_chunk_and_no_done`
-pins the absence."""
+truncated stream. Tests pin the
+whole final line and its absence after a failure."""
 
 
 SSE_HEADERS: Mapping[str, str] = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
@@ -58,8 +57,7 @@ class StreamPlan:
 Both exist to stop something between the gateway and the client holding the
 frames back and delivering them as one block, which turns a stream into a slow
 non-streaming answer: `Cache-Control` for caches, `X-Accel-Buffering` for nginx
-and the ingress controllers that read it. Pinned by
-`test_headers_on_a_streamed_success`."""
+and the ingress controllers that read it. """
 
 
 def _completion_id() -> str:
@@ -72,7 +70,7 @@ def _frame(payload: str) -> str:
 
     The blank line is not decoration - it is what terminates an event, so a
     client whose stream never carries one hands nothing to its parser and waits
-    until its read timeout. `test_every_frame_ends_with_a_blank_line` asserts the
+    until its read timeout. A test asserts the
     raw bytes of a real response, because the helpers the other cases use split
     on lines and cannot see a separator at all.
     """
@@ -95,25 +93,22 @@ def sse_frames(
     `{"error": {...}}` body every non-streaming failure uses, and the stream then
     ends with no sentinel: the status is already 200 and cannot be changed, so
     the frame says what went wrong and the missing `[DONE]` is what lets a client
-    tell a truncated answer from a finished one (an earlier change decision E,
-    `test_a_failure_after_the_first_event_emits_an_error_chunk_and_no_done`).
+    tell a truncated answer from a finished one.
 
     Only a TYPED failure is rendered, and the limit is deliberate rather than an
     oversight. An untyped one is a bug, and there is nothing safe to say about a
     bug in a frame; it reaches the client as a cut stream with no sentinel, which
-    is the same "truncated" report decision E gives a typed failure, minus the
+    is the same "truncated" report a typed failure gets, minus the
     explanation. Nothing in this gateway turns it into a body: the `Exception`
-    handler registered in `gateway/errors.py` is served by Starlette's
+    handler registered in `app/core/http_errors.py` is served by Starlette's
     `ServerErrorMiddleware`, which re-raises unchanged once a response has
     started, so for a crash inside this generator that handler never runs and the
-    traceback is logged by the ASGI server rather than by us
-    (`test_an_untyped_failure_mid_stream_is_not_rendered_as_a_frame`).
+    traceback is logged by the ASGI server rather than by us.
 
     The provider's connection is released in a `finally` rather than left to the
     garbage collector. A client that navigates away mid-answer leaves this
     generator suspended, and the streamed `httpx` response underneath it stays
-    checked out of the pool until it is closed
-    (`test_closing_the_frame_generator_releases_the_provider_stream`).
+    checked out of the pool until it is closed.
 
     Typed as a `Generator` rather than an `Iterator` because a caller has to be
     able to `close()` it: that is what releases the provider stream when the
@@ -127,13 +122,11 @@ def sse_frames(
     SENT, and only when the stream ended without a `UsageTotal` event - a typed
     failure after the first frame, or a client that went away mid-answer. It runs
     in the `finally` beside the release above, so the abandoned stream reaches it
-    too, and it is what makes an earlier change decision E true: every served request
+    too, and it is what makes this true: every served request
     books a row, and the one nobody reported usage for books an estimated one
-    rather than nothing at all
-    (`test_a_stream_that_fails_after_its_first_frame_books_one_estimated_row`).
+    rather than nothing at all.
     A stream that DID report usage has already booked from `on_usage`, so the
-    flag below is what keeps a completed stream from booking twice
-    (`test_a_stream_with_usage_books_exactly_one_row`).
+    flag below is what keeps a completed stream from booking twice.
 
     The count is of text this generator EMITTED, not of what the provider sent:
     text still held in the rehydrator was never part of an answer anyone
@@ -141,26 +134,21 @@ def sse_frames(
 
     `mapping` is the rehydration the caller asked for, and `None` - the shape a
     request without `X-Gateway-Rehydrate` takes - leaves every frame exactly as
-    it was before an earlier change (`test_a_stream_without_the_header_is_what_it_is_today`).
+    it was before rehydration existed.
     With a mapping, a `TextDelta` goes through a `StreamRehydrator` and becomes
     ZERO or one frame: a fragment that could still be completing a placeholder is
-    held rather than sent as an empty delta (decision D). A `ToolCallDelta`
+    held rather than sent as an empty delta. A `ToolCallDelta`
     carries a COMPLETE call, so its `arguments` need no
-    buffer and are substituted whole
-    (`test_a_streamed_tool_calls_arguments_are_rehydrated`).
+    buffer and are substituted whole.
 
     The held text is flushed before EVERY non-text event, before the error frame
     and before `[DONE]` (decisions E and F), so a `finish_reason` can never
-    overtake the last of the answer and nothing the provider produced is dropped
-    (`test_held_text_is_flushed_before_the_finish_reason`,
-    `test_held_text_is_flushed_before_an_error_frame`,
-    `test_a_trailing_partial_placeholder_is_flushed_before_done`).
+    overtake the last of the answer and nothing the provider produced is dropped.
 
     The wrap runs INSIDE this generator rather than around the iterator it is
-    handed (decision C): the `finally` below closes `events` by name, and closing
+    handed: the `finally` below closes `events` by name, and closing
     a wrapper instead would leave the provider's stream to the garbage collector
-    - which is what `test_closing_the_frame_generator_releases_the_provider_stream`
-    exists to catch.
+    - which a test exists to catch.
     """
     created = int(time.time())
     # An empty map stands in for "no rehydration asked for": both `rehydrate` and
@@ -193,7 +181,7 @@ def sse_frames(
                 emitted = rehydrator.feed(event.text)
                 if not emitted and event.text:
                     # Everything the provider sent is still held: no frame at all
-                    # (decision D). `event.text` guards the other way round - a
+                    # . `event.text` guards the other way round - a
                     # provider delta that was empty to begin with is rendered
                     # exactly as it was before this parameter existed.
                     continue
@@ -255,11 +243,11 @@ def streamed(
     that can only be an error frame inside a 200 - which an SDK reports to its
     caller as a parse failure rather than as the provider outage it was. Pulling
     one event here keeps every pre-stream failure a typed HTTP error the existing
-    handlers render (`test_a_provider_failure_before_the_first_event_is_502_with_no_stream`).
+    handlers render.
 
     A stream that opens and ends without a single event is a provider failure
     too, not a `StopIteration` for the last-resort handler to turn into a 500
-    with no code (`test_a_stream_that_opens_and_yields_nothing_is_502`).
+    with no code.
 
     Returns a `StreamPlan` so the route builds the HTTP response and the
     response type stays out of the service layer (§3.3).

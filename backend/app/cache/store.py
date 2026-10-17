@@ -2,7 +2,7 @@
 
 The shape mirrors `redaction/store.py` on purpose - a Protocol, an in-process
 implementation and a Redis one, picked by `OPSCONSOLE_REDIS_URL` in `create_app`
-(decision C, the same switch an earlier change decision B chose for the map store) - so
+(the same switch the map store uses) - so
 someone who has read that file can read this one. Two things about it are
 deliberately DIFFERENT, and both follow from what a cache is.
 
@@ -11,27 +11,21 @@ raises `RedactionMapStoreUnavailable` when Redis is down, because a caller
 holding a map id asked for something specific and "absent" would be a lie. This
 store has no such duty: nobody asked for the entry, and a cache that cannot
 answer simply has not got one. So every `redis.RedisError` is swallowed, `get`
-answers `None` and `put` returns - pinned by
-`test_a_get_against_an_unreachable_redis_answers_absent` and
-`test_a_put_against_an_unreachable_redis_is_swallowed`, four failure rows each,
-and end to end by `test_a_cache_that_raises_still_serves_the_request`. A
-`ValidationError` off an unreadable stored value is swallowed the same way
-(`test_unreadable_stored_bytes_answer_absent_rather_than_raising`): a value
+answers `None` and `put` returns. A
+`ValidationError` off an unreadable stored value is swallowed the same way: a value
 written by an older build is a cache entry this build cannot use, which is a
 miss and not a 500.
 
-**The value is the NEUTRAL `ChatResponse`, not the wire body** (decision E).
+**The value is the NEUTRAL `ChatResponse`, not the wire body**.
 `to_wire` then runs on a hit exactly as it runs on a miss, so a replayed answer
 is rendered by the same code and gets its OWN completion id rather than
 replaying another request's; and the wire shape is not frozen into a store that
 outlives it by a day.
 
 The rest is the map store's argument unchanged. The key is `(tenant, key)`, so
-one tenant cannot read another's entry
-(`test_one_tenant_cannot_read_another_tenants_entry`,
-`test_one_tenant_cannot_read_another_tenants_live_entry`, both reading with a
-key that is genuinely live for the other tenant so "unknown key" cannot be what
-makes them pass). The clock is injected, so the TTL boundary is a pair of
+one tenant cannot read another's entry,
+even with a key that is genuinely live for the other tenant. The clock is
+injected, so the TTL boundary is a pair of
 assertions rather than a day of waiting. Both key segments are pre-checked
 before any command is sent, against the gateway's own
 `IDENTIFIER_PATTERN` and `CACHE_ID_PATTERN` rather than a second copy of either.
@@ -52,12 +46,9 @@ from app.core.validation import IdentifierInvalid, checked_identifier
 from app.providers.base import ChatResponse
 
 RESPONSE_CACHE_TTL_SECONDS: Final[int] = 86400
-"""How long an exact-match answer stays readable, in seconds (#22's twenty-four hours).
+"""How long an exact-match answer stays readable, in seconds (twenty-four hours).
 
-Pinned exactly by `test_the_ttl_is_exactly_one_day`, which asserts it against
-both the literal and `24 * 60 * 60`, and bracketed by
-`test_an_entry_is_readable_up_to_and_including_the_ttl` and
-`test_an_entry_is_gone_past_the_ttl`. The boundary is inclusive: an entry is
+The boundary is inclusive: an entry is
 still there at exactly this many seconds and gone one second later."""
 
 
@@ -73,9 +64,10 @@ class ResponseCache(Protocol):
     have served, which is the one failure a CACHE must not cause.
 
     The two segments a caller supplies still have to be well formed - a
-    malformed tenant or key raises `IdentifierInvalid` BEFORE any store call. That is not a store failure: it is a programming error at
+    malformed tenant or key raises `IdentifierInvalid` BEFORE any store call.
+    That is not a store failure: it is a programming error at
     the call site, and the route never reaches it with anything but the tenant
-    `gateway/context.py` authenticated and a key `cache_key` minted.
+    `app/core/context.py` authenticated and a key `cache_key` minted.
     """
 
     def get(self, tenant: str, key: str) -> ChatResponse | None:
@@ -104,7 +96,7 @@ class InProcessResponseCache:
     `clock` defaults to `time.monotonic` rather than `time.time`: a wall clock
     stepped backwards by NTP would resurrect an expired entry, and monotonic time
     cannot be stepped. The default exists so `create_app` can build one with no
-    arguments (`test_the_clock_parameter_has_a_default`).
+    arguments.
     """
 
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
@@ -146,25 +138,18 @@ class RedisResponseCache:
     `RESPONSE_CACHE_TTL_SECONDS` in the same round trip, so an entry is dropped
     by Redis whether or not anyone asks for it again and there is no window in
     which one exists without its expiry. The TTL is read back off the server
-    rather than slept for (`test_the_key_expires_after_exactly_the_published_ttl`)
-    and off the call itself (`test_put_sends_the_ttl_with_the_write`). There is
+    rather than slept for. There is
     no clock to inject here, which is why this class takes none.
 
-    Both key segments are pre-checked before any command is sent (standing rule
-    1). `tenant` is a client-supplied string and a colon in it would forge a
+    Both key segments are pre-checked before any command is sent.
+    `tenant` is a client-supplied string and a colon in it would forge a
     segment and address another tenant's namespace; `key` is minted by
     `cache_key`, and checking it anyway is what keeps that guarantee from
-    depending on one call site
-    (`test_put_refuses_a_malformed_tenant_before_touching_redis`,
-    `test_get_refuses_a_malformed_tenant_before_touching_redis`,
-    `test_get_refuses_a_malformed_key_before_touching_redis`,
-    `test_put_refuses_a_malformed_key_before_touching_redis`, each asserting the
-    client recorded no call at all).
+    depending on one call site.
 
     `key_prefix` exists for the suite: per-test isolation is a namespace rather
-    than a `FLUSHDB` that would delete keys this suite does not own (standing
-    rule 7). The default is the shipped one, exercised by
-    `test_the_default_prefix_is_the_one_the_key_is_written_under`.
+    than a `FLUSHDB` that would delete keys this suite does not own. The default
+    is the shipped one.
 
     Not annotated `redis.Redis[bytes]`: the installed client is not generic at
     runtime, so a parametrised annotation fails `mypy --strict` with `type-arg`.
@@ -178,8 +163,7 @@ class RedisResponseCache:
         """The Redis key one tenant's cached answer is stored under.
 
         Public because it is what an operator's `SCAN`, a future invalidation and
-        the test that reads the key back all depend on
-        (`test_the_key_carries_the_prefix_the_tenant_and_the_cache_key`).
+        the test that reads the key back all depend on.
         """
         return f"{self._key_prefix}:{tenant}:{key}"
 
@@ -228,10 +212,9 @@ def _checked_tenant(tenant: str) -> None:
     """Refuse a tenant that may not shape a key, before any command is sent.
 
     The gateway's own identifier rules, imported rather than restated, so the
-    name a cache accepts and the name `gateway/context.py` authenticated can
+    name a cache accepts and the name `app/core/context.py` authenticated can
     never disagree. Inclusive at the cap: exactly `MAX_IDENTIFIER_LENGTH`
-    characters is accepted (`test_a_tenant_at_the_length_cap_is_accepted`,
-    `test_a_tenant_one_character_over_the_cap_is_rejected`).
+    characters is accepted.
     """
     checked_identifier(tenant, "tenant", param="tenant")
 
@@ -240,8 +223,7 @@ def _checked_key(key: str) -> None:
     """Refuse a cache key that may not shape a Redis key, before any command is sent.
 
     `fullmatch` against `CACHE_ID_PATTERN`, because `$` in Python also matches
-    before a trailing newline; the rejection table is
-    `test_get_refuses_a_malformed_key_before_touching_redis` and its `put` twin.
+    before a trailing newline.
     """
     if CACHE_ID_PATTERN.fullmatch(key) is None:
         raise IdentifierInvalid("cache key: not a valid cache key", param="key")

@@ -30,10 +30,7 @@ from app.storage.residency_log import RESIDENCY_LOG_RETENTION_DAYS, purge_partit
 NO_DATABASE_URL = 2
 """The exit code for "nothing is configured", distinct from 1 so a CronJob's
 alerting can tell a misconfiguration from a failed statement. One case per entry
-point, because each reads the setting for itself:
-`test_migrate_refuses_without_a_database_url`,
-`test_purge_refuses_without_a_database_url` and
-`test_refresh_rollup_refuses_without_a_database_url`."""
+point, because each reads the setting for itself."""
 
 
 def _parser(description: str) -> argparse.ArgumentParser:
@@ -84,8 +81,7 @@ def purge(argv: Sequence[str] | None = None) -> int:
 
     Nothing to drop is a SUCCESS, not a failure: for the first ninety days of the
     system's life that is the only correct outcome, and a CronJob that treated it
-    as an error would page someone every night until then
-    (`test_purge_answers_zero_when_there_is_nothing_to_drop`).
+    as an error would page someone every night until then.
     """
     parser = _parser(
         f"Drop residency log partitions older than {RESIDENCY_LOG_RETENTION_DAYS} days."

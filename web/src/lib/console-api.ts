@@ -8,10 +8,10 @@ import { residencyGuard, type ResidencyBody } from "@/features/residency/guards"
 
 /**
  * The console's only read client: server-side, one fixed path per page, never a
- * query string (decision F). A failure is a reason, never a throw, so a page
- * degrades to a notice (decision D, a design note). The admin key is sent and never
+ * query string. A failure is a reason, never a throw, so a page
+ * degrades to a notice. The admin key is sent and never
  * logged. The seven per-page guards (one feature folder each) are assembled
- * here into PageBodies and GUARDS. Pinned by tests/console-api.test.ts.
+ * here into PageBodies and GUARDS.
  */
 
 export const CONSOLE_PATHS = {

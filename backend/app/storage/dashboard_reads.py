@@ -10,22 +10,19 @@ without calling it at all.
 `>=` on a timestamp and with `day >= since.date()` on the daily rollup, whose days
 are UTC dates. "Today" on the home page is `[UTC midnight, +1 day)` over the live
 ledger rather than the rollup: the rollup refreshes only on
-`make refresh-rollup`. Pinned by `test_today_counts_only_the_current_utc_day` and
-`test_residency_by_region_and_violations_over_the_window`. Every query is bounded
+`make refresh-rollup`. Every query is bounded
 by its window or by `ROW_LIMIT`.
 
 **The rollup may be unpopulated.** PostgreSQL refuses a SELECT from a materialised
 view that was never refreshed, so `cost` asks `pg_matviews.ispopulated` first and
-answers `rollup_populated: False` with no days rather than raising
-(`test_an_unpopulated_rollup_is_empty_and_flagged`).
+answers `rollup_populated: False` with no days rather than raising.
 
-**Savings are estimated at read time** (decision D). A cache hit is booked at zero
+**Savings are estimated at read time**. A cache hit is booked at zero
 with the replayed answer's own token counts, so what it saved is what those tokens
 would have cost. Cached rows are grouped by `(day, tenant, provider, model,
 price_version)` and each group is priced by `limits.cost.cost_for` at key
 `provider/model` and at the group's earliest `ts`, the price in force when it was
-served (`test_savings_price_cached_rows_at_the_price_in_force`,
-`test_a_cached_row_of_a_shipped_priced_provider_saves_more_than_zero`).
+served.
 
 **Regressions** are computed from the metrics the reader returns, by
 `regressed_metrics`, over `HIGHER_IS_BETTER_METRICS` only.
@@ -64,8 +61,7 @@ from app.schemas.provider import Usage
 from app.storage.db import DEFAULT_SCHEMA, checked_schema
 
 ROW_LIMIT: Final[int] = 100
-"""The most rows any list on a page carries (`test_incidents_are_newest_first_and_capped_at_100`,
-`test_releases_left_join_eval_runs_and_cap_at_100`)."""
+"""The most rows any list on a page carries."""
 
 COST_ROLLUP: Final[str] = "cost_ledger_daily"
 """The materialised view `migrations/002_cost_ledger.sql` creates."""
@@ -86,7 +82,7 @@ HIGHER_IS_BETTER_METRICS: Final[tuple[str, ...]] = (
 
 The rest of a report's metrics are counts, latencies and costs, where lower is an
 improvement, so "a metric lower than last time" would list a faster, cheaper run
-as a regression (`test_the_higher_is_better_metrics_are_pinned`)."""
+as a regression."""
 
 
 class _Read(BaseModel):
@@ -113,8 +109,7 @@ class BlockedRelease(_Read):
     """A blocked deploy with the raw metrics a regression is computed from.
 
     `metrics` is the linked run's, `previous_metrics` the newest EARLIER passed run's
-    of the same `set_name`; either is `None` when there is no such run
-    (`test_blocked_releases_carry_their_regressions`).
+    of the same `set_name`; either is `None` when there is no such run.
     """
 
     git_sha: str
@@ -151,7 +146,7 @@ def regressed_metrics(
     """Every higher-is-better metric strictly lower than in the previous run.
 
     Either side missing is no regressions, and so is a metric either run did not
-    measure (`test_regressed_metrics_decision_table`).
+    measure.
     """
     if current is None or previous is None:
         return ()

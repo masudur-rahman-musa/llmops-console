@@ -6,31 +6,28 @@ partitioned because it has a ninety-day retention and dropping a partition beats
 deleting a quarter of a table; this one has no retention at all, so it is a plain
 table and there is no purge command to go with it.
 
-**The cost is computed HERE, never passed in** (decision C), exactly as
+**The cost is computed HERE, never passed in**, exactly as
 `record_residency` computes `allowed` rather than accepting it. `record_cost`
 takes the `PriceTable` and the usage and prices the request through
 `app.limits.cost.cost_for`. A caller filling `cost_usd` would be recording
 its own belief rather than the price table's answer, and it would let the number
-in the row disagree with the `price_version` beside it. Pinned by
-`test_the_cost_is_priced_from_the_table_and_cannot_be_supplied_by_the_caller`.
+in the row disagree with the `price_version` beside it.
 
-**A failed write changes nothing about the request** (decision E, the same rule
-as an earlier change decision D and a design note). `record_cost` logs at ERROR and returns.
+**A failed write changes nothing about the request** (the same rule
+as for the residency log). `record_cost` logs at ERROR and returns.
 The provider has already charged by the time this runs, so a Postgres blip
 turning a served request into a 500 would lose the answer as well as the row.
 What that costs is stated rather than hidden: a cost row can be lost, so the
 ledger is a LOWER BOUND on spend during a database incident, and the counter
 `gateway_cost_usd_total` is the number that keeps moving regardless - the route
 moves it from the row this function ANSWERS, which is why a
-lost write still shows up as spend on a dashboard. Pinned by
-`test_a_failing_write_is_swallowed`.
+lost write still shows up as spend on a dashboard.
 
-**`model` has its own rule, not the resolver's** (decision D). The shipped
+**`model` has its own rule, not the resolver's**. The shipped
 `routing.yaml` names `qwen2.5-3b-instruct` and `bge-small-en-v1.5`, and both fail
 `routing.resolver.IDENTIFIER_PATTERN` because of the dots, so reusing it here
 would refuse - and therefore silently lose - every ledger row the local provider
-produced.  `test_every_model_the_shipped_policy_can_resolve_to_passes_the_pattern`
-is what makes a routing change that adds an unrepresentable id fail in the suite
+produced.  A test is what makes a routing change that adds an unrepresentable id fail in the suite
 rather than in production.
 """
 
@@ -57,8 +54,7 @@ from app.storage.db import DEFAULT_SCHEMA, checked_schema
 logger = logging.getLogger(__name__)
 
 COST_LEDGER: Final[str] = "cost_ledger"
-"""The table `migrations/002_cost_ledger.sql` creates. Pinned by
-`test_the_table_names_are_the_ones_the_migration_creates`."""
+"""The table `migrations/002_cost_ledger.sql` creates."""
 
 COST_LEDGER_DAILY: Final[str] = "cost_ledger_daily"
 """The materialised view the console reads, refreshed by `make refresh-rollup`.
@@ -69,20 +65,17 @@ MAX_MODEL_LENGTH: Final[int] = 128
 
 A model id is a vendor's string rather than one of ours: a fine-tune carries an
 account and a suffix, and a hosted open-weights id carries a publisher prefix.
-Pinned exactly by `test_the_model_and_price_version_caps_are_pinned`, with the
-inclusive boundary in `test_a_model_at_exactly_the_length_cap_is_accepted`.
+The caps and the inclusive boundary are pinned in the tests.
 """
 
 MODEL_PATTERN: Final[re.Pattern[str]] = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]*")
 """What a provider's model id may contain: letters, digits, `.`, `:`, `_`, `-`
 and `/`, starting with a letter or a digit.
 
-Wider than `routing.resolver.IDENTIFIER_PATTERN` on purpose (decision D) and
+Wider than `routing.resolver.IDENTIFIER_PATTERN` on purpose and
 still narrow enough that nothing here can reach a statement as anything but a
 bound parameter - no quote, no semicolon, no whitespace, no backslash and no
 percent. `re.fullmatch`, so a trailing newline is refused.
-The two directions are `test_write_refuses_a_malformed_model_before_any_sql` and
-`test_the_model_pattern_admits_the_shapes_provider_ids_actually_take`.
 """
 
 MAX_PRICE_VERSION_LENGTH: Final[int] = 256
@@ -90,34 +83,31 @@ MAX_PRICE_VERSION_LENGTH: Final[int] = 256
 
 Built by `app.limits.prices.price_version` from a price key and a date
 rather than by a request, so it is only as bounded as the key that fed it - which
-is why it is capped anyway. Pinned exactly by
-`test_the_model_and_price_version_caps_are_pinned`.
+is why it is capped anyway.
 """
 
 TRACE_ID_LENGTH: Final[int] = 32
 """A W3C trace-context trace id, in hex: 16 bytes, 32 characters. The console
 joins a ledger row to its trace on this, so a row carrying anything else joins to
-nothing. Pinned by `test_a_trace_id_is_exactly_thirty_two_characters`."""
+nothing.."""
 
 TRACE_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"[0-9a-f]{32}")
 """Exactly `TRACE_ID_LENGTH` lowercase hex characters, matched with
 `re.fullmatch`. The length is in the pattern as well as in the constant because
 the three sharpest rejection rows - a trailing newline, CRLF and space at the
-exact total length - are refused by the pattern and by nothing else
-(`test_write_refuses_a_malformed_trace_id_before_any_sql`)."""
+exact total length - are refused by the pattern and by nothing else."""
 
 CACHED_COST_USD: Final[Decimal] = Decimal(0).quantize(COST_QUANTUM)
 """What a request served from a cache costs: zero, at the ledger's six places.
 
-Decision B of an earlier change, and it is a statement about what one column MEANS rather
+This is a statement about what one column MEANS rather
 than a saving: `sum(cost_usd)` is spend, so it reconciles against an invoice with
 no `WHERE cached = false` and a console page that forgot that filter cannot
 overstate a tenant's bill. Nothing is lost - the row still carries the replayed
 answer's tokens and the price version in force, so the cost the hit AVOIDED is
 derivable from the row exactly. Quantized from `COST_QUANTUM` rather than written
 as a literal, so the zero has the same exponent every other cost on the table
-has. Pinned by `test_a_cached_request_is_booked_at_zero_with_the_price_version_in_force`
-and `test_a_cached_row_keeps_the_replayed_answers_token_counts`.
+has.
 """
 
 LEDGER_QUEUE_SIZE: Final[int] = 10000
@@ -125,8 +115,7 @@ LEDGER_QUEUE_SIZE: Final[int] = 10000
 
 Decided without asking: 10 000 absorbs a burst of concurrent requests
 without growing without bound. A full queue means the database cannot keep up;
-the row is counted as `dropped` and the chat reply still succeeds. Pinned by
-`test_the_ledger_queue_size_is_exactly_10000`.
+the row is counted as `dropped` and the chat reply still succeeds.
 """
 
 _SENTINEL: object = object()
@@ -134,11 +123,11 @@ _SENTINEL: object = object()
 
 
 class CostLedgerRow(BaseModel):
-    """One request's cost, as it is written: the design's columns and nothing else.
+    """One request's cost, as it is written: the spec's columns and nothing else.
 
     Frozen, because the same object is handed to a writer and to whatever counts
     it, and a `cost_usd` edited afterwards would make the ledger disagree with
-    the number already reported for that request (`test_a_row_is_frozen`).
+    the number already reported for that request.
 
     `provider` and `model` name what SERVED. On a request that fell back, that is
     the second candidate: the field answering "what did this cost" has to name
@@ -185,13 +174,12 @@ class CostLedgerWriter(Protocol):
 class InMemoryCostLedgerWriter:
     """Every row in this process's memory, in the order written.
 
-    What a gateway with no `OPSCONSOLE_DATABASE_URL` builds, the same trade plan
-    09a decision B made for the redaction map store and an earlier change for the
-    residency log. It is not a store: nothing reads it back, nothing expires, and
+    What a gateway with no `OPSCONSOLE_DATABASE_URL` builds, the same trade made
+    for the redaction map store and for the residency log. It is not a store: nothing reads it
+    back, nothing expires, and
     a restart loses everything. Rows are kept in a LIST and never keyed, because
     spend is a sum over them and a writer that deduplicated by tenant or by trace
-    id would under-report every tenant that asked the same thing twice
-    (`test_the_in_memory_writer_keeps_every_row_in_the_order_written`).
+    id would under-report every tenant that asked the same thing twice.
     """
 
     def __init__(self) -> None:
@@ -212,7 +200,7 @@ class InMemoryCostLedgerWriter:
 class PostgresCostLedgerWriter:
     """One INSERT per row via a bounded background queue. No DDL, ever.
 
-    An earlier change: `write` enqueues and returns at once so a slow or stuck database
+    `write` enqueues and returns at once so a slow or stuck database
     cannot hold a chat reply. A daemon thread drains the queue and does the
     actual INSERT; a full queue drops the row and counts it as `dropped` rather
     than blocking. Each outcome — ok, error, dropped — increments
@@ -338,7 +326,7 @@ class PostgresCostLedgerWriter:
 
 
 def _checked_model(value: str) -> str:
-    """The provider's model id, against this module's own rule (decision D)."""
+    """The provider's model id, against this module's own rule."""
     if len(value) > MAX_MODEL_LENGTH:
         raise IdentifierInvalid(f"model: longer than {MAX_MODEL_LENGTH} characters")
     if MODEL_PATTERN.fullmatch(value) is None:
@@ -376,8 +364,7 @@ def refresh_daily_rollup(
     is held. So the first refresh is the plain one and every later refresh is
     concurrent, decided from `pg_class.relispopulated` rather than from a flag
     someone has to set. Both are idempotent - the second answers the same rows as
-    the first - and the pair is
-    `test_the_first_refresh_populates_and_the_second_runs_concurrently`.
+    the first.
 
     Takes the POOL rather than a connection, unlike `purge_partitions`:
     `REFRESH MATERIALIZED VIEW CONCURRENTLY` cannot run inside a transaction

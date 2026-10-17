@@ -1,6 +1,6 @@
 import type { Reason } from "@/lib/console-api";
 
-/** What a page renders instead of its data when console-api could not answer (decision D). */
+/** What a page renders instead of its data when console-api could not answer. */
 export function Unavailable({ title, reason }: { title: string; reason: Reason }) {
   return (
     <>

@@ -6,29 +6,22 @@ cover the four ways a request can fail, and between them they leave FastAPI and
 Starlette no path to answer in their own `{"detail": ...}` shape or in the
 `text/plain` body their unhandled-exception middleware writes:
 
-* `GatewayError` for the typed failures the gateway raises itself
-  (`test_residency_unavailable_is_451_openai_shaped`);
-* `RequestValidationError` for the ones FastAPI raises before a route runs
-  (`test_request_validation_uses_the_error_contract`);
+* `GatewayError` for the typed failures the gateway raises itself;
+* `RequestValidationError` for the ones FastAPI raises before a route runs;
 * `StarletteHTTPException` for the ones raised before any of our code is reached
-  at all - an unrouted path is a 404 and a wrong method a 405
-  (`test_starlette_failures_use_the_error_contract`);
+  at all - an unrouted path is a 404 and a wrong method a 405;
 * `Exception` for a bug: anything a route raises that is not typed becomes a 500
-  in the same shape, with the traceback logged and never sent
-  (`test_unhandled_exception_uses_the_error_contract`). It is also the only
+  in the same shape, with the traceback logged and never sent. It is also the only
   handler a MIDDLEWARE's raise can reach, so it recognises a `GatewayError` and
-  renders it properly rather than as a 500 (an earlier change decision F,
-  `test_a_gateway_error_raised_in_middleware_keeps_its_status_and_code`).
+  renders it properly rather than as a 500.
 
 The last two carry `code: null`. `ErrorCode` is the closed set of failures the
 gateway classifies; an unrouted URL and a crash are not among them, and inventing
 a code for either, or bending `VALIDATION` onto a 404, would break the
-one-status-per-code table `test_error_code_set_is_exhaustive` holds (an earlier change
-decision J).
+one-status-per-code table the error tests hold.
 
 `type` is the coarse OpenAI-style family, derived from the status rather than
-stored per class so a new code cannot forget one. The table is pinned by
-`test_error_type_matches_the_status_family`.
+stored per class so a new code cannot forget one.
 """
 
 from __future__ import annotations
@@ -65,14 +58,11 @@ def as_gateway_error(
     route no longer hand-picks a 422 or a 502 at each call site: a
     `LibraryInputInvalid` becomes `IdentifierInvalid` (422, `VALIDATION`) and a
     `LibraryDependencyUnavailable` a retryable `ProviderError` (502,
-    `PROVIDER_ERROR`) (`test_the_converter_maps_an_input_invalid_to_validation`,
-    `test_the_converter_maps_a_dependency_outage_to_a_retryable_502`).
+    `PROVIDER_ERROR`).
 
     `message` is the ROUTE's own words, never the library exception's: a store
     failure's text names an internal host and port, and it stays in the chained
-    cause the caller passes `raise ... from exc` rather than reaching a client
-    (`test_the_converter_maps_a_dependency_outage_to_a_retryable_502` pins the
-    message as exactly the words passed).
+    cause the caller passes `raise ... from exc` rather than reaching a client.
 
     `retryable=True` classifies the outage as the transient class, the same
     verdict the three store conversions set before this converter replaced them.
@@ -91,15 +81,13 @@ ERROR_TYPE_BY_STATUS: dict[int, str] = {
     403: "permission_error",
     429: "rate_limit_error",
 }
-"""Statuses whose family is not implied by 4xx-versus-5xx. Pinned by
-`test_error_type_matches_the_status_family`."""
+"""Statuses whose family is not implied by 4xx-versus-5xx."""
 
 CLIENT_ERROR_TYPE = "invalid_request_error"
 SERVER_ERROR_TYPE = "api_error"
 
 INTERNAL_ERROR_STATUS = 500
-"""What an unhandled exception becomes. Pinned by
-`test_unhandled_exception_uses_the_error_contract`."""
+"""What an unhandled exception becomes."""
 
 GENERIC_FAILURE_MESSAGE = "the request could not be completed"
 """The message for a failure with nothing safe to say about it: a crash, or an
@@ -131,9 +119,7 @@ RETRY_AFTER_HEADER = "Retry-After"
 """The one header a failure can add to its own response.
 
 Emitted for a typed error that carries a `retry_after_seconds` and for no other
-response, which today is `RateLimited` alone (an earlier change decision D,
-`test_the_429_carries_retry_after_in_whole_seconds`,
-`test_a_served_response_carries_no_retry_after`)."""
+response, which today is `RateLimited` alone."""
 
 
 def retry_after_headers(error: GatewayError) -> dict[str, str] | None:
@@ -142,12 +128,11 @@ def retry_after_headers(error: GatewayError) -> dict[str, str] | None:
     The condition is the ERROR carrying a wait, never its status. `if
     http_status == 429` is the obvious implementation and is wrong: a budget
     refusal is also a 429, and it would then tell a tenant that has spent its
-    month to retry in a second, for ever
-    (`test_a_budget_refusal_carries_no_retry_after`).
+    month to retry in a second, for ever.
 
     Whole seconds, because that is what the field is defined in - the rounding
     up happens in `limits/ratelimit.retry_after`, where the bucket's own rate is
-    known (`test_the_retry_after_is_the_seconds_to_the_next_whole_token`).
+    known.
     """
     wait = error.retry_after_seconds
     return None if wait is None else {RETRY_AFTER_HEADER: str(wait)}
@@ -178,19 +163,16 @@ async def handle_gateway_error(request: Request, exc: Exception) -> JSONResponse
     middleware sees only a status, and a status is not a reason: 502 is every
     provider outage and 451 is every residency refusal, so the typed code is
     recorded here, where it exists, and read there. Only the code travels - never
-    the message, which for a `ProviderError` carries the provider's own words
-    (`test_a_provider_failure_records_the_code_on_the_span`).
+    the message, which for a `ProviderError` carries the provider's own words.
 
     `record_failure` is the metrics half of the same fact, and it is here for the
     same reason: this is where a raised `GatewayError` arrives with its typed code
     still attached. It moves the ONE failure family that has an operator response
     of its own and nothing else - which family, and on what, is
-    `core/metrics.py`'s decision rather than this file's
-    (`test_a_provider_failure_increments_the_provider_error_counter`). A 451 used
+    `core/metrics.py`'s decision rather than this file's. A 451 used
     to move a second one and no longer does: `gateway_residency_violations_total`
     now counts only a request actually SERVED from a forbidden region, which no
-    handler ever sees (an earlier change decision E,
-    `test_a_residency_refusal_leaves_the_violation_counter_flat`).
+    handler ever sees.
     """
     error = cast(GatewayError, exc)
     record_error_code(request.scope, error.code.value if error.code is not None else None)
@@ -203,7 +185,7 @@ async def handle_request_validation_error(request: Request, exc: Exception) -> J
 
     The first error is the one reported: `param` is the last segment of its
     location (the query parameter or header name), which is what a client points
-    at. Pinned by `test_validation_body_names_the_offending_field`.
+    at.
     """
     first = cast(RequestValidationError, exc).errors()[0]
     location = first.get("loc") or ()
@@ -220,12 +202,12 @@ async def handle_http_exception(request: Request, exc: Exception) -> JSONRespons
     Reached before routing has found anything of ours to run, so there is no
     `GatewayError` to carry a code and none is invented. The exception's headers
     are carried through, because a 405 without `Allow` is a malformed answer
-    (RFC 9110); pinned by `test_starlette_failures_use_the_error_contract`.
+    (RFC 9110).
 
-    Only Starlette's own raises reach here in this plan, and those carry a string
+    Only Starlette's own raises reach here today, and those carry a string
     `detail`. A non-string one is replaced rather than rendered, so a later
     endpoint raising `HTTPException(409, detail={...})` cannot put a Python repr
-    on the wire (`test_non_string_http_detail_is_not_rendered`).
+    on the wire.
     """
     http_exception = cast(StarletteHTTPException, exc)
     status = http_exception.status_code
@@ -249,8 +231,7 @@ async def handle_unhandled_exception(request: Request, exc: Exception) -> JSONRe
     Internal Server Error`, and a client whose error path reads
     `response.json()["error"]["message"]` fails on top of the outage. The
     traceback is logged and never put in the body, because the body is the one
-    place an internal detail must not reach
-    (`test_unhandled_exception_uses_the_error_contract`).
+    place an internal detail must not reach.
 
     A typed failure is the exception, and it is why this handler branches. Starlette
     lifts the `Exception` entry out of `ExceptionMiddleware` into
@@ -258,9 +239,8 @@ async def handle_unhandled_exception(request: Request, exc: Exception) -> JSONRe
     raised by a MIDDLEWARE - which is anything installed above the router,
     `TracingMiddleware` included - never reaches `handle_gateway_error` at all.
     Without the branch it would answer 500 with `code: null`, and a client's retry
-    logic would read a gateway bug where the gateway meant 451. An earlier change installs
-    the first middleware, so an earlier change owes the fix
-    (`test_a_gateway_error_raised_in_middleware_keeps_its_status_and_code`).
+    logic would read a gateway bug where the gateway meant 451. The tracing
+    middleware is the first one installed, so this branch is needed.
 
     Two boundaries worth knowing before this is read as a total guarantee.
     `ServerErrorMiddleware` re-raises after the response is sent, so a real
@@ -268,7 +248,7 @@ async def handle_unhandled_exception(request: Request, exc: Exception) -> JSONRe
     and a typed failure rendered through this branch is re-raised too, which is a
     traceback in the log for a request that was answered correctly.
     And it only sends a body when the response has not started, so a crash part
-    way through a streamed response still reaches the
+    way through a streamed response (an SSE completion) still reaches the
     client as a truncated stream with no JSON at all.
     """
     if isinstance(exc, GatewayError):
@@ -296,7 +276,7 @@ def register_error_handlers(app: FastAPI) -> None:
     three do not match, and also anything raised outside `ExceptionMiddleware` -
     which includes every middleware. That is why `handle_unhandled_exception`
     checks for a `GatewayError` before treating a failure as a bug: it is the only
-    handler positioned to render a middleware's typed raise, and an earlier change's
+    handler positioned to render a middleware's typed raise, and the
     `TracingMiddleware` made that position occupied.
     """
     app.add_exception_handler(GatewayError, handle_gateway_error)

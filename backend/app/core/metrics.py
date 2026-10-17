@@ -5,43 +5,39 @@ one file can read the other. There is a module-owned `CollectorRegistry` the way
 there is a module-owned `TracerProvider`; there is one table of everything that
 may be emitted the way `SpanAttributes` is the table of everything a span may
 say; and one request's labels ride in the ASGI scope the way `RequestTrace` does.
-The middleware that observes a finished request lives in `gateway/app.py`,
+The middleware that observes a finished request lives in the app module,
 because a request boundary is a gateway concern and `core/` does not import from
-`gateway/`.
+the app layer.
 
 **Why the registry is ours.** prometheus_client's global `REGISTRY` is write-once
 per family name, so a second `create_app` in one process raises `Duplicated
 timeseries` - which turns a whole test session red at once and makes a second app
 impossible in a worker that hosts one. It also arrives carrying process, GC and
-platform collectors nobody chose. Both halves are pinned by
-`test_a_second_app_registers_no_duplicate_family` and
-`test_the_exposed_family_names_are_exactly_the_declared_set`.
+platform collectors nobody chose.
 
-**Why every declared family now carries data.** Each was declared as a SPEC
-§13.2 name before its subsystem existed, so the plan that built the subsystem
-added a VALUE rather than a family - the same move an earlier change made by declaring
+**Why every declared family now carries data.** Each was declared as a name
+before its subsystem existed, so the work that built the subsystem
+added a VALUE rather than a family - the same move made by declaring
 `cache`, `cost_usd` and `fallback_count` on `SpanAttributes` without setting
 them. Each was registered and empty in the meantime, never registered and zeroed:
 a zero booked on every request would have drawn a confident flat line on a
-dashboard for a subsystem that did not exist. An earlier change filled
-`gateway_fallbacks_total` and `gateway_circuit_state`, an earlier change
-`gateway_cache_hits_total`, an earlier change `gateway_cost_usd_total`, and an earlier change
-`gateway_budget_ratio`, which was the last of them
-(`test_the_last_declared_family_is_now_fed_by_a_served_request`). A family
+dashboard for a subsystem that did not exist. Each is now filled:
+`gateway_fallbacks_total`, `gateway_circuit_state`,
+`gateway_cache_hits_total`, `gateway_cost_usd_total` and
+`gateway_budget_ratio`. A family
 declared ahead of its subsystem again belongs back in that case's unfed list.
 
-`gateway_eval_*` is deliberately not here. the design has the nightly job PUSH
+`gateway_eval_*` is deliberately not here. The nightly job PUSHes
 those gauges to a Pushgateway, so they are not this process's to declare.
 
 **Why no client string becomes a label without passing a check first.** A
 registry has no cap of its own: one distinct label tuple is one time series, in
 process memory and in Prometheus's index, forever. So `alias`, `provider`,
 `region` and `model` are only ever the RESOLVER's answer, `tenant` is only ever
-the identifier `gateway/context.py` already checked against `IDENTIFIER_PATTERN`
+the identifier the request context already checked against `IDENTIFIER_PATTERN`
 and `MAX_IDENTIFIER_LENGTH`, `kind` is only ever a `Kind` member and `code` only
 ever an `ErrorCode` member. Everything else is the empty string. That is standing
-rule 1 applied to a store with no backstop, and its inclusive boundary is
-`test_unknown_aliases_create_exactly_one_time_series`.
+rule applied to a store with no backstop.
 
 The session is deliberately not a label anywhere below, though it is on the
 trace. A session is a conversation, so one tenant's traffic would mint a time
@@ -53,8 +49,7 @@ and a series is not.
 no body and no header: a counter is how an outage is reported, never how one is
 caused. Every function here that touches a family does its work inside
 `_guarded`; the three that only read or build a record - `registry`,
-`request_metrics` and `start_request` - touch none. Told by
-`test_a_failing_emission_changes_no_response`.
+`request_metrics` and `start_request` - touch none.
 """
 
 from __future__ import annotations
@@ -85,30 +80,28 @@ COUNTED_PATH_PREFIX = "/v1/"
 
 A scrape every fifteen seconds and a kubelet probe are not traffic: counted, they
 put a constant floor under every RPS panel and an unmovable denominator under
-every error ratio in the design's dashboard 1, so a real outage barely moves the
-line. Pinned by `test_the_probe_and_scrape_paths_are_not_counted`."""
+every error ratio in the first dashboard, so a real outage barely moves the
+line."""
 
 LATENCY_BUCKETS = (0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 6.0, 10.0, 20.0, 30.0, 60.0, 120.0)
-"""The histogram bounds, in seconds (decision H). prometheus_client's default set
+"""The histogram bounds, in seconds. prometheus_client's default set
 tops out at 10s, which puts every ordinary streamed completion in `+Inf` and
 makes a p95 panel unreadable exactly where it matters. `6.0` is the latency SLO's
 threshold, so its error budget counts requests under exactly 6 seconds
-(`prometheus.LATENCY_BUDGET_QUERY`). Pinned exactly, a project rule, by
-`test_latency_buckets_are_the_declared_eleven`."""
+(`prometheus.LATENCY_BUDGET_QUERY`). """
 
 DIRECTION_IN = "in"
 DIRECTION_OUT = "out"
 """The two values of the `direction` label: prompt tokens and completion tokens.
 An embedding has no completion, so it records `in` alone rather than an invented
-zero (`test_tokens_are_recorded_on_an_embeddings_request`)."""
+zero."""
 
 UNSET_LABEL = ""
-"""A label this request never got (decision F).
+"""A label this request never got.
 
 Not a `none` sentinel and not a dropped request: every `/v1/*` request is counted
 exactly once so the counter reconciles with the access log, and the empty string
-is what Prometheus itself means by an unset label. Pinned by
-`test_an_unauthorized_request_is_counted_with_empty_labels`."""
+is what Prometheus itself means by an unset label."""
 
 PROVIDER_FAILURE_CODES = frozenset({ErrorCode.PROVIDER_ERROR})
 """The typed codes that name a provider, and therefore move
@@ -117,13 +110,12 @@ PROVIDER_FAILURE_CODES = frozenset({ErrorCode.PROVIDER_ERROR})
 One member, and it stays one. `ALL_PROVIDERS_FAILED` is raised by the resolver
 BEFORE any provider is chosen - the breaker's contribution is to make the seam
 refuse more often, not to name a provider - so it has no provider to label with
-and would need the empty one, which is a series nobody can act on (an earlier change
-decision E). A residency refusal is deliberately not here either: a 451 is a
+and would need the empty one, which is a series nobody can act on. A residency refusal is
+deliberately not here either: a 451 is a
 residency decision, not a provider outage, and counting it as one would fire
-the design's provider panel on a request no provider ever saw. Since an earlier change
-decision E it moves no failure family at all and is counted only by
-`gateway_requests_total`'s `status` label
-(`test_a_residency_refusal_leaves_the_violation_counter_flat`)."""
+the provider panel on a request no provider ever saw. It moves no failure family at all and is
+counted only by
+`gateway_requests_total`'s `status` label."""
 
 _registry = CollectorRegistry()
 
@@ -215,8 +207,7 @@ LEDGER_WRITES = Counter(
 """Three `result` values: `ok` (inserted), `error` (insert failed), `dropped`
 (queue was full). The counter stays flat when the database is healthy, which
 is the easy case to miss; `ok` is what a dashboard uses to confirm the ledger
-is keeping up. Pinned by `test_the_ledger_queue_size_is_exactly_10000` and the
-off-path ledger tests."""
+is keeping up."""
 
 
 def registry() -> CollectorRegistry:
@@ -230,8 +221,7 @@ def _guarded(what: str) -> Iterator[None]:
 
     The traceback is logged rather than swallowed silently, because an emission
     that cannot render its own labels is a bug someone has to see; the request it
-    belongs to has already been answered correctly by then
-    (`test_a_failing_emission_changes_no_response`).
+    belongs to has already been answered correctly by then.
     """
     try:
         yield
@@ -243,18 +233,16 @@ def _guarded(what: str) -> Iterator[None]:
 class RequestMetrics:
     """The labels one request's counter needs, filled as they become known.
 
-    Mutable and scope-carried, which is the whole of decision E. The six labels
+    Mutable and scope-carried, which is the point. The six labels
     `gateway_requests_total` takes are known at four different points in a
     request, and none of them is the point where the request ENDS - so they are
     collected here, at exactly the call sites that already call `annotate`, and
     read once by `TracingMiddleware` after the last byte. That is also the only
-    place a streamed request's real duration exists
-    (`test_a_streamed_requests_latency_covers_the_frames`).
+    place a streamed request's real duration exists.
 
     Every field defaults to `UNSET_LABEL`, so a request that failed before
     resolution - or before authentication - is still counted, with the labels it
-    never got left empty rather than invented
-    (`test_an_unauthorized_request_is_counted_with_empty_labels`).
+    never got left empty rather than invented.
     """
 
     tenant: str = UNSET_LABEL
@@ -279,8 +267,7 @@ def start_request(scope: Scope) -> RequestMetrics | None:
 
     This is the single place decision G is enforced: a path outside
     `COUNTED_PATH_PREFIX` gets no record, so every later emission finds nothing
-    and no probe or scrape can reach a counter
-    (`test_the_probe_and_scrape_paths_are_not_counted`).
+    and no probe or scrape can reach a counter.
     """
     if not str(scope.get("path", "")).startswith(COUNTED_PATH_PREFIX):
         return None
@@ -293,8 +280,7 @@ def label_tenant(scope: Scope, tenant: str) -> None:
     """Note the authenticated tenant, once the key has resolved to one.
 
     Called after authentication succeeds and never before, so an unauthenticated
-    caller's own `X-Tenant` header cannot mint a time series
-    (`test_an_unauthorized_request_is_counted_with_empty_labels`).
+    caller's own `X-Tenant` header cannot mint a time series.
     """
     with _guarded("tenant label"):
         record = request_metrics(scope)
@@ -308,7 +294,7 @@ def label_resolution(scope: Scope, *, alias: str, provider: str, region: str, ca
     Called only AFTER `resolve()` returns, which is what bounds the cardinality of
     `alias`: an unknown alias never reaches here, so fifty distinct unknown ones
     are fifty requests against ONE time series rather than fifty permanent rows in
-    Prometheus's index (`test_unknown_aliases_create_exactly_one_time_series`).
+    Prometheus's index.
     """
     with _guarded("resolution labels"):
         record = request_metrics(scope)
@@ -323,10 +309,8 @@ def observe_request(scope: Scope, *, status: int, seconds: float) -> None:
     """Count one finished request and observe how long it took.
 
     Called once, by the middleware, after the response is fully sent. Both halves
-    are pinned: exactly one count per request including a streamed one
-    (`test_a_streamed_request_is_counted_once`), and a duration that covers the
-    frames rather than ending where the route returned
-    (`test_a_streamed_requests_latency_covers_the_frames`).
+    hold: exactly one count per request including a streamed one, and a duration
+    that covers the frames rather than ending where the route returned.
     """
     with _guarded("request observation"):
         record = request_metrics(scope)
@@ -355,14 +339,12 @@ def record_tokens(
 
     `model` is the RESOLVED provider model, never the alias and never the name the
     provider answered with: an alias covers several provider models, so cost per
-    model would be unattributable at the grain an earlier change's ledger prices at, and the
-    two systems could never be reconciled
-    (`test_the_token_model_label_is_the_resolved_model_not_the_alias`).
+    model would be unattributable at the grain the ledger prices at, and the
+    two systems could never be reconciled.
 
     `completion_tokens` is omitted rather than passed as zero by a caller with no
     output direction. An embedding has no completion, and a zero `out` sample is an
-    invented number a dashboard would sum
-    (`test_tokens_are_recorded_on_an_embeddings_request`).
+    invented number a dashboard would sum.
     """
     with _guarded("token counts"):
         TOKENS.labels(tenant=tenant, provider=provider, model=model, direction=DIRECTION_IN).inc(
@@ -380,16 +362,14 @@ def record_cost_usd(*, tenant: str, provider: str, model: str, usd: Decimal) -> 
     The number comes from the row `app.storage.record_cost` ANSWERS, never
     from a second pricing: the counter, the `X-Gateway-Cost-USD` header and the
     ledger row are one figure computed once, so a dashboard and an invoice cannot
-    disagree by a rounding (an earlier change decision G,
-    `test_the_counter_moves_by_exactly_the_rows_cost`).
+    disagree by a rounding.
 
     Moved on a CACHE HIT too, by zero. A hit is a served request with a real row,
     and a counter that skipped it would still read the same total - `inc(0)`
-    creates the tenant's series and adds nothing to it
-    (`test_a_cache_hit_books_zero_with_its_tokens`).
+    creates the tenant's series and adds nothing to it.
 
     `model` is the RESOLVED provider model for the reason `record_tokens` gives:
-    the two families are reconciled against each other and against an earlier change's
+    the two families are reconciled against each other and against the
     ledger, and an alias covers several models.
 
     `Decimal` in, float out, because a Prometheus counter is a float and there is
@@ -406,19 +386,17 @@ def record_budget_ratio(*, tenant: str, ratio: float) -> None:
 
     Set after every SERVED request, from the total the budget counter answered
     for that request's own debit, so the gauge includes the request in hand
-    rather than lagging it by one
-    (`test_the_gauge_reads_the_ratio_after_a_served_request`).
+    rather than lagging it by one.
 
     A fraction rather than the raw spend, so one alert threshold and one panel
     work for every tenant whatever its cap - and NOT clamped at 1.0, because the
     gauge is what an operator reads to see how far past its cap a tenant with a
-    standing override has gone (`test_the_ratio_keeps_reading_above_one_over_cap`).
+    standing override has gone.
 
     Nothing is published for a request whose counter could not answer. That is
     `limits/budget.py`'s fail-open decision reaching the dashboard: an unreachable
     Redis leaves the last known level standing rather than overwriting every
-    tenant's series with a healthy-looking 0.0 for the length of the incident
-    (`test_an_unreachable_store_serves_and_moves_no_gauge`). The route decides
+    tenant's series with a healthy-looking 0.0 for the length of the incident. The route decides
     that by not calling this at all, which is why there is no sentinel here.
     """
     with _guarded("budget ratio"):
@@ -430,21 +408,18 @@ def record_fallback(*, tenant: str, alias: str, provider: str) -> None:
 
     Once per REQUEST, not once per attempt: a request that walked three
     candidates is one fallback, so the counter answers "how many requests did not
-    get their first choice" rather than "how many provider calls were made"
-    (`test_a_fallback_is_counted_once_against_the_serving_provider`). A request
+    get their first choice" rather than "how many provider calls were made". A request
     that needed none moves nothing at all, which is what keeps the panel from
-    showing a permanent 100%
-    (`test_a_request_that_needed_no_fallback_counts_none`).
+    showing a permanent 100%.
 
     `provider` is the one that SERVED, not the one that failed, which is a
-    deliberate deviation from the design's `(from, to)` labels recorded in
-    a design note. What this family is for is attributing the traffic that actually
+    deliberate deviation from a `(from, to)` pair of labels. What this family is for is attributing
+    the traffic that actually
     left, per tenant, which is what the console and `limits/budget.py` read.
 
     Where the FAILED provider shows up, precisely, because the obvious answer is
     wrong: on the trace, as its own `provider:{name}` stage span on a request
-    whose `provider` attribute names a different one
-    (`test_the_failed_candidate_keeps_its_own_provider_span`), and on
+    whose `provider` attribute names a different one, and on
     `gateway_circuit_state`, which opens for it after five failures in the window.
     NOT on `gateway_provider_errors_total` - that is moved by `record_failure`
     from the error handler, and a fallback that succeeds returns 200 and reaches
@@ -462,8 +437,7 @@ def record_circuit_state(*, provider: str, state: int) -> None:
     Called for every provider a route CONSULTS, not only for one that opens. A
     gauge that appeared when a breaker opened would leave an alert on
     `gateway_circuit_state != 0` blind to every provider until the moment it
-    broke, and a dashboard with no series to draw
-    (`test_the_circuit_gauge_reads_open_for_the_failed_provider_and_closed_for_the_other`).
+    broke, and a dashboard with no series to draw.
 
     The values are `CircuitState`'s own, passed as the int the enum already is:
     the names live in `providers/breaker.py`, and importing them here would point
@@ -477,9 +451,9 @@ def record_redactions(*, tenant: str, counts: Mapping[str, int]) -> None:
     """Count the placeholders one redaction pass minted, per detector kind.
 
     Placeholders, not detections: the same address in three turns is one redacted
-    value under one placeholder, so counting detections
+    value under one placeholder (the redaction numbering), so counting detections
     would make a tenant's redaction rate a function of how often someone repeats
-    themselves (`test_a_repeated_value_across_turns_counts_once`).
+    themselves.
     """
     with _guarded("redaction counts"):
         for kind, count in counts.items():
@@ -488,13 +462,12 @@ def record_redactions(*, tenant: str, counts: Mapping[str, int]) -> None:
 
 EXACT_CACHE_KIND: Final[str] = "exact"
 SEMANTIC_CACHE_KIND: Final[str] = "semantic"
-"""The two `kind` values a cache hit is counted under, one per tier the design describes.
+"""The two `kind` values a cache hit is counted under, one per tier.
 
 Both tiers are wired into the chat route, and they are a second VALUE on one
 family rather than a second family, which is the whole reason this label exists:
 a dashboard sums them for the hit rate and splits them for the two consistency
-regimes. Pinned by `test_a_hit_counts_a_cache_hit_and_labels_the_request_hit`
-and `test_a_semantic_hit_counts_its_own_kind_and_labels_the_request_semantic`.
+regimes.
 
 The semantic value is the same word the header and the `cache` label answer
 (`CACHE_STATUS_SEMANTIC` in `app.services.chat_pipeline`), so a hit rate per
@@ -506,12 +479,10 @@ def record_cache_hit(*, tenant: str, kind: str) -> None:
 
     Only a HIT moves this counter. A miss is already visible as
     `gateway_requests_total`'s `cache="miss"` label, and a second family counting
-    both would report a hit rate of one on every dashboard that divided them
-    (`test_a_miss_is_labelled_miss_and_moves_no_hit_counter`).
+    both would report a hit rate of one on every dashboard that divided them.
 
     Nothing here books tokens or cost: `gateway_tokens_total`
-    is what the providers billed, and a hit bought nothing
-    (`test_a_hit_books_no_tokens`).
+    is what the providers billed, and a hit bought nothing.
     """
     with _guarded("cache hit"):
         CACHE_HITS.labels(tenant=tenant, kind=kind).inc()
@@ -522,19 +493,17 @@ def record_failure(scope: Scope, error: GatewayError) -> None:
 
     One failure has a panel of its own, because one failure has an operator
     response of its own: a provider outage is answered by looking at the provider,
-    so it is labelled with the one that failed and with the typed code
-    (`test_a_provider_failure_increments_the_provider_error_counter`). Every other
+    so it is labelled with the one that failed and with the typed code. Every other
     typed failure is already counted by `gateway_requests_total`'s `status` label
     and gets no second family.
 
     A 451 is NOT among them, and used to be. A residency
     refusal is the resolver working: it is the guarantee being kept, not a
-    violation of it, and the design alerts `gateway_residency_violations_total` at
+    violation of it, and the alert on `gateway_residency_violations_total` fires at
     greater than zero - so counting 451s there paged someone every time an EU
     tenant asked for `agent-strong`. That counter is now moved only by an
     `allowed=false` row in the residency log, from `record_residency_violation`
     below, which is what makes it zero by construction and alertable at all.
-    `test_a_residency_refusal_leaves_the_violation_counter_flat` is the case.
     """
     with _guarded("failure counters"):
         record = request_metrics(scope)
@@ -560,17 +529,16 @@ def record_residency_violation(*, tenant: str) -> None:
     """Book one residency violation: a request SERVED from a region policy forbids.
 
     The resolver cannot produce one - it filters the candidate list by region
-    before anything is dialled, and `tests/routing/test_residency_property.py`
+    before anything is dialled, and the residency property test
     is the proof - so this counter is expected to stay at zero forever, which is
-    exactly what makes the design's "alert above zero" a usable alert rather than
+    exactly what makes "alert above zero" a usable alert rather than
     a threshold someone has to tune. It moves only from
     `storage/residency_log.py::record_residency`, on a row whose `allowed` came back
     false; if it ever moves, the log row beside it names the tenant, the alias,
     the provider and the region.
 
     Moved BEFORE the write rather than after it, so a violation is still visible
-    when the database is the thing that has broken
-    (`test_a_forced_allowed_false_row_moves_the_violation_counter_once`).
+    when the database is the thing that has broken.
     """
     with _guarded("residency violations"):
         RESIDENCY_VIOLATIONS.labels(tenant=tenant).inc()

@@ -7,18 +7,16 @@ purpose: mutable state inside this function is what would stop the residency
 property test being a proof.
 
 Residency is deny by default. Under the default `ResidencyMode.STRICT` the filter
-only ever narrows and no branch adds a region back, which is what makes
-`test_eu_tenant_never_gets_non_eu_provider` provable rather than merely
-unfalsified, and `test_shipped_policy_exhaustive` checks the same claim over
-every triple the shipped file can produce. Both call `resolve()` with no `mode`,
-so both are statements about strict.
+only ever narrows and no branch adds a region back, which makes the
+claim provable rather than merely unfalsified. The tests check it over
+every triple the shipped file can produce, calling `resolve()` with no `mode`,
+so they are statements about strict.
 
 `ResidencyMode.RELAXED` is the one exception, opt-in per process and off by
 default: it unions `RELAXED_REGIONS` into the allowed set after the
 clamp, for a data class that HAS a rule and is not `pii`. It widens nothing on
 failure - the union is decided by the mode alone and never by an empty result -
-so a project rule still holds, and `pii` is identical in both modes
-(`test_relaxed_never_widens_pii`, `test_pii_resolves_identically_in_both_modes`).
+so a project rule still holds, and `pii` is identical in both modes.
 """
 
 from __future__ import annotations
@@ -44,10 +42,10 @@ from app.model_routing.policy import (
 RELAXED_REGIONS = ("us",)
 """The regions `ResidencyMode.RELAXED` adds, and the whole of what relaxed means.
 
-Exactly one region, pinned by `test_relaxed_regions_is_pinned`: the mode exists so
+Exactly one region: the mode exists so
 a local demo can reach a US chat provider, and every region not named
 here is as denied under relaxed as it is under strict. `pii` never gains these,
-whatever the mode (`test_relaxed_never_widens_pii`).
+whatever the mode.
 """
 
 
@@ -96,8 +94,8 @@ def resolve(
     were allowed but none is healthy.
 
     `mode` defaults to `STRICT`, so a caller that says nothing gets today's
-    behaviour and a call site missed in a later change fails safe
-    (`test_strict_is_the_default_mode`). `RELAXED` is the one widening this module
+    behaviour and a call site missed in a later change fails safe. `RELAXED` is the one widening
+    this module
     has, it is applied below rather than here, and `pii` is outside it.
     """
     checked_identifier(tenant, "tenant")
@@ -133,7 +131,7 @@ def resolve(
         # default it cannot run at all. Deliberately AFTER the clamp, because a
         # union before it is removed again and relaxed would mean nothing; and
         # gated on `rule is not None`, so a data class the tenant never ruled on
-        # stays denied and deny-by-default remains structural (decision B).
+        # stays denied and deny-by-default remains structural.
         # `pii` is excluded here and nowhere else, which is what keeps personal
         # data on the box under every mode.
         allowed |= set(RELAXED_REGIONS)

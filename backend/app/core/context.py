@@ -17,9 +17,9 @@ class RequestContext(BaseModel):
 
     No user identity, by construction: a tenant, an optional session and a trace
     id are the only things here, which is what keeps telemetry free of it.
-    `test_context_carries_the_authenticated_tenant` compares the field set
-    exactly, so a field added here goes red rather than quietly reaching a trace;
-    that red is the invariant, not a stale expectation to update.
+    A test compares the field set exactly, so a field added here goes red rather
+    than quietly reaching a trace; that red is the rule, not a stale expectation
+    to update.
     """
 
     model_config = ConfigDict(frozen=True)

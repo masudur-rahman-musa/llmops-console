@@ -1,37 +1,30 @@
-"""The LLM judge: one fixed prompt, three samples at temperature zero, the median (#35).
+"""The LLM judge: one fixed prompt, three samples at temperature zero, the median.
 
 The judge scores the cases a golden set wrote a `judge_rubric` for, and nothing
 else - a case with no rubric is never sent and costs nothing
-(`test_a_case_with_no_rubric_is_not_judged_at_all`). It reaches a model the way
+. It reaches a model the way
 every other client does, through the gateway's `/v1/chat/completions` naming the
-alias `judge` (decision A): the design locks aliases as the only thing a client
-names, and going through the gateway puts the judge's spend on the `evals`
-tenant's budget, its trace in Langfuse and its cost in the ledger without this
-module knowing any of those exist.
+alias `judge`: the gateway puts the judge's spend on the `evals` tenant's budget,
+its trace in Langfuse and its cost in the ledger without this module knowing any
+of those exist.
 
 Four properties are worth more than the arithmetic.
 
-* **Three samples and the MEDIAN, never the mean and never the first**
-  (`test_three_samples_are_taken_and_the_median_is_the_verdict`). A single sample
+* **Three samples and the MEDIAN, never the mean and never the first**. A single sample
   of a generative model is a coin toss dressed as a measurement; the mean of
   three is not a score the rubric defines, and the median is one of the three
   answers a model actually gave.
 * **The rubric and the reply are DATA.** The system message is the prompt file
   verbatim and nothing is interpolated into it; both case-supplied strings travel
-  in a user message under their own labels
-  (`test_the_rubric_and_the_reply_are_sent_as_delimited_data`), and an answer
+  in a user message under their own labels, and an answer
   that does not schema-validate is a retry and then a `None`, never a score - so
-  a reply carrying its own `{"score": 5}` is graded rather than obeyed
-  (`test_a_reply_that_tries_to_instruct_the_judge_is_scored_not_obeyed`).
+  a reply carrying its own `{"score": 5}` is graded rather than obeyed.
 * **A sample that cannot be used is retried exactly once, then the case is
-  unjudged** (decision E). Not a failed case: a judge outage is a fact about our
-  own gateway, and recording it as the target's `provider_error` would make the
-  taxonomy lie about which system broke. The count is four requests for three
-  samples with one bad answer, and three for a sample abandoned
-  (`test_an_unusable_sample_is_retried_exactly_once`,
-  `test_a_sample_that_fails_twice_leaves_the_case_unjudged`).
-* **The prompt is a FILE and its sha256 is recorded on the run** (decision H,
-  `test_the_prompt_version_is_the_sha256_of_the_prompt_file`). The change a
+  unjudged.** Not a failed case: a judge outage is a fact about our own gateway,
+  and recording it as the target's `provider_error` would make the taxonomy lie
+  about which system broke. The count is four requests for three samples with one
+  bad answer, and three for a sample abandoned.
+* **The prompt is a FILE and its sha256 is recorded on the run**. The change a
   stored version exists to catch is an edit to the wording with no rename, which
   a file name and a module constant both survive unchanged.
 
@@ -57,13 +50,11 @@ JUDGE_ALIAS: Final[str] = "judge"
 """The alias the judge names, and the only model name this package contains.
 
 `routing.yaml` already defines it with two candidates, so which provider serves a
-judged run is a config change and never a code one. Pinned by
-`test_the_judge_constants_are_the_published_ones`."""
+judged run is a config change and never a code one."""
 
 JUDGE_PATH: Final[str] = "/v1/chat/completions"
 """Where the judge speaks to the gateway. The same OpenAI-compatible path every
-other client uses, joined onto `--judge-url`
-(`test_the_request_names_the_alias_and_temperature_zero` asserts the whole URL)."""
+other client uses, joined onto `--judge-url`."""
 
 JUDGE_SAMPLES: Final[int] = 3
 """How many times one case is scored. Three is what makes a median a median, and
@@ -81,13 +72,11 @@ JUDGE_MIN_SCORE: Final[int] = 1
 JUDGE_MAX_SCORE: Final[int] = 5
 """The highest, inclusive. Both bounds are on `JudgeAnswer.score` itself, so an
 answer of `0` or `6` is an unusable sample rather than a number that reaches a
-metric (`test_a_score_of_zero_and_a_score_of_six_are_refused`)."""
+metric."""
 
 JUDGE_LOW_SCORE: Final[int] = 3
-"""The lowest median that does NOT fail a case (decision D): 1 and 2 fail, 3, 4
-and 5 do not. Read with `<` and never `<=`, pinned at the boundary by
-`test_a_score_of_three_does_not_fail_the_case` in `tests/evals/test_runner.py`
-and by `test_a_low_judge_score_is_tagged_judge_low` in `tests/evals/test_taxonomy.py`."""
+"""The lowest median that does NOT fail a case: 1 and 2 fail, 3, 4 and 5 do not.
+Read with `<` and never `<=`."""
 
 DEFAULT_JUDGE_TIMEOUT_SECONDS: Final[float] = 60.0
 """How long one sample may take. A real default rather than httpx's `None`, which
@@ -97,10 +86,9 @@ is one, and the only thing between a hung gateway and a CI job that never ends."
 MAX_JUDGE_REASON_LENGTH: Final[int] = 500
 """Characters of the median sample's reason that are kept, inclusive.
 
-a project rule on this module's one unsized input: the reason is stored in
-`eval_cases.details`, which is `jsonb` with no cap of its own, and a model can
-answer a page of prose. Truncated rather than refused - a long reason is not a
-bad score (`test_the_reason_is_capped_at_its_published_length`)."""
+The reason is stored in `eval_cases.details`, which is `jsonb` with no cap of
+its own, and a model can answer a page of prose. Truncated rather than refused -
+a long reason is not a bad score."""
 
 PROMPT_PACKAGE: Final[str] = "app.evals.prompts"
 """Where the prompt file lives, read through `importlib.resources` so a wheel
@@ -108,7 +96,7 @@ install finds it the same way a checkout does."""
 
 PROMPT_RESOURCE: Final[str] = "judge-v1.md"
 """The prompt file itself. Versioned in its NAME for a reader and by its sha256
-for a stored run (decision H)."""
+for a stored run."""
 
 RUBRIC_OPEN: Final[str] = "<rubric>"
 RUBRIC_CLOSE: Final[str] = "</rubric>"
@@ -118,17 +106,16 @@ REPLY_CLOSE: Final[str] = "</reply>"
 
 Labels rather than a bare concatenation: a model handed `rubric + reply` has no
 way to tell the standard from the text being judged, and the standard is the half
-that must not be scored (`test_the_rubric_and_the_reply_are_sent_as_delimited_data`)."""
+that must not be scored."""
 
 
 class JudgeAnswer(BaseModel):
     """One sample as the model answered it: a score in range and a reason for it.
 
-    `extra="forbid"` and the two bounds are the whole schema check (criterion 3).
+    `extra="forbid"` and the two bounds are the whole schema check.
     An answer carrying a third field, a missing reason or a score of `0` is an
     unusable sample, which is a retry and then an unjudged case - never a number
     that reaches `judge_mean` or fails a case
-    (`test_a_sample_that_fails_twice_leaves_the_case_unjudged` walks the table).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -142,13 +129,11 @@ class JudgeVerdict(BaseModel):
 
     The samples are carried in the order they were TAKEN rather than sorted, so a
     rerun's report diffs against the last one and a reader can tell a confident
-    judgement from three answers that disagreed
-    (`test_three_samples_are_taken_and_the_median_is_the_verdict`). The reason is
+    judgement from three answers that disagreed. The reason is
     the median sample's own, capped at `MAX_JUDGE_REASON_LENGTH`.
 
-    Every field is JSON-native, which is what lets `16d` put this record into the
-    `details` `jsonb` column with no adapter of its own
-    (`test_the_details_carry_the_judge_verdict` in `tests/evals/test_store.py`).
+    Every field is JSON-native, which is what lets the store put this record into
+    the `details` `jsonb` column with no adapter of its own.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -171,10 +156,9 @@ _PROMPT_VERSION: str | None = None
 def judge_prompt_version() -> str:
     """The sha256 hex of the prompt file's bytes, computed once per process.
 
-    Decision H. The file name is not the version: an edit to the wording with no
-    rename is exactly the change that makes every score after it incomparable to
-    the ones before, and a hash over the file's BYTES is the only thing that sees
-    it (`test_the_prompt_version_is_the_sha256_of_the_prompt_file`).
+    The file name is not the version: an edit to the wording with no rename is
+    exactly the change that makes every score after it incomparable to the ones
+    before, and a hash over the file's BYTES is the only thing that sees it.
     """
     global _PROMPT_VERSION
     if _PROMPT_VERSION is None:
@@ -185,9 +169,8 @@ def judge_prompt_version() -> str:
 def _system_prompt() -> str:
     """The prompt file's text, which is the system message verbatim.
 
-    Nothing is formatted into it (criterion 5): the test asserts the message is
-    byte-equal to the file, so any interpolation at all is visible
-    (`test_the_rubric_and_the_reply_are_sent_as_delimited_data`).
+    Nothing is formatted into it: the test asserts the message is byte-equal to
+    the file, so any interpolation at all is visible.
     """
     return _prompt_bytes().decode("utf-8")
 
@@ -212,8 +195,7 @@ def _answer_from(document: object) -> JudgeAnswer | None:
     envelope with no choice, a `content` that is not JSON, a payload the schema
     refuses and a score out of range. The model's text is parsed and NEVER
     scanned for a digit - a reply that reads "I would rate this a 5 out of 5"
-    would otherwise become a fabricated verdict
-    (`test_a_judge_that_answers_prose_leaves_the_case_unjudged`).
+    would otherwise become a fabricated verdict.
     """
     try:
         choices = document["choices"]  # type: ignore[index]
@@ -239,8 +221,7 @@ class JudgeClient:
     the whole request contract is pinned against `httpx.MockTransport` with no
     gateway up and no key, and the URL is built from this module's own path
     constant as an absolute URL, so a client quietly carrying its own `base_url`
-    cannot pass while sending somewhere else
-    (`test_the_request_names_the_alias_and_temperature_zero`).
+    cannot pass while sending somewhere else.
     """
 
     def __init__(
@@ -276,11 +257,8 @@ class JudgeClient:
 
         A non-2xx, a body that is not JSON and a transport failure are the same
         event here - the sample cannot be used - and the caller decides what a
-        run of them means (decision E). Nothing raises out of this module: a
-        judge outage may not abort a run whose deterministic assertions have
-        already been paid for
-        (`test_a_judge_that_answers_five_hundred_leaves_the_case_unjudged`,
-        `test_a_judge_that_times_out_leaves_the_case_unjudged`).
+        run of them means. Nothing raises out of this module: a judge outage may
+        not abort a run whose deterministic assertions have already been paid for.
         """
         try:
             response = self._client.post(
@@ -302,10 +280,9 @@ class JudgeClient:
     def _sample_once_retried(self, rubric: str, reply: str) -> JudgeAnswer | None:
         """One sample, retried EXACTLY once when the first attempt is unusable.
 
-        Once and never twice (criterion 4): giving up on the first bad answer
-        would leave a case unjudged on the ordinary flakiness of a model, and
-        retrying until it succeeds is unbounded spend on a gateway that is
-        failing (`test_an_unusable_sample_is_retried_exactly_once`).
+        Once and never twice: giving up on the first bad answer would leave a case
+        unjudged on the ordinary flakiness of a model, and retrying until it
+        succeeds is unbounded spend on a gateway that is failing.
         """
         answer = self._sample(rubric, reply)
         if answer is not None:
@@ -315,20 +292,16 @@ class JudgeClient:
     def score_reply(self, rubric: str, reply: str) -> JudgeVerdict | None:
         """Score one reply against one rubric, or `None` when the judge could not be used.
 
-        The whole sampling rule, and the seam 17e's calibration reaches it through
-        (17e decision E): `calibrate` has no `EvalCase` and no `CaseOutcome`, and
-        a second copy of the retry rule and the median would drift from this one
-        (`test_calibrate_reaches_the_judge_through_score_reply_with_the_labels_own_strings`
-        in `tests/evals/test_calibration.py`).
+        The whole sampling rule, and the seam the calibration module reaches it
+        through: `calibrate` has no `EvalCase` and no `CaseOutcome`, and a second
+        copy of the retry rule and the median would drift from this one.
 
-        Sequential samples on the caller's own client (decision G): `run_set` is
-        synchronous, and three calls on the cases that carry a rubric is not
-        worth an async island inside a sync loop.
+        Sequential samples on the caller's own client: `run_set` is synchronous,
+        and three calls on the cases that carry a rubric is not worth an async
+        island inside a sync loop.
 
         A sample that failed twice ends the case there and no further request is
-        made - a verdict built from two samples is not the median of three
-        (`test_a_sample_that_fails_twice_leaves_the_case_unjudged` counts the
-        requests).
+        made - a verdict built from two samples is not the median of three.
         """
         answers: list[JudgeAnswer] = []
         for _ in range(JUDGE_SAMPLES):
@@ -347,13 +320,10 @@ class JudgeClient:
     def score(self, case: EvalCase, outcome: CaseOutcome) -> JudgeVerdict | None:
         """Score one rubric case, or answer `None` when the judge could not be used.
 
-        Two lines over `score_reply` and nothing else (17e decision E), which is
-        what keeps every 17c case true while the calibration path never learns
-        the shape of these two records
-        (`test_score_still_delegates_to_score_reply` in
-        `tests/evals/test_calibration.py`). Callers hand in a case that HAS a
-        rubric; one without is not judged and never reaches here
-        (`runner.run_set`).
+        Two lines over `score_reply` and nothing else, which is what keeps every
+        judge test true while the calibration path never learns the shape of these
+        two records. Callers hand in a case that HAS a rubric; one without is not
+        judged and never reaches here (`runner.run_set`).
         """
         if case.judge_rubric is None:
             return None

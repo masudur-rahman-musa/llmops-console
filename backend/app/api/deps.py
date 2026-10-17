@@ -11,15 +11,13 @@ Three things every route reaches for and none of them owns:
 Keys are held as sha256 digests and never as plaintext. A presented key is
 hashed and compared with `hmac.compare_digest`, so the comparison does not leak
 the position of the first differing byte, and nothing here logs the key: the
-plaintext appears in no response body and no log record, pinned by
-`test_key_never_appears_in_body_or_log`.
+plaintext appears in no response body and no log record.
 
 The store is a seam. `SettingsKeyStore` reads `tenant:sha256hex` pairs from one
 setting, which is the implementation that costs nothing to delete once Postgres
 owns the table. Its entries are parsed at construction, so
 a malformed pair fails when the process starts and names the pair's 1-based
-position, rather than surfacing as a puzzling 401 at request time
-(`test_key_store_rejects_malformed_entry_at_construction`).
+position, rather than surfacing as a puzzling 401 at request time.
 """
 
 from __future__ import annotations
@@ -58,16 +56,13 @@ from app.services.routing_reload import RUNTIME_SCOPE_KEY, RoutingRuntime
 from app.storage import ConsoleEventWriter
 
 MAX_KEY_LENGTH = 256
-"""Longest bearer key the gateway will hash. The value is pinned by
-`test_max_key_length_is_pinned` and the inclusive boundary by
-`test_bearer_key_length_boundary_is_inclusive`; a key one character over it is
-`UNAUTHORIZED`, like any other unusable key."""
+"""Longest bearer key the gateway will hash. The limit is inclusive: a key one
+character over it is `UNAUTHORIZED`, like any other unusable key."""
 
 BEARER_SCHEME = "bearer"
 """The `Authorization` scheme, matched case-insensitively: RFC 7235 makes the
 scheme token case-insensitive, and a client that sends `bearer` would otherwise
-get a 401 whose reason is deliberately never disclosed. Pinned by
-`test_bearer_scheme_is_case_insensitive`."""
+get a 401 whose reason is deliberately never disclosed."""
 
 _DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}")
 """A lowercase sha256 digest, matched with `re.fullmatch`: `.match` with `$`
@@ -91,7 +86,7 @@ class SettingsKeyStore:
     """`tenant:sha256hex` pairs from a single setting, parsed once.
 
     An empty setting is a valid store that authorises nobody, which is what the
-    shipped default has to be (`test_empty_key_store_is_valid_and_authorises_nobody`).
+    shipped default has to be.
     """
 
     def __init__(self, entries: str) -> None:
@@ -140,9 +135,9 @@ def bearer_key(authorization: str | None) -> str | None:
 
     Absent, empty, a scheme other than `Bearer`, an empty value and a value over
     `MAX_KEY_LENGTH` all give `None`: the caller turns every one of them into the
-    same `UNAUTHORIZED` (`test_missing_key_is_unauthorized`). The key itself is
+    same `UNAUTHORIZED`. The key itself is
     taken verbatim and never stripped, so a trailing newline or space makes it a
-    different key (`test_unknown_key_is_unauthorized`).
+    different key.
     """
     if authorization is None:
         return None
@@ -155,36 +150,31 @@ def bearer_key(authorization: str | None) -> str | None:
 
 
 DEFAULT_DATA_CLASS = DataClass.CONFIDENTIAL
-"""What a request with no `X-Data-Class` is treated as. Pinned by
-`test_data_class_defaults_to_confidential`. Defaulting to `public` would route a
+"""What a request with no `X-Data-Class` is treated as. Defaulting to `public` would route a
 tenant's unlabelled traffic to the widest region set it has, which is the one
 mistake residency cannot recover from."""
 
 TRACEPARENT_PATTERN = re.compile(r"00-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}")
 """W3C `traceparent`, version `00` only, matched with `re.fullmatch`. The
-all-zero trace and span ids the spec forbids are rejected separately below.
-The rejection table is `test_malformed_traceparent_generates_one`."""
+all-zero trace and span ids the spec forbids are rejected separately below."""
 
 _ZERO_TRACE_ID = "0" * 32
 _ZERO_SPAN_ID = "0" * 16
 
 AUTH_SPAN = "auth"
-"""The stage span this dependency is. the design names it; pinned by
-`test_the_emitted_span_names_are_exactly_the_stages_that_exist`."""
+"""The stage span this dependency is. The spec names it."""
 
 
 def emitted_trace_id(scope: Scope) -> str:
     """The trace id of the span this request is actually being traced under.
 
-    Reading it off the started span rather than off the header is the whole of
-    an earlier change decision B: `X-Gateway-Trace-Id` is then the id an engineer can paste
-    into a trace viewer, in the continued case and the fresh case alike
-    (`test_the_trace_id_header_is_the_emitted_traces_id`).
+    Reading it off the started span rather than off the header means
+    `X-Gateway-Trace-Id` is the id an engineer can paste
+    into a trace viewer, in the continued case and the fresh case alike.
 
     A request served by an app with no tracing middleware gets a fresh id, which
     keeps the `X-Gateway-Trace-Id` contract true rather than making tracing a
-    requirement for answering at all
-    (`test_an_untraced_scope_still_gets_a_trace_id`).
+    requirement for answering at all.
     """
     record = request_trace(scope)
     if record is None:
@@ -202,7 +192,7 @@ def _checked_data_class(value: str | None) -> DataClass:
 
     An unknown value is rejected rather than replaced by the default: silently
     downgrading `secret` to `confidential` would route on a class the caller
-    never asked for (`test_unknown_data_class_is_422`).
+    never asked for.
     """
     if value is None:
         return DEFAULT_DATA_CLASS
@@ -217,18 +207,17 @@ def _checked_data_class(value: str | None) -> DataClass:
 def parsed_traceparent(traceparent: str) -> tuple[str, str] | None:
     """The upstream trace id and span id, or `None` when the header is not usable.
 
-    Parse and validate only. An earlier change decision B moved the MINTING out of here:
-    the root span owns the trace id now, so this function answers what the caller
+    Parse and validate only. Minting an id is not done here:
+    the root span owns the trace id, so this function answers what the caller
     sent and `TracingMiddleware` decides what the request's own trace is. Two
     places minting an id was the way the response header and the exported trace
     could describe two different traces, which would make "one trace shared with
     the Helpdesk" a claim rather than a fact.
 
-    An earlier change decision C still holds for what a bad header does: a malformed
+    A malformed
     `traceparent` is ignored rather than rejected, which is what W3C asks of a
     receiver. A broken header upstream should not fail a request that is otherwise
-    valid, and the rejection table is `test_malformed_traceparent_generates_one`
-    with `test_a_malformed_traceparent_starts_a_new_trace` as its tracing half.
+    valid.
     """
     match = TRACEPARENT_PATTERN.fullmatch(traceparent)
     if match is None or match.group(1) == _ZERO_TRACE_ID or match.group(2) == _ZERO_SPAN_ID:
@@ -243,7 +232,7 @@ def request_context(
     x_data_class: Annotated[str | None, Header()] = None,
     x_session: Annotated[str | None, Header()] = None,
 ) -> RequestContext:
-    """Authenticate the request and build its context, in the order an earlier change fixes.
+    """Authenticate the request and build its context, in a fixed order.
 
     1. the bearer key, resolved to a tenant, or `UNAUTHORIZED`;
     2. `X-Tenant`, present and a lowercase slug within the cap, or `VALIDATION`;
@@ -253,7 +242,7 @@ def request_context(
     5. the trace id, read off the root span `TracingMiddleware` started.
 
     Auth comes first so an unauthenticated caller learns nothing about which of
-    its other headers were also wrong; `test_models_requires_auth` pins the 401.
+    its other headers were also wrong.
 
     `X-Tenant` is declared optional to FastAPI and required here, so its absence
     is answered after the key rather than before it: FastAPI raises its own
@@ -299,7 +288,7 @@ Context = Annotated[RequestContext, Depends(request_context)]
 
 TENANT_PARAM = "tenant"
 """The query parameter the routing view filters on, and the `param` every
-rejection of it names (`test_the_tenant_filter_rejection_table`)."""
+rejection of it names."""
 
 
 def checked_tenant(value: str) -> str:
@@ -309,8 +298,7 @@ def checked_tenant(value: str) -> str:
     The cap and the pattern are the resolver's own rather than numbers copied
     here, so the filter and the request path can never disagree about what a
     tenant name is; `IDENTIFIER_PATTERN` is a `fullmatch`, which is what keeps a
-    trailing newline out. The inclusive boundary is
-    `test_the_tenant_filter_length_boundary_is_inclusive`.
+    trailing newline out. The length limit is inclusive.
     """
     return checked_identifier(value, TENANT_PARAM, param=TENANT_PARAM)
 
@@ -327,12 +315,10 @@ def admin_key(request: Request, authorization: Annotated[str | None, Header()] =
     An unset `admin_key_sha256` authorises nobody. It is compared rather than
     short-circuited, so there is no "not configured" branch a deployment could
     fall into open; the comparison simply never succeeds, because no key hashes
-    to the empty string. Pinned by
-    `test_admin_routes_reject_every_caller_when_no_admin_key_is_configured`.
+    to the empty string.
 
     Nothing here logs or echoes the presented key: the refusal message says only
-    that no usable admin key was presented, exactly as the tenant path's does
-    (`test_admin_key_never_appears_in_body_or_log`).
+    that no usable admin key was presented, exactly as the tenant path's does.
     """
     settings: Settings = request.app.state.settings
     key = bearer_key(authorization)
@@ -347,10 +333,8 @@ def admin_key(request: Request, authorization: Annotated[str | None, Header()] =
 # lifespan built through one of these getters instead of reading
 # `request.app.state.<name>` by hand. A route takes the matching `*Dep` alias as a
 # parameter; a test swaps what the route sees with
-# `app.dependency_overrides[get_<name>]` rather than by mutating `app.state`
-# (`test_a_route_reads_its_client_through_a_dependency`). The getters live here,
-# not in the route files, so a scan of those files finds no `app.state` read left
-# (`test_routes_do_not_read_app_state_by_hand`).
+# `app.dependency_overrides[get_<name>]` rather than by mutating `app.state`. The getters live here,
+# not in the route files, so a scan of those files finds no `app.state` read left.
 
 
 def get_clients(request: Request) -> Clients:
@@ -363,7 +347,7 @@ def get_clients(request: Request) -> Clients:
 
     `policy`, `adapters` and `breaker` come from the `RoutingRuntime` the
     middleware leased for this request, so they are always from the same reload
-    generation (`test_a_reload_hands_one_request_the_same_policy_adapters_and_breaker`).
+    generation.
     """
     state = request.app.state
     runtime: RoutingRuntime = request.scope[RUNTIME_SCOPE_KEY]

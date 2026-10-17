@@ -11,34 +11,29 @@ compiled per string would compile 2000 alternatives 64 times for one request; a
 matcher that scanned once per NAME would walk the text 2000 times. So the
 directory is compiled ONCE per request, by the route, and handed to every string.
 
-Three things the alternation has to get right, each with its own group of rows in
-`tests/redaction/test_names.py`.
+Three things the alternation has to get right.
 
 `re.escape` on every name, individually. An operator's name may legitimately
 contain a dot, a star or a bracket, and unescaped those change what the pattern
 means: `A. B*` would read as "any character, then B repeated", matching `Ax BBB`
 and not the person. A `|` or a `)` is worse than wrong - it ends the group early
-and silently drops every name after it
-(`test_a_metacharacter_name_does_not_change_what_a_neighbour_matches`).
+and silently drops every name after it.
 
 Longest first. A Python alternation takes the FIRST branch that matches, so with
 `Anna` before `Anna Schmidt` the text `Anna Schmidt` yields a four-character span
 and leaves ` Schmidt` in the clear behind the placeholder. Sorting by length
 descending is what makes the outcome independent of the order the store happened
-to answer in (`test_the_longest_name_wins_over_its_own_first_token`).
+to answer in.
 
 Whole-word boundaries as lookarounds, `(?<!\w)` and `(?!\w)`, never `\b`. A name
 may begin or end with a non-word character (`A. B*` ends in a star), and `\b` is
 defined against the character on the other side, so it would refuse exactly those
 names. The lookarounds say the same thing for a name that starts and ends in a
-letter and the right thing for one that does not
-(`test_a_name_with_regex_metacharacters_matches_itself_literally`,
-`test_punctuation_around_a_name_is_not_part_of_the_span`).
+letter and the right thing for one that does not.
 
 An empty directory compiles to no pattern at all rather than to an empty
 alternation. `(?:)` matches the empty string at every position, which would make
-every request for a tenant that has pushed nothing one `<PERSON_N>` per character
-(`test_an_empty_directory_yields_nothing_and_does_not_raise`).
+every request for a tenant that has pushed nothing one `<PERSON_N>` per character.
 """
 
 from __future__ import annotations
@@ -63,8 +58,7 @@ class NameDirectory:
     with `value` sliced out of the SCANNED text rather than taken from the
     directory: matching is case-insensitive, so the two spellings differ, and the
     placeholder map has to hold what the caller actually wrote or its inverse
-    stops reproducing the input
-    (`test_a_candidates_value_indexes_its_own_offsets`).
+    stops reproducing the input.
     """
 
     __slots__ = ("_pattern",)
@@ -92,8 +86,7 @@ class NameDirectory:
 
         `finditer` and not `search`: a name mentioned twice must be replaced
         twice, and a second mention left in the clear behind a response that
-        reports a redaction is the worst failure shape this control has
-        (`test_every_occurrence_of_a_name_is_a_candidate`).
+        reports a redaction is the worst failure shape this control has.
         """
         if self._pattern is None:
             return

@@ -4,13 +4,12 @@
 other module names a model by alias. This schema is the boundary where an
 operator's YAML becomes typed data.
 
-Loading is deliberately strict. `yaml.safe_load` is the only deserialiser used
-(pinned by `test_safe_load_only`), unknown keys are rejected, and the two
+Loading is deliberately strict. `yaml.safe_load` is the only deserialiser used,
+unknown keys are rejected, and the two
 cross-model references YAML cannot express - a candidate naming a provider, an
 override naming an alias - are checked here so a broken file fails on reload
 instead of at the first request that happens to touch it. Every rejection is a
-`PolicyInvalid` whose message names the field path, pinned by
-`test_invalid_policy_names_the_field`.
+`PolicyInvalid` whose message names the field path.
 """
 
 from __future__ import annotations
@@ -89,13 +88,11 @@ class Candidate(_Frozen):
 class Alias(_Frozen):
     """The ordered candidates an alias resolves to when a tenant has no override.
 
-    `semantic_cache` is #23's per-alias switch, and it defaults to OFF: the
+    `semantic_cache` is the per-alias switch, and it defaults to OFF: the
     semantic tier serves an answer to a question that is merely SIMILAR, which is
     right for a chat assistant and wrong for a judge or an extraction, so an
-    alias reaches it only by saying so. An alias that omits the key is off
-    (`test_an_alias_that_omits_the_semantic_switch_is_off`), and what the shipped
-    file turns on is pinned by
-    `test_only_agent_default_carries_the_semantic_cache_switch`.
+    alias reaches it only by saying so. An alias that omits the key is off, and what the shipped
+    file turns on is fixed.
     """
 
     candidates: tuple[Candidate, ...]
@@ -113,13 +110,12 @@ class RateLimit(_Frozen):
     """Per-tenant request and token ceilings. Enforced by the limits package.
 
     Both are `ge=1`, so a ceiling of zero or below is refused at LOAD with its
-    field path named (an earlier change decision G,
-    `test_a_zero_rate_limit_is_refused_at_load`). Before enforcement existed a
+    field path named. Before enforcement existed a
     zero parsed and was inert; enforced, it refuses every request that tenant
     ever sends, with a typed 429 and a `Retry-After` that never comes true, and
     nothing distinguishes that from the limiter working. A negative is a bucket
     whose capacity is below its own empty level. One is admitted - a smoke-test
-    tenant is a real setting (`test_a_rate_limit_of_exactly_one_is_admitted`).
+    tenant is a real setting.
     """
 
     rpm: int = Field(ge=1)
@@ -148,7 +144,7 @@ class Tenant(_Frozen):
 
         The resolver applies its EU clamp and relaxed-mode union on top of this
         value; the eval check uses it raw. Neither caller changes the return value
-        itself, pinned by `test_the_gateway_and_the_eval_check_read_the_same_rule`.
+        itself.
         """
         rule = self.data_class_rules.get(data_class)
         return rule.allow_regions if rule is not None else ()
@@ -228,8 +224,7 @@ class PolicyStore:
 
     `reload` parses into a new `Policy` before it rebinds the attribute, so a
     failed reload leaves the previous snapshot in place and a resolution already
-    holding a snapshot keeps reading a consistent one. Pinned by
-    `test_reload_swaps_snapshot` and `test_failed_reload_keeps_previous_policy`.
+    holding a snapshot keeps reading a consistent one.
     """
 
     def __init__(self, path: Path) -> None:
@@ -251,8 +246,7 @@ def reachable_price_keys(policy: Policy) -> set[str]:
 
     Both sources, because a tenant override introduces a pair that need appear in
     no alias: the resolver uses an override in place of the alias's own candidate
-    list, so a pair reachable only that way is just as billable. Pinned by
-    `test_reachable_price_keys_covers_alias_and_override_keys`.
+    list, so a pair reachable only that way is just as billable.
     """
     keys: set[str] = set()
     for alias in policy.aliases.values():
@@ -276,8 +270,7 @@ def check_policy_models_priced(policy: Policy, table: PriceTable) -> None:
 
     The unhappy path names all missing pairs in one message, sorted, so an
     operator can fix all of them in one edit rather than learning about them one
-    reload at a time. Pinned by
-    `test_check_policy_models_priced_names_every_unpriced_model`.
+    reload at a time.
     """
     missing = sorted(reachable_price_keys(policy) - set(table.prices))
     if missing:

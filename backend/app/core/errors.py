@@ -2,30 +2,12 @@
 
 `ErrorCode` is closed on purpose: a caller writes code against these nine
 strings, so adding, renaming or dropping one is a change to the published API
-rather than an implementation detail. `test_error_code_set_is_exhaustive` holds
-the whole table - each code's string, its HTTP status, and the requirement that
-exactly one concrete `GatewayError` subclass carries it - against a literal
-written out in the test, so any of those three drifting fails there.
+rather than an implementation detail. A test holds the whole table - each code's
+string, its HTTP status, and the requirement that exactly one concrete
+`GatewayError` subclass carries it - against a literal written out in the test,
+so any of those three drifting fails there.
 
-EVERY class below is now raised by something: `RateLimited` was the last one that
-was not, and an earlier change's per-tenant rate limits raise it. These two commands
-answer where, the class names bracketed so this quotation of them is not itself a
-hit:
-
-    grep -rE "raise (Unauth[o]rized|TenantMis[m]atch)" packages services
-    grep -rE "raise (BudgetExc[e]eded|Rate[L]imited|ProviderE[r]ror)" packages services
-
-with these files and no others:
-
-    gateway/context.py              TenantMismatch, Unauthorized
-    gateway/routes/admin.py         Unauthorized
-    services/chat_pipeline.py       BudgetExceeded, RateLimited
-    services/wire_mapping.py        ProviderError
-    services/streaming.py           ProviderError
-    gateway/routes/directory.py     ProviderError
-    services/redaction_flow.py      ProviderError
-    providers/anthropic.py          ProviderError
-    providers/openai_compatible.py  ProviderError
+Every class below is raised by something in the code.
 """
 
 from __future__ import annotations
@@ -35,7 +17,7 @@ from typing import ClassVar
 
 
 class ErrorCode(StrEnum):
-    """The wire `code` on every error body. A closed set (the design)."""
+    """The wire `code` on every error body. A closed set."""
 
     UNAUTHORIZED = "UNAUTHORIZED"
     TENANT_MISMATCH = "TENANT_MISMATCH"
@@ -53,8 +35,7 @@ class GatewayError(Exception):
 
     A subclass that a client can be shown sets both class attributes; the two
     intermediate bases that do not (`GatewayError` itself and `RoutingError`)
-    are how `concrete_error_classes` in tests/gateway/test_error_contract.py
-    tells a real code from a grouping. `param` names the input at fault where
+    are how the error tests tell a real code from a grouping. `param` names the input at fault where
     the raiser knows it.
     """
 
@@ -65,11 +46,10 @@ class GatewayError(Exception):
     """Whole seconds a client should wait before retrying, or `None` for "do not".
 
     A class attribute defaulting to `None`, so every existing failure carries no
-    wait and `gateway/errors.py` renders `Retry-After` for the ONE that does. Deliberately not derived from the status: a budget
-    refusal is also a 429, and telling a tenant that has spent its month to come
-    back in a second would be a header that is never true
-    (`test_a_budget_refusal_carries_no_retry_after`,
-    `test_a_residency_refusal_carries_no_retry_after`).
+    wait and the error handlers render `Retry-After` for the ONE that does. Deliberately not
+    derived from the
+    status: a budget refusal is also a 429, and telling a tenant that has spent its month to come
+    back in a second would be a header that is never true.
     """
 
     def __init__(self, message: str, *, param: str | None = None) -> None:
@@ -82,9 +62,7 @@ class Unauthorized(GatewayError):
     """No usable API key: absent, unreadable, over the length cap, or unknown.
 
     One answer for all four. Which of them it was is not disclosed, so a caller
-    cannot use the status to probe the key store (an earlier change decisions F and G;
-    pinned by `test_missing_key_is_unauthorized` and
-    `test_unknown_key_is_unauthorized`).
+    cannot use the status to probe the key store.
     """
 
     code: ClassVar[ErrorCode] = ErrorCode.UNAUTHORIZED
@@ -95,7 +73,7 @@ class TenantMismatch(GatewayError):
     """The key is valid, but it does not belong to the tenant the caller named.
 
     403 rather than 401: the caller is authenticated and is asking for something
-    that is not theirs. Pinned by `test_key_tenant_mismatch_is_403`.
+    that is not theirs.
     """
 
     code: ClassVar[ErrorCode] = ErrorCode.TENANT_MISMATCH
@@ -107,9 +85,7 @@ class BudgetExceeded(GatewayError):
 
     Raised by `services/chat_pipeline.py::check_budget`, at the top of both the chat
     and the embeddings route and before anything is resolved or dialled, so a
-    refusal costs no provider call and books no row
-    (`test_a_tenant_over_cap_is_429_budget_exceeded`,
-    `test_a_refused_request_dials_no_provider_and_books_no_row`). A request
+    refusal costs no provider call and books no row. A request
     carrying a valid `X-Gateway-Budget-Override` for its own tenant and the
     current month is served instead.
     """
@@ -123,15 +99,12 @@ class RateLimited(GatewayError):
 
     Raised by `services/chat_pipeline.py::check_rate_limit`, at the top of both the
     chat and the embeddings route and BEFORE `check_budget`, so a tenant over
-    both is told to slow down rather than to top up
-    (`test_a_tenant_over_its_request_rate_is_429_rate_limited`,
-    `test_the_rate_check_runs_before_the_budget_check`).
+    both is told to slow down rather than to top up.
 
     The only failure that carries a `retry_after_seconds`, and it is required
     here rather than optional: a limiter that will not say when to come back
     makes every client guess, and the bucket that refused already knows when its
-    next whole token lands (decision D,
-    `test_the_429_carries_retry_after_in_whole_seconds`).
+    next whole token lands.
     """
 
     code: ClassVar[ErrorCode] = ErrorCode.RATE_LIMITED
@@ -150,14 +123,12 @@ class ProviderError(GatewayError):
     the routes' fallback loop has to decide whether to try the next candidate
     without re-parsing a status it can no longer see, so the adapter that knew the
     status records the verdict here. It is true for 429, any 5xx and a timeout, false for
-    every other failure: `test_retry_table_by_status` pins the status rows and
-    `test_a_timeout_is_retried_and_raises_retryable` the timeout ones.
+    every other failure.
 
     `provider_message` is where the provider's own words go, and they go nowhere
     else: `message` is client-facing and carries the provider name and the status
     only, so an upstream body cannot put request ids or quota wording in front of a
-    tenant. `test_provider_message_never_reaches_the_client_message` holds both
-    halves against a marker planted in the fixtures.
+    tenant. Tests hold both halves against a marker planted in the fixtures.
     """
 
     code: ClassVar[ErrorCode] = ErrorCode.PROVIDER_ERROR
@@ -180,13 +151,13 @@ class LibraryError(Exception):
     """Base for a failure raised by a pure library - redaction, pricing, evals.
 
     A SECOND hierarchy on purpose, deliberately NOT a `GatewayError`. The nine
-    codes above are a closed set and `test_error_code_set_is_exhaustive` allows
+    codes above are a closed set and the exhaustive-code test allows
     exactly one concrete `GatewayError` per code; `VALIDATION` and
     `PROVIDER_ERROR` already have theirs (`app.core.validation.IdentifierInvalid`
     and `ProviderError`), so a library failure cannot be a `GatewayError`
-    carrying either (`test_the_library_base_is_not_a_gateway_error`). The two
+    carrying either. The two
     hierarchies stay apart and `app.core.http_errors.as_gateway_error` joins
-    them. a design note records this.
+    them.
 
     `code` and `http_status` are set by the two middle bases below that have an
     HTTP answer; a direct subclass (`app.evals.calibration.CalibrationRefused`)
@@ -201,8 +172,7 @@ class LibraryInputInvalid(LibraryError):
     """A library rejected its input. The 422 `VALIDATION` answer, named once.
 
     Where a route converts one, it becomes `IdentifierInvalid` - code
-    `VALIDATION`, 422 - so the status lives here rather than at each call site
-    (`test_input_invalid_names_validation_422`).
+    `VALIDATION`, 422 - so the status lives here rather than at each call site.
     """
 
     code: ClassVar[ErrorCode] = ErrorCode.VALIDATION
@@ -213,8 +183,7 @@ class LibraryDependencyUnavailable(LibraryError):
     """A library's backing store could not be reached. The 502, named once.
 
     Where a route converts one, it becomes a retryable `ProviderError` - code
-    `PROVIDER_ERROR`, 502 - the same code an unreachable provider lands on
-    (`test_dependency_unavailable_names_provider_error_502`).
+    `PROVIDER_ERROR`, 502 - the same code an unreachable provider lands on.
     """
 
     code: ClassVar[ErrorCode] = ErrorCode.PROVIDER_ERROR

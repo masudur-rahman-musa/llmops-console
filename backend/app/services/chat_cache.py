@@ -21,15 +21,14 @@ from app.schemas.chat import ChatCompletionRequest
 from app.schemas.embeddings import MAX_EMBEDDING_INPUT_CHARS
 
 EMBED_ALIAS = "embed"
-"""The alias a semantic probe is embedded through: the design's own word, a constant
+"""The alias a semantic probe is embedded through: a constant
 and not a setting.
 
 Settable, it would be a way to point the tier at a model whose vectors no stored
 entry shares - every search silently returning nothing, with no failure anywhere
 to see. It is resolved per request like any other alias, so residency, health and
 the tenant's data class apply to the embedding exactly as they apply to a
-completion (`test_the_semantic_words_are_the_published_ones`,
-`test_an_embed_alias_refused_by_residency_is_a_miss`)."""
+completion."""
 
 
 def health_seam(
@@ -40,7 +39,7 @@ def health_seam(
     Both routes build it here rather than each writing the conjunction, because a
     route that asked only its own half would be the bug this seam exists to
     prevent: an embeddings route still dialling an open provider while the chat
-    route respected it (`test_the_embeddings_route_skips_a_provider_whose_breaker_is_open`).
+    route respected it.
     `has_adapter` is the half that differs - "an adapter exists" for a completion,
     "an EMBEDDING adapter exists" for an embedding.
 
@@ -51,12 +50,10 @@ def health_seam(
 
     A breaker consulted HERE, and not inside the fallback loop, is what makes a
     request whose every candidate is open the resolver's 503 with no provider
-    dialled at all
-    (`test_every_breaker_open_is_the_resolvers_503_with_no_provider_called`).
+    dialled at all.
 
     Publishing the gauge from here is what gives every provider in rotation a
-    series rather than only the ones that have broken
-    (`test_the_circuit_gauge_reads_open_for_the_failed_provider_and_closed_for_the_other`).
+    series rather than only the ones that have broken.
     The seam is called once per permitted candidate by `resolve()`, so the cost is
     one gauge set per candidate and the label is a policy provider name.
     """
@@ -73,8 +70,7 @@ def absorb_failure(breaker: CircuitBreaker, provider: str, error: ProviderError)
 
     A 4xx and an unreadable body are not evidence about the provider - they are
     evidence about the request - so counting them would take a healthy provider out
-    of rotation over a caller's own mistake
-    (`test_a_non_retryable_failure_stops_at_the_first_candidate`). The caller
+    of rotation over a caller's own mistake. The caller
     re-raises a non-retryable one; this only decides what the breaker learns.
     """
     if not error.retryable:
@@ -96,9 +92,8 @@ def cached_answer(cache: ResponseCache, tenant: str, key: str | None) -> ChatRes
     `redis.RedisError` and a bad stored value, so nothing the SHIPPED store does
     reaches here - but this seam is a Protocol, the wiring is settings-driven,
     and a cache is the one dependency whose failure must never change a status
-    code. `test_a_cache_that_raises_still_serves_the_request` injects a store
-    that raises a plain `RuntimeError` from both methods, which no `redis`-shaped
-    guard would catch.
+    code. A store that raises a plain `RuntimeError` from either method, which no
+    `redis`-shaped guard would catch, must still leave the request served.
     """
     if key is None:
         return None
@@ -136,15 +131,15 @@ def requested_key(
 
     One function for both the lookup and the write, so the two cannot disagree
     about what the key is or about which requests are eligible - the lookup uses
-    `candidates[0]` and the write uses whatever candidate actually served
-    (decision B), and that resolved model is the only argument that differs
+    `candidates[0]` and the write uses whatever candidate actually served, and that resolved model
+    is the only argument that differs
     between the two calls.
 
     `data_class` is keyword-only and required: a default would let a call site
     quietly omit it and serve a cached answer across data-handling boundaries,
-    which is the exact failure an earlier change adds it to prevent.
+    which is the exact failure it is there to prevent.
 
-    The body is the INBOUND one, before redaction (decision A). The redacted text
+    The body is the INBOUND one, before redaction. The redacted text
     depends on the tenant's directory, so keying on the outbound body would
     silently invalidate every entry the moment a name is pushed, and would give
     two callers' identical prompts two keys for nothing.
@@ -183,17 +178,15 @@ def embedded_probe(
     helpers below turn into a miss and a write that does not happen: no probe
     text, a probe over the cap, an `embed` alias that does not exist, one refused
     by residency, one with no healthy embedding candidate, an adapter that raises
-    and an answer carrying no embedding are the same nothing here (an earlier change
-    decision B). A cache tier must never change the status code of a request a
-    provider would have served, and `test_an_embedding_adapter_that_raises_is_a_miss`
-    injects an adapter raising a plain `RuntimeError`, which no typed guard would
-    catch.
+    and an answer carrying no embedding are the same nothing here. A cache tier must never change
+    the status code of a request a
+    provider would have served, so an adapter raising a plain `RuntimeError`, which
+    no typed guard would catch, is a miss too.
 
     The cap is `MAX_EMBEDDING_INPUT_CHARS`, imported from `app.schemas.embeddings`
-    and never restated (decision F). A longer probe is not truncated: truncating
+    and never restated. A longer probe is not truncated: truncating
     changes the question, and two different long prompts sharing a prefix would
-    become one question (`test_the_probe_length_boundary_is_inclusive_and_never_a_422`,
-    `test_a_probe_at_the_cap_is_embedded_whole_and_not_truncated`).
+    become one question.
 
     The health seam is the embeddings route's, not the chat route's - "this
     provider has an EMBEDDING adapter and its breaker allows it" - so a candidate
@@ -203,13 +196,11 @@ def embedded_probe(
     Failures are absorbed into the breaker exactly as the embeddings route
     absorbs them, because they are real provider failures and that route would
     count them too, and the tokens are booked with `record_tokens` under the EMBED
-    provider and model (decision G): they were really bought, and a tier that
-    spends tokens invisibly is how a cache ends up costing more than it saves
-    (`test_the_embedding_tokens_are_booked_under_the_embed_provider_and_model`).
+    provider and model: they were really bought, and a tier that
+    spends tokens invisibly is how a cache ends up costing more than it saves.
     `record_served` is deliberately NOT called - that would write a second
     residency-log row for one client request and relabel the scope with the
-    embedding provider (`test_the_embedding_writes_no_second_residency_row`,
-    `test_the_embedding_does_not_relabel_the_requests_candidate`).
+    embedding provider.
     """
 
     if text is None or len(text) > MAX_EMBEDDING_INPUT_CHARS:
@@ -278,7 +269,7 @@ def semantic_answer(
     The `except Exception` is the route's own backstop rather than a duplicate of
     the store's, for the reason `cached_answer` states: `app.cache`
     guarantees neither implementation raises, but this seam is a Protocol and the
-    wiring is settings-driven (`test_a_store_that_raises_on_search_is_a_miss`).
+    wiring is settings-driven.
     """
     if vector is None:
         return None
@@ -322,8 +313,7 @@ def store_probe(
 
     Guarded for the reason `store_answer` is guarded, and it is the sharper one:
     this runs after a provider has answered and been paid, so an escaping failure
-    would lose a request that was completely served
-    (`test_a_store_that_raises_on_put_is_swallowed_after_the_caller_is_served`).
+    would lose a request that was completely served.
     """
     if vector is None:
         return

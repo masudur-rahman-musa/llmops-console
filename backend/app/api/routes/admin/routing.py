@@ -3,8 +3,7 @@
 Both behind the admin key space (`admin_key`), both cluster-internal: the
 `gateway` Ingress routes `/v1` and nothing wider, so no public router matches
 `/admin/*` and a request for one from the internet is Traefik's own 404
-(`infra/tests/infra/test_k8s_apps.py::test_no_public_router_matches_an_admin_path_or_the_scrape`,
-whose paths are imported from here and from `directory.py`).
+(the infra tests import the paths from here and from `directory.py` to check that).
 
 The view is the resolver's own answer rather than a re-reading of `routing.yaml`.
 For every tenant, every alias and every data class it calls `resolve()` and
@@ -15,17 +14,13 @@ available to this tenant" - and deliberately not the `RoutingError` base.
 
 `?tenant=` is the one client-supplied input on this surface and is pre-checked
 against the resolver's own `MAX_IDENTIFIER_LENGTH` and `IDENTIFIER_PATTERN` by
-`app.api.deps.checked_tenant` before any lookup happens
-(`test_the_tenant_filter_length_boundary_is_inclusive`,
-`test_the_tenant_filter_rejection_table`). A valid but unknown tenant is an empty
-view rather than an error (`test_an_unknown_but_valid_tenant_is_an_empty_view`).
+`app.api.deps.checked_tenant` before any lookup happens. A valid but unknown tenant is an empty
+view rather than an error.
 
 Reload delegates entirely to `RoutingRuntimeStore.reload`, which parses the new
 policy, builds new adapters and a new breaker, and swaps all three atomically
 under one lock. A file that does not parse raises `PolicyInvalid` before any
 state is touched, so the previous set goes on serving.
-(`test_an_invalid_policy_on_reload_is_422_naming_the_field`,
-`test_a_failed_reload_keeps_the_previous_policy_serving`).
 """
 
 from __future__ import annotations
@@ -47,11 +42,10 @@ from app.schemas.admin import AliasView, ReloadResult, ResolvedEntry, RoutingVie
 from app.services.routing_reload import RoutingRuntimeStore
 
 ADMIN_ROUTING = "/admin/routing"
-"""The resolved-routing view. Pinned against the mounted route by
-`test_the_admin_paths_and_statuses_are_pinned`."""
+"""The resolved-routing view."""
 
 ADMIN_ROUTING_RELOAD = "/admin/routing/reload"
-"""The policy reload. Pinned by `test_the_admin_paths_and_statuses_are_pinned`."""
+"""The policy reload."""
 
 
 def _tenant_view(policy: Policy, tenant: str, mode: ResidencyMode) -> TenantView:
@@ -115,13 +109,12 @@ def reload_routing(request: Request, store: PolicyDep) -> ReloadResult:
     file that does not parse raises `PolicyInvalid` before any state is touched.
     Under the lock it builds new adapters and a new breaker, then swaps all three
     atomically - so `acquire()` always sees either the fully old or the fully new
-    set, never a mix (`test_a_reload_hands_one_request_the_same_policy_adapters_and_breaker`).
+    set, never a mix.
 
     `PolicyInvalid` becomes a 422 `VALIDATION` carrying the message the loader
     built, which names the field path. The exception is deliberately not allowed
     to escape as a 500: the file is this endpoint's input, so a bad one is a
-    request-level validation failure rather than a gateway fault (an earlier change
-    decision D, `test_an_invalid_policy_on_reload_is_422_naming_the_field`).
+    request-level validation failure rather than a gateway fault.
     """
     routing_store: RoutingRuntimeStore = request.app.state.routing_store
     try:

@@ -1,31 +1,26 @@
 """Liveness, readiness, the readiness probes, and the Prometheus scrape.
 
 `/healthz` says the process is up and checks nothing else, so a dependency
-outage never takes the container down (pinned by `test_registries_are_per_app`,
-which asserts 200 from `/healthz` while `/readyz` is 503). `/readyz` runs the
+outage never takes the container down: `/healthz` stays 200 while `/readyz` is 503. `/readyz` runs
+the
 registered probes and returns 503 the moment one of them fails, which is what
 takes the pod out of the load balancer.
 
 The body names every probe that RAN, which is the half of the contract an empty
 registry makes visible: `{"checks": {}}` is a readiness that checked nothing, and
-an operator can see that rather than having to infer it from a green 200
-(`test_a_refused_redis_makes_readyz_503_naming_every_probe`). Beside `checks` it
+an operator can see that rather than having to infer it from a green 200. Beside `checks` it
 carries `residency_mode`, so a process running the opt-in relaxed mode cannot be
 mistaken for a strict one by anything that reads the endpoint.
 A top-level key rather than another entry in `checks`, because `checks` means "a
 probe ran and this is its verdict" and readiness is `all(checks.values())` - a
-string filed in there would read as a passing probe
-(`test_readyz_reports_the_residency_mode`).
+string filed in there would read as a passing probe.
 
 Four probes live here and every one of them obeys the same three rules.
 
 It answers a bool and never raises. `_run` catches too, but a probe that relied
 on that would put the reason for a failure in a log line that says only
 "readiness probe raised": each factory catches its own client's error and logs it
-with the service name (`test_the_redis_probe_answers_a_bool_for_every_client`,
-`test_the_postgres_probe_answers_a_bool_for_every_connection`,
-`test_the_qdrant_probe_answers_false_when_the_call_raises`,
-`test_the_provider_probe_is_ready_when_an_adapter_exists`).
+with the service name.
 
 It is bounded. The clients the probes run over come from `core/clients.py`, each
 carrying `PROBE_TIMEOUT_SECONDS` on connect and read.
@@ -33,8 +28,7 @@ carrying `PROBE_TIMEOUT_SECONDS` on connect and read.
 It asks the server something. A probe that only opens a connection passes against
 a Postgres still replaying WAL and a Qdrant still loading its collections, so the
 Postgres probe runs `SELECT 1` and the Qdrant probe reads the status of a real
-request (`test_the_postgres_probe_runs_a_statement_rather_than_only_connecting`,
-`test_the_qdrant_probe_reads_the_status`).
+request.
 
 The provider probe is the exception to that last rule, and it is honest about it
 here rather than in a plan file: it proves only that the adapter mapping is
@@ -50,18 +44,15 @@ its URL is set and does not exist otherwise, while the provider probe is always
 registered. An unconfigured store that registered a failing probe would make
 `/readyz` red forever on a machine that never wanted that store, and one that
 registered a passing probe would be worse - readiness would be green having
-checked nothing
-(`test_register_probes_registers_the_configured_stores_and_always_the_provider`).
+checked nothing.
 
 `GET /metrics` is the Prometheus scrape, unauthenticated like `/healthz` and
 `/readyz`. It is served in-cluster only: the `gateway`
 Ingress routes `/v1` and nothing wider, so no public router matches this path and
-a request for it from the internet is Traefik's own 404
-(`infra/tests/infra/test_k8s_apps.py::test_no_public_router_matches_an_admin_path_or_the_scrape`).
+a request for it from the internet is Traefik's own 404.
 That matters because tenant names are label values. The path is deliberately
 outside `/v1/`, which keeps a scrape every fifteen seconds out of
-`gateway_requests_total` without a rule of its own
-(`test_the_probe_and_scrape_paths_are_not_counted`).
+`gateway_requests_total` without a rule of its own.
 """
 
 from __future__ import annotations
@@ -93,31 +84,26 @@ POSTGRES_PROBE: Final[str] = "postgres"
 QDRANT_PROBE: Final[str] = "qdrant"
 PROVIDER_PROBE: Final[str] = "provider"
 """The four keys the `/readyz` body publishes. They are read by an operator and
-by whatever alerts on readiness, so they are API rather than internal labels;
-pinned by `test_the_probe_names_are_the_ones_the_readyz_body_publishes`."""
+by whatever alerts on readiness, so they are API rather than internal labels."""
 
 QDRANT_READY_PATH: Final[str] = "/readyz"
 """Qdrant's own readiness path. Its `/healthz` answers 200 while collections are
-still loading, which is exactly the state this probe has to refuse; pinned by
-`test_the_qdrant_readiness_path_is_the_services_own`."""
+still loading, which is exactly the state this probe has to refuse."""
 
 PROBE_STATUS_FLOOR: Final[int] = 400
-"""The first HTTP status a probe reads as not ready. Pinned by the 399/400 pair in
-`test_the_qdrant_probe_reads_the_status`."""
+"""The first HTTP status a probe reads as not ready."""
 
 POSTGRES_PROBE_STATEMENT: Final[str] = "SELECT 1"
 
 METRICS = "/metrics"
-"""The published scrape path. Pinned against the mounted route by
-`test_metrics_answers_the_exposition_content_type`."""
+"""The published scrape path."""
 
 
 class ProbeRegistry:
     """The readiness probes an app checks.
 
     Iteration follows registration order, and a second registration under an
-    existing name replaces the first. Both are pinned by
-    `test_registering_the_same_name_replaces_the_probe`.
+    existing name replaces the first.
     """
 
     def __init__(self) -> None:
@@ -146,8 +132,7 @@ def redis_probe(client: SupportsPing) -> Probe:
     """A probe answering whether `client` still responds to `PING`.
 
     Asked on every call rather than once: readiness is polled precisely so a
-    Redis that went away since the last check is noticed
-    (`test_the_redis_probe_asks_the_server_every_time_it_is_called`).
+    Redis that went away since the last check is noticed.
     """
 
     def probe() -> bool:
@@ -179,8 +164,7 @@ def postgres_probe(pool: SupportsConnection) -> Probe:
     The connection is borrowed from the SHARED pool per call rather than held,
     because a probe holding an idle connection through an outage is a probe that
     reports on a socket rather than on a server. The pool's `connection()` context
-    manager is what returns it on the failing path too
-    (`test_the_postgres_probe_releases_the_connection_even_when_the_statement_fails`).
+    manager is what returns it on the failing path too.
     One pool serves the writers and this probe, so a down database is what makes
     this probe fail.
     """
@@ -202,7 +186,7 @@ def qdrant_probe(client: httpx.Client, base_url: str) -> Probe:
 
     Ready is any status below `PROBE_STATUS_FLOOR`, not `== 200`: Qdrant answers
     a 2xx that is not 200 on some builds, and a 503 while it loads is the case
-    this must refuse (`test_the_qdrant_probe_reads_the_status`).
+    this must refuse.
     """
 
     def probe() -> bool:
@@ -225,7 +209,7 @@ def provider_probe(adapters: Mapping[str, Adapter]) -> Probe:
     state (`providers/breaker.py`) tracks whether each provider is healthy at
     request time.
 
-    Pinned by `test_the_provider_probe_is_ready_when_an_adapter_exists`.
+
     """
 
     def probe() -> bool:
@@ -239,12 +223,10 @@ def register_probes(app: FastAPI) -> None:
 
     Run by `lifespan` once the shared clients are on `app.state`, so each store
     probe runs over the very `redis.Redis`, Qdrant `httpx.Client` or Postgres pool
-    the stores, caches and writers use - not a second one minted here (an earlier change,
-    `test_readyz_probes_run_over_the_shared_clients`). Registration is still
+    the stores, caches and writers use - not a second one minted here. Registration is still
     configured-only: a client exists only when its URL is
     set, so a store probe exists exactly when its service is configured and the
-    provider probe is always registered
-    (`test_register_probes_registers_the_configured_stores_and_always_the_provider`).
+    provider probe is always registered.
 
     Reads `app.state.settings`, `app.state.adapters`, `app.state.probes` and the
     shared clients, so it is callable against any app carrying those and is
@@ -271,7 +253,7 @@ router = APIRouter()
 
 @router.get("/healthz")
 def healthz() -> dict[str, str]:
-    """Liveness: 200 as long as the process is serving. Pinned by `test_healthz_ok`."""
+    """Liveness: 200 as long as the process is serving."""
     return {"status": "ok"}
 
 
@@ -279,10 +261,9 @@ def healthz() -> dict[str, str]:
 def readyz(request: Request) -> Response:
     """Readiness: 200 when every registered probe passes, 503 naming the failures.
 
-    An empty registry is ready. Pinned by `test_readyz_ok_when_all_probes_pass`
-    and `test_readyz_503_when_a_probe_fails`. The body also states this process's
+    An empty registry is ready. The body also states this process's
     `residency_mode`, which is settings and not a probe, so it never affects the
-    status (`test_readyz_reports_the_residency_mode`).
+    status.
     """
     probes: ProbeRegistry = request.app.state.probes
     mode: ResidencyMode = request.app.state.settings.residency_mode
@@ -302,8 +283,8 @@ def scrape() -> Response:
 
     The content type carries the format version, and a Prometheus scrape reads it
     before the body: a target answering a bare `text/plain` is dropped, so every
-    panel in the design would be empty while the endpoint answered 200 to a
-    browser (`test_metrics_answers_the_exposition_content_type`).
+    dashboard panel would be empty while the endpoint answered 200 to a
+    browser.
 
     Declared `def` rather than `async def`: rendering walks every sample in the
     registry, and FastAPI runs a `def` route in a worker thread rather than on the

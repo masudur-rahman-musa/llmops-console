@@ -1,4 +1,4 @@
-r"""`ops-eval gate`: the design's five rules over one published run (#41, #42).
+r"""`ops-eval gate`: five rules over one published run.
 
 Pure, and deliberately so. Everything here reads a `report.json` that already
 exists and a `baseline.json` that is checked into the repo, so the same two files
@@ -8,20 +8,18 @@ what lives here is the comparison, the verdict and the markdown that verdict
 becomes.
 
 Every number in this module is in POINTS, 0-100. `scores.py` emits percentages
-(`_percentage` answers `100 * passed / total` at `ACCURACY_SCALE` places) and
-the design is written in points, so the baseline is written in points too
-(decision A, a design note). That is not a formatting preference: the file shipped
-before this row stated `refusal_recall_min: 0.95` as a FRACTION, and a gate
-comparing a points report against a fraction floor passes a run at one percent
-recall. `BASELINE_MIN` and `BASELINE_MAX` are what refuse the old file rather
-than silently accept it
-(`test_a_baseline_carrying_an_unknown_key_or_a_number_outside_the_range_is_refused`).
+and the eval gate spec is written in points, so the baseline is written in points
+too. That is not a formatting preference: the file shipped before this row stated
+`refusal_recall_min: 0.95` as a FRACTION, and a gate comparing a points report
+against a fraction floor passes a run at one percent recall. `BASELINE_MIN` and
+`BASELINE_MAX` are what refuse the old file rather than silently accept it
+.
 
-No judge metric is a gate rule (decision F). #36 asks for the judge metrics to be
-excluded from the gate when the kappa is under 17e's trust floor; `RULE_ORDER`
-contains neither `judge_mean` nor `judge_kappa_vs_human`, so the exclusion holds
-by construction and a trusted and an untrusted calibration produce an equal
-verdict (`test_a_trusted_and_an_untrusted_calibration_give_the_same_verdict`).
+No judge metric is a gate rule. The judge metrics are excluded from the gate when
+the kappa is under the trust floor; `RULE_ORDER` contains neither `judge_mean`
+nor `judge_kappa_vs_human`, so the exclusion holds by construction and a trusted
+and an untrusted calibration produce an equal verdict
+.
 `gate_comment` is where that is SAID, because the comment is where the merge
 decision is made.
 """
@@ -40,32 +38,27 @@ from app.evals.report import JUDGE_METRIC_NAMES, RunReport
 BASELINE_MIN: Final[float] = 0.0
 """The lowest a threshold or a reference metric may be, inclusive.
 
-a project rule on a file an operator edits: every number in `baseline.json`
-lands in a comparison that decides whether a PR merges, and a negative floor
-makes a rule that can never fail. Pinned with `BASELINE_MAX` by
-`test_the_gate_bounds_and_rule_names_are_the_published_ones`, and the inclusive
-end by `test_a_baseline_sitting_exactly_on_a_bound_is_accepted`."""
+Every number in `baseline.json` lands in a comparison that decides whether a PR
+merges, and a negative floor makes a rule that can never fail."""
 
 BASELINE_MAX: Final[float] = 100.0
 """The highest a threshold or a reference metric may be, inclusive.
 
 Inclusive because the shipped `injection_resistance_min` IS `100.0`: an exclusive
-upper bound would make the gate unloadable the day the workflow first runs it
-(`test_a_baseline_sitting_exactly_on_a_bound_is_accepted`)."""
+upper bound would make the gate unloadable the day the workflow first runs it."""
 
 MAX_SET_NAME_LENGTH: Final[int] = 128
 """The cap on `golden_set`, the one free-text string in the file.
 
-a project rule again: the name is quoted into the PR comment the workflow posts, and
-a path with no bound is a comment with no bound
-(`test_a_golden_set_name_at_the_cap_is_accepted_and_one_character_over_is_refused`)."""
+The name is quoted into the PR comment the workflow posts, and a path with no
+bound is a comment with no bound."""
 
 NO_BREACH_COUNT: Final[float] = 0.0
 """What the two count rules compare against: `> 0` is a breach, `0` is clean.
 
 A constant rather than a literal in the comparison because it is also the
 threshold a `RuleResult` carries and the comment renders, and the two must be the
-same number (`test_each_rule_decides_only_at_its_own_inclusive_boundary`)."""
+same number."""
 
 RULE_DECISION_ACCURACY: Final[str] = "decision_accuracy"
 """The drop rule's metric. Its threshold is not a constant: it is the baseline's
@@ -91,14 +84,13 @@ RULE_ORDER: Final[tuple[str, ...]] = (
     RULE_CROSS_TENANT_LEAKS,
     RULE_RESIDENCY_VIOLATIONS,
 )
-"""The five rules the design names, in the order a verdict reports them.
+"""The five rules named in the eval gate spec, in the order a verdict reports them.
 
 Fixed for `METRIC_NAMES`' reason: the workflow renders these strings into a PR
 comment and reads them out of a workflow, so a reorder makes two gate runs of the
-same report diff. Every name is a key a real report carries, which is asserted
-against the imported `METRIC_NAMES` and the count block by
-`test_every_rule_name_is_a_key_the_report_actually_carries` - a rule named for
-`accuracy_min`, the key decision A drops, would gate on nothing forever.
+same report diff. Every name is a key a real report carries, which is checked
+against the imported `METRIC_NAMES` and the count block. A rule named for
+`accuracy_min` would gate on nothing forever.
 """
 
 _COUNT_RULES: Final[frozenset[str]] = frozenset(
@@ -106,7 +98,7 @@ _COUNT_RULES: Final[frozenset[str]] = frozenset(
 )
 """The two rules that are counts rather than percentages, and the two that make
 `GateVerdict.residency_breached` true. Both are `> 0` breaches, both outrank a
-threshold breach in `cli/evals.py`'s exit code (decision D)."""
+threshold breach in `cli/evals.py`'s exit code."""
 
 _Points = Annotated[float, Field(ge=BASELINE_MIN, le=BASELINE_MAX)]
 """A number in the baseline: a percentage in points, bounded inclusively at both ends."""
@@ -115,13 +107,10 @@ _Points = Annotated[float, Field(ge=BASELINE_MIN, le=BASELINE_MAX)]
 class GateInputInvalid(LibraryInputInvalid):
     """One of the gate's two input files could not be used, and the message names it.
 
-    `CalibrationSetInvalid`'s shape and its reasons: a `LibraryInputInvalid`, not
-    a `GatewayError`, because an unloadable file is an operator error reported to
-    whoever ran the harness and never an answer to a caller, and
-    `tests/api/test_error_contract.py` walks `GatewayError.__subclasses__()`
-    asserting one class per wire code - the `LibraryError` hierarchy never enters
-    it (`test_every_library_failure_shares_the_base`). Raised only at load, never
-    converted to HTTP, so the base's 422 mapping stays unused.
+    A `LibraryInputInvalid`, not a `GatewayError`, because an unloadable file is
+    an operator error reported to whoever ran the harness and never an answer to a
+    caller. Raised only at load, never converted to HTTP, so the base's 422
+    mapping stays unused.
 
     Two subclasses rather than one class with a flag, so `cli/evals.py`'s refusal
     block can say which of the two files it refused without parsing the reason.
@@ -139,9 +128,7 @@ class BaselineInvalid(GateInputInvalid):
     Every way the file can be wrong arrives as this one class, which is what lets
     the CLI print one line and answer `EXIT_USAGE` rather than let an `OSError`,
     a `JSONDecodeError` or a pydantic `ValidationError` reach an operator as a
-    traceback (`test_a_baseline_path_that_does_not_exist_is_refused_and_the_message_names_it`,
-    `test_a_baseline_that_is_not_json_is_refused_as_the_same_typed_error`,
-    `test_a_valid_json_file_that_is_not_a_baseline_is_refused_as_baseline_invalid`).
+    traceback.
     """
 
 
@@ -149,18 +136,17 @@ class ReportInvalid(GateInputInvalid):
     """`--report` could not be read, parsed, or validated as a `RunReport`.
 
     `BaselineInvalid`'s three shapes over the other file: a mistyped path, a
-    half-written artifact from a killed run, and a document from some other schema
-    (`test_a_malformed_report_or_baseline_is_one_line_on_stderr_and_exit_two`).
+    half-written artifact from a killed run, and a document from some other schema.
     """
 
 
 class BaselineThresholds(BaseModel):
-    """The three numbers the design states as thresholds, all in points.
+    """The three numbers the eval gate spec states as thresholds, all in points.
 
     `extra="forbid"` is what refuses the fraction-era `accuracy_min` rather than
     reading past it: a file half of whose numbers nobody reads is worse than a
     file that will not load, because everyone believes the unread ones are being
-    enforced (`test_a_baseline_carrying_an_unknown_key_or_a_number_outside_the_range_is_refused`).
+    enforced.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -171,7 +157,7 @@ class BaselineThresholds(BaseModel):
 
 
 class BaselineMetrics(BaseModel):
-    """The reference the drop rule measures from (decision B).
+    """The reference the drop rule measures from.
 
     One field today. It is a BLOCK rather than a bare `decision_accuracy` key so
     a second gated reference - a nightly median, another accuracy - is a field
@@ -186,10 +172,9 @@ class BaselineMetrics(BaseModel):
 class Baseline(BaseModel):
     """`backend/evals/baseline.json`, validated whole before any comparison runs.
 
-    `rule` is read from the file's `_rule` key, which carries a project rule's own
+    `rule` is read from the file's `_rule` key, which carries the hard rule's own
     instruction in the file it governs. It is a real field rather than an ignored
-    extra because `extra="forbid"` admits no ignored extras
-    (`test_the_baseline_reads_the_shipped_files_prose_key_under_its_own_name`).
+    extra because `extra="forbid"` admits no ignored extras.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -204,10 +189,9 @@ class RuleResult(BaseModel):
     """One rule's answer: what the run measured, what it had to clear, and which won.
 
     `actual` is `None` when the report carried `null` for the metric, and that is
-    a BREACH (decision C): a golden set that gates refusal recall and no longer
-    states a refusal case has lost the cases, and reading `null` as "nothing
-    against us" merges that green forever
-    (`test_a_null_gated_metric_breaches_its_own_rule_and_no_other`). `None` rather
+    a BREACH: a golden set that gates refusal recall and no longer states a refusal
+    case has lost the cases, and reading `null` as "nothing against us" merges that
+    green forever. `None` rather
     than `0.0` so the comment and the CLI can say "no evidence" instead of
     printing a number nobody measured.
     """
@@ -223,14 +207,13 @@ class RuleResult(BaseModel):
 class GateVerdict(BaseModel):
     """The whole answer: all five rules, always, plus whether a boundary was breached.
 
-    All five and never only the failures (criterion 2): a reviewer meeting a red
-    gate needs to see that the other four were measured, and a gate that
-    short-circuits on the first breach sends them back for a second round
-    (`test_all_five_rules_breached_at_once_are_all_reported_in_rule_order`).
+    All five and never only the failures: a reviewer meeting a red gate needs to
+    see that the other four were measured, and a gate that short-circuits on the
+    first breach sends them back for a second round.
 
     `residency_breached` is carried rather than recomputed by callers because it
-    is what decides `EXIT_RESIDENCY` over `EXIT_FAILED` (decision D), and a second
-    `> 0` in `cli/evals.py` is a second place that ranking can be got wrong.
+    is what decides `EXIT_RESIDENCY` over `EXIT_FAILED`, and a second `> 0` in
+    `cli/evals.py` is a second place that ranking can be got wrong.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -252,10 +235,9 @@ class GateVerdict(BaseModel):
 VERDICT_PASSED_LINE: Final[str] = "gate passed: {total} of {total} rules clear"
 """The ONE line a clean gate prints, and the first line of its comment.
 
-A format template rather than a finished sentence for `UNTRUSTED_JUDGE_NOTE`'s
-reason: the count comes from `RULE_ORDER`, so a sixth rule is reported as six
-without anyone remembering to edit a string
-(`test_gate_on_a_run_that_breaches_nothing_exits_zero_with_one_line_on_stdout`)."""
+A format template rather than a finished sentence: the count comes from
+`RULE_ORDER`, so a sixth rule is reported as six without anyone remembering to
+edit a string."""
 
 VERDICT_FAILED_LINE: Final[str] = "gate FAILED: {failed} of {total} rules breached ({names})"
 """The ONE line a red gate prints, and the first line of its comment.
@@ -263,17 +245,15 @@ VERDICT_FAILED_LINE: Final[str] = "gate FAILED: {failed} of {total} rules breach
 It names the breached rules, so the workflow's log says what broke without opening
 the artifact, and the same string is what the comment opens with - the two are
 rendered once and never by separate code that can disagree about whether the run
-passed
-(`test_the_comment_file_carries_the_verdict_line_and_the_rules_while_stdout_stays_one_line`)."""
+passed."""
 
 NO_EVIDENCE: Final[str] = "no evidence"
 """What a `null` metric renders as, in the reason line and in the comment's table.
 
-Decision C's second half: the two failures have to read differently, because
-"refusal recall was 94.9" and "no case stated a refusal expectation" have
-different fixes, and printing `None` or `0.0` for the second sends a reviewer
-looking for a regression that never happened
-(`test_a_null_gated_metric_exits_one_and_says_no_evidence_rather_than_a_number`)."""
+The two failures have to read differently, because "refusal recall was 94.9" and
+"no case stated a refusal expectation" have different fixes, and printing `None`
+or `0.0` for the second sends a reviewer looking for a regression that never
+happened."""
 
 JUDGE_EXCLUSION_NOTE: Final[str] = (
     "The judge metrics ({names}) are excluded from every gate rule: an LLM judge "
@@ -282,11 +262,9 @@ JUDGE_EXCLUSION_NOTE: Final[str] = (
 )
 """The sentence every comment carries, whatever the run's calibration says.
 
-Decision F stated where the merge decision is made. Without it a reviewer reading
-a green gate beside a judge mean of 2.1 assumes the judge was consulted; with it,
-"excluded when the kappa is under the floor" is visibly a property of the rule
-set rather than of a branch somebody can delete
-(`test_the_comment_states_that_the_judge_metrics_are_excluded_from_the_gate`)."""
+Without it a reviewer reading a green gate beside a judge mean of 2.1 assumes
+the judge was consulted; with it, "excluded when the kappa is under the floor"
+is visibly a property of the rule set rather than of a branch somebody can delete."""
 
 CALIBRATION_NOTE: Final[str] = (
     "Judge calibration: kappa {kappa} against {labels_name} over {pairs} pairs, {trust}."
@@ -295,8 +273,7 @@ CALIBRATION_NOTE: Final[str] = (
 
 The kappa is rendered from the report's own record rather than restated as a
 word, because it is the only place a reviewer can learn the judge disagreed with
-the humans - the verdict cannot tell them, by decision F
-(`test_only_the_comment_text_tells_a_trusted_calibration_from_an_untrusted_one`)."""
+the humans - the verdict cannot tell them."""
 
 NO_CALIBRATION_NOTE: Final[str] = (
     "Judge calibration: none supplied, so no agreement with human labels is known."
@@ -306,10 +283,9 @@ than omitted: a silent comment and a trusted one look identical to a reviewer.""
 
 TRUSTED_WORD: Final[str] = "trusted"
 UNTRUSTED_WORD: Final[str] = "NOT trusted"
-"""The two verdicts 17e's `JUDGE_TRUST_MIN` already decided. Read off
-`RunCalibration.trusted` and never recompared here, for the reason
-`report._untrusted_note` gives: a second comparison is a second place the floor
-can be got wrong."""
+"""The two verdicts the trust floor already decided. Read off
+`RunCalibration.trusted` and never recompared here: a second comparison is a
+second place the floor can be got wrong."""
 
 
 def _one_line(exc: ValidationError) -> str:
@@ -317,10 +293,8 @@ def _one_line(exc: ValidationError) -> str:
 
     `str(exc)` runs to a line per field plus a documentation URL for each - forty
     for a file that is JSON and nothing else - and both refusals below travel to a
-    CI log as a single stderr line the eval gate workflow reads
-    (`test_a_malformed_report_or_baseline_is_one_line_on_stderr_and_exit_two`).
-    The first error is the one reported, named by its field, exactly as
-    `gateway/errors.py` renders a request validation failure.
+    CI log as a single stderr line the eval gate workflow reads.
+    The first error is the one reported, named by its field.
     """
     problems = exc.errors()
     if not problems:
@@ -336,15 +310,13 @@ def _one_line(exc: ValidationError) -> str:
 def load_baseline(path: Path) -> Baseline:
     """Read `baseline.json`, or raise `BaselineInvalid` naming the path.
 
-    The shape `cases.load_golden_set` and `calibration.read_calibration` already
-    have, and for the same reason: every way the file can be wrong becomes ONE
-    typed refusal, so the CLI's pre-check block gains an exception class and no
-    new structure.
+    Every way the file can be wrong becomes ONE typed refusal, so the CLI's
+    pre-check block gains an exception class and no new structure.
 
     The range checks are the MODEL's, not a pass afterwards: `_Points` bounds
     every threshold and the reference accuracy inclusively, so a file is either
     wholly valid or wholly refused and nothing compares against a number that got
-    halfway through validation (criterion 8).
+    halfway through validation.
     """
     try:
         text = path.read_text(encoding="utf-8")
@@ -368,8 +340,7 @@ def load_report(path: Path) -> RunReport:
     `load_baseline`'s three guards over the other input. The document is validated
     through `RunReport` itself and never by picking the five gated keys out of it:
     a reader that took the keys alone would gate a hand-written file whose numbers
-    no run produced
-    (`test_a_malformed_report_or_baseline_is_one_line_on_stderr_and_exit_two`).
+    no run produced.
     """
     try:
         text = path.read_text(encoding="utf-8")
@@ -395,19 +366,16 @@ def _actual(value: Any) -> float | None:  # noqa: ANN401 - `metrics` is a Mappin
 def evaluate(report: RunReport, baseline: Baseline) -> GateVerdict:
     """Answer the five rules over one published run. Pure: no I/O, no clock.
 
-    The same report and baseline give an equal verdict every time
-    (`test_evaluating_one_report_twice_gives_an_equal_verdict`), which is what
+    The same report and baseline give an equal verdict every time, which is what
     lets the workflow run the gate over a stored artifact and get the answer CI got.
 
-    Every comparison is `<` for a threshold and `>` for a count, exactly as SPEC
-    §12.6 writes them, so a run landing ON a floor or dropping EXACTLY
-    `max_drop_points` is green - the boundary is inclusive in the run's favour
-    (`test_each_rule_decides_only_at_its_own_inclusive_boundary`). A `null`
-    breaches (decision C).
+    Every comparison is `<` for a threshold and `>` for a count, exactly as the
+    eval gate spec writes them, so a run landing ON a floor or dropping EXACTLY
+    `max_drop_points` is green - the boundary is inclusive in the run's favour. A `null`
+    breaches.
 
     Only the five rules' own keys are read out of `report.metrics`, each of them a
-    `METRIC_NAMES` entry or one of `build_report`'s counts
-    (`test_evaluate_reads_no_metric_key_outside_the_published_set`): a key this
+    `METRIC_NAMES` entry or one of `build_report`'s counts: a key this
     module invented would be a `KeyError` on every real run, or worse a `.get`
     default gating against nothing.
     """
@@ -437,11 +405,10 @@ def evaluate(report: RunReport, baseline: Baseline) -> GateVerdict:
 
 
 def verdict_line(verdict: GateVerdict) -> str:
-    """The ONE line the command prints and the comment opens with (decision E).
+    """The ONE line the command prints and the comment opens with.
 
     Rendered once and used twice, so the summary a workflow reads and the markdown
-    a reviewer reads cannot disagree about whether the run passed
-    (`test_the_comment_file_carries_the_verdict_line_and_the_rules_while_stdout_stays_one_line`).
+    a reviewer reads cannot disagree about whether the run passed.
     """
     total = len(verdict.results)
     if verdict.passed:
@@ -464,8 +431,7 @@ def reason_line(result: RuleResult) -> str:
 
     A null says `NO_EVIDENCE` and carries no number at all, so the two failures a
     reviewer can meet - "this got worse" and "the cases that measured it are
-    gone" - do not read the same
-    (`test_a_null_gated_metric_exits_one_and_says_no_evidence_rather_than_a_number`).
+    gone" - do not read the same.
     """
     if result.actual is None:
         return f"{result.name}: {NO_EVIDENCE}, and no case in this run stated it"
@@ -491,8 +457,7 @@ def _category_lines(report: RunReport) -> list[str]:
     """The report's own per-category table, one row per category the run used.
 
     Carried into the comment because it is what turns "decision accuracy fell two
-    points" into "policy_qa fell over" - the design asks for it by name
-    (`test_the_comment_carries_the_reports_per_category_table`).
+    points" into "policy_qa fell over".
     """
     categories: Any = report.metrics["categories"]
     lines = ["| category | passed | failed |", "| --- | --- | --- |"]
@@ -510,13 +475,12 @@ def gate_comment(verdict: GateVerdict, report: RunReport) -> str:
     their threshold - the four that passed included, because that is how a
     reviewer knows they were measured - then the run's per-category table, then
     the two judge lines: what the calibration said, and that the judge decides
-    nothing here (decision F).
+    nothing here.
 
     Rendered from BOTH arguments and never from the verdict alone: the categories
     and the calibration exist only on the report, and a comment built from the
     verdict would post identical markdown for a run whose judge was trustworthy
-    and one whose kappa was 0.42
-    (`test_only_the_comment_text_tells_a_trusted_calibration_from_an_untrusted_one`).
+    and one whose kappa was 0.42.
     """
     lines = [
         "## Eval gate",

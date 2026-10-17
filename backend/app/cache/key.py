@@ -1,17 +1,16 @@
 r"""What makes two chat requests the same request, and which requests may be cached at all.
 
 Two pure functions and four constants. Nothing here talks to a store, reads a
-policy or knows an adapter exists, which is what lets `tests/cache/test_key.py`
+policy or knows an adapter exists, which is what lets it
 run with no app and no backing service.
 
-**The key is a digest of ten fields** (the design): the tenant, the alias the
+**The key is a digest of ten fields** the tenant, the alias the
 caller named, the provider that served it, the region that provider is in, the
 data class of the request, the model the resolver picked, the messages, the
 tools, the response format and the temperature. A key over nine of them serves a
-WRONG answer to a request that differs by the tenth, so each field has its own
-row in `test_changing_one_keyed_field_changes_the_key` rather than a sample, and
-`test_the_ten_field_variants_all_key_differently_from_each_other` is what
-catches two of them sharing a slot.
+WRONG answer to a request that differs by the tenth, so each field is checked
+on its own rather than by a sample, and the variants are checked against each
+other to catch two of them sharing a slot.
 
 Both the tenant and the resolved model are in there for reasons worth stating.
 The tenant, because an entry is a tenant's data and one tenant reading another's
@@ -23,18 +22,16 @@ of serving an answer from a model the caller's alias would not have chosen today
 
 **Canonicalisation is `json.dumps(sort_keys=True)`,** which makes two bodies that
 differ only in the KEY ORDER of a JSON object one request, and leaves two that
-differ in MESSAGE order as two (`test_object_key_order_does_not_change_the_key`,
-`test_message_order_does_change_the_key`). The structure is dumped whole rather
+differ in MESSAGE order as two. The structure is dumped whole rather
 than glued together field by field, so two conversations that concatenate to the
-same string still key apart
-(`test_two_conversations_that_concatenate_alike_do_not_share_a_key`).
+same string still key apart.
 
-**Eligibility is deliberately narrow** (#22). `temperature == 0` STATED in the
+**Eligibility is deliberately narrow.** `temperature == 0` STATED in the
 body, or the `X-Gateway-Cache: allow` header. An absent temperature is not
 eligible: the provider's default is not the caller's promise, and reading it as
 zero would quietly make every request the gateway has ever served cacheable.
-Streamed requests are out (decision G) and so are requests carrying tools unless
-`tool_choice` is `none` (decision H), because a tool result varies per call and
+Streamed requests are out and so are requests carrying tools unless
+`tool_choice` is `none`, because a tool result varies per call and
 the answer is then not a function of the request.
 """
 
@@ -54,7 +51,7 @@ CACHE_KEY_PREFIX: Final[str] = "response"
 
 A running gateway's live entries are addressed by this string, so renaming it
 orphans every one of them and turns a warm cache into a day of misses nobody
-sees as a failure; pinned by `test_the_key_prefix_is_the_published_one`. Distinct
+sees as a failure. Distinct
 from `REDACTION_MAP_KEY_PREFIX` and `DIRECTORY_KEY_PREFIX`, which share the same
 Redis database."""
 
@@ -65,8 +62,7 @@ A sha256 rendered as lowercase hex, which is what `cache_key` mints. Used with
 `fullmatch` and never with `match`: in Python `$` also matches
 before a trailing newline, so `match` would let `<64 hex>\n` through. The
 rejection table - 63, 65, uppercase, non-hex, a trailing newline, a trailing
-CRLF, a trailing space, a colon and a glob character - is
-`test_the_id_pattern_rejection_table`."""
+CRLF, a trailing space, a colon and a glob character - is refused."""
 
 CACHE_HEADER: Final[str] = "X-Gateway-Cache"
 """One spelling for two directions.
@@ -74,26 +70,21 @@ CACHE_HEADER: Final[str] = "X-Gateway-Cache"
 Inbound it is the caller's opt-in and carries `allow`; outbound it is the
 outcome and carries `hit` or `miss`. The same name on both, because a caller
 reading `X-Gateway-Cache: miss` after sending `X-Gateway-Cache: allow` is being
-answered about the thing it asked for. Pinned by
-`test_the_request_and_the_response_header_are_the_same_spelling`."""
+answered about the thing it asked for."""
 
 CACHE_ALLOW: Final[str] = "allow"
 """The only value the request header accepts.
 
-Anything else is a 422 rather than a silent miss (decision D): the header opts
+Anything else is a 422 rather than a silent miss: the header opts
 into a different consistency regime, and a typo meaning "no" is the failure a
-caller cannot see. The refusal and this word are pinned by
-`test_a_cache_header_that_is_not_the_accepted_word_is_422` and
-`test_the_accepted_word_is_not_refused` in tests/gateway/test_exact_cache.py."""
+caller cannot see."""
 
 NO_TOOL_CHOICE: Final[str] = "none"
 """The one `tool_choice` under which a request carrying tools is still cacheable.
 
 `none` forbids a call, so the answer is a function of the request again. Absent,
 `auto`, `required` and a named tool are all uncacheable - absent included,
-because the provider is free to call - which is the pair of rows
-`tools with no tool_choice` and `tools with tool_choice none` in
-`test_the_eligibility_decision_table`."""
+because the provider is free to call."""
 
 
 def cache_key(
@@ -109,19 +100,16 @@ def cache_key(
     response_format: Mapping[str, object] | None,
     temperature: float | None,
 ) -> str:
-    """The sha256 of the design's ten fields, as 64 lowercase hex characters.
+    """The sha256 of the ten keyed fields, as 64 lowercase hex characters.
 
     Keyword-only, and every argument required. A default on any of the ten
     would let a call site key a request without one of its fields simply by
-    forgetting it - the exact failure `test_changing_one_keyed_field_changes_the_key`
-    exists to catch, and one that a default would hide from that table.
+    forgetting it.
 
-    `provider`, `region` and `data_class` are the three new fields added by an earlier change:
+    `provider`, `region` and `data_class` are part of the key because
     a cached answer is served only where it could have been made, so the key must
     include where it was made (provider and region) and under which data-handling
-    rule (data_class). Pinned by `test_changing_the_provider_changes_the_key`,
-    `test_changing_the_region_changes_the_key` and
-    `test_changing_the_data_class_changes_the_key`.
+    rule (data_class).
 
     `messages`, `tools` and `response_format` arrive as the JSON-able structures
     the route holds after `body.model_dump(mode="json", exclude_none=True)`,
@@ -129,7 +117,7 @@ def cache_key(
     inside here would make this function depend on the wire shape it is
     deliberately ignorant of.
 
-    Determinism is the whole contract (`test_the_same_request_keys_the_same_twice`):
+    Determinism is the whole contract:
     nothing per-call - no clock, no salt, no `id()` - goes into the digest, or
     every request misses and the cache never serves anything.
     """
@@ -154,22 +142,21 @@ def cache_key(
 
 
 def is_cacheable(body: ChatCompletionRequest, *, allow_header: bool) -> bool:
-    """Whether this request may be looked up and stored (#22, decisions G and H).
+    """Whether this request may be looked up and stored.
 
     `allow_header` is keyword-only and has no default, for the reason
     `gateway_headers`'s `redacted` has none: a default would let a call site
     silently drop the caller's opt-in, and the request would go on being served
     correctly, so nothing but a header assertion would ever notice.
 
-    Four rules, and the tests name the wrong predicate each one rules out
-    (`test_the_eligibility_decision_table`, sixteen rows):
+    Four rules:
 
     * `temperature is not None and temperature == 0`, never `not temperature`
       and never `temperature or 0`. An ABSENT temperature is not eligible.
     * `stream` is never cacheable. A response cache stores an answer, and
-      replaying frames is its own plan (decision G).
+      replaying frames is a job of its own.
     * Tools with anything but `tool_choice: none` are not cacheable, absent
-      choice included (decision H).
+      choice included.
     * The header alone makes an otherwise-ineligible request eligible, but it
       does not override `stream` or the tool rule: those two are about whether
       the answer is a function of the request at all, which is not the caller's

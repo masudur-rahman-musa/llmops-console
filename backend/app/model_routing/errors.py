@@ -2,10 +2,7 @@
 
 Each client-facing error carries the wire `code` from the API error contract and
 the HTTP status it maps to. `app.core.http_errors` builds the OpenAI-shaped
-body from those two attributes, so they are pinned exactly by
-`test_empty_candidates_raises_residency_unavailable`, `test_unknown_alias_raises`,
-`test_is_healthy_filtering_everything_raises_all_providers_unavailable` and, as a
-set, `test_error_code_set_is_exhaustive`.
+body from those two attributes, so they are fixed exactly.
 
 `PolicyInvalid` is the exception to that: a rejected policy file is an operator
 error reported to whoever reloaded it, never an answer to a caller, so it is a
@@ -32,7 +29,7 @@ class AliasUnknown(RoutingError):
 
     The error contract fixes the code but not the status. 404 is the choice
     here, matching what an OpenAI-compatible client already expects from a model
-    name it cannot use; pinned by `test_unknown_alias_raises`.
+    name it cannot use.
     """
 
     code: ClassVar[ErrorCode] = ErrorCode.ALIAS_UNKNOWN

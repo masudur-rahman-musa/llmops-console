@@ -10,8 +10,7 @@ test and produces exact delays rather than a range. No provider SDK is imported:
 the mapping is the thing we own, and it stops here, so no Anthropic field name
 and no SSE event name reaches the rest of the gateway. A `response_format`
 becomes Anthropic's native `output_config.format`, whose answer is a plain text
-block of JSON, so both readers hand it back as content with no special case
-(`test_a_native_json_answer_becomes_content`).
+block of JSON, so both readers hand it back as content with no special case.
 
 Every PROVIDER failure that leaves this module is a `ProviderError` carrying
 `retryable`, including a timeout and a 200 whose body we cannot read, so plan
@@ -76,22 +75,20 @@ ANTHROPIC_TOOL_CHOICE_BY_MODE = {"auto": "auto", "none": "none", "required": "an
 """The neutral `ToolChoice.mode` in Anthropic's own words.
 
 Anthropic spells `required` as `any`, and this table is the only place that
-translation happens (`grep -rn ANTHROPIC_TOOL_CHOICE_BY_MODE packages/`), which
+translation happens, which
 is the whole reason the neutral contract keeps its own word for it. The `tool`
-mode is absent from the table because it carries a name and is built separately.
-Pinned row by row by `test_tool_choice_maps_to_the_anthropic_table`."""
+mode is absent from the table because it carries a name and is built separately."""
 
 
 def _tool_use_block(call: ToolCall, field: str) -> dict[str, Any]:
     """Render one tool call the model made, as the block Anthropic replays it as.
 
     Both ids are checked here rather than at the contract, so an invalid one
-    raises before any outbound call is built
-    (`test_bad_tool_ids_raise_before_any_outbound_call`). `arguments` is the JSON
+    raises before any outbound call is built. `arguments` is the JSON
     *string* the published API hands its clients, and Anthropic's `input` is an
     object, so it is parsed rather than passed through; a string that will not
     parse is the caller's error and not a provider outage, which is why it leaves
-    as `IdentifierInvalid` (`test_tool_call_arguments_that_are_not_json_raise`).
+    as `IdentifierInvalid`.
     """
     try:
         arguments = json.loads(call.arguments)
@@ -113,12 +110,11 @@ def _rendered_turn(index: int, message: ChatMessage) -> dict[str, Any]:
     Anthropic has neither a `tool` role nor a `tool_calls` field: a tool RESULT is
     a `tool_result` block inside a **user** turn, and a tool CALL is a `tool_use`
     block inside an assistant turn. That asymmetry is the mapping this function
-    exists for (`test_tool_result_turn_renders_as_a_user_turn_in_order`).
+    exists for.
 
-    An assistant turn stays a plain string unless it carries calls
-    (`test_a_plain_assistant_turn_stays_a_plain_string`), and a turn whose only
+    An assistant turn stays a plain string unless it carries calls, and a turn whose only
     answer was a call gets no text block at all: Anthropic rejects an empty
-    `text` (`test_a_tool_call_only_assistant_turn_has_no_text_block`).
+    `text`.
     """
     if message.role == "tool":
         return {
@@ -128,7 +124,7 @@ def _rendered_turn(index: int, message: ChatMessage) -> dict[str, Any]:
                     "type": "tool_result",
                     # `or ""` rather than a branch: an absent id fails the same
                     # pre-check as a malformed one, with the same 422 naming the
-                    # same field (`test_a_tool_turn_without_a_tool_call_id_raises`).
+                    # same field.
                     "tool_use_id": checked_tool_name(
                         message.tool_call_id or "", f"messages[{index}].tool_call_id"
                     ),
@@ -154,8 +150,7 @@ def to_anthropic(request: ChatRequest) -> dict[str, Any]:
     """Render a normalised request as an Anthropic Messages request body.
 
     Every caller-supplied tool name is checked first, so an invalid one raises
-    before any outbound call is built
-    (`test_bad_tool_name_raises_before_any_outbound_call`).
+    before any outbound call is built.
 
     The system turn is lifted out of `messages` into the top-level `system`
     field, because Anthropic has no `system` role and rejects one; the remaining
@@ -210,10 +205,9 @@ def to_anthropic(request: ChatRequest) -> dict[str, Any]:
         # to this schema, where a forced tool's input can be wrapped or reshaped,
         # and newer models refuse a forced `tool_choice` outright. The caller's
         # schema passes through unchanged and the caller's own `tool_choice`
-        # stays theirs (`test_response_format_renders_output_config`,
-        # `test_a_callers_tool_choice_passes_through_beside_response_format`).
+        # stays theirs.
         # The name is still checked, so a bad one is the caller's 422 before
-        # any call (`test_a_bad_response_format_name_is_refused_before_any_call`).
+        # any call.
         checked_tool_name(request.response_format.name, "response_format.name")
         body["output_config"] = {
             "format": {
@@ -236,18 +230,16 @@ def from_anthropic(payload: Mapping[str, Any]) -> ChatResponse:
     Text blocks concatenate into `content` and `tool_use` blocks become
     `tool_calls` whose `arguments` is a JSON *string*, which is the shape the
     published OpenAI-compatible API promises its clients. A `response_format`
-    answer is one text block of JSON, so it lands in `content` on this same path
-    (`test_a_native_json_answer_becomes_content`). A block of any other
+    answer is one text block of JSON, so it lands in `content` on this same path. A block of any
+    other
     type is passed over rather than guessed at, and an answer that leaves nothing
     behind - no text and no tool call - is a `ProviderError` rather than an empty
-    string a tenant is billed for (`test_an_unknown_block_type_is_ignored` and
-    `test_an_answer_with_no_readable_block_raises`).
+    string a tenant is billed for.
 
     Usage is required. Anthropic's `input_tokens` and `output_tokens` become
     `prompt_tokens` and `completion_tokens` with `total_tokens` their sum, and a
     response missing any of it raises rather than defaulting to zero: the ledger
-    prices from these numbers, so a silent zero books a real, billed call as free
-    (`test_a_response_without_usage_raises_provider_error`).
+    prices from these numbers, so a silent zero books a real, billed call as free.
     """
     try:
         text: list[str] = []
@@ -309,8 +301,7 @@ class _OpenToolBlock:
     Kept in a dict keyed by the block's own index rather than in a single "the
     open block" variable, because Anthropic may have more than one block open at
     a time: a fragment names the index it belongs to, and matching on that is
-    what stops one call's JSON being appended to another's
-    (`test_interleaved_tool_fragments_stay_with_the_block_that_names_them`).
+    what stops one call's JSON being appended to another's.
     """
 
     id: str
@@ -323,8 +314,7 @@ SSE_DATA_PREFIX = "data: "
 
 An `event:` line names what the `data:` line beneath it already carries in its
 `type`, so reading both would be two sources for one fact; comments, `id:` lines
-and the blank separators are skipped for the same reason a `ping` is
-(`test_the_reader_yields_the_start_then_the_text_then_the_finish_and_usage_last`)."""
+and the blank separators are skipped for the same reason a `ping` is."""
 
 
 def _sse_payload(line: str) -> dict[str, Any] | None:
@@ -349,20 +339,19 @@ def from_anthropic_events(lines: Iterable[str]) -> Iterator[StreamEvent]:
     Text arrives as `text_delta` fragments and is forwarded in the provider's
     order. A `tool_use` block is ASSEMBLED: its `input_json_delta` fragments are
     buffered and emitted as one whole `ToolCallDelta` when the block closes,
-    because `{"city": "Ber` is not JSON any client can parse (an earlier change decision
-    B, `test_the_reader_assembles_a_tool_use_block_from_its_json_fragments`).
+    because `{"city": "Ber` is not JSON any client can parse.
     The fragments are concatenated rather than parsed and re-serialised, so what
     the model wrote is what the client is handed.
 
     A `response_format` answer is a text block of JSON, so it streams as plain
-    `TextDelta`s on this same path (`test_the_reader_streams_a_native_json_answer_as_text`).
+    `TextDelta`s on this same path.
 
     Usage is split across two events - `input_tokens` on `message_start`,
     `output_tokens` on `message_delta` - and both are required, as is the stop
     reason. A stream that ends without them raises rather than yielding a total
     the ledger would price: `message_start` reports an `output_tokens` of its own
     that is not the answer's, so zero-filling is not the only wrong number
-    available (`test_a_truncated_stream_raises_rather_than_zero_filling_usage`).
+    available.
     """
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
@@ -435,12 +424,12 @@ def from_anthropic_events(lines: Iterable[str]) -> Iterator[StreamEvent]:
         # this adapter can hand a client, and finishing the stream with a usage
         # chunk would bill the tenant for an empty answer. Refusing it on one
         # path and serving it on the other would be two behaviours for one
-        # provider reply (`test_a_stream_with_no_readable_block_raises`).
+        # provider reply.
         #
         # Second, not first: a stream cut off before its first text delta
         # renders nothing EITHER, and reporting that as an empty answer would
         # point an operator at a content bug instead of the dropped connection
-        # it was (`test_a_stream_cut_off_before_any_content_reports_the_truncation`).
+        # it was.
         raise ProviderError(
             "the provider streamed no readable content block",
             retryable=False,
@@ -462,10 +451,9 @@ class AnthropicAdapter(HttpAdapter):
 
     `name` is that policy name rather than the vendor, so two Anthropic accounts
     in one policy stay distinguishable everywhere they are counted; `price_key`
-    is built from it (`test_price_key_is_provider_name_slash_model`).
+    is built from it.
 
-    The key travels only in the `x-api-key` header
-    (`test_the_key_travels_only_in_the_x_api_key_header`). This module logs
+    The key travels only in the `x-api-key` header. This module logs
     nothing at all; what reaches a log on a failure is
     `ProviderError.provider_message`, which holds the provider's answer or the
     transport's own exception text, never the request body or its headers.
@@ -493,11 +481,7 @@ class AnthropicAdapter(HttpAdapter):
 
     @property
     def client(self) -> httpx.Client:
-        """The underlying HTTP client, so the fixed timeouts stay observable here.
-
-        Asserted on by `test_client_timeouts_are_fixed_at_five_and_sixty` and
-        `test_close_releases_the_client`.
-        """
+        """The underlying HTTP client, so the fixed timeouts stay observable here."""
         return self.http.client
 
     def chat(self, request: ChatRequest) -> ChatResponse:
@@ -508,7 +492,7 @@ class AnthropicAdapter(HttpAdapter):
             payload = response.json()
         except ValueError as exc:
             # A 200 that is not JSON at all - a proxy's HTML error page, a
-            # truncated body. Pinned by `test_a_non_json_success_body_is_a_provider_error`.
+            # truncated body.
             raise unreadable(exc) from exc
         return from_anthropic(payload)
 
@@ -519,13 +503,11 @@ class AnthropicAdapter(HttpAdapter):
         `ProviderTransport.open_stream` owns the retry loop, so the retry cannot
         reach around the iteration: once one event has been yielded the client
         has already been shown part of an answer, and nothing that cannot be
-        un-sent is resent (an earlier change decision C,
-        `test_stream_open_retries_only_before_the_first_event`).
+        un-sent is resent.
 
         A transport failure part way through the body is wrapped here rather than
         escaping raw, so the module's promise holds on this path too - every
-        provider failure that leaves it is a `ProviderError` carrying `retryable`
-        (`test_a_transport_failure_mid_stream_is_a_provider_error_and_is_not_retried`).
+        provider failure that leaves it is a `ProviderError` carrying `retryable`.
         """
         body = to_anthropic(request)
         # Copied rather than mutated in place: `to_anthropic` is the shape the

@@ -45,10 +45,9 @@ def _checked_tenant(value: str) -> str:
     """Validate `--tenant` against the gateway's own identifier vocabulary.
 
     The cap and the pattern are imported rather than restated, so a tenant the
-    running gateway serves cannot be one the harness refuses to evaluate
-    (`test_the_tenant_length_cap_is_the_resolvers_own`). `re.fullmatch` and never
-    `.match`: in Python `$` also matches before a trailing newline (standing
-    rule 4), and this value names a directory under `--out`.
+    running gateway serves cannot be one the harness refuses to evaluate.
+    `re.fullmatch` and never `.match`: in Python `$` also matches before a
+    trailing newline, and this value names a directory under `--out`.
     """
     return checked_identifier(value, "tenant")
 
@@ -71,14 +70,12 @@ def _checked_judge_url_value(value: str) -> str:
 
     The same function and not a second copy of the rule: the two URLs this command
     takes would otherwise drift, and a judge URL of `gateway.example` is the same
-    defect as a target of one
-    (`test_a_judge_url_that_is_not_an_absolute_http_url_is_refused` and
-    `test_a_calibrate_judge_url_that_is_not_an_absolute_http_url_is_refused` both
-    parametrise the target's own rejection table). The message still names the
+    defect as a target of one.
+    The message still names the
     flag the operator typed.
 
     Split from `_checked_judge_url` because the flag is OPTIONAL on `run` and
-    REQUIRED on `calibrate` (17e): one function answering `str | None` would
+    REQUIRED on `calibrate`: one function answering `str | None` would
     leave the required caller narrowing a value argparse already guaranteed.
     """
     try:
@@ -97,11 +94,11 @@ def _checked_judge_url(value: str | None) -> str | None:
 def _checked_judge_key() -> str:
     """The judge key `calibrate` cannot run without.
 
-    Where `run` turns the judge OFF with no key and keeps its own exit code
-    (17c decision B), a calibration with no judge has nothing left to do, so it
+    Where `run` turns the judge OFF with no key and keeps its own exit code,
+    a calibration with no judge has nothing left to do, so it
     refuses rather than writing an artifact with no kappa in it - a
-    `calibration.json` that exists is read by 17f as trust
-    (`test_calibrate_with_no_judge_key_is_a_usage_refusal`). An empty string is
+    `calibration.json` that exists is read as trust.
+    An empty string is
     the same as absent: a `JudgeClient` built on one would spend a 401 per sample.
     """
     api_key = Settings().eval_judge_key
@@ -120,14 +117,12 @@ def _checked_calibration(value: Path | None, judge_url: str | None) -> RunCalibr
     (`read_calibration`'s own `CalibrationSetInvalid`, printed as one line by the
     caller's guard); the artifact was computed under a DIFFERENT judge prompt than
     this run will score with, which is a stale number worn as trust and whose fix
-    is to recalibrate (decision D,
-    `test_a_calibration_computed_against_another_prompt_is_refused_before_the_run`);
+    is to recalibrate;
     and `--calibration` with no `--judge-url`, where the run judges nothing and a
     kappa beside a null `judge_mean` is agreement about scores this run never
-    produced (decision E,
-    `test_a_calibration_with_no_judge_url_is_refused_before_the_run`).
+    produced.
 
-    What comes back is the narrowed `RunCalibration` a report publishes, not 17e's
+    What comes back is the narrowed `RunCalibration` a report publishes, not the
     whole document: the rows, the drop count and the clock stay in
     `calibration.json`, which is the file a reader is sent to by `labels_name` and
     `labels_sha`.
@@ -157,17 +152,15 @@ def _checked_calibration(value: Path | None, judge_url: str | None) -> RunCalibr
 
 
 def _checked_ref(value: str, flag: str) -> str:
-    """Validate one `--base` or `--head` before git is asked anything (risk 5).
+    """Validate one `--base` or `--head` before git is asked anything .
 
     The cap and the pattern come from `baseline_guard`, and the order is the point:
     both values reach a subprocess argument list, so a value starting `-` is an
     option to `git log` and a value carrying a newline is a second argument. Neither
-    is refusable once the command line is built, which is why this runs first
-    (`test_a_ref_failing_the_pre_check_is_refused_before_any_git_call`).
+    is refusable once the command line is built, which is why this runs first.
 
     The length is measured before the pattern is applied, and the boundary is
-    inclusive - 256 in, 257 out
-    (`test_a_ref_of_exactly_the_cap_gets_past_the_pre_check`).
+    inclusive - 256 in, 257 out.
     """
     if len(value) > MAX_REF_LENGTH:
         raise UsageError(f"{flag}: longer than {MAX_REF_LENGTH} characters")
@@ -189,15 +182,12 @@ def _commits(base: str, head: str) -> tuple[Commit, ...]:
     carries.
 
     `-M100%` makes git report only a byte-identical move as `R100\told\tnew`; any edit
-    turns it into a delete and an add, so it is judged like any change
-    (`test_baseline_guard_fails_a_move_that_also_edits_the_baseline`). Both sides of
-    a move go into `files`, so moving the baseline away is still seen
-    (`test_baseline_guard_fails_a_commit_that_moves_the_baseline_away`).
+    turns it into a delete and an add, so it is judged like any change. Both sides of
+    a move go into `files`, so moving the baseline away is still seen.
 
     A range git cannot resolve exits non-zero, and that is reported as a refusal
     rather than as an empty commit list: a shallow checkout would otherwise let this
-    guard report clean having read nothing, which is risk 2
-    (`test_a_ref_git_cannot_resolve_is_one_usage_line_and_never_a_clean_verdict`).
+    guard report clean having read nothing.
     git's own message runs to three lines, so what is printed is this command's own
     one line naming the range.
     """
@@ -243,8 +233,7 @@ def _checked_out(value: Path) -> Path:
 
     A path that exists as a FILE is refused rather than replaced: the two report
     writes would fail at the end of a paid-for run, and an implementation that
-    "fixed" it would delete whatever an operator named
-    (`test_an_out_path_that_is_an_existing_file_is_refused`).
+    "fixed" it would delete whatever an operator named.
     """
     if value.exists() and not value.is_dir():
         raise UsageError(f"--out: {value} exists and is not a directory")
@@ -257,8 +246,7 @@ def _checked_policy(path: Path, tenant: str) -> Policy:
 
     A well-formed tenant no policy defines would otherwise reach the run with no
     allow list at all, and deny-by-default would report a residency violation per
-    case instead of an operator's typo
-    (`test_a_tenant_the_policy_does_not_define_is_refused`).
+    case instead of an operator's typo.
     """
     try:
         policy = load_policy(path)
@@ -275,7 +263,7 @@ def _other_tenant_markers(cases: tuple, tenant: str) -> tuple[str, ...]:
     The seed's markers, derived from the set itself rather than configured: a
     `cross_tenant` case exists to prove the agent cannot see another tenant's
     data, and the other tenants in the file are exactly the ones the seed carries.
-    With none, 16a's leak assertion reports `skipped` rather than claiming a pass
+    With none, the leak assertion reports `skipped` rather than claiming a pass
     nothing checked.
     """
     return tuple(sorted({case.tenant for case in cases} - {tenant}))
@@ -285,9 +273,9 @@ def _checked_set_sha(value: str | None) -> str | None:
     """Validate `--set-sha`, or answer `None` when the caller gave none.
 
     7 to 64 lowercase hex, inclusive at both ends, with `re.fullmatch` and never
-    `.match`: `$` also matches before a trailing newline in Python (standing
-    rule 4), and this value is stored beside a run as the version of the set that
-    produced it (`test_a_malformed_set_sha_is_refused_before_the_target_is_touched`).
+    `.match`: `$` also matches before a trailing newline in Python, and
+    this value is stored beside a run as the version of the set that
+    produced it.
     """
     if value is None:
         return None
@@ -301,9 +289,8 @@ def _set_sha(supplied: str | None, case_set: Path) -> tuple[str, str]:
 
     The golden set lives in the Helpdesk repo, whose commit this process cannot
     see, so a caller who knows it passes it and everyone else gets the sha256 of
-    the file's BYTES (`16c` decision A). The source travels with the value so no
-    reader is ever told a content hash is a commit
-    (`test_without_a_set_sha_the_field_is_the_sets_own_sha256`).
+    the file's BYTES. The source travels with the value so no
+    reader is ever told a content hash is a commit.
     """
     if supplied is not None:
         return supplied, "commit"
@@ -316,11 +303,9 @@ def _git_sha() -> str | None:
     Never a guess and never a default string: `unknown` in a stored column is a
     value a query has to know about, while `null` is the absence it already
     handles. All three shapes of failure answer `None` - no git binary, a
-    non-zero exit outside a repository, and a raising call
-    (`test_the_git_sha_is_null_when_git_rev_parse_does_not_answer`) - and the
+    non-zero exit outside a repository, and a raising call - and the
     trailing newline `rev-parse` prints is stripped, or every equality query
-    against a commit would miss
-    (`test_the_git_sha_is_this_repos_head_with_no_trailing_newline`).
+    against a commit would miss.
     """
     try:
         finished = subprocess.run(

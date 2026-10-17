@@ -48,9 +48,7 @@ def region_allowed(policy: Policy, tenant: str, data_class: DataClass, region: s
     order to describe it is not evidence. What keeps the two honest is that this
     function is only ever asked about a region the resolver ALREADY returned, so
     a disagreement between them shows up as an `allowed=false` row and an alert
-    rather than as a silent pass. The rows are
-    `test_region_allowed_over_the_shipped_policy` and
-    `test_a_data_class_with_no_rule_allows_nothing`.
+    rather than as a silent pass.
     """
     tenant_config = policy.tenants.get(tenant)
     if tenant_config is None:

@@ -5,16 +5,14 @@ Everything a provider adapter takes and returns is defined in
 OpenAI-shaped because that is the API this product publishes, but they are ours:
 no provider SDK is imported, and no provider's field names appear, so
 `providers/openai_compatible.py` implements it unchanged rather than translating
-into one provider's dialect, and the OpenAI and Azure adapters of an earlier change are
-meant to do the same.  `test_base_contract_carries_no_provider_vocabulary` holds
-that by walking this module's names and every model's fields.
+into one provider's dialect, and the OpenAI and Azure adapters do the
+same.
 
 The models are frozen and reject unknown fields.  Frozen because an adapter must
 not mutate the caller's request while mapping it - the routes' fallback loop
 sends the same request to a second provider, and it has to be the SAME request;
 unknown fields rejected because a misspelled `max_token` should be an error
-rather than a silently applied default.  Both are pinned by
-`test_contract_models_are_frozen` and `test_contract_models_forbid_unknown_fields`.
+rather than a silently applied default.
 
 `embed()` is deliberately absent from `Adapter`: Anthropic has no embeddings
 endpoint, and a method that exists only to raise is worse than a second
@@ -88,21 +86,18 @@ DEFAULT_MAX_TOKENS = 4096
 """What `max_tokens` becomes when the caller omits it.
 
 Anthropic requires the field, so there has to be a default; 4096 is large enough
-that it is not felt as a cap on an ordinary answer. Pinned exactly by
-`test_default_max_tokens_is_exactly_4096`.
+that it is not felt as a cap on an ordinary answer.
 """
 
 MAX_TOOL_NAME_LENGTH = 128
-"""Longest tool name accepted. Pinned by `test_max_tool_name_length_is_exactly_128`."""
+"""Longest tool name accepted."""
 
 TOOL_NAME_PATTERN = re.compile(r"[a-zA-Z0-9_-]{1,128}")
 """The character set a tool name may use, matched with `re.fullmatch`.
 
 `.match` with `^...$` would accept a trailing newline, and this string is sent
-to a provider as the identifier the model calls back by name. The rejection
-table in `test_tool_name_rejection_table` covers a trailing newline, a trailing
-CRLF and a trailing space; the accepted set (uppercase included) is held by
-`test_tool_name_acceptance_table`.
+to a provider as the identifier the model calls back by name. A trailing newline, a trailing
+CRLF and a trailing space are all rejected; uppercase is accepted.
 """
 
 
@@ -110,8 +105,7 @@ def checked_tool_name(value: str, field: str) -> str:
     r"""Validate one caller-supplied identifier before it reaches a provider.
 
     Named for its first caller and now used for every identifier in a tool loop.
-    `grep -rnE "checked_tool_name\(" packages/` returns 13 lines as of an earlier change:
-    this definition and TWELVE call sites, the same six in each of the two
+    It has TWELVE call sites, the same six in each of the two
     adapters that build an outbound body - `providers/anthropic.py` and
     `providers/openai_compatible.py`. The six are a tool call's id and its name,
     the `tool_call_id` on a result turn, a `tools[].name`, a forced
@@ -122,9 +116,7 @@ def checked_tool_name(value: str, field: str) -> str:
     Raises `IdentifierInvalid` (code VALIDATION, status 422) naming `field`, so a
     bad value is the caller's error with a pointer to it rather than a provider
     400 the caller cannot act on. Adapters call this before the outbound request
-    is built, which `test_bad_tool_name_raises_before_any_outbound_call` and
-    `test_bad_tool_ids_raise_before_any_outbound_call` prove by asserting no
-    request was made.
+    is built, so no request is made for a bad value.
     """
     if len(value) > MAX_TOOL_NAME_LENGTH:
         raise IdentifierInvalid(
@@ -144,10 +136,7 @@ class HttpAdapter:
     from `self.name`, and `close`, which delegates to `self.http`.
 
     `AzureOpenAIAdapter` inherits through `OpenAICompatibleAdapter`, so the chain
-    is `AzureOpenAIAdapter → OpenAICompatibleAdapter → HttpAdapter` (an earlier change,
-    agreed by auto-mode).
-
-    `test_both_adapters_subclass_the_shared_base` pins this structure.
+    is `AzureOpenAIAdapter → OpenAICompatibleAdapter → HttpAdapter`.
     """
 
     name: str
@@ -169,14 +158,11 @@ class Adapter(Protocol):
     `name` is the policy provider name (the key in `routing.yaml`'s `providers`
     and in the factory's mapping), not the vendor: two accounts with the same
     vendor are two providers, and the ledger, the metric label and the resolver
-    all have to address them apart. `price_key` is built from it for that reason,
-    pinned by `test_price_key_is_provider_name_slash_model`.
+    all have to address them apart. `price_key` is built from it for that reason.
 
-    `healthcheck()` was removed in an earlier change.  The `provider` readiness probe now
-    reads True when the adapter mapping is non-empty and False when empty; it
-    calls no adapter method.  `test_the_provider_probe_is_ready_when_an_adapter_exists`
-    pins the new behaviour and `test_no_adapter_or_protocol_exposes_healthcheck`
-    confirms the method is gone.
+    There is no `healthcheck()`.  The `provider` readiness probe reads True when
+    the adapter mapping is non-empty and False when empty; it calls no adapter
+    method.
     """
 
     name: str
@@ -188,8 +174,8 @@ class Adapter(Protocol):
     def stream_chat(self, request: ChatRequest) -> Iterator[StreamEvent]:
         """Run one streamed completion. Every failure is a `ProviderError`.
 
-        On the one protocol rather than a separate `StreamingAdapter` (an earlier change
-        decision A): every provider in the policy speaks SSE, so a second
+        On the one protocol rather than a separate `StreamingAdapter`: every
+        provider in the policy speaks SSE, so a second
         protocol would buy a capability check on every request and a "this
         provider cannot stream" path nothing would reach.
         """
@@ -216,9 +202,6 @@ class EmbeddingAdapter(Protocol):
     the thing the embeddings route asks `isinstance` about and hands to the
     resolver as its health seam. An alias whose candidates are all chat-only is
     then the resolver's typed 503 rather than an `AttributeError` served as a 500.
-    The two ends of that choice are pinned by
-    `test_the_openai_compatible_adapter_satisfies_the_embedding_protocol` and
-    `test_the_anthropic_adapter_does_not_satisfy_the_embedding_protocol`.
 
     `name` is the policy provider name, for the same reason it is on `Adapter`.
     """
@@ -246,12 +229,7 @@ class EmbeddingAdapter(Protocol):
 
         The OpenAI-compatible implementation checks the numbering and the vectors
         while reading the payload, and the count in `embed()`, where the request
-        is still in hand
-        (`test_indices_that_are_not_zero_to_n_minus_one_raise`,
-        `test_an_empty_vector_raises`,
-        `test_a_non_finite_vector_component_raises`,
-        `test_a_vector_component_out_of_float32_range_raises`,
-        `test_an_answer_with_fewer_vectors_than_inputs_raises`).
+        is still in hand.
         """
         ...
 

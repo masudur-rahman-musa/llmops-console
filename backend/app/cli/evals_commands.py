@@ -83,7 +83,7 @@ def _summary(result: RunResult) -> str:
     """The one line this command prints, in the order `report.md`'s counts repeat.
 
     One line because `make eval`'s output is read in a CI log, and the counts are
-    the run's real ones (`test_the_summary_is_one_line_naming_the_four_counts`).
+    the run's real ones.
     """
     return (
         f"cases {result.cases} · passed {result.passed_count} · "
@@ -107,14 +107,14 @@ def _exit_code(result: RunResult) -> int:
 def _store_rows(report: RunReport, out: Path) -> str | None:
     """Store the run and its cases, and answer what went wrong, or `None`.
 
-    Called AFTER both report files are written (decision E's ordering): the
+    Called AFTER both report files are written (that ordering matters): the
     artefact is what survives a failed insert, and the eval gate reads it off
     disk. The failure is answered rather than raised so the caller can apply
-    decision E's exit rule in one place, and a storage complaint never becomes a
+    the exit rule in one place, and a storage complaint never becomes a
     traceback over a run already paid for.
 
     With no `OPSCONSOLE_DATABASE_URL` configured nothing is stored, `UNSTORED_LINE`
-    is printed and the run keeps its own exit code (decision B).
+    is printed and the run keeps its own exit code.
     """
     database_url = Settings().database_url
     if database_url is None:
@@ -131,7 +131,7 @@ def _store_rows(report: RunReport, out: Path) -> str | None:
 def _judge(judge_url: str | None, client: httpx.Client) -> JudgeClient | None:
     """The judge this run scores with, or `None` with one line on stderr.
 
-    Both halves are required (decision B): a URL with no key would spend three
+    Both halves are required: a URL with no key would spend three
     401s per rubric case, and a key with no URL has nowhere to send them. The
     client is the run's own `httpx.Client`, so the judge opens no second pool and
     the whole path is drivable through one `MockTransport`.
@@ -146,11 +146,10 @@ def _judge(judge_url: str | None, client: httpx.Client) -> JudgeClient | None:
 def _judged_prompt_version(result: RunResult) -> str | None:
     """The prompt's sha256 when a case was actually judged, and `None` otherwise.
 
-    Read off the RECORDS rather than off whether a judge was built (criterion 7):
+    Read off the RECORDS rather than off whether a judge was built:
     a run whose every judge sample failed, and a set with no rubric in it, both
     judged nothing, and a hash recorded there would tell a later comparison the
-    two runs used a prompt neither of them scored anything with
-    (`test_with_no_judge_url_the_run_judges_nothing_and_keeps_its_exit_code`).
+    two runs used a prompt neither of them scored anything with.
     """
     if any(run.judge is not None for run in result.runs):
         return judge_prompt_version()
@@ -162,8 +161,7 @@ def _calibration_summary(report: CalibrationReport) -> str:
 
     One line for `_summary`'s reason - this output is read in a CI log - and the
     trust flag is on it because that is the whole point of the command: a kappa
-    with no verdict beside it makes every reader apply the threshold themselves
-    (`test_calibrate_writes_the_artifact_into_out_and_exits_zero`).
+    with no verdict beside it makes every reader apply the threshold themselves.
     """
     kappa = "null" if report.kappa is None else report.kappa
     return (
@@ -176,8 +174,7 @@ def _run(options: argparse.Namespace) -> int:
     """Run one golden set and answer the process exit code.
 
     Every refusal goes to stderr and never to stdout, which is the stream the
-    summary's counts are parsed from
-    (`test_a_pre_check_failure_reports_on_stderr_rather_than_stdout`), and
+    summary's counts are parsed from, and
     `EvalSetInvalid` and `TargetUnreachable` are reported as their own message
     rather than as a traceback: an operator who mistyped a path needs the path.
     """
@@ -258,25 +255,22 @@ def _run(options: argparse.Namespace) -> int:
 
 
 def _gate(options: argparse.Namespace) -> int:
-    """Compare one published run against the baseline and answer the exit code (18a).
+    """Compare one published run against the baseline and answer the exit code.
 
     `_run`'s shape with no run in it: every refusal is one line on stderr answered
-    with `EXIT_USAGE`, stdout carries exactly the one verdict line the workflow reads
-    (decision E), and the breached rules go to stderr one line each so a reviewer
-    sees all of them at once
-    (`test_gate_reports_every_breached_rule_on_its_own_line_and_exits_one`).
+    with `EXIT_USAGE`, stdout carries exactly the one verdict line the workflow reads,
+    and the breached rules go to stderr one line each so a reviewer
+    sees all of them at once.
 
     The order here is the contract. Both inputs are validated before anything is
     written, so a malformed report never leaves a comment file behind claiming a
     run that never happened; the comment is written before the verdict is printed,
     so a run whose comment could not be written does not look, from stdout and the
-    code, exactly like one whose comment reached the PR
-    (`test_a_comment_path_inside_a_directory_that_does_not_exist_is_a_usage_refusal`).
+    code, exactly like one whose comment reached the PR.
 
     `EXIT_RESIDENCY` outranks `EXIT_FAILED` exactly as `_exit_code` ranks them for
-    `run` (decision D): a boundary breach read as an accuracy dip is a breach
-    somebody merges over
-    (`test_gate_exits_three_when_a_residency_violation_sits_beside_a_threshold_breach`).
+    `run`: a boundary breach read as an accuracy dip is a breach
+    somebody merges over.
     """
     try:
         report = load_report(options.report)
@@ -307,12 +301,11 @@ def _gate(options: argparse.Namespace) -> int:
 
 
 def _tradeoff(options: argparse.Namespace) -> int:
-    """Build the tradeoff table from a manifest of published runs (27b).
+    """Build the tradeoff table from a manifest of published runs.
 
     `_gate`'s shape with no verdict in it: every input is read and checked before
     anything is written, so a refusal on the last option leaves `--out` empty
-    rather than a half-written table for the next reader to quote
-    (`test_every_refusal_exits_two_with_one_line_on_stderr_and_an_empty_out_directory`).
+    rather than a half-written table for the next reader to quote.
     A relative `report` in the manifest resolves against the manifest's own
     directory, which is what makes the committed evidence directory portable.
     """
@@ -339,15 +332,12 @@ def _calibrate(options: argparse.Namespace) -> int:
 
     Every pre-check happens before a request is made, for `run`'s own reason one
     level along: the spend here is `MIN_CALIBRATION_LABELS` times `JUDGE_SAMPLES`
-    calls, and a URL refused afterwards has already cost all of it
-    (`test_a_calibrate_judge_url_that_is_not_an_absolute_http_url_is_refused`
-    asserts the request log is empty).
+    calls, and a URL refused afterwards has already cost all of it.
 
     Both refusals a calibration can end in - an unloadable file and a judge that
     scored too few labels - are reported as their own single line and answered
     with `EXIT_USAGE`, never as a traceback and never as `EXIT_FAILED`: a gate
-    reads `2` as "the harness never ran", which is exactly what a judge outage is
-    (`test_a_judge_that_answers_five_hundred_throughout_writes_nothing_and_exits_two`).
+    reads `2` as "the harness never ran", which is exactly what a judge outage is.
     The artifact is written LAST, so nothing on disk can be read as trust unless
     the whole calibration succeeded.
     """
@@ -384,13 +374,12 @@ def _calibrate(options: argparse.Namespace) -> int:
 
 
 def _baseline_guard(options: argparse.Namespace) -> int:
-    """Answer #42's verdict over one range of commits and the process exit code (18b).
+    """Answer the baseline guard's verdict over one range of commits and the process exit code.
 
     `_gate`'s shape over git rather than over two files: every refusal is one line on
     stderr answered with `EXIT_USAGE`, stdout carries exactly the one summary line,
     and the offences go to stderr one per sha so an author sees every commit to fix
-    in one CI round
-    (`test_baseline_guard_prints_one_stderr_line_per_offence_and_exits_one`).
+    in one CI round.
 
     `EXIT_USAGE` and `EXIT_FAILED` are kept apart here for the reason the rest of
     this module keeps them apart: "the guard could not read the range" and "the

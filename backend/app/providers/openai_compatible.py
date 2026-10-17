@@ -17,9 +17,9 @@ stream - so every direction is tested against payloads on disk with no transport
 at all. `OpenAICompatibleAdapter` adds only the endpoints, the auth header and
 the streamed body, because the client, the fixed timeouts, the retry table and
 the provider-message truncation are `providers.transport`, shared with every
-other HTTP adapter (the design). No provider SDK is imported.
+other HTTP adapter. No provider SDK is imported.
 
-Two endpoints are served: `/chat/completions` and, since an earlier change, `/embeddings`.
+Two endpoints are served: `/chat/completions` and `/embeddings`.
 The second is what makes this the residency-only path for embeddings as well as
 for completions.
 
@@ -27,7 +27,7 @@ This wire shape is the one the gateway itself publishes, so the mapping is close
 to an identity - and that is the trap. The adapter next door lifts the system
 turn, renames `required`, rewrites a tool result as a user turn and re-serialises
 a call's arguments; every one of those would be wrong here, so each is asserted
-rather than assumed (`tests/providers/test_local_mapping.py`).
+rather than assumed.
 
 Every PROVIDER failure that leaves this module is a `ProviderError` carrying
 `retryable`. The caller's own bad input is the deliberate exception: it leaves as
@@ -80,19 +80,19 @@ CHAT_COMPLETIONS_PATH = "/chat/completions"
 """Appended to the policy's `base_url`, which already ends in `/v1`.
 
 A path carrying its own `/v1` would send the request to `/v1/v1/chat/completions`.
-`test_the_completions_path_is_appended_to_the_policy_base_url` asserts the whole
-URL against a base url ending in `/v1`, mirroring the shipped policy's - it does
-not read `routing.yaml`, and nothing validates that suffix at load time, so a
-policy edited to drop the `/v1` 404s at request time with no config-time signal.
-An earlier change's admin reload is where that check belongs."""
+The tests build the whole
+URL against a base url ending in `/v1`, mirroring the shipped policy's. Nothing
+validates that suffix at load time, so a policy edited to drop the `/v1` 404s at
+request time with no config-time signal. The admin reload is where that check
+belongs."""
 
 EMBEDDINGS_PATH = "/embeddings"
 """Appended to the policy's `base_url`, which already ends in `/v1`.
 
 The same rule `CHAT_COMPLETIONS_PATH` follows and for the same reason: a path
 carrying its own `/v1` would send the request to `/v1/v1/embeddings`.
-`test_the_embeddings_path_is_appended_to_the_policy_base_url` asserts the whole
-URL against a base url ending in `/v1`, mirroring the shipped policy's."""
+The whole URL is built
+against a base url ending in `/v1`, mirroring the shipped policy's."""
 
 OPENAI_BASE_URL = "https://api.openai.com/v1"
 """The vendor's own endpoint, for a `kind: openai` provider that names no `base_url`.
@@ -105,9 +105,7 @@ endpoint a provider gets, not to know what the vendor's is.
 
 Only the `openai` kind falls back to it. An `openai_compatible` provider naming
 no `base_url` is dropped instead, because there is no such thing as a default box
-of our own (`test_an_openai_compatible_provider_without_a_base_url_is_dropped_with_a_warning`).
-Pinned as an exact string by
-`test_an_openai_provider_without_a_base_url_uses_the_vendor_default`."""
+of our own."""
 
 FLOAT32_MAX = 3.4028234663852886e38
 """The largest finite value a float32 can hold, and therefore the largest
@@ -116,7 +114,7 @@ component a vector may carry.
 The gateway renders base64 by packing components as float32
 (`services/embedding_pipeline.py`), and `struct.pack("<f", 1e300)` raises
 `OverflowError` - uncaught, that is a 500 with no code for what is really a
-provider defect. Pinned by `test_a_vector_component_out_of_float32_range_raises`."""
+provider defect."""
 
 OUTBOUND_ENCODING_FORMAT = "float"
 """What this adapter always asks the provider for, whatever the caller asked the
@@ -125,18 +123,14 @@ gateway for.
 The gateway renders base64 itself from the float vector, so forwarding a
 caller's `base64` would hand this reader a string where it expects numbers - and
 a reader that passed it through unchanged would return a DOUBLE-encoded blob,
-which decodes cleanly to nonsense. Pinned by
-`test_the_outbound_body_always_asks_for_floats`, and on the whole path by
-`test_base64_still_asks_the_provider_for_floats_on_the_wire`."""
+which decodes cleanly to nonsense."""
 
 OPENAI_TOOL_CHOICE_BY_MODE = {"auto": "auto", "none": "none", "required": "required"}
 """The three nameless `ToolChoice` modes, in this wire's words.
 
 Unlike Anthropic's table next door, every row here is the identity: this wire
 spells `required` the same way the neutral contract does. The table exists so
-that stays a fact a test can hold rather than an assumption
-(`test_tool_choice_maps_to_the_openai_table`,
-`test_the_nameless_tool_choice_table_is_exactly_the_three_modes`). The `tool`
+that stays a fact a test can hold rather than an assumption. The `tool`
 mode is absent because it carries a name and is built as an object."""
 
 DONE_SENTINEL = "[DONE]"
@@ -144,7 +138,7 @@ DONE_SENTINEL = "[DONE]"
 
 It is not JSON, so a reader that parses every `data:` line fails on every single
 stream; and a reader that ignores it keeps parsing whatever a proxy appended
-after it (`test_the_reader_stops_at_the_done_sentinel`)."""
+after it."""
 
 SSE_DATA_PREFIX = "data: "
 """The only SSE field this reader looks at. Comments, `id:` lines and the blank
@@ -155,13 +149,12 @@ def _tool_call_wire(call: ToolCall, field_name: str) -> dict[str, Any]:
     """Render one tool call the model made, as this wire replays it.
 
     Both ids are checked here rather than at the contract, so an invalid one
-    raises before any outbound request is built
-    (`test_every_request_path_identifier_is_checked_before_any_outbound_call`).
+    raises before any outbound request is built.
 
     `arguments` is passed through as the JSON STRING it already is. The adapter
     next door has to parse it, because Anthropic's `input` is an object; doing
     the same here would re-serialise the model's own output and change what the
-    model is told it said (`test_tool_call_arguments_travel_as_the_caller_wrote_them`).
+    model is told it said.
     """
     return {
         "id": checked_tool_name(call.id, f"{field_name}.id"),
@@ -177,16 +170,13 @@ def _rendered_turn(index: int, message: ChatMessage) -> dict[str, Any]:
     """Render one turn. Every role survives as itself, including `system` and `tool`.
 
     That is the whole difference from the Anthropic mapping, which has neither
-    role and has to rewrite a tool result as a `user` turn
-    (`test_the_system_turn_stays_a_system_role_message_in_place`,
-    `test_a_tool_result_turn_keeps_the_tool_role_and_its_id`).
+    role and has to rewrite a tool result as a `user` turn.
     """
     if message.role == "tool":
         return {
             "role": "tool",
             # `or ""` rather than a branch: an absent id fails the same pre-check
-            # as a malformed one, with the same 422 naming the same field
-            # (`test_a_tool_turn_without_a_tool_call_id_raises_before_any_outbound_call`).
+            # as a malformed one, with the same 422 naming the same field.
             "tool_call_id": checked_tool_name(
                 message.tool_call_id or "", f"messages[{index}].tool_call_id"
             ),
@@ -206,10 +196,9 @@ def to_openai(request: ChatRequest) -> dict[str, Any]:
     """Render a normalised request as an OpenAI-compatible chat completions body.
 
     `max_tokens` is always sent: this wire treats an omitted value as unbounded,
-    and an unbounded generation on a CPU box holds a worker for minutes
-    (`test_max_tokens_default_and_override`). `stream` and `stream_options`
-    are deliberately NOT set here - they belong to the streamed call alone
-    (`test_the_non_streaming_body_carries_neither_stream_flag`).
+    and an unbounded generation on a CPU box holds a worker for minutes. `stream` and
+    `stream_options`
+    are deliberately NOT set here - they belong to the streamed call alone.
     """
     body: dict[str, Any] = {
         "model": request.model,
@@ -254,13 +243,10 @@ def to_openai(request: ChatRequest) -> dict[str, Any]:
     if request.response_format is not None:
         # A first-class field on this wire, so it neither becomes a tool nor
         # touches `tool_choice` - both of which the Anthropic mapping has to do,
-        # and both of which would take the caller's own tools away here
-        # (`test_response_format_leaves_the_callers_tools_alone`). `strict` is
+        # and both of which would take the caller's own tools away here. `strict` is
         # the caller's to set: forwarded as given, and absent when they left it
         # out, because a strict schema must close every object and require every
-        # field, and most callers' schemas do neither
-        # (`test_response_format_without_strict_sends_no_strict_key`,
-        # `test_a_non_strict_schema_goes_through_to_openai`).
+        # field, and most callers' schemas do neither.
         json_schema: dict[str, Any] = {
             "name": checked_tool_name(request.response_format.name, "response_format.name"),
             "schema": dict(request.response_format.json_schema),
@@ -277,12 +263,10 @@ def _usage(block: Mapping[str, Any]) -> Usage:
 
     `total_tokens` is not recomputed: a server counting a cached or reused prefix
     reports a total that is not the sum, and the ledger books what the provider
-    says it served (`test_total_tokens_is_the_providers_own_number_not_a_recomputed_sum`).
+    says it served.
     The two counts are required - a missing one raises rather than defaulting to
-    zero, which would book a real, billed call as free
-    (`test_a_response_without_usage_raises_provider_error`) - while an absent
-    total falls back to the sum, because some builds omit it
-    (`test_a_usage_block_without_a_total_falls_back_to_the_sum`).
+    zero, which would book a real, billed call as free - while an absent
+    total falls back to the sum, because some builds omit it.
     """
     prompt_tokens = block["prompt_tokens"]
     completion_tokens = block["completion_tokens"]
@@ -299,15 +283,12 @@ def from_openai(payload: Mapping[str, Any]) -> ChatResponse:
 
     Everything is read from `choices[0]`: a `content` of `null` becomes the empty
     string the frozen contract requires, and `tool_calls` keep the JSON *string*
-    the published API promises its clients rather than being parsed into a dict
-    (`test_tool_calls_keep_their_id_name_and_argument_string`).
+    the published API promises its clients rather than being parsed into a dict.
 
     An answer with real usage but nothing to render is refused rather than served
     as an empty string a tenant is billed for, which is the same verdict the
-    Anthropic path reaches for the same reply
-    (`test_an_answer_with_usage_but_nothing_to_render_raises`). An empty
-    `choices` is refused the same way rather than escaping as an `IndexError`
-    (`test_a_response_with_no_choices_raises`).
+    Anthropic path reaches for the same reply. An empty
+    `choices` is refused the same way rather than escaping as an `IndexError`.
     """
     try:
         choices = payload["choices"]
@@ -359,8 +340,7 @@ class _OpenCall:
 
     Kept in a dict keyed by the call's own `index`, never by "the call that
     opened last": this wire interleaves two calls' fragments, so matching on the
-    index is what stops one call's JSON being appended to another's
-    (`test_the_reader_emits_every_buffered_call_before_the_finish_reason`).
+    index is what stops one call's JSON being appended to another's.
     """
 
     id: str = ""
@@ -393,17 +373,13 @@ def from_openai_events(lines: Iterable[str]) -> Iterator[StreamEvent]:
     opening chunk's empty string is not an answer fragment and is not forwarded.
     A tool call is ASSEMBLED: its `function.arguments` fragments are buffered per
     `index` and every buffered call is emitted, in index order, when the finish
-    reason arrives - decision C. Flushing a call when the NEXT index opens would
-    be a guess about provider ordering, and this wire interleaves them
-    (`test_a_streamed_tool_call_arrives_as_one_whole_delta`,
-    `test_the_reader_emits_every_buffered_call_before_the_finish_reason`).
+    reason arrives. Flushing a call when the NEXT index opens would
+    be a guess about provider ordering, and this wire interleaves them.
 
     Usage rides a final chunk whose `choices` is empty and is required, which is
     why the adapter always asks for it. A stream that ends without it raises
-    rather than yielding a total the ledger would price as zero
-    (`test_a_stream_that_ends_without_usage_raises_rather_than_zero_filling`),
-    and so does one that renders nothing at all
-    (`test_a_stream_that_renders_nothing_raises`).
+    rather than yielding a total the ledger would price as zero,
+    and so does one that renders nothing at all.
     """
     started = False
     rendered = False
@@ -496,13 +472,11 @@ def to_openai_embedding(request: EmbeddingRequest) -> dict[str, Any]:
 
     Three fields, and only three: this endpoint validates what it is sent rather
     than ignoring it, so a `max_tokens` or an invented `dimensions` copied in
-    from the chat body would make every embedding request a provider 400
-    (`test_the_outbound_body_is_exactly_three_fields`).
+    from the chat body would make every embedding request a provider 400.
 
     `input` is always a list, even for a single text. The wire accepts a bare
     string, so a server would answer 200 either way and nothing downstream would
-    notice the shape differed by batch size
-    (`test_a_single_input_still_travels_as_a_list`).
+    notice the shape differed by batch size.
     """
     return {
         "model": request.model,
@@ -515,12 +489,10 @@ def _embedding_usage(block: Mapping[str, Any]) -> EmbeddingUsage:
     """Read an embedding usage block. `prompt_tokens` is required, the total is not.
 
     The two counts are handled differently on purpose. A missing `prompt_tokens`
-    raises, because zero-filling it would book a real, billed call as free
-    (`test_a_response_without_usage_raises_rather_than_zero_filling`). A missing
+    raises, because zero-filling it would book a real, billed call as free. A missing
     `total_tokens` falls back to the prompt count rather than raising, because
     some llama.cpp builds omit it and there is no second count on this wire to
-    add - the prompt count IS the whole total
-    (`test_an_absent_total_falls_back_to_the_prompt_count`).
+    add - the prompt count IS the whole total.
     """
     prompt_tokens = block["prompt_tokens"]
     total = block.get("total_tokens")
@@ -537,9 +509,7 @@ def _checked_vector(vector: Sequence[float]) -> None:
     vector on this wire is supposed to be, and anything else - a list of strings
     is the shape a release change would produce - fails inside on a `TypeError`
     that `from_openai_embedding` turns into the same `unreadable` 502 as any
-    other unparseable body
-    (`test_an_unreadable_payload_leaves_as_a_provider_error`, the vector-of-strings
-    row).
+    other unparseable body.
 
     The other guards in this module read the envelope - is `data` empty, are the
     indices `0..n-1`, is there a usage block. None of them looks inside a vector,
@@ -549,14 +519,13 @@ def _checked_vector(vector: Sequence[float]) -> None:
       and answers 200. The caller stores a zero-length vector against a real row
       and every similarity computed from it afterwards is quietly wrong - the
       same verdict `from_openai`'s no-readable-content guard reaches, for the
-      same reason (`test_an_empty_vector_raises`);
+      same reason;
     * a `NaN` or an infinity, which a badly quantised local model does produce,
       cannot be serialised by the JSON renderer (it runs with `allow_nan=False`),
       so it reaches the client as a 500 with no code rather than the 502 a retry
-      loop is written against (`test_a_non_finite_vector_component_raises`);
+      loop is written against;
     * a finite component beyond `FLOAT32_MAX` raises `OverflowError` inside the
-      base64 packer, with the same untyped 500 as the result
-      (`test_a_vector_component_out_of_float32_range_raises`).
+      base64 packer, with the same untyped 500 as the result.
 
     Refusing all three here means the route can pack any vector it is handed.
     """
@@ -584,13 +553,11 @@ def from_openai_embedding(payload: Mapping[str, Any]) -> EmbeddingResponse:
     server: the caller matches vectors back to its own rows by index and by
     nothing else, so a positional reader, or a sorted reader that accepts a
     duplicated or a one-based numbering, returns real vectors attached to the
-    wrong texts - plausible numbers, no error anywhere
-    (`test_the_batch_is_ordered_by_each_items_own_index_not_by_file_order`,
-    `test_indices_that_are_not_zero_to_n_minus_one_raise`).
+    wrong texts - plausible numbers, no error anywhere.
 
     An empty `data` is refused rather than answered as an empty list, which is
     the twin of `from_openai`'s no-choices guard and reaches the caller as a 502
-    the routes' fallback loop can move past (`test_a_response_with_no_data_raises`). The
+    the routes' fallback loop can move past. The
     vectors themselves are checked by `_checked_vector`, because every guard in
     this function reads the ENVELOPE and a well-formed envelope can carry numbers
     no client can use.
@@ -634,24 +601,19 @@ class OpenAICompatibleAdapter(HttpAdapter):
 
     `name` is that policy name, never the kind: `local` and `vllm` are the same
     kind on two different boxes, and the ledger, the metric label and the
-    resolver all have to address them apart
-    (`test_price_key_is_the_policy_provider_name_slash_model`).
+    resolver all have to address them apart.
 
-    `api_key` is optional, and that is decision B: the shipped `local` and `vllm`
+    `api_key` is optional, and the reason is that the shipped `local` and `vllm`
     providers sit on a private network and declare no `key_env`, so no
-    `Authorization` header is sent at all rather than an empty bearer
-    (`test_no_api_key_sends_no_authorization_header`). A key given travels only
-    in that header (`test_an_api_key_travels_only_as_a_bearer_header`).
+    `Authorization` header is sent at all rather than an empty bearer. A key given travels only
+    in that header.
 
     Two methods are SEAMS rather than behaviour: `_auth_headers` and `_path`,
-    added by an earlier change for `providers/azure_openai.py`, whose adapter differs from
+    added for `providers/azure_openai.py`, whose adapter differs from
     this one in the auth header and the request URL and in nothing else. Both
     defaults are identity here, so the two kinds this class serves directly -
-    `openai_compatible` and, since an earlier change, `openai` - send exactly what they
-    sent before (`test_the_completions_path_is_appended_to_the_policy_base_url`,
-    `test_the_embeddings_path_is_appended_to_the_policy_base_url`,
-    `test_no_api_key_sends_no_authorization_header`,
-    `test_an_api_key_travels_only_as_a_bearer_header`).
+    `openai_compatible` and `openai` - send exactly what they
+    sent before.
 
     This module logs nothing. What reaches a log on a failure is
     `ProviderError.provider_message`, which holds the provider's answer or the
@@ -683,11 +645,10 @@ class OpenAICompatibleAdapter(HttpAdapter):
 
         A seam. Called once, from `__init__`, so the key is set on the client and
         never rebuilt per request. Overridden by `AzureOpenAIAdapter`, which sends
-        an `api-key` header instead (`test_the_key_travels_only_as_an_api_key_header`).
+        an `api-key` header instead.
 
-        Empty rather than an empty bearer when there is no key, which is decision B
-        of an earlier change: the shipped `local` and `vllm` sit on a private network and
-        declare no `key_env` (`test_no_api_key_sends_no_authorization_header`).
+        Empty rather than an empty bearer when there is no key, because the shipped
+        `local` and `vllm` sit on a private network and declare no `key_env`.
         """
         return {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
@@ -695,8 +656,7 @@ class OpenAICompatibleAdapter(HttpAdapter):
         """Where `leaf` is addressed on this wire, given the model being called.
 
         A seam, and on this wire the identity: `model` travels in the BODY here,
-        so the path is the leaf unchanged and the argument is unused
-        (`test_the_completions_path_is_appended_to_the_policy_base_url`).
+        so the path is the leaf unchanged and the argument is unused.
         Overridden by `AzureOpenAIAdapter`, where the model names a deployment in
         the URL path and an `api-version` query is mandatory.
         """
@@ -704,11 +664,7 @@ class OpenAICompatibleAdapter(HttpAdapter):
 
     @property
     def client(self) -> httpx.Client:
-        """The underlying HTTP client, so the fixed timeouts stay observable here.
-
-        Asserted on by `test_client_timeouts_are_fixed_at_five_and_sixty` and
-        `test_close_releases_the_client`.
-        """
+        """The underlying HTTP client, so the fixed timeouts stay observable here."""
         return self.http.client
 
     def chat(self, request: ChatRequest) -> ChatResponse:
@@ -719,7 +675,7 @@ class OpenAICompatibleAdapter(HttpAdapter):
             payload = response.json()
         except ValueError as exc:
             # A 200 that is not JSON at all - a reverse proxy's HTML error page,
-            # a truncated body (`test_a_non_json_success_body_is_a_provider_error`).
+            # a truncated body.
             raise unreadable(exc) from exc
         return from_openai(payload)
 
@@ -728,11 +684,9 @@ class OpenAICompatibleAdapter(HttpAdapter):
 
         The same three lines `chat()` is, over the same `ProviderTransport`, so
         the timeouts, the retry table and the provider-message truncation are the
-        shared ones rather than a second copy that would drift
-        (`test_the_retry_table_by_status`, `test_an_oversized_provider_body_is_truncated`).
+        shared ones rather than a second copy that would drift.
         A 200 that is not JSON - a reverse proxy's HTML error page - is the same
-        `unreadable` 502 here as there
-        (`tests/providers/test_local_embeddings.py::test_a_non_json_success_body_is_a_provider_error`).
+        `unreadable` 502 here as there.
 
         The one thing this method does that `chat()` does not is COUNT. Nothing
         `from_openai_embedding` can see settles whether the answer is complete:
@@ -740,8 +694,7 @@ class OpenAICompatibleAdapter(HttpAdapter):
         to a 64-item request, which satisfies every guard that reads the payload
         alone. Only here are both the request and the answer in hand, which is
         why the completeness half of the protocol's guarantee is checked here and
-        the numbering half is checked there
-        (`test_an_answer_with_fewer_vectors_than_inputs_raises`).
+        the numbering half is checked there.
         """
         body = to_openai_embedding(request)
         response = self.http.send(self._path(EMBEDDINGS_PATH, request.model), body)
@@ -759,7 +712,7 @@ class OpenAICompatibleAdapter(HttpAdapter):
             # that is the one recovery that must never happen: another provider
             # means another vector space, so the caller gets plausible numbers
             # that do not compare against anything it has already stored
-            #. An error it can act on is the better answer.
+            # An error it can act on is the better answer.
             raise ProviderError(
                 f"{self.http.name}: the provider answered "
                 f"{len(answer.embeddings)} embeddings for {len(request.input)} inputs",
@@ -773,14 +726,12 @@ class OpenAICompatibleAdapter(HttpAdapter):
 
         `stream_options.include_usage` is always sent, never left to the caller:
         without it this wire sends no usage chunk, and the reader would refuse
-        every streamed answer rather than book one at zero
-        (`test_the_streamed_body_asks_for_usage_as_well_as_the_stream`).
+        every streamed answer rather than book one at zero.
 
         The open and the read are separate. `ProviderTransport.open_stream` owns
         the retry loop, so a retry cannot reach around the iteration: once one
         event has been yielded the client has already been shown part of an
-        answer, and nothing that cannot be un-sent is resent
-        (`test_the_stream_open_is_retried_but_a_started_answer_is_not`).
+        answer, and nothing that cannot be un-sent is resent.
         """
         body = to_openai(request)
         # Copied rather than mutated in place: `to_openai` is the shape the

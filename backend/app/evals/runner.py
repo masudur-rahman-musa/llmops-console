@@ -1,22 +1,20 @@
-"""One reset, every case in file order, one `RunResult` (#33, #38).
+"""One reset, every case in file order, one `RunResult`.
 
-The loop is the whole module: reset once before the first case (decision F), send
-each case in the order the file listed it, map the envelope, score it with 16a's
+The loop is the whole module: reset once before the first case, send
+each case in the order the file listed it, map the envelope, score it with
 `assert_case` - imported, never re-implemented - and check the region every turn
-reports. Nothing here writes a file: `16c` owns `report.json` and `report.md`,
-`16d` owns the `eval_runs` and `eval_cases` rows, and this module owns only the
-record both of them read.
+reports. Nothing here writes a file: the report module owns `report.json` and
+`report.md`, the store module owns the `eval_runs` and `eval_cases` rows, and
+this module owns only the record both of them read.
 
 Three rules the record keeps that no single field states:
 
 * a broken turn is a FAILED case and the run continues, one attempt, never a
-  retry and never omitted from the counts (decision E) - omitting it would shrink
-  the denominator every threshold in the eval gate is measured against
-  (`test_a_case_that_times_out_is_a_failed_case_and_the_run_continues`);
+  retry and never omitted from the counts - omitting it would shrink
+  the denominator every threshold in the eval gate is measured against;
 * a residency violation makes that case not passed even when every assertion
   passed: a turn that left its allowed region is not a result the run may count
-  as correct (#38,
-  `test_a_residency_violation_fails_the_run_even_when_every_assertion_passed`);
+  as correct;
 * every count on `RunResult` is DERIVED from the per-case records, so no caller
   can report a number the records do not support.
 """
@@ -37,8 +35,7 @@ LEAK_ASSERTION: str = "cross_tenant_leak"
 """The assertion whose failure is a tenant boundary breach rather than a score.
 
 One of `assertions.ASSERTION_NAMES`, named here because `RunResult.leaked` reads
-it and the CLI puts a leak on the same exit code as a residency violation
-(`test_a_cross_tenant_case_is_supplied_the_markers_so_the_leak_assertion_is_live`)."""
+it and the CLI puts a leak on the same exit code as a residency violation."""
 
 
 class CaseRun(BaseModel):
@@ -52,15 +49,14 @@ class CaseRun(BaseModel):
     with zeros would read as a free, instant success.
 
     `category` and `outcome` are carried rather than re-derived because the
-    report is built from this record and nothing else (`16c` decision E), and
-    neither the golden set nor the turn is available to it
-    (`test_a_case_report_carries_the_measured_fields_the_assertions_and_the_verdict`).
+    report is built from this record and nothing else, and neither the golden set
+    nor the turn is available to it.
 
     `failure_kind` is the raised `TurnFailed`'s own kind, carried for the same
-    reason and set in exactly the same place as `error`: `17b`'s taxonomy tags a
+    reason and set in exactly the same place as `error`: the taxonomy tags a
     broken turn `timeout` or `provider_error` and has nothing else to read, since
     a turn that never answered left no assertions behind. It is `None` on every
-    case that answered (`test_a_case_that_answered_carries_no_failure_kind`).
+    case that answered.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -77,7 +73,7 @@ class CaseRun(BaseModel):
 
 
 class RunResult(BaseModel):
-    """Every case's record, and the counts the summary line and `16c` both read."""
+    """Every case's record, and the counts the summary line and the report both read."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -85,7 +81,7 @@ class RunResult(BaseModel):
 
     @property
     def cases(self) -> int:
-        """How many cases ran. A broken turn is one of them (decision E)."""
+        """How many cases ran. A broken turn is one of them."""
         return len(self.runs)
 
     @property
@@ -109,8 +105,7 @@ class RunResult(BaseModel):
 
         Read off the assertion's VERDICT and never off the case's category, which
         would fail every run containing a cross-tenant case at all - and a gate
-        that fails always is a gate nobody keeps
-        (`test_a_clean_cross_tenant_case_does_not_report_a_leak`).
+        that fails always is a gate nobody keeps.
         """
         return any(
             result.name == LEAK_ASSERTION and result.status is AssertionStatus.FAILED
@@ -131,21 +126,18 @@ def run_set(
 ) -> RunResult:
     """Reset the target, run every case in file order, and answer what happened.
 
-    The reset is first and happens once (pinned in `tests/evals/test_runner.py` by
-    the reset-once case); a `TargetUnreachable` from it is not caught here,
-    because a run over an unreset seed is not comparable to the baseline and the
-    CLI turns that into exit `2` (decision F).
+    The reset is first and happens once; a `TargetUnreachable` from it is not
+    caught here, because a run over an unreset seed is not comparable to the
+    baseline and the CLI turns that into exit `2`.
 
     Residency is checked on every case that answered, not on the first one and
-    then trusted (`test_residency_is_checked_on_every_case_and_not_only_the_first`).
+    then trusted.
 
-    The judge is optional and OFF unless the CLI built one (`17c` decision B), and
-    it scores only the cases that carry a `judge_rubric`, after `assert_case` and
-    on the same loop - so a set with no rubric anywhere costs exactly what it cost
-    before this row (`test_a_case_with_no_rubric_is_not_judged_at_all`). A median
-    below `JUDGE_LOW_SCORE` fails the case (decision D), which is the one thing
-    that makes `passed` more than a statement about assertions and residency
-    (`test_a_case_that_passed_every_assertion_fails_on_a_low_judge_score`).
+    The judge is optional and OFF unless the CLI built one, and it scores only
+    the cases that carry a `judge_rubric`, after `assert_case` and on the same
+    loop - so a set with no rubric anywhere costs exactly what it cost before.
+    A median below `JUDGE_LOW_SCORE` fails the case, which is the one thing that
+    makes `passed` more than a statement about assertions and residency.
     """
     client.reset()
 

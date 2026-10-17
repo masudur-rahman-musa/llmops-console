@@ -1,27 +1,23 @@
-r"""The two rows a run stores: `eval_runs` and `eval_cases` (#39, part).
+r"""The two rows a run stores: `eval_runs` and `eval_cases`.
 
-`16c` writes the two report files; this module writes the two rows built from the
-same `RunReport`. It lives in `storage/` with the other Postgres writers - the
-folder restructure gathered every Postgres write here, reversing plan
-16d decision A's placement in `evals/`. It still reads the record it writes from
-`evals.report`, so the dependency points from `storage` up into `evals`; there is
-no import contract forbidding it. The migration sits in `migrations/` for
-`storage.db.apply_migrations` to find it, and this module imports `storage.db`.
+The eval runner writes the two report files; this module writes the two rows built
+from the same `RunReport`. It lives in `storage/` with the other Postgres writers.
+It still reads the record it writes from `evals.report`, so the dependency points
+from `storage` up into `evals`; there is no import contract forbidding it. The
+migration sits in `migrations/` for `storage.db.apply_migrations` to find it, and
+this module imports `storage.db`.
 
 Three things it holds that no single field states:
 
 * **`rows_from_report` is pure and total.** Every column comes from the report and
   nothing is recomputed or re-timed, so the row and the file a run leaves behind
-  cannot disagree about the same run
-  (`test_the_run_row_carries_every_identity_field_from_the_report`).
+  cannot disagree about the same run.
 * **A case that measured nothing stores NULL, never `0` and never `""`.** A turn
   that never answered has no latency, cost, provider or region; a zero there
   would be averaged in as a free, instant, in-region case and would lift every
-  number `evals/scores.py` reports exactly when the target is failing
-  (`test_a_case_whose_turn_failed_stores_no_measurements_and_its_error`).
-* **Every pre-check runs before a connection is borrowed**,
-  which `test_write_refuses_a_malformed_tenant_before_any_sql` asserts as "no
-  connection was borrowed at all" rather than as "the INSERT errored". As with
+  number `evals/scores.py` reports exactly when the target is failing.
+* **Every pre-check runs before a connection is borrowed.** A refused row means
+  "no connection was borrowed at all", not "the INSERT errored". As with
   the cost ledger, each value reaches the statement as a bound parameter, so the
   checks are not what stands between the table and an injection - they are what
   keeps the audit rows honest: `nordlicht\n` and `Nordlicht` are two tenants a
@@ -29,32 +25,23 @@ Three things it holds that no single field states:
 
 `run_kind` is checked against `report.RunKind`'s own three words rather than
 against `app.cli.evals.RUN_KINDS`, because `app.cli.evals` imports this module
-and the reverse import would be a cycle;
-`test_each_run_kind_the_command_accepts_is_written` is
-parametrised over the command's tuple, so the two cannot drift apart in silence.
-The CHECK constraint in `003_eval_runs.sql` is the second guard, for the row
-somebody loads with `psql`.
+and the reverse import would be a cycle. A test over the command's tuple keeps
+the two from drifting apart in silence. The CHECK constraint in
+`003_eval_runs.sql` is the second guard, for the row somebody loads with `psql`.
 
-`tags` carries row 17b's failure taxonomy (#40), read straight off the report's
-own `CaseReport.tags` rather than recomputed here, so the column and the file
-cannot disagree about why a case failed
-(`test_rows_from_report_fills_tags_from_the_report_case_by_case`).
-`metrics` carries row 17d's fixed metric set the same way, in the report's own
-JSON form: the two costs are `Decimal` in the mapping and decimal STRINGS in the
-column, exactly as they are in the file
-(`test_the_stored_metrics_are_the_json_the_report_file_carries`).
-`alias_resolution` still ships NULL (decision F), and the migration says so
-column by column. `judge_kappa` is filled since 17f, off the report's own
-`RunCalibration` record and never out of the `metrics` mapping - a typed field is
-what keeps `mypy --strict` honest about a value going into a `double precision`
-column, and a mapping lookup that came back `None` would ship NULL on a
-calibrated run and nothing would notice
-(`test_the_judge_kappa_column_is_filled_from_the_reports_calibration_record`). A
+`tags` carries the failure taxonomy, read straight off the report's own
+`CaseReport.tags` rather than recomputed here, so the column and the file
+cannot disagree about why a case failed. `metrics` carries the fixed metric set
+the same way, in the report's own JSON form: the two costs are `Decimal` in the
+mapping and decimal STRINGS in the column, exactly as they are in the file.
+`alias_resolution` still ships NULL, and the migration says so column by column.
+`judge_kappa` is filled off the report's own `RunCalibration` record and never
+out of the `metrics` mapping - a typed field is what keeps `mypy --strict` honest
+about a value going into a `double precision` column, and a mapping lookup that
+came back `None` would ship NULL on a calibrated run and nothing would notice. A
 run made with no `--calibration` still stores `None` there, which is the column's
-"nothing measured this" and not a zero agreement
-(`test_a_calibration_whose_own_kappa_is_null_stores_null_rather_than_zero`,
-`test_row_seventeens_remaining_columns_still_arrive_empty_rather_than_absent`).
-17c's judge verdict goes into `details` and never into a column of its own.
+"nothing measured this" and not a zero agreement. The judge verdict goes into
+`details` and never into a column of its own.
 """
 
 from __future__ import annotations
@@ -83,7 +70,7 @@ EVAL_CASES: Final[str] = "eval_cases"
 """The per-case table beside it, whose `run_id` cascades from `eval_runs.id`.
 
 Both names are constants because the statements below build their identifiers
-from them and tests/storage/test_eval_store_postgres.py reads the catalogue by the
+from them and the Postgres tests read the catalogue by the
 same names, so a rename cannot reach only one of the two."""
 
 MAX_SET_NAME_LENGTH: Final[int] = 128
@@ -91,9 +78,7 @@ MAX_SET_NAME_LENGTH: Final[int] = 128
 
 Wider than an identifier because a set name is a FILE name - `helpdesk-golden-v1.jsonl`
 carries a version and an extension - and narrower than a path because it is one
-segment. Nothing else caps this value: it arrives as `--set`'s basename. Pinned
-exactly by `test_the_length_caps_are_the_published_ones`, with
-the inclusive boundary in `test_a_run_row_value_at_exactly_its_cap_is_accepted`.
+segment. Nothing else caps this value: it arrives as `--set`'s basename.
 """
 
 MAX_REPORT_PATH_LENGTH: Final[int] = 1024
@@ -115,18 +100,18 @@ the same two cases.
 RUN_KINDS: Final[tuple[str, ...]] = get_args(RunKind)
 """The three words `run_kind` may be, taken from `report.RunKind` rather than
 restated - `app.cli.evals` imports this module, so importing `app.cli.evals.RUN_KINDS` back would be
-a cycle. `test_each_run_kind_the_command_accepts_is_written` is parametrised over
-the command's own tuple, which is what pins the two together."""
+a cycle. A test parametrised over
+the command's own tuple pins the two together."""
 
 CATEGORIES: Final[frozenset[str]] = frozenset(category.value for category in EvalCategory)
-"""The twelve categories a case row may carry, taken from `16a`'s enum.
+"""The twelve categories a case row may carry, taken from the eval category enum.
 
-A report file reaches this store without passing `16a`'s loader, so this is the
-only check on that path (`test_write_refuses_a_category_outside_the_twelve_before_any_sql`)."""
+A report file reaches this store without passing the case loader, so this is the
+only check on that path."""
 
 
 class EvalRunRow(BaseModel):
-    """One run, as `eval_runs` stores it: the design's columns with decision C's split.
+    """One run, as `eval_runs` stores it: the columns of the run table.
 
     Frozen, so the row handed to the store is the row the report described. The
     vocabulary fields are plain `str` rather than `Literal`s on purpose: a
@@ -178,8 +163,7 @@ class EvalCaseRow(BaseModel):
     tags: tuple[str, ...] = ()
     """The failure taxonomy for this case, in `taxonomy.TAG_ORDER` and empty when
     it passed. Stored in an order-preserving `text[]`, so the array a query reads
-    back is the tuple the report published
-    (`test_the_tags_column_reads_back_the_case_reports_tags_in_order`)."""
+    back is the tuple the report published."""
     latency_ms: int | None
     cost_usd: Decimal | None
     provider: str | None
@@ -192,8 +176,7 @@ class EvalStore(Protocol):
 
     A Protocol rather than a base class, the shape `CostLedgerWriter` established:
     a test double satisfies it without importing anything to inherit from. `write`
-    is allowed to RAISE - `app.cli.evals` is what guards it, in one place, and decision E is
-    what that guard does with the failure.
+    is allowed to RAISE - `app.cli.evals` is what guards it, in one place.
     """
 
     def write(self, run_row: EvalRunRow, case_rows: Sequence[EvalCaseRow]) -> None:
@@ -207,10 +190,9 @@ def _details(case: CaseReport) -> dict[str, Any]:
     Dumped in JSON mode rather than as Python objects, because the column is
     `jsonb`: a `Decimal` or a `datetime` inside an assertion result would
     otherwise reach the adapter as an object it cannot serialise, at the end of a
-    run already paid for. `17c`'s judge verdict is the fourth key and takes the
+    run already paid for. The judge verdict is the fourth key and takes the
     same treatment - a pydantic model handed to `Jsonb` raises inside
-    `json.dumps`, which is 17d's trap on this plan's field
-    (`test_the_details_carry_the_judge_verdict`). It is `null` and never absent on
+    `json.dumps`, which is an easy trap with a judge verdict. It is `null` and never absent on
     a case nothing judged, so two rows of the same set answer one query.
     """
     return {
@@ -229,14 +211,12 @@ def rows_from_report(
     Pure: the run id is the report's own, never a fresh one, or every case row
     would join back to a run nobody can find beside the file that describes it.
     `report_path` is the `report.json` that was WRITTEN rather than the `--out`
-    directory - the gate and the console open it expecting a document
-    (`test_the_report_path_is_the_report_json_that_was_written`).
+    directory - the gate and the console open it expecting a document.
 
-    `metrics` is taken in JSON mode and never as the live mapping: since 17d it
+    `metrics` is taken in JSON mode and never as the live mapping: it
     carries two `Decimal` costs, and psycopg's `Jsonb` dumper is `json.dumps`,
     which raises `TypeError` on a `Decimal` - so the live mapping would fail the
-    INSERT rather than store a wrong number
-    (`test_the_stored_metrics_are_the_json_the_report_file_carries`). Taken this
+    INSERT rather than store a wrong number. Taken this
     way the column is byte for byte what `report.json` holds, which is the same
     property `_case_details` keeps for `details`.
     """
@@ -277,16 +257,13 @@ def rows_from_report(
 class PostgresEvalStore:
     """One run and its cases, in ONE transaction over a pooled connection. No DDL.
 
-    Decision G: a run whose cases half-landed is counted by every later query as a
+    A run whose cases half-landed is counted by every later query as a
     run with fewer cases, and nothing downstream can tell that from a shorter
     golden set. So the run row and one `executemany` over the cases share a
-    transaction, and a failure part way leaves neither table changed
-    (`test_a_write_that_fails_part_way_leaves_neither_table_changed`).
+    transaction, and a failure part way leaves neither table changed.
 
     Every pre-check runs BEFORE the borrow, and every one of
-    them raises `IdentifierInvalid`;
-    `test_a_run_row_value_one_character_over_its_cap_is_refused_before_the_borrow`
-    asserts that no connection was borrowed at all.
+    them raises `IdentifierInvalid`, so no connection is borrowed at all.
     """
 
     def __init__(
@@ -374,8 +351,7 @@ def _check_case_row(row: EvalCaseRow) -> None:
 
     `provider` and `region` are checked only when they are present: `None` is not
     a malformed identifier, it is the absence the NULL column exists for, and an
-    unconditional check would refuse exactly the rows a failing target produces
-    (`test_a_case_that_measured_nothing_is_written_rather_than_refused`).
+    unconditional check would refuse exactly the rows a failing target produces.
     """
     checked_identifier(row.case_id, "case_id")
     _checked_category(row.category)
@@ -400,10 +376,10 @@ def _checked_length(value: str, field: str, cap: int) -> str:
 def _checked_git_sha(value: str | None) -> str | None:
     """This repo's commit, against `report.SET_SHA_PATTERN`, or the honest absence.
 
-    `None` is accepted because `16c` records it when `git rev-parse` cannot
+    `None` is accepted because the report records it when `git rev-parse` cannot
     answer. It is the column a regression is bisected on, so `A1B2C3D` and a
     trailing newline join to no commit while looking perfectly plausible in a
-    table (`test_write_refuses_a_malformed_git_sha_before_any_sql`).
+    table.
     """
     if value is None:
         return None
@@ -425,9 +401,9 @@ def _checked_run_kind(value: str) -> str:
 
 
 def _checked_category(value: str) -> str:
-    """One case's category, against `16a`'s twelve.
+    """One case's category, against the twelve.
 
-    Row 17 counts per category and the per-category minimums are read off these
+    The score report counts per category and the per-category minimums are read off these
     strings, so a thirteenth bucket is a number nobody reports on and
     `helpdesk\\n` is a category with one case in it.
     """

@@ -89,8 +89,7 @@ class RoutingLeaseMiddleware:
     Pure ASGI, for the same reason `TracingMiddleware` is: the `finally` fires
     after the full response body, including every frame of a streamed reply, so
     the lease covers the whole request and the adapter set is never closed while
-    a request still holds it
-    (`test_dropped_adapters_close_only_after_the_last_request_holding_them_finishes`).
+    a request still holds it.
     """
 
     def __init__(self, app: ASGIApp, store: RoutingRuntimeStore) -> None:
@@ -121,8 +120,7 @@ def build_qdrant_data_client(base_url: str) -> httpx.Client:
     readiness probe uses, and reused rather than given a number of its own: this
     client sits in front of a chat request, so an unbounded read here is the
     whole request hanging on a cache that has nothing to say. Two seconds is a
-    generous bound for a vector search and a miss is free
-    (`test_the_semantic_cache_client_bounds_every_phase_of_the_call`).
+    generous bound for a vector search and a miss is free.
     """
     return httpx.Client(base_url=base_url, timeout=httpx.Timeout(PROBE_TIMEOUT_SECONDS))
 
@@ -137,9 +135,8 @@ RELAXED_RESIDENCY_WARNING = (
 
 Logged exactly once, by `create_app`, and never per request: the mode is read at
 startup and cannot change, so a per-resolution warning would be five records per
-request and would bury itself (`test_create_app_warns_once_under_relaxed_residency`).
-`/readyz` carries the same fact for anything that reads machines rather than logs
-(`test_readyz_reports_a_relaxed_residency_mode`).
+request and would bury itself.
+`/readyz` carries the same fact for anything that reads machines rather than logs.
 """
 
 
@@ -148,8 +145,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Open the backing-service clients and the stores over them on startup, close on shutdown.
 
     Everything here runs when the process starts serving, not when `create_app`
-    builds the app, so importing `app.main` and building the app opens no socket
-    (`test_building_the_app_opens_no_client`, `test_clients_are_built_on_startup`).
+    builds the app, so importing `app.main` and building the app opens no socket.
     The key store, the policy, the prices, the breaker and the adapters are built
     in `create_app` instead: they open no connection, and a malformed config file
     should stop the process before it serves rather than on a live request.
@@ -157,14 +153,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     One Redis client, one Qdrant client and one Postgres pool are built here and
     shared by the stores, caches, writers and the readiness probes, so a
     deployment opens one connection set per service and the probe that checks a
-    service runs over the very client the routes use
-    (`test_one_redis_one_qdrant_one_pool_are_shared`,
-    `test_readyz_probes_run_over_the_shared_clients`). Each is settings-driven on
+    service runs over the very client the routes use. Each is settings-driven on
     the switch its plan fixed: `OPSCONSOLE_REDIS_URL` gives the five Redis-backed
-    stores a shared client and an in-process twin otherwise (an earlier change,
-    15a, 15b), `OPSCONSOLE_QDRANT_URL` the semantic cache,
+    stores a shared client and an in-process twin otherwise `OPSCONSOLE_QDRANT_URL` the semantic
+    cache,
     `OPSCONSOLE_DATABASE_URL` the one pool both Postgres writers, the console event
-    writer and the console reader share, and
+    writer and the console reader share and
     `OPSCONSOLE_PROMETHEUS_URL` the console's Prometheus client. An
     absent switch keeps the twin, which is what lets the suite and a bare local run
     need no backing service at all. Only a local run reaches here without the Redis
@@ -178,7 +172,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     race the same DDL).
 
     `register_probes` runs last, once the shared clients are on `app.state`, and
-    the four clients all close on shutdown (`test_clients_are_closed_on_shutdown`).
+    the four clients all close on shutdown.
     """
     resolved: Settings = app.state.settings
 
@@ -261,8 +255,7 @@ def incoming_parent(scope: Scope) -> Context | None:
     own propagator, because the propagator accepts headers this gateway has
     already decided to reject. One parser means the trace a request JOINS and the
     header contract `X-Gateway-Trace-Id` answers under can never disagree about
-    what a valid upstream trace is; the rejection table is
-    `test_a_malformed_traceparent_starts_a_new_trace`.
+    what a valid upstream trace is; a malformed header starts a new trace.
     """
     for name, value in scope.get("headers", ()):
         if name.lower() == b"traceparent":
@@ -275,20 +268,18 @@ class TracingMiddleware:
     """The boundary of every request: opened before routing, closed after the last byte.
 
     It owns two records, and it owns them for the same reason. The root span, and
-    the `RequestMetrics` labels an earlier change counts a request with: both describe a
+    the `RequestMetrics` labels a request is counted with: both describe a
     whole request, and both can only be closed at a point no route can see. The
     name is the tracing one it was born with, because the seam is the same seam.
 
-    Pure ASGI rather than `BaseHTTPMiddleware`, for two reasons that both decide
-    an acceptance criterion. It runs OUTSIDE `ExceptionMiddleware`, so a request
+    Pure ASGI rather than `BaseHTTPMiddleware`, for two reasons that both matter. It runs OUTSIDE
+    `ExceptionMiddleware`, so a request
     that fails before any route - an unauthenticated one, which never builds a
     `RequestContext` at all - still has a span to record the failure on and is
-    still counted (`test_an_unauthorized_request_still_emits_a_trace`,
-    `test_an_unauthorized_request_is_counted_with_empty_labels`). And it ends the
+    still counted. And it ends the
     span, and takes the latency observation, only once the response body is fully
     sent - which for a streamed completion is after the last frame rather than
-    when the route returned (`test_a_streamed_requests_root_span_covers_the_frames`,
-    `test_a_streamed_requests_latency_covers_the_frames`).
+    when the route returned.
 
     The outcome is read off the wire rather than guessed: `send` is wrapped so the
     response's own status decides whether the root span failed and what the
@@ -298,8 +289,7 @@ class TracingMiddleware:
     500 rather than 200.
 
     Not every request gets a metrics record: `start_request` opens one for the
-    counted paths only, so a probe and a scrape pass through traced and uncounted
-    (`test_the_probe_and_scrape_paths_are_not_counted`).
+    counted paths only, so a probe and a scrape pass through traced and uncounted.
 
     The clock is `perf_counter`, which is monotonic: a wall clock stepped by NTP
     mid-request would otherwise book a negative or a wildly long duration into a
@@ -345,58 +335,51 @@ def create_app(
     """Build the gateway app.
 
     Each call gets its own `ProbeRegistry` on `app.state`, so probes registered
-    against one app never leak into another. Pinned by
-    `test_registries_are_per_app`.
+    against one app never leak into another.
 
     The key store and the policy snapshot are built here too, so a malformed
     `OPSCONSOLE_API_KEYS` entry or an invalid `routing.yaml` stops the process
-    from starting instead of turning into a puzzling failure on a live request;
-    pinned by `test_create_app_refuses_a_malformed_key_setting` and
-    `test_create_app_refuses_an_invalid_policy_file`. A route reads one snapshot
+    from starting instead of turning into a puzzling failure on a live request. A route reads one
+    snapshot
     per request from `app.state.policy`.
 
-    The adapter set is built once, here, and closed on shutdown by `lifespan`: building one per request would mint an `httpx.Client`
+    The adapter set is built once, here, and closed on shutdown by `lifespan`:
+    building one per request would mint an `httpx.Client`
     and a connection pool per call. It is keyed by the policy provider name, so
     the chat route can use "an adapter exists for this provider" as the
-    resolver's health seam. Pinned by `test_create_app_builds_the_adapter_set`
-    and `test_adapters_are_closed_on_shutdown`.
+    resolver's health seam.
 
     The circuit breaker is built here for the same reason and is the other half of
     that seam: one per app, so state accumulated against one app cannot decide
-    another app's routing, and per process rather than shared through Redis. `POST /admin/routing/reload` rebuilds it alongside the adapter set
+    another app's routing, and per process rather than shared through Redis.
+    `POST /admin/routing/reload` rebuilds it alongside the adapter set
     it rebuilds, because the state it holds is keyed by provider names out of the
     policy that has just been replaced - a reload that renamed or repointed a
     provider would otherwise leave a breaker open against a name that no longer
-    means what it meant (`test_a_policy_reload_rebuilds_the_breaker`).
+    means what it meant.
 
     `environ` is where the provider keys are read from, injectable for the same
-    reason `build_adapters` takes it (#66): a test passes `{}` and no adapter is
+    reason `build_adapters` takes it: a test passes `{}` and no adapter is
     built from a key that happens to be exported in the developer's shell, so a
     suite that would make a real billed call cannot pass locally and fail in CI.
-    Pinned by `test_create_app_reads_keys_only_from_the_given_environ`.
 
     The clients that open a connection - the Redis client, the Qdrant client, the
     Postgres pool and the Prometheus client - and the stores, caches, writers and
     readers built over them are NOT built here: `lifespan` builds them on startup
-    and closes them on shutdown, so building the app opens no socket (an earlier change,
-    `test_building_the_app_opens_no_client`). `register_probes` runs there too,
+    and closes them on shutdown, so building the app opens no socket. `register_probes` runs there
+    too,
     over those shared clients. A route reaches each through a typed dependency in
     `app.api.deps` rather than off `app.state`.
 
     The price table is built here for the reason the key store and the policy are:
     a malformed `prices.yaml` stops the process from starting rather than
-    surfacing on a live request that then cannot be priced
-    (`test_create_app_refuses_a_malformed_prices_file`,
-    `test_the_price_store_is_built_over_the_configured_path`). It opens no socket,
+    surfacing on a live request that then cannot be priced. It opens no socket,
     which is why it stays here while the connection-backed stores move.
 
     `OPSCONSOLE_RESIDENCY_MODE=relaxed` logs `RELAXED_RESIDENCY_WARNING` here, once
     and before any state is built. An unknown value never gets
     this far: `Settings()` above refuses it, so the process exits instead of
-    serving one request under a mode nobody chose
-    (`test_create_app_warns_once_under_relaxed_residency`,
-    `test_create_app_logs_no_residency_warning_under_strict`,
-    `test_create_app_refuses_an_unknown_residency_mode`).
+    serving one request under a mode nobody chose.
     """
     resolved = settings or Settings()
     if resolved.env != "local":
@@ -404,10 +387,7 @@ def create_app(
         # give each copy its own budgets and rate limits. Any other value, the
         # empty string included, must reach shared Redis and Qdrant or the process
         # stops here, at build time, naming the missing URL rather than serving one
-        # request with a limit that silently means nothing. Pinned by
-        # test_create_app_refuses_a_non_local_process_without_a_redis_url,
-        # test_create_app_refuses_a_non_local_process_without_a_qdrant_url and
-        # test_create_app_refuses_an_empty_env_without_backing_urls.
+        # request with a limit that silently means nothing.
         missing = [
             name
             for name, value in (
@@ -451,7 +431,7 @@ def serve(reload: bool = False) -> None:
     """Run the gateway on the configured port.
 
     The listening port comes from `Settings`, so `OPSCONSOLE_PORT` reaches the
-    socket. Pinned by `test_serve_uses_the_configured_port`. Clients that dial
+    socket. Clients that dial
     the gateway (`make eval`, the compose healthcheck) carry their own address
     and are not covered by that test.
     """

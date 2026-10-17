@@ -7,12 +7,10 @@ same provider kind priced differently stay apart. This schema is the boundary
 where an operator's YAML becomes typed data.
 
 Loading is deliberately strict, in the shape `app.model_routing.policy` set.
-`yaml.safe_load` is the only deserialiser used (pinned by
-`test_safe_load_only`), unknown keys are rejected, a negative price, a
+`yaml.safe_load` is the only deserialiser used, unknown keys are rejected, a negative price, a
 non-finite price and an `effective_from` that is not a date are refused before
 any caller holds a table, and every rejection is a `PriceTableInvalid` whose
-message names the field path (pinned by
-`test_invalid_price_table_names_the_field`).
+message names the field path.
 
 Prices are Decimals, and the shipped file QUOTES every one of them. Not because
 an unquoted number is corrupted - pydantic converts a parsed float to Decimal
@@ -21,9 +19,8 @@ a float carries about seventeen significant digits and silently truncates
 anything longer, and drops trailing zeros with it: bare `0.12345678901234567890`
 loads as `0.12345678901234568`, and bare `1.00` loads as `Decimal("1.0")`. The
 quoted form is the digits as written, every time, which is the property a price
-file wants. The schema accepts either, and
-`test_an_awkward_price_survives_the_round_trip_exactly` holds the thing that
-would really break the arithmetic: a `float` field, or a `Decimal` built from
+file wants. The schema accepts either. What
+would really break the arithmetic is a `float` field, or a `Decimal` built from
 the parsed float rather than from its repr.
 
 Selection is by date and never by file order. `price_for` answers the newest
@@ -53,7 +50,7 @@ from app.limits.errors import PriceTableInvalid
 PriceAmount = Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
 """A price per 1,000,000 tokens. Non-negative and finite, refused at load
 otherwise: a negative price would credit an account and a non-finite one would
-poison every sum it reached. Pinned by `test_price_rejection_table`."""
+poison every sum it reached."""
 
 
 class _Frozen(BaseModel):
@@ -130,7 +127,7 @@ def price_for(table: PriceTable, key: str, at: date | datetime) -> PriceEntry | 
     The comparison is by DATE. `at` may be an instant or a day; a `datetime` is
     narrowed to its own date, so an entry dated on that day is in force from the
     first moment of it. Selection is by `effective_from` and never by file
-    order, pinned by `test_file_order_does_not_decide_the_selection`.
+    order.
     """
     entries = table.prices.get(key)
     if entries is None:
@@ -148,8 +145,7 @@ def price_version(key: str, entry: PriceEntry) -> str:
 
     Per-entry rather than a document-level version bumped by hand: the row then
     names the exact price it was charged at, and a later, unrelated key added to
-    the file cannot restate what an old row was priced at. Pinned by
-    `test_the_price_version_names_the_entrys_own_effective_from`.
+    the file cannot restate what an old row was priced at.
     """
     return f"{key}@{entry.effective_from.isoformat()}"
 
@@ -160,9 +156,7 @@ class PriceStore:
     Mirrors `app.model_routing.policy.PolicyStore`, and for the same reason:
     `reload` parses into a new `PriceTable` before it rebinds the attribute, so a
     failed reload leaves the previous snapshot in place and a pricing already
-    holding a snapshot keeps reading a consistent one. Pinned by
-    `test_reload_swaps_the_price_snapshot` and
-    `test_a_failed_reload_keeps_the_previous_price_table`.
+    holding a snapshot keeps reading a consistent one.
     """
 
     def __init__(self, path: Path) -> None:

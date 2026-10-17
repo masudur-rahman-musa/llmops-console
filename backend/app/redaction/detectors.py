@@ -4,7 +4,7 @@ Nine of them are one compiled pattern run with `finditer` over free text, plus a
 optional post-check the pattern itself cannot express: Luhn for `CARD`, mod-97
 for `IBAN`, ISO 7064 MOD 11,10 for `STEUER_ID`, mod-23 for `PPSN`, the octet and
 group ranges (via `ipaddress`) for `IPV4` and `IPV6`, and the cue window for
-`DOB`. That split is an earlier change decision A: a single alternation regex cannot
+`DOB`. That split is deliberate: a single alternation regex cannot
 carry a checksum, and a kind label is only truthful if the thing it labels
 passed that kind's own check.
 
@@ -25,14 +25,11 @@ integrity test calls them on whatever a case claims is an IBAN or a PPSN. So
 both are anchored with `\Z`, never `$`, because in Python `$` also matches
 before a trailing newline - `iban_ok("DE12...\n")` would otherwise be true, as
 `str.replace` does not strip the newline and `int()` tolerates it.
-`test_iban_rejects_trailing_whitespace` and `test_ppsn_rejects_trailing_whitespace`
-carry the rule's required table (a trailing newline, a trailing CRLF, a trailing
-space) for each.
+The same goes for a trailing CRLF or a trailing space.
 
 The nine PATTERNS are the other half and have no `fullmatch` at all: every one
 searches free text with explicit boundary lookarounds, so the rule's analogue is
-what applies to them, pinned by
-`test_value_at_end_of_input_is_detected_without_the_trailing_whitespace` - a
+what applies to them: a
 value at the very end of the input, with a trailing newline, CRLF or space, is
 still detected and its span stops before the whitespace.
 
@@ -40,23 +37,22 @@ still detected and its span stops before the whitespace.
 IBAN can look like a card number - and resolving that is
 `app.redaction.redactor.resolve_overlaps`, not this module's job. The
 boundary lookarounds are still written to keep raw overlaps rare, because
-`test_precision_meets_the_floor` scores `detect_all` and every spurious
+precision is scored on `detect_all` and every spurious
 candidate is a false positive whether or not the merge would later drop it.
 
 What a detector owes: a span whose `value` is `text[start:end]` exactly,
 boundaries that stop it firing inside a longer alphanumeric run, and a fixture
 case in `tests/redaction/fixtures/cases.json` for each of its accepted forms.
-`test_fixture_covers_every_detector_kind` fails on a kind with no ground truth,
+A kind with no ground truth fails the fixture check,
 but nothing forces the negative case that would show the new pattern eating an
 ordinary number.
 
 The tenth kind, `PERSON`, is the one exception to "a pattern over the text" and
-lives in `app.redaction.names`. Its input is a tenant's pushed
+lives in `app.redaction.names` Its input is a tenant's pushed
 display names as well as the text, so it cannot be a pure function of one string:
 `detect_all` takes it as an optional `directory` argument and yields nothing of
 that kind when none is passed, which is what keeps every existing caller
-behaving exactly as it did
-(`test_detect_all_without_a_directory_yields_no_person_candidate`). It owes the
+behaving exactly as it did. It owes the
 same three things as the nine, and its module docstring says how it holds them.
 """
 
@@ -77,9 +73,8 @@ if TYPE_CHECKING:  # pragma: no cover - names.py imports this module, so runtime
 class Kind(StrEnum):
     """The ten detector labels. Each is the `KIND` half of a `<KIND_N>` placeholder.
 
-    Wire-visible: an earlier change stores the map under these strings, so a rename is a
-    contract change rather than an implementation detail. The member list is held
-    against a literal by `test_kind_members_are_the_ten_named_in_acceptance`.
+    Wire-visible: the map is stored under these strings, so a rename is a
+    contract change rather than an implementation detail.
     """
 
     EMAIL = "EMAIL"
@@ -96,9 +91,7 @@ class Kind(StrEnum):
 
 # Tie-break for two overlapping candidates of the SAME length; longer always wins
 # first. Ordered by how specific the kind's own check is: a value that satisfies
-# both a checksum and a shape is far likelier to be the checksummed kind. Held
-# complete by `test_precedence_lists_every_kind_exactly_once`; the tie-break
-# behaviour is pinned by `test_equal_length_overlap_falls_to_the_precedence_order`.
+# both a checksum and a shape is far likelier to be the checksummed kind.
 # `PERSON` is last:
 # it is the one kind whose only check is membership in a list an operator pushed,
 # so on an equal-length tie the checksummed kind is the likelier truth.
@@ -117,9 +110,7 @@ KIND_PRECEDENCE: Final[tuple[Kind, ...]] = (
 
 # A date counts as a birth date only when one of these appears before it, ending
 # within `DOB_CUE_DISTANCE` characters of where the date starts. Matched
-# case-insensitively on word boundaries. Both values are pinned exactly by
-# `test_dob_cues_are_the_three_named_in_acceptance` and
-# `test_dob_cue_distance_is_thirty_two`.
+# case-insensitively on word boundaries.
 DOB_CUES: Final[tuple[str, ...]] = ("born", "DOB", "date of birth")
 DOB_CUE_DISTANCE: Final[int] = 32
 
@@ -129,9 +120,7 @@ class Detection:
     """One candidate span. `value` is always `text[start:end]` of the scanned text.
 
     Frozen so the merge step cannot rewrite a candidate in place and leave the
-    raw list disagreeing with the resolved one
-    (`test_detection_is_frozen`); the offset invariant is
-    `test_detect_all_values_index_their_own_offsets`.
+    raw list disagreeing with the resolved one.
     """
 
     kind: Kind
@@ -148,9 +137,8 @@ class Detection:
 def luhn_ok(digits: str) -> bool:
     """The Luhn check digit over a run of digits.
 
-    `test_luhn_accepts_valid_numbers` and `test_luhn_rejects_invalid_numbers`
-    hold both directions, which is what stops a `return True` stub passing every
-    `CARD` row.
+    Both directions are checked, which is what stops a `return True` stub passing
+    every `CARD` row.
     """
     if not digits.isdigit():
         return False
@@ -170,16 +158,13 @@ def iban_ok(compact: str) -> bool:
     to two-digit numbers from A=10, and require a remainder of 1.
 
     Length is checked here too (15 to 34 characters), because the pattern's
-    bounds and the standard's bounds are two different statements. Pinned by
-    `test_iban_mod97_accepts_valid` and `test_iban_mod97_rejects_bad_check_digits`,
-    and at both ends by `test_iban_length_bounds_reach_both_ends_of_the_standard`.
+    bounds and the standard's bounds are two different statements.
 
     The argument is COMPACT: no separators of any kind are stripped here. An
     earlier version stripped spaces so a grouped IBAN would validate, which also
     made a trailing space invisible and defeated the `\Z` anchor below - the
-    thing a project rule exists to stop. `IBAN_PATTERN` never yields a spaced
-    value, so the flexibility bought nothing;
-    `test_iban_rejects_trailing_whitespace` holds the corrected behaviour.
+    thing a strict check exists to stop. `IBAN_PATTERN` never yields a spaced
+    value, so the flexibility bought nothing.
     """
     value = compact.upper()
     if not 15 <= len(value) <= 34:
@@ -196,8 +181,8 @@ def steuer_id_ok(digits: str) -> bool:
 
     Two rules beyond the checksum, both of them real rejections rather than
     shape: the number is exactly 11 digits and its first digit is never 0.
-    `test_steuer_id_rejects` carries a specimen with a CORRECT check digit and a
-    leading zero, so only the leading-zero rule can reject that row.
+    A number with a CORRECT check digit and a leading zero is still rejected, so
+    only the leading-zero rule can reject it.
 
     The standard's other rule - that exactly one digit repeats within the first
     ten - is NOT implemented here. It would tighten precision further; it is not
@@ -226,8 +211,7 @@ def ppsn_ok(value: str) -> bool:
     Weights 8..2 run over the seven digits; the second letter, when present,
     contributes its position in `PPSN_ALPHABET` times 9 (so a trailing `W`
     contributes nothing). The check character is `PPSN_ALPHABET[total % 23]`.
-    Pinned by `test_ppsn_accepts_valid` and `test_ppsn_rejects`, whose rows
-    include a correct shape with a wrong check character.
+
     """
     text = value.upper()
     if not re.match(r"\A[0-9]{7}[A-W][A-W]?\Z", text):
@@ -268,8 +252,8 @@ PHONE_NATIONAL_PATTERN: Final[re.Pattern[str]] = re.compile(
 # an IBAN. Without them `DE12 5001 0517 0648 4898 90` is not an IBAN to this
 # engine, and `CARD_PATTERN` - which does allow separators - picks up the digit
 # tail instead: the country and check digits leak AND the value is stored under
-# the wrong kind. `test_a_space_grouped_iban_is_one_detection_not_a_card` holds
-# both halves. The separators are stripped before the checksum, never from the
+# the wrong kind. Both halves are held. The separators are stripped before the checksum, never from
+# the
 # span, so `mapping` still reconstructs what the caller wrote.
 IBAN_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"(?<![0-9A-Za-z])[A-Z]{2}[0-9]{2}(?:[ ]?[0-9A-Z]){11,30}(?![0-9A-Za-z])"
@@ -286,7 +270,7 @@ STEUER_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"(?<![0-9A-Za-z])[0-9]{1
 
 # Lower case is accepted because `ppsn_ok` upper-cases before checking: an
 # uppercase-only pattern would make that normalisation unreachable and a PPS
-# number typed in lower case a silent miss. `test_a_lowercase_ppsn_is_detected`.
+# number typed in lower case a silent miss.
 PPSN_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"(?<![0-9A-Za-z])[0-9]{7}[A-Wa-w][A-Wa-w]?(?![0-9A-Za-z])"
 )
@@ -302,11 +286,11 @@ IPV4_PATTERN: Final[re.Pattern[str]] = re.compile(
 # cannot match. The boundaries are ALPHANUMERIC, not hex: `(?<![0-9A-Fa-f:])`
 # would let `std::vector` start a match at the `d`, because `d` is a hex digit
 # preceded by a non-hex letter. `ipaddress` accepts `d::`, so nothing downstream
-# would have caught it. Pinned by `test_scope_resolution_operator_is_not_an_ipv6`.
+# would have caught it.
 # The trailing quad is all-or-nothing (exactly three dotted parts, or none), so
 # `::ffff:192.0.2.1` is one detection rather than a hex prefix with three octets
 # left in the clear, while `2001:db8::1.` at the end of a sentence still matches
-# up to the `1`. Pinned by `test_an_ipv4_mapped_ipv6_is_detected_whole`.
+# up to the `1`.
 IPV6_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"(?<![0-9A-Za-z:])[0-9A-Fa-f]{0,4}(?::[0-9A-Fa-f]{0,4}){2,7}"
     r"(?:(?:\.[0-9]{1,3}){3})?(?![0-9A-Za-z:])"
@@ -314,8 +298,7 @@ IPV6_PATTERN: Final[re.Pattern[str]] = re.compile(
 # The second half of the same guard: a candidate must carry at least this many hex
 # characters. `a::b` parses as a valid IPv6 and is far likelier to be prose or code
 # than an address. The cost is that `::1` and other very short forms are not
-# detected; that is deliberate and is why the number is pinned by
-# `test_ipv6_minimum_hex_characters_is_four`.
+# detected; that is deliberate.
 IPV6_MIN_HEX_CHARS: Final[int] = 4
 
 # Years are four digits in all three forms. A two-digit year would match an
@@ -367,8 +350,7 @@ def _cue_ends_before(text: str, start: int) -> bool:
     """True when a cue ends within `DOB_CUE_DISTANCE` characters before `start`.
 
     Direction matters as much as distance: a cue that ends at or after the date
-    does not qualify it, which is what
-    `test_cue_after_the_date_does_not_qualify_it` pins.
+    does not qualify it.
     """
     window_start = max(0, start - DOB_CUE_DISTANCE - max(len(cue) for cue in DOB_CUES))
     for match in CUE_PATTERN.finditer(text, window_start, start):
@@ -397,8 +379,7 @@ def _checked(
 
     `compact=True` strips spaces and hyphens before the check but yields the RAW
     matched text, so the span and the placeholder map hold what the input
-    actually contained rather than a normalised form
-    (`test_mapping_round_trips_the_redacted_text_back_to_the_original`).
+    actually contained rather than a normalised form.
     """
     for match in pattern.finditer(text):
         value = match.group(0)
@@ -455,19 +436,16 @@ def detect_all(text: str, directory: NameDirectory | None = None) -> list[Detect
     """Every candidate span in `text`, in start order, overlaps included.
 
     Deduplicated on `(kind, start, end)` so two date patterns matching the same
-    run cannot yield the span twice. Ordering is pinned by
-    `test_detect_all_returns_candidates_in_start_order`; resolving the overlaps
+    run cannot yield the span twice. Candidates come back in start order; resolving the overlaps
     is `resolve_overlaps` in `app.redaction.redactor`.
 
     `directory` is the tenant's compiled display names and defaults to `None`,
-    which yields no `PERSON` candidate at all - so every caller written before
-    an earlier change behaves exactly as it did, and a name is only ever matched for the
-    tenant whose directory was passed in
-    (`test_detect_all_without_a_directory_yields_no_person_candidate`,
-    `test_detect_all_with_a_directory_yields_the_person_candidate`). Its
+    which yields no `PERSON` candidate at all - so a caller that passes none
+    gets the plain pattern results, and a name is only ever matched for the
+    tenant whose directory was passed in. Its
     candidates join the same list as the nine patterns' BEFORE the sort rather
     than being appended after it, because `resolve_overlaps` walks candidates in
-    start order (`test_a_directory_candidate_joins_the_others_in_start_order`).
+    start order.
     """
     found: list[tuple[Kind, int, int, str]] = []
     found.extend(_simple(text, EMAIL_PATTERN, Kind.EMAIL))

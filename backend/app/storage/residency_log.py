@@ -3,7 +3,7 @@ r"""The residency decision log: one row per request a provider actually served.
 What this answers is "where did this tenant's data go", per request, for ninety
 days. What it does NOT do is enforce anything. The residency guarantee is the
 resolver's, made before a provider is dialled and proved by
-tests/routing/test_residency_property.py; this module records the answer the
+the residency property test; this module records the answer the
 resolver already gave, which is why `allowed` is expected to be `true` on every
 row the gateway can produce and why a `false` one is worth an alert.
 
@@ -11,20 +11,18 @@ row the gateway can produce and why a `false` one is worth an alert.
 tenant's permitted regions from the policy at write time. A caller filling the
 field would be recording its own belief rather than the policy's answer, and the
 one shape that belief takes in practice is a literal `True` - which is exactly
-what a log kept as evidence must not contain. Pinned by
-`test_allowed_is_computed_from_the_policy_and_can_be_false`.
+what a log kept as evidence must not contain.
 
-**A failed write changes nothing about the request** (an earlier change decision D, ADR
-0004). `record_residency` logs at ERROR and returns. The evidence trail is
+**A failed write changes nothing about the request** `record_residency` logs at ERROR and returns.
+The evidence trail is
 best-effort on purpose: this write sits on the hot path of every served request,
 and a Postgres blip taking out a gateway whose residency behaviour is entirely
-unchanged is the worse failure. the project notes
-request-s-critical-path.md` says what would change that.
+unchanged is the worse failure.
 
-**Partitions are made on demand** (decision B), cached per process per day. A
+**Partitions are made on demand** cached per process per day. A
 refused `CREATE` is swallowed and the INSERT still runs, landing the row in the
 migration's DEFAULT partition: a read-only role costs a badly-placed row, never a
-lost one (`test_a_row_whose_partition_cannot_be_created_lands_in_the_default`).
+lost one.
 """
 
 from __future__ import annotations
@@ -49,7 +47,7 @@ RESIDENCY_LOG_RETENTION_DAYS: Final[int] = 90
 """How long a residency row is kept, in days.
 
 A data-protection commitment rather than a tuning knob, which is why
-`test_the_retention_is_ninety_days` asserts it exactly: widened, the gateway
+it is fixed exactly: widened, the gateway
 keeps request-level evidence for longer than it promised anyone; narrowed, an
 auditor asking about last month has nothing to read. `make purge-residency`
 drops every partition older than this, and the boundary is inclusive-keep -
@@ -61,7 +59,7 @@ RESIDENCY_LOG: Final[str] = "residency_log"
 
 _PARTITION_PREFIX: Final[str] = f"{RESIDENCY_LOG}_"
 PARTITION_DAY_FORMAT: Final[str] = "%Y%m%d"
-"""`residency_log_20260907`. Pinned by `test_the_partition_name_is_the_pinned_format`.
+"""`residency_log_20260907`.
 
 The writer builds this name and `cli/ledger.py`'s purge parses it back, so the
 two agree by construction only as long as nobody changes one of them; the format
@@ -79,7 +77,7 @@ class ResidencyLogRow(BaseModel):
 
     Frozen, because the same object is handed to a writer and to whatever logs
     it, and a row edited afterwards would make the in-process writer's contents
-    disagree with what was written (`test_a_row_is_frozen`).
+    disagree with what was written.
 
     `provider` and `region` name the candidate that SERVED. On a request that
     fell back, that is the second candidate and not the first - the field
@@ -116,8 +114,8 @@ class InMemoryResidencyLogWriter:
     """Every row in this process's memory, in the order written.
 
     What a gateway with no `OPSCONSOLE_DATABASE_URL` builds, which is what lets
-    the suite and a bare local run need no backing service - the same trade plan
-    09a decision B made for the redaction map store. It is not a store: nothing
+    the suite and a bare local run need no backing service - the same trade the
+    redaction map store makes. It is not a store: nothing
     reads it back, nothing expires, and a restart loses everything. That is the
     honest shape for "no database configured", and the reason `/readyz` reports
     `postgres` separately.
@@ -146,15 +144,15 @@ class PostgresResidencyLogWriter:
     `region`'s day is not the point - `tenant`, `alias`, `provider` and `region`
     are all strings a request can influence, and this table is the audit trail,
     so a value that could not be a routing identifier has no business being
-    recorded as one. `test_write_refuses_a_malformed_identifier_before_any_sql`
-    asserts no connection was even borrowed, which is the difference between a
+    recorded as one. A refused row
+    means no connection was even borrowed, which is the difference between a
     refused row and a row half-written under a partition name built from the
     same string.
 
     The `CREATE` and the `INSERT` take SEPARATE connections on purpose. In one
     transaction a refused `CREATE` aborts it, and the `INSERT` that follows fails
-    with `InFailedSqlTransaction` - which would lose exactly the row decision B
-    exists to keep. Two borrows cost one extra round trip on the first request of
+    with `InFailedSqlTransaction` - which would lose exactly the row the DEFAULT
+    partition exists to keep. Two borrows cost one extra round trip on the first request of
     each day and nothing afterwards.
     """
 
@@ -199,9 +197,7 @@ class PostgresResidencyLogWriter:
 
         The cache is keyed by the DAY, not by "have I ever created one": the
         second shape passes every same-day test and then sends every row after
-        the first midnight into the DEFAULT partition, silently, forever
-        (`test_a_row_on_the_next_day_creates_a_second_partition`, standing rule
-        34).
+        the first midnight into the DEFAULT partition, silently, forever.
 
         A refused create marks the day done ANYWAY. The alternative is a DDL
         statement per request for the rest of the day against a role that has
@@ -215,8 +211,7 @@ class PostgresResidencyLogWriter:
         DEFAULT partition, so the retention purge had whole-day partitions to
         drop and never dropped anything. `sql.Literal` over the two `datetime`
         values builds the bound with no string-joining, so there is nothing to
-        inject. Pinned by `test_postgres_writer.py`'s three partition cases and
-        `test_cli.py`'s eight purge cases.
+        inject.
         """
         with self._lock:
             if day in self._days:
@@ -246,8 +241,7 @@ def _day_of(partition: str) -> date | None:
     `None` is what keeps `residency_log_default` alive: it is a child of the
     parent table with no day in its name, and a purge that dropped what it could
     not date would remove the backstop, so the next refused `CREATE` would lose
-    its row instead of misfiling it
-    (`test_the_default_partition_is_never_dropped`).
+    its row instead of misfiling it.
     """
     prefix = f"{RESIDENCY_LOG}_"
     if not partition.startswith(prefix):
@@ -284,16 +278,14 @@ def purge_partitions(
     """Drop the day partitions older than the retention, and answer what was dropped.
 
     The boundary is inclusive-keep: `today - retention_days` STAYS and
-    `today - retention_days - 1` goes, asserted pair by pair in
-    `test_the_purge_boundary_is_inclusive_keep`. Both directions of an off-by-one
+    `today - retention_days - 1` goes. Both directions of an off-by-one
     here are real damage - one destroys a day of evidence inside the retention
     the project promised, the other keeps everything forever.
 
     `today` is a parameter rather than a clock read so a caller can say which day
     it means; `retention_days` is one so an operator can run a shorter retention
     deliberately, and `make purge-residency` passes neither, which is why the
-    default is checked against the published constant
-    (`test_the_shipped_retention_is_the_purges_default`).
+    default is checked against the published constant.
 
     Answers only the partitions it actually dropped, sorted: the CronJob that
     will call this logs the answer, and an operator asking what happened to last

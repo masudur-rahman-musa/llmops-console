@@ -1,18 +1,18 @@
 r"""The connection seam and the migration runner: this project's first Postgres writes.
 
 Until this module, Postgres existed here only as a readiness probe. Three things
-arrive together, and every later Postgres plan inherits them.
+arrive together, and every later Postgres write inherits them.
 
 **The pool.** `build_pool` answers a `psycopg_pool.ConnectionPool`. The residency
 log is a write on every served request, so a connect per write would put a TCP
-handshake and an authentication round trip on the hot path.
-`gateway/probes.py` deliberately does NOT borrow from it: a probe that reported on
+handshake and an authentication round trip on the hot path. The readiness probe
+in `app/api/routes/health.py` deliberately does NOT borrow from it: a probe that reported on
 the pool would go green while the server behind it was gone.
 
 **The runner.** Plain `.sql` files applied in file-name order, with a
 `schema_migrations(version, applied_at)` table recording what has run. One
 transaction per file, so a file that fails leaves nothing of itself behind and is
-retried whole on the next `make migrate`. Chosen over Alembic in decision A: one
+retried whole on the next `make migrate`. Chosen over Alembic: one
 table's DDL does not pay for an env, autogenerate and a revision graph.
 
 **The schema.** Every statement is qualified with a schema name the caller gives,
@@ -20,8 +20,7 @@ defaulting to `opsconsole`. A schema name cannot be a bound parameter - it is
 interpolated into DDL - so `SCHEMA_PATTERN` and `MAX_SCHEMA_LENGTH` are checked
 before the file is read and before a single statement runs. That check is also
 what lets the test suite migrate into a throwaway schema per test rather than
-rebuilding a database. Pinned by
-tests/storage/test_migrations.py, whose rejection table carries a trailing
+rebuilding a database. The rejection table carries a trailing
 newline, a trailing CRLF and a trailing space.
 """
 
@@ -36,8 +35,7 @@ from psycopg.rows import TupleRow
 from psycopg_pool import ConnectionPool
 
 DEFAULT_SCHEMA: Final[str] = "opsconsole"
-"""Where the ledger's tables live (the design). Pinned by
-`test_the_default_schema_is_the_published_one`."""
+"""Where the ledger's tables live."""
 
 MIGRATIONS: Final[Path] = Path(__file__).resolve().parents[2] / "migrations"
 """The directory of `.sql` files. `parents[2]` is `backend/`, so this is
@@ -60,7 +58,6 @@ MAX_SCHEMA_LENGTH: Final[int] = 63
 A longer name is not rejected by the server - it is silently TRUNCATED to this
 many bytes, so the caller creates its tables in a schema with a different name
 from the one it asked for and `make purge-residency` then finds nothing to drop.
-Pinned by `test_a_schema_name_longer_than_postgres_allows_is_refused`.
 """
 
 SCHEMA_MIGRATIONS: Final[str] = "schema_migrations"
@@ -73,7 +70,7 @@ MIN_POOL_SIZE: Final[int] = 1
 MAX_POOL_SIZE: Final[int] = 4
 """Small on purpose: one gateway replica issues one short INSERT per served
 request, and a pool larger than the worker threads that can be in flight only
-holds idle server-side sessions open. Pinned by `test_the_pool_is_bounded`."""
+holds idle server-side sessions open."""
 
 POOL_WAIT_TIMEOUT: Final[float] = 2.0
 """Seconds to wait for a free connection before raising.
@@ -81,14 +78,13 @@ POOL_WAIT_TIMEOUT: Final[float] = 2.0
 A saturated pool would otherwise hold a request indefinitely, masking the
 saturation as a slow response. Two seconds is generous for the one short INSERT
 this pool is used for; if a connection is not free in two seconds, the database
-is the problem and the caller should know. Pinned by
-`test_the_pool_wait_timeout_is_exactly_2_seconds`.
+is the problem and the caller should know.
 """
 
 DB_CONNECT_TIMEOUT: Final[float] = 5.0
 """Seconds to wait for a new TCP connection to PostgreSQL.
 
-Matches the design's adapter connect timeout: an unanswered TCP open is a dead
+Matches the adapter connect timeout: an unanswered TCP open is a dead
 host, and five seconds is already generous. Used in `connect_timeout` of the
 psycopg conninfo, not the pool wait.
 """
@@ -97,9 +93,7 @@ STATEMENT_TIMEOUT_MS: Final[int] = 2000
 """Maximum milliseconds any one statement may run before PostgreSQL cancels it.
 
 Set as `options='-c statement_timeout=2000ms'` in the conninfo so every
-connection from the pool carries it, not just one. Pinned by
-`test_the_statement_timeout_is_two_seconds` and
-`test_a_statement_past_the_timeout_is_cancelled`.
+connection from the pool carries it, not just one.
 """
 
 
@@ -154,14 +148,10 @@ def build_pool(database_url: str) -> ConnectionPool[Connection[TupleRow]]:
     Three timeouts:
     - `timeout` (pool wait): 2 s — a connection not free in 2 s means the pool
       is saturated; the caller gets an error rather than waiting indefinitely.
-    - `connect_timeout` in the conninfo: 5 s — matches the design's adapter connect
+    - `connect_timeout` in the conninfo: 5 s — matches the adapter connect
       timeout; an unanswered TCP open is a dead host.
     - `statement_timeout` in the conninfo: 2000 ms — PostgreSQL cancels any
       statement that runs longer than 2 seconds, so a stuck query gives up fast.
-
-    Pinned by `test_the_pool_is_bounded`, `test_the_pool_wait_timeout_is_exactly_2_seconds`,
-    `test_the_statement_timeout_is_two_seconds`, and
-    `test_a_statement_past_the_timeout_is_cancelled`.
     """
     conninfo = (
         f"{database_url} "
@@ -184,8 +174,7 @@ def apply_migrations(
 
     Answers what THIS call applied, so a second call answers `()` - which is the
     whole of "running `make migrate` twice applies nothing the second time and
-    leaves the data alone" (`test_a_second_run_applies_nothing`,
-    `test_a_second_run_leaves_the_data_alone`). Idempotence comes from the
+    leaves the data alone". Idempotence comes from the
     bookkeeping table, never from dropping and recreating: the second shape
     passes the first of those two cases and destroys every row logged since the
     last deploy.
@@ -194,9 +183,7 @@ def apply_migrations(
     its DDL nor its `schema_migrations` row behind.
 
     Raises `ValueError` for a schema name that is not a lowercase slug, before
-    any statement runs at all; the case is
-    `test_a_schema_name_that_is_not_a_slug_is_refused_before_any_statement`, and
-    it asserts "nothing ran" rather than "the statement errored".
+    any statement runs at all.
     """
     checked = checked_schema(schema)
     conn.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(checked)))

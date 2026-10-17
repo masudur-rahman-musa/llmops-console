@@ -3,9 +3,7 @@
 Every client built here carries `PROBE_TIMEOUT_SECONDS` on both the connect and
 the read, because a backing service that accepts a connection and then never
 answers is the shape that hangs readiness itself and takes a healthy pod out of
-rotation for the wrong reason
-(`test_the_redis_client_bounds_both_the_connect_and_the_read`,
-`test_the_qdrant_client_bounds_every_phase_of_the_call`).
+rotation for the wrong reason.
 
 The builders live here rather than beside the probes in `api/routes/health.py`
 because the semantic cache opens a Qdrant client over the same bound without
@@ -25,9 +23,7 @@ import redis
 PROBE_TIMEOUT_SECONDS: Final[float] = 2.0
 """How long any one readiness check may take, connecting and reading, in seconds.
 
-Pinned exactly by `test_the_probe_timeout_is_exactly_two_seconds` and asserted on
-the built clients by `test_the_redis_client_bounds_both_the_connect_and_the_read`
-and `test_the_qdrant_client_bounds_every_phase_of_the_call`. Kubernetes gives a
+Kubernetes gives a
 readiness probe its own timeout as well; this one exists so the process cannot be
 the thing that hangs."""
 
@@ -68,7 +64,7 @@ def build_redis_client(url: str) -> redis.Redis:
 
     `socket_timeout` is the half that matters and the half a library default
     leaves unset: a server that accepts the connection and never answers is what
-    hangs a probe (`test_the_redis_client_bounds_both_the_connect_and_the_read`).
+    hangs a probe.
 
     Not annotated `redis.Redis[bytes]`: the installed client is not generic at
     runtime, and a parametrised annotation fails `mypy --strict` with `type-arg`.
@@ -85,8 +81,7 @@ def build_qdrant_client() -> httpx.Client:
 
     `httpx.Timeout(x)` sets connect, read, write and pool together; the library
     default bounds the connect at 5s and leaves the read unbounded, which is the
-    hang this exists to prevent
-    (`test_the_qdrant_client_bounds_every_phase_of_the_call`).
+    hang this exists to prevent.
     """
     return httpx.Client(timeout=httpx.Timeout(PROBE_TIMEOUT_SECONDS))
 

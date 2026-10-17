@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-/** One `table-wrap` > table > [thead] > tbody. With `columns` it draws a header row; without, none (a design note look). */
+/** One `table-wrap` > table > [thead] > tbody. With `columns` it draws a header row; without, none. */
 export function Table({ columns, rows }: { columns?: string[]; rows: Array<{ key: string; cells: ReactNode[] }> }) {
   return (
     <div className="table-wrap">

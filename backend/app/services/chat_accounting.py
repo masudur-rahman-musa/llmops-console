@@ -82,14 +82,14 @@ class ChatResult:
 CHECK_COST = 1
 """What one request costs each bucket at the check.
 
-One from the REQUEST bucket is decision C: unlike its tokens, a request is
+One from the REQUEST bucket on purpose: unlike its tokens, a request is
 countable before it is served, so the check and the debit are one atomic take and
 a tenant's published `rpm` is exactly the number of requests it gets. One from the
 TOKEN bucket is a probe, and it is what makes "this tenant has spent its minute's
 tokens" expressible at all - the real usage is not known until the provider has
-answered (decision B), so the check asks whether a single token is left and the
+answered, so the check asks whether a single token is left and the
 debit follows from `book_cost`. One token in a `tpm` of 120,000 is what that probe
-costs (`test_the_check_takes_one_from_each_bucket_at_the_tenants_own_ceiling`).
+costs.
 """
 
 
@@ -101,21 +101,17 @@ def check_rate_limit(clients: Clients, context: RequestContext) -> None:
     once. A refusal must cost no provider call, no ledger row and no cache write,
     and a streamed request must be refused before the 200 and the first frames
     are on the wire, or the client gets an error inside a stream instead of a
-    typed 429 with a `Retry-After` no started response could carry
-    (`test_a_refused_request_dials_no_provider_and_books_no_row`,
-    `test_a_streamed_request_over_rate_is_refused_before_the_stream_opens`). And
+    typed 429 with a `Retry-After` no started response could carry. And
     being before the budget check is criterion 6: both refusals are 429s, so a
-    tenant over both is told to slow down rather than to top up
-    (`test_the_rate_check_runs_before_the_budget_check`).
+    tenant over both is told to slow down rather than to top up.
 
     A tenant the POLICY does not carry has no ceiling and is not this function's
     to refuse. Its limit is read with `.get` and not `policy.tenants[tenant]`,
     which would raise `KeyError` and turn the resolver's typed 451 into an
     untyped 500; inventing a ceiling of zero for it would be worse, because the
-    429 would then hide the residency refusal that is the correct answer
-    (`test_a_tenant_the_policy_does_not_carry_is_still_the_resolvers_451`).
+    429 would then hide the residency refusal that is the correct answer.
 
-    A store that cannot answer serves the request (decision E, argued in
+    A store that cannot answer serves the request (see
     `limits/ratelimit.py`): a `None` from either take refuses nobody, and the
     store has already logged at ERROR by the time it is read here.
 
@@ -162,20 +158,16 @@ def debit_tokens(clients: Clients, context: RequestContext, *, row: CostLedgerRo
     Called from `book_cost` and from nowhere else, beside `debit_budget`, which
     is what makes criterion 2 structural rather than a list of call sites to keep
     in step: every path that books a ledger row debits the bucket, by the tokens
-    of the row it just booked, because there is one place that does both
-    (`test_every_book_cost_site_debits_the_token_bucket`).
+    of the row it just booked, because there is one place that does both.
 
     A CACHED ROW DEBITS ZERO, and this is the one branch here. A cached row keeps
-    the replayed answer's token counts on purpose
-    (`test_a_cached_row_keeps_the_replayed_answers_token_counts` in
-    tests/storage/test_cost_ledger.py), so reading `input_tokens + output_tokens`
+    the replayed answer's token counts on purpose, so reading `input_tokens + output_tokens`
     off it would charge a tenant's `tpm` again for every hit and make the cache
     actively expensive in the one currency it saves. Zero is still a DEBIT: the
     call happens, which is what separates a path that cost nothing from a path
-    the wiring missed, and no bucket level can tell those apart
-    (`test_a_cache_hit_debits_zero_tokens`).
+    the wiring missed, and no bucket level can tell those apart.
 
-    The answer is ignored, which is decision B: the request that crosses `tpm`
+    The answer is ignored on purpose: the request that crosses `tpm`
     completes and the NEXT one is refused, because a token count is not known
     until the provider has answered and reserving an estimate up front would
     refuse requests on a guess. Like everything else `book_cost` calls, this
@@ -202,13 +194,11 @@ def check_budget(clients: Clients, context: RequestContext, *, override: str | N
     """Refuse this request if the tenant has already spent its month, and warn it near.
 
     Called at the top of BOTH routes, after `Context` has authenticated the
-    tenant and before anything is resolved, redacted, embedded or dialled (plan
-    15a decision D). The position is the whole point: a refusal must cost no
-    provider call, no ledger row and no cache write
-    (`test_a_refused_request_dials_no_provider_and_books_no_row`), and a streamed
+    tenant and before anything is resolved, redacted, embedded or dialled. The position is the
+    whole point: a refusal must cost no
+    provider call, no ledger row and no cache write, and a streamed
     request must be refused before the 200 and the first frames are on the wire,
-    or the client gets an error inside a stream instead of a typed 429
-    (`test_a_streamed_request_over_cap_is_refused_before_the_stream_opens`). A
+    or the client gets an error inside a stream instead of a typed 429. A
     middleware could not do this job at all: it runs before the `Context`
     dependency, so it has no authenticated tenant to look a cap up for.
 
@@ -216,11 +206,10 @@ def check_budget(clients: Clients, context: RequestContext, *, override: str | N
     refuse. Its cap is read with `.get` and not `policy.tenants[tenant]`, which
     would raise `KeyError` and turn the resolver's typed 451 into an untyped 500;
     inventing a cap of zero for it would be worse still, because the 429 would
-    then hide the residency refusal that is the correct answer
-    (`test_a_tenant_the_policy_does_not_carry_is_still_the_resolvers_451`).
+    then hide the residency refusal that is the correct answer.
 
-    A counter that cannot answer serves the request (an earlier change decision B, argued
-    in `limits/budget.py`): `spend` answering `None` returns here having warned
+    A counter that cannot answer serves the request (see
+    `limits/budget.py`): `spend` answering `None` returns here having warned
     nobody and refused nobody.
 
     The warning covers the whole band at or above 80%, an overridden request
@@ -261,22 +250,18 @@ def debit_budget(clients: Clients, context: RequestContext, *, usd: Decimal) -> 
     Called from `book_cost` and from nowhere else, which is what makes criterion
     5 structural rather than a list to keep in step: every path that books a
     ledger row debits the counter, by the cost of the row it just booked, because
-    there is one place that does both
-    (`test_every_book_cost_site_debits_the_budget`,
-    `test_a_stream_that_reports_no_usage_still_debits_its_estimated_row`).
+    there is one place that does both.
 
     ZERO IS A DEBIT. A cache hit books a row of `0.000000` and debits it, which
     both keeps the gauge fresh on a hit and makes a missing call site visible: a
     total cannot tell a path that added nothing from one that was never wired,
-    and the two cache tiers and `/v1/embeddings` against `local` all cost zero
-    (`test_a_cache_hit_debits_zero`).
+    and the two cache tiers and `/v1/embeddings` against `local` all cost zero.
 
     The gauge is set from what `debit` ANSWERED, not from a second read, so it
     includes the request in hand rather than lagging it by one. Nothing is
     published when the counter could not answer or when the tenant has no cap:
     the last known level stands rather than being overwritten with a confident
-    0.0 for the length of a Redis incident (decision B,
-    `test_an_unreachable_store_serves_and_moves_no_gauge`).
+    0.0 for the length of a Redis incident.
 
     Like everything else `book_cost` calls, this cannot change the answer. The
     store swallows every `redis.RedisError`, `record_budget_ratio` is guarded like
@@ -313,40 +298,35 @@ def book_cost(
     The four numbers a request reports its cost through - the row in
     `cost_ledger`, the `gateway_cost_usd_total` counter, the tenant's monthly
     budget counter and `X-Gateway-Cost-USD` - come from ONE call to
-    `app.storage.record_cost` here (an earlier change decisions A and G, an earlier change
-    criterion 5). Four call sites pricing separately is how a dashboard comes to
+    `app.storage.record_cost` here. Four call sites pricing separately is how a dashboard comes to
     disagree with an invoice by a rounding, and how a cap comes to refuse traffic
     on a total nobody can reconcile with the ledger; only one of the four would
-    ever be audited (`test_the_counter_moves_by_exactly_the_rows_cost`,
-    `test_the_cost_header_is_the_booked_cost`,
-    `test_the_debit_is_the_number_the_cost_header_reports`).
+    ever be audited.
 
     Called once per REQUEST and never once per attempt, from the same closing
     stretch as `record_served`: `chosen` is the candidate that SERVED, so a
     request that fell back books one row against the provider that charged for it
-    and nothing at all against the one that failed
-    (`test_a_request_that_fell_back_books_one_row_against_the_serving_provider`).
+    and nothing at all against the one that failed.
 
     `price_key` comes from the SERVING adapter rather than being rebuilt from the
     provider name, so the key the price was read under and the key the adapter
-    publishes cannot drift (an earlier change's own argument for taking it as a
-    parameter). The lookup is the same `state.adapters[chosen.provider]` the route
-    dialled: the resolver's health seam is what guarantees the entry exists, and a
+    publishes cannot drift. The lookup is the same
+    `state.adapters[chosen.provider]` the route dialled: the resolver's health seam is what
+    guarantees the entry exists, and a
     cache hit reads it without dialling anything.
 
     `cached` is keyword-only and has NO default, exactly as `gateway_headers`'
     `redacted` has none and for the same reason: a forgotten argument would book a
     replayed answer as money that was spent. What the flag then costs is decided
-    inside `record_cost` (decision C), not here.
+    inside `record_cost`, not here.
 
     `usage` is what the provider reported, and `None` is the streamed request that
     ended without a usage event - the two character counts are what its row is
-    estimated from then (decision E).
+    estimated from then.
 
     Nothing here can change the answer. `record_cost` swallows a failing write,
     `record_cost_usd` and `debit_budget` are guarded like every other emission,
-    and the header is formatted from a `Decimal` this function already holds
-    (`test_a_failing_writer_changes_no_status_body_or_header`). The budget the
+    and the header is formatted from a `Decimal` this function already holds. The budget the
     debit moves is read at the TOP of the request by `check_budget`, never here,
     so a request is refused on what was already spent when it arrived and not on
     a total this call has just changed.
@@ -384,7 +364,7 @@ def cost_header_value(usd: Decimal) -> str:
     `Decimal` formatting rather than a float or a rounded string: every cost this
     gateway books is already quantized to `COST_QUANTUM`, and the quantize here is
     what makes the SIX places a property of the header rather than of whatever
-    reached it (`test_the_cost_header_is_the_rows_decimal_at_six_places`). A
+    reached it. A
     `float` would render `0.000105` as an approximation and drop the last place on
     some values, which is exactly the disagreement between a client's total and
     the ledger this header exists to prevent.

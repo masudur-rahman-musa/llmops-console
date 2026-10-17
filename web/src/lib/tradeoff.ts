@@ -1,9 +1,9 @@
 import { readFile } from "node:fs/promises";
 
 /**
- * The model tradeoff table, read from `CONSOLE_TRADEOFF_PATH` on every request
- * (decision E). Anything short of a whole, consistent document is `null`, which
- * the cost page shows as `Not measured yet.` Pinned by tests/tradeoff.test.ts.
+ * The model tradeoff table, read from `CONSOLE_TRADEOFF_PATH` on every request.
+ * Anything short of a whole, consistent document is `null`, which
+ * the cost page shows as `Not measured yet.`
  */
 
 export const TRADEOFF_METRICS = [

@@ -2,7 +2,7 @@
 
 The chat and embeddings routes are `async def`. FastAPI runs async routes on the
 event loop directly, so a blocking call inside one would stall every coroutine
-waiting for it — the event loop cannot move to the next request while it is
+waiting for it - the event loop cannot move to the next request while it is
 inside a synchronous provider call.
 
 The routes hand each blocking provider call to `asyncio.to_thread`, which runs
@@ -27,7 +27,7 @@ PROVIDER_POOL_SIZE: Final[int] = 32
 Decided without asking: 32 leaves headroom under the shared pool's
 default of 40 thread-pool workers, absorbs a healthy burst of concurrent chat
 requests, and is small enough that a single stalled provider cannot exhaust the
-machine's memory. Pinned by `test_the_provider_worker_limit_is_exactly_32`.
+machine's memory.
 """
 
 

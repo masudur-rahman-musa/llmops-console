@@ -1,7 +1,7 @@
-"""Pushing one run's `gateway_eval_*` gauges to a Pushgateway (#43, an earlier change).
+"""Pushing one run's `gateway_eval_*` gauges to a Pushgateway.
 
-`core/metrics.py` deliberately never registers `gateway_eval_*`: the design has the
-nightly job push those gauges rather than have the gateway process serve them, so
+`core/metrics.py` deliberately never registers `gateway_eval_*`: the
+nightly job pushes those gauges rather than have the gateway process serve them, so
 this module owns a registry of its own, built fresh on every call rather than
 shared across runs the way `core/metrics.py`'s process-lifetime one is - there is
 no long-running process here to hold one open.
@@ -28,7 +28,7 @@ from app.evals.scores import METRIC_NAMES
 PUSHGATEWAY_JOB: Final[str] = "eval_nightly"
 """The fixed job label every push carries (§1's "fixed job label", never derived from a
 tenant, a run kind or any other caller-supplied value - the plan's own no-new-identifier
-criterion). Pinned by `test_the_job_label_is_the_published_constant`."""
+criterion)."""
 
 
 def push_metrics(
@@ -38,8 +38,7 @@ def push_metrics(
 
     A key whose value is `None` (an accuracy nothing stated, or `judge_kappa_vs_human`
     with no calibration) contributes no series at all - a `Gauge` left at its unset zero
-    would read as a genuine score of zero to `NightlyEvalRegression`
-    (`test_every_non_null_metric_reaches_the_body_and_the_null_one_is_absent`). Never
+    would read as a genuine score of zero to `NightlyEvalRegression`. Never
     raises for a transport failure or a non-2xx response; both answer a short string.
     `float(value)` accepts an `int`, a `float`, a `Decimal` or the string a `Decimal`
     serialises to on the written report (`report.py`'s `_serialise_cost`), so the

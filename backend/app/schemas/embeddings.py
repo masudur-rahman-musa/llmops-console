@@ -12,15 +12,11 @@ LIST_OBJECT: Literal["list"] = "list"
 EMBEDDING_OBJECT: Literal["embedding"] = "embedding"
 """The two `object` discriminators, in the words the published API uses. A client
 branches on these strings to decide how to read the body, so a near-miss is a
-body that parses and then hands the client nothing
-(`test_the_two_object_discriminators_are_the_published_words`)."""
+body that parses and then hands the client nothing."""
 
 
 MAX_EMBEDDING_INPUTS = 64
-"""Most inputs one request may carry. Pinned exactly by
-`test_the_input_caps_are_exactly_sixty_four_and_eight_thousand_one_hundred_ninety_two`,
-with the inclusive boundary either side in `test_an_input_at_the_boundary_is_accepted`
-and `test_a_rejected_input_is_422_before_any_outbound_call`.
+"""Most inputs one request may carry. The limit is inclusive.
 
 An unbounded batch holds a CPU box for minutes, and this endpoint's whole point
 is that it runs on that box."""
@@ -47,14 +43,13 @@ class EmbeddingsRequest(_Wire):
 
     `model` is an alias, not a provider model id; the resolver checks its shape
     before any lookup, so a malformed one is a 422 rather than a 404 claiming
-    the name does not exist (`test_a_malformed_alias_is_422_not_404`).
+    the name does not exist.
 
     `input` accepts a bare string or a list of strings and nothing else.
     OpenAI's token-array forms (`int[]`, `int[][]`) are refused by this
     annotation: the gateway has no tokenizer, and neither redaction
     nor pricing can see inside a token array, so passing one through would be a
-    shape this product cannot honour its guarantees on (an earlier change decision C,
-    `test_a_rejected_input_is_422_before_any_outbound_call`).
+    shape this product cannot honour its guarantees on.
     """
 
     model: str
@@ -69,8 +64,7 @@ class EmbeddingsRequest(_Wire):
         On the FIELD rather than on the model, so the shared
         `handle_request_validation_error` reports `input` as the offending
         parameter: with up to 64 items in a batch, "the request is not valid"
-        leaves the caller nothing to look at
-        (`test_a_capped_input_names_the_field`).
+        leaves the caller nothing to look at.
 
         An empty string is refused alongside the sizes because it is not a text
         to embed: the provider would answer a vector for nothing, or a 400 the
@@ -96,8 +90,7 @@ class EmbeddingsRequest(_Wire):
 
         A bare string becomes a one-item tuple here rather than being passed
         down as itself, which something below would iterate character by
-        character - one vector per letter, and no error anywhere
-        (`test_a_bare_string_input_reaches_the_adapter_as_a_one_item_tuple`).
+        character - one vector per letter, and no error anywhere.
         """
         return (self.input,) if isinstance(self.input, str) else self.input
 
@@ -125,10 +118,9 @@ class EmbeddingsResponse(BaseModel):
     """The `list` envelope an OpenAI-compatible client reads.
 
     `model` is the ALIAS the caller sent, never the provider model id: aliases
-    are the only routable names (the design), so an answer naming a provider model
+    are the only routable names so an answer naming a provider model
     would hand back a name that cannot be sent again and disclose which provider
-    served the request. The provider model id travels in `X-Gateway-Model`
-    (`test_response_model_is_the_alias_the_caller_named`).
+    served the request. The provider model id travels in `X-Gateway-Model`.
     """
 
     model_config = ConfigDict(frozen=True)

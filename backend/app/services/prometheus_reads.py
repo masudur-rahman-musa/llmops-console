@@ -1,28 +1,23 @@
 """The console's Prometheus client: named queries only, and one failure type.
 
 No caller supplies PromQL. Every query the console runs is
-a constant or a builder in this module, and every one is pinned as a literal by
-`test_the_named_queries_are_pinned`, so a changed metric name or window shows up
+a constant or a builder in this module, and every one is pinned as a literal in
+the tests, so a changed metric name or window shows up
 as a failing test rather than as an empty panel.
 
 The only client-supplied text that reaches a query is `tenant`, inside
 `redactions_query`'s label matcher. It arrives here already pre-checked by
 `app.api.deps._checked_tenant`, a lowercase slug under `re.fullmatch`, which is
-what keeps a `"` or a `}` from closing the matcher
-(`test_the_tenant_rejection_table`). This module does not re-check it; the route
+what keeps a `"` or a `}` from closing the matcher. This module does not re-check it; the route
 is the one boundary a client string crosses.
 
 Every failure is `PrometheusError`: a timeout, a transport error, a non-200, a
-body whose `status` is not `success`, and a body of the wrong shape
-(`test_a_timeout_is_error`, `test_a_non_200_is_error`,
-`test_a_non_success_status_body_is_error`,
-`test_an_unexpected_result_type_or_malformed_body_is_error`). The routes turn that
+body whose `status` is not `success`, and a body of the wrong shape. The routes turn that
 one type into `prometheus: error` beside the data.
 
 A non-finite sample is dropped, not returned. `histogram_quantile` over no traffic
 answers `NaN` and a ratio of two zero rates does too; JSON has no spelling for
-either, and a panel is better served by a missing point than by a 500
-(`test_a_non_finite_sample_is_dropped`).
+either, and a panel is better served by a missing point than by a 500.
 """
 
 from __future__ import annotations
@@ -34,11 +29,10 @@ import httpx
 
 PROMETHEUS_TIMEOUT_SECONDS: Final[float] = 2.0
 """Every phase of every call. The console waits on this per query, so a slow
-Prometheus costs a page load seconds rather than a hung worker
-(`test_the_timeout_is_two_seconds`)."""
+Prometheus costs a page load seconds rather than a hung worker."""
 
 RANGE_STEP_SECONDS: Final[int] = 3600
-"""One point per hour on the reliability series (`test_the_range_step_is_3600_seconds`)."""
+"""One point per hour on the reliability series."""
 
 QUERY_PATH: Final[str] = "/api/v1/query"
 QUERY_RANGE_PATH: Final[str] = "/api/v1/query_range"
@@ -60,15 +54,16 @@ ERROR_RATE_QUERY: Final[str] = (
 """The share of requests answered 5xx over the last day, reused the same way."""
 
 CIRCUITS_QUERY: Final[str] = "max by (provider) (gateway_circuit_state)"
-"""The worst breaker state per provider across replicas. The breaker is in-process, so two pods can disagree and the page shows the worse of them."""
+"""The worst breaker state per provider across replicas. The breaker is in-process
+, so two pods can disagree and the page shows the worse of them."""
 
 
 AVAILABILITY_OBJECTIVE: Final[float] = 0.995
 AVAILABILITY_ALLOWED_BAD: Final[float] = 0.005
 LATENCY_THRESHOLD_SECONDS: Final[float] = 6.0
 LATENCY_ALLOWED_SLOW: Final[float] = 0.05
-"""The SLO numbers the project notes documents, pinned by
-`test_the_budget_queries_are_the_pinned_literals`. The allowed shares are what an
+"""The SLO numbers the ops docs give, pinned as literals in the tests. The allowed shares are what
+an
 error budget spends: a p95 under 6 s allows 5% of requests at 6 s or over."""
 
 AVAILABILITY_BUDGET_QUERY: Final[str] = (
@@ -80,8 +75,8 @@ AVAILABILITY_BUDGET_QUERY: Final[str] = (
 
 The three budget queries are literals rather than builders because Grafana's
 `gateway-overview.json` carries each one byte for byte, and
-`test_each_slo_panel_expr_equals_its_prometheus_constant` fails on drift. The window
-never follows a page's `days` (`test_slos_ignore_days`)."""
+a test fails on drift. The window
+never follows a page's `days`."""
 
 LATENCY_BUDGET_QUERY: Final[str] = (
     "sum(increase(gateway_request_latency_seconds_bucket"
@@ -91,7 +86,7 @@ LATENCY_BUDGET_QUERY: Final[str] = (
 )
 """The API tier's share of requests under 6 s over 30 days. Prometheus renders the
 bucket label `6.0`, never `6`. Streamed requests are counted too: the histogram has
-no streaming label, a gap the project notes records."""
+no streaming label, a gap the ops docs record."""
 
 RESIDENCY_VIOLATIONS_30D_QUERY: Final[str] = (
     "sum(increase(gateway_residency_violations_total[30d]))"

@@ -19,20 +19,17 @@ The entry is `sha256(normalised name) -> plaintext name`, which is the design's
 "hashed + plaintext" read literally. The hash is what makes
 a re-push idempotent: an operator who types `  ANNA SCHMIDT ` after having
 pushed `Anna Schmidt` writes the same field rather than a second entry that
-burns one of the 2000 slots and compiles a duplicate branch into the alternation
-(`test_re_pushing_a_name_the_directory_already_holds_changes_nothing`).
+burns one of the 2000 slots and compiles a duplicate branch into the alternation.
 
-A push MERGES (decision C). A caller that pages a large directory would
+A push MERGES. A caller that pages a large directory would
 otherwise silently delete everything it had already sent, and nothing in the
-answer would say so (`test_a_second_push_merges_rather_than_replacing`). There is
+answer would say so. There is
 no delete in this plan.
 
 Every cap is checked over the WHOLE push before anything is written, and the
 count cap over the resulting TOTAL rather than over one push.
 Validating inside the write loop would leave a tenant's directory half applied
-with the caller holding an error naming a cap
-(`test_one_bad_name_in_a_push_stores_none_of_the_good_ones`,
-`test_the_count_cap_is_over_the_directory_total_and_not_over_one_push`).
+with the caller holding an error naming a cap.
 """
 
 from __future__ import annotations
@@ -53,10 +50,7 @@ MIN_DIRECTORY_NAME_CHARS: Final[int] = 2
 The cap that matters. A one-character name redacts every
 `a` in every request that tenant sends, so a single typo in a push is a precision
 failure across the tenant's whole traffic - and precision is a number this plan
-has to keep above a floor. Pinned exactly by
-`test_the_three_caps_are_the_published_numbers` and bracketed by
-`test_a_name_at_a_length_boundary_is_accepted` and
-`test_a_name_outside_the_length_bounds_is_refused_and_nothing_is_stored`."""
+has to keep above a floor."""
 
 MAX_DIRECTORY_NAME_CHARS: Final[int] = 128
 """The longest name an operator may push, in normalised characters.
@@ -70,23 +64,18 @@ MAX_DIRECTORY_NAMES: Final[int] = 2000
 
 The compiled alternation is the only unbounded thing this plan introduces, and
 this is what bounds it. Over the TOTAL and not over one push: a per-push reading
-lets a paged caller build a directory of any size at all
-(`test_the_count_cap_is_over_the_directory_total_and_not_over_one_push`).
-Pinned by `test_the_three_caps_are_the_published_numbers` and bracketed by
-`test_a_push_at_the_count_cap_is_accepted` and
-`test_a_push_one_name_over_the_count_cap_is_refused`."""
+lets a paged caller build a directory of any size at all.
+"""
 
 DIRECTORY_KEY_PREFIX: Final[str] = "directory"
 """The first segment of every Redis key a directory is stored under.
 
 A live gateway's directories are addressed by this string, so renaming it empties
-every directory an operator has pushed; pinned by
-`test_the_key_prefix_is_the_published_one`."""
+every directory an operator has pushed."""
 
 NAMES_PARAM: Final[str] = "names"
 """The field every cap rejection names, and the only thing about the push besides
-the cap that a rejection is allowed to say
-(`test_a_rejection_names_the_field_and_the_cap_and_never_the_value`)."""
+the cap that a rejection is allowed to say."""
 
 
 def normalise_name(name: str) -> str:
@@ -97,9 +86,7 @@ def normalise_name(name: str) -> str:
     makes `ANNA SCHMIDT` the same name as `anna schmidt`, which the matcher
     treats as one anyway because it matches case-insensitively. The length check
     runs on this rather than on the raw string, or `"  L  "` would be five
-    characters and slip a one-character name past the minimum
-    (`test_a_name_whose_length_is_only_whitespace_is_refused`,
-    `test_normalisation_folds_case_and_strips_surrounding_whitespace`).
+    characters and slip a one-character name past the minimum.
     """
     return name.strip().casefold()
 
@@ -108,8 +95,7 @@ def name_field(name: str) -> str:
     """The hash one name is stored under: sha256 of its normalised form, as hex.
 
     the design's hashed half. It is a stable id for an entry, which is what makes a
-    re-push idempotent and what a later plan's delete would address
-    (`test_the_field_is_the_sha256_of_the_normalised_name`).
+    re-push idempotent and what a later plan's delete would address.
     """
     return hashlib.sha256(normalise_name(name).encode("utf-8")).hexdigest()
 
@@ -121,12 +107,11 @@ def checked_entries(names: Sequence[str], held: Sequence[str]) -> dict[str, str]
     is what a project rule asks of the three caps: a name outside the length
     bounds, or a push that would take the directory past
     `MAX_DIRECTORY_NAMES`, raises `DirectoryNameInvalid` with none of the push
-    applied (`test_one_bad_name_in_a_push_stores_none_of_the_good_ones`).
+    applied.
 
     `held` is what the tenant's directory already contains, so the count is over
     the union of the two rather than over either alone: a re-push of names the
-    directory already holds is not growth
-    (`test_the_count_cap_counts_a_re_push_once`).
+    directory already holds is not growth.
 
     The stored value is the name STRIPPED but not case-folded, so an operator
     reads back what they pushed; only the field is folded.
@@ -162,15 +147,15 @@ class DirectoryStore(Protocol):
 
     Two methods and one rule: `get` answers the empty tuple for a tenant nobody
     has pushed for, and raises for neither that nor an expired anything - there is
-    no expiry (`test_an_empty_directory_answers_an_empty_tuple`). Every redacted
+    no expiry. Every redacted
     request makes this read, so a `KeyError` or a `None` here is a 500 on the
     first request of every tenant with no names, which is most of them.
 
     What `get` may NOT do is answer an empty tuple because the store is
-    unreachable. That is an earlier change decision H, and it is why `RedisDirectoryStore`
+    unreachable. That is a firm rule, and it is why `RedisDirectoryStore`
     raises `DirectoryStoreUnavailable`: a request redacted without the tenant's
     names and served anyway sends exactly the values this control exists to
-    remove (`test_a_get_against_an_unreachable_redis_raises_the_typed_failure`).
+    remove.
     """
 
     def put(self, tenant: str, names: Sequence[str]) -> None:
@@ -200,9 +185,8 @@ class InProcessDirectoryStore:
         """Merge `names` into this tenant's directory, or raise having written nothing.
 
         The caps are checked over the whole push first, against what this tenant
-        already holds, so a refusal leaves the directory exactly as it was
-        (`test_one_bad_name_in_a_push_stores_none_of_the_good_ones`). Merging and
-        not replacing is decision C.
+        already holds, so a refusal leaves the directory exactly as it was. Merging, not
+        replacing, is the rule.
         """
         held = self._directories.get(tenant, {})
         entries = checked_entries(names, tuple(held.values()))
@@ -216,14 +200,14 @@ class InProcessDirectoryStore:
 class RedisDirectoryStore:
     """A `DirectoryStore` keeping directories in Redis, where every replica reads them.
 
-    The implementation the gateway ships with once `OPSCONSOLE_REDIS_URL` is set. It differs from `InProcessDirectoryStore` in three ways
+    The implementation the gateway ships with once `OPSCONSOLE_REDIS_URL` is set. It differs from
+    `InProcessDirectoryStore` in three ways
     that matter.
 
     One tenant is one Redis HASH, field `name_field(name)`, value the plaintext
-    name (decision B). A hash rather than a set because the hash gives every entry
+    name. A hash rather than a set because the hash gives every entry
     a stable handle: a re-push overwrites its own field instead of adding a
-    duplicate, and a later plan's delete has something to address
-    (`test_the_field_is_the_hashed_name_and_the_value_is_the_plaintext`). No TTL
+    duplicate, and a later plan's delete has something to address. No TTL
     is written, unlike a placeholder map's key: a directory is configuration.
 
     `tenant` is pre-checked before any command is sent, on BOTH
@@ -232,19 +216,15 @@ class RedisDirectoryStore:
     means compiling another tenant's names into the matcher. The rules are the
     gateway's own `IDENTIFIER_PATTERN` and `MAX_IDENTIFIER_LENGTH`, imported
     rather than restated, so the name a directory accepts and the name
-    `gateway/context.py` authenticated cannot disagree
-    (`test_put_refuses_a_malformed_tenant_before_touching_redis`,
-    `test_get_refuses_a_malformed_tenant_before_touching_redis`).
+    the request context authenticated cannot disagree.
 
     Every `redis.RedisError` becomes `DirectoryStoreUnavailable`, chained. Decision
     H is what makes that mandatory on the read path: an empty tuple would be a
-    request redacted without the tenant's names and served
-    (`test_a_get_against_an_unreachable_redis_raises_the_typed_failure`).
+    request redacted without the tenant's names and served.
 
     `key_prefix` exists for the suite: per-test isolation is a namespace rather
     than a `FLUSHDB` that would delete keys this suite does not own (standing rule
-    7). The default is the shipped one
-    (`test_the_default_prefix_is_the_one_the_key_is_written_under`).
+    7). The default is the shipped one.
 
     Not annotated `redis.Redis[bytes]`: the installed client is not generic at
     runtime, so a parametrised annotation fails `mypy --strict` with `type-arg`.
@@ -258,8 +238,7 @@ class RedisDirectoryStore:
         """The Redis key one tenant's directory is stored under.
 
         Public because it is what a migration, an operator's `SCAN` and the test
-        that reads the key back all depend on
-        (`test_the_key_carries_the_prefix_and_the_tenant`).
+        that reads the key back all depend on.
         """
         return f"{self._key_prefix}:{tenant}"
 
@@ -268,8 +247,7 @@ class RedisDirectoryStore:
 
         The count cap is over the total, so what the tenant already holds is read
         first; that read is the only command a refused push sends, and the tests
-        assert `hset` specifically for exactly that reason
-        (`test_put_refuses_a_name_outside_the_caps_before_touching_redis`).
+        assert `hset` specifically for exactly that reason.
         """
         _checked_tenant(tenant)
         entries = checked_entries(names, self.get(tenant))
@@ -288,7 +266,7 @@ class RedisDirectoryStore:
         """Every name this tenant has pushed, decoded, or the empty tuple.
 
         Decoded here rather than by a `decode_responses` client, because the
-        client is built once in `gateway/app.py` and shared with the placeholder
+        client is built once in the app setup and shared with the placeholder
         map store, which stores JSON and decodes its own.
         """
         _checked_tenant(tenant)
@@ -302,11 +280,10 @@ class RedisDirectoryStore:
 def _as_text(value: bytes | str) -> str:
     """One hash value as text, whether the client decoded it or not.
 
-    The client is built once in `gateway/app.py` and shared with the placeholder
+    The client is built once in the app setup and shared with the placeholder
     map store, which stores JSON and decodes its own, so it is NOT built with
     `decode_responses`. Handling both spellings keeps this store correct if that
-    ever changes, and keeps a `str` out of `bytes.decode`
-    (`test_a_pushed_name_round_trips_through_redis`).
+    ever changes, and keeps a `str` out of `bytes.decode`.
     """
     return value if isinstance(value, str) else value.decode("utf-8")
 
@@ -315,8 +292,6 @@ def _checked_tenant(tenant: str) -> None:
     """Refuse a tenant that may not shape a key, before any command is sent.
 
     The gateway's own identifier rules, imported rather than restated. Inclusive
-    at the cap: exactly `MAX_IDENTIFIER_LENGTH` characters is accepted
-    (`test_a_tenant_at_the_length_cap_is_accepted`,
-    `test_a_tenant_one_character_over_the_cap_is_rejected`).
+    at the cap: exactly `MAX_IDENTIFIER_LENGTH` characters is accepted.
     """
     checked_identifier(tenant, "tenant", param="tenant")

@@ -7,7 +7,7 @@ mid-call. A reload that fails to parse keeps the old set untouched.
 
 `RoutingRuntimeStore` watches `app.state`: the adapters, the breaker and the
 policy store keep their current home there, so no fixture that sets a stub
-adapter has to change (`test_a_reload_hands_one_request_the_same_policy_adapters_and_breaker`).
+adapter has to change.
 
 The lock is a `threading.Lock` rather than an asyncio lock: reload runs in a
 FastAPI worker thread while leases are touched on the event loop, so a plain
@@ -64,8 +64,7 @@ class RoutingRuntimeStore:
 
     The store holds a reference to the Starlette `State` object rather than the
     three pieces directly, because test fixtures set stubs on `app.state` and
-    those stubs must be what `acquire()` reads
-    (`test_a_reload_hands_one_request_the_same_policy_adapters_and_breaker`).
+    those stubs must be what `acquire()` reads.
     """
 
     def __init__(self, state: State) -> None:
@@ -165,8 +164,7 @@ class RoutingRuntimeStore:
     def lease_count(self) -> int:
         """The total number of open leases across all adapter sets.
 
-        Zero means no request is holding any runtime. Used by
-        `test_a_finished_request_leaves_no_routing_lease_open` to prove the
+        Zero means no request is holding any runtime. Tests use it to prove the
         middleware releases every lease it takes.
         """
         with self._lock:

@@ -38,15 +38,15 @@ class ToolCall(_Contract):
 class ChatMessage(_Contract):
     """One turn. `system` is a role here; adapters place it wherever their provider wants it.
 
-    Four roles, closed (`test_role_set_stays_closed`). `tool` is the result of a
+    Four roles, closed. `tool` is the result of a
     call the model asked for, and it carries `tool_call_id` to say which call it
     answers; an `assistant` turn carries `tool_calls` when the model's answer was
     a call rather than words, so `content` defaults to empty rather than being
-    required (`test_a_tool_call_only_assistant_turn_needs_no_content`). Which
+    required. Which
     combinations are coherent is settled at the API boundary, in
     `schemas/chat.py`, where an incoherent one is a 422 the caller can
     read; the ids themselves are checked by the adapter, before any outbound
-    call (`test_bad_tool_ids_raise_before_any_outbound_call`).
+    call.
     """
 
     role: Literal["system", "user", "assistant", "tool"]
@@ -70,10 +70,8 @@ class ResponseFormat(_Contract):
     adapters run it through `checked_tool_name` like any other tool name.
 
     `strict` is the caller's own flag, `None` when they left it out. A wire with
-    a strict mode forwards it as given and never adds it
-    (`test_response_format_without_strict_sends_no_strict_key`). `StrictBool`,
-    so `"yes"` is refused rather than read as true
-    (`test_a_non_bool_strict_is_422_before_any_outbound_call`).
+    a strict mode forwards it as given and never adds it. `StrictBool`,
+    so `"yes"` is refused rather than read as true.
     """
 
     name: str
@@ -84,8 +82,7 @@ class ResponseFormat(_Contract):
 class ToolChoice(_Contract):
     """How freely the model may choose whether to call a tool.
 
-    Four modes, closed, in the gateway's own words
-    (`test_tool_choice_mode_set_stays_closed`): `auto` leaves it to the model,
+    Four modes, closed, in the gateway's own words: `auto` leaves it to the model,
     `none` forbids a call, `required` demands one of the offered tools, and
     `tool` demands the one `name` names. `required` is deliberately not spelled
     the way any provider spells it - Anthropic calls it `any` - so that word
@@ -93,10 +90,8 @@ class ToolChoice(_Contract):
 
     `name` is meaningful only with `mode="tool"` and is not required by the
     model: it is caller-supplied and becomes an identifier on the outbound call,
-    so the adapter runs it through `checked_tool_name`
-    (`test_tool_choice_name_is_checked_before_any_outbound_call`). A `tool` mode
-    with no name at all fails the same check as a 422 before anything is sent
-    (`test_a_named_tool_choice_with_no_name_raises_before_any_outbound_call`).
+    so the adapter runs it through `checked_tool_name`. A `tool` mode
+    with no name at all fails the same check as a 422 before anything is sent.
     """
 
     mode: Literal["auto", "none", "required", "tool"]
@@ -142,9 +137,8 @@ class StreamStart(_Contract):
 
     A separate event rather than a flag on the first text delta, because an
     answer that is only a tool call has no first text delta and still has to
-    open. `test_first_chunk_carries_the_assistant_role` pins the role on an
-    ordinary text answer and `test_streamed_tool_call_is_one_whole_delta` pins it
-    on a tool-only one, which is the case a lazily emitted role would break.
+    open. The role is sent on an ordinary text answer and on a tool-only one,
+    which is the case a lazily emitted role would break.
     """
 
     role: Literal["assistant"] = "assistant"
@@ -163,8 +157,7 @@ class ToolCallDelta(_Contract):
     fragments would mean owning a second incremental-arguments shape in the wire
     mapping. The cost is recorded: a client cannot render
     arguments as they are typed. `index` is the call's position in the answer,
-    which is what an OpenAI-compatible client assembles by
-    (`test_streamed_tool_call_is_one_whole_delta`).
+    which is what an OpenAI-compatible client assembles by.
     """
 
     index: int
@@ -175,7 +168,7 @@ class FinishReason(_Contract):
     """Why the answer ended, in the provider's own word.
 
     Mapped into OpenAI's vocabulary at the API boundary, through the same table
-    the non-streaming path uses (`test_finish_reason_table_on_the_stream`), so a
+    the non-streaming path uses, so a
     provider's spelling stops at the adapter here as it does everywhere else.
     """
 
@@ -185,10 +178,9 @@ class FinishReason(_Contract):
 class UsageTotal(_Contract):
     """What the streamed call consumed. Always sent, and never zero-filled.
 
-    A stream carries usage exactly like a completion does (the design): the ledger
+    A stream carries usage exactly like a completion does: the ledger
     prices from these numbers, so an adapter that cannot read them raises rather
-    than defaulting to zero and booking a real, billed call as free
-    (`test_a_truncated_stream_raises_rather_than_zero_filling_usage`).
+    than defaulting to zero and booking a real, billed call as free.
     """
 
     usage: Usage
@@ -219,13 +211,11 @@ class EmbeddingRequest(_Contract):
 
     `input` is always a tuple, even for a caller who sent a bare string. The
     published wire accepts either, and an adapter handed a `str` would iterate it
-    character by character somewhere below - one vector per letter, no error
-    (`tests/gateway/test_embeddings.py::test_a_bare_string_input_reaches_the_adapter_as_a_one_item_tuple`).
+    character by character somewhere below - one vector per letter, no error.
 
     There is deliberately no `encoding_format` here. The gateway renders base64
-    itself from the float vector and always asks the provider for floats, so the field stops at the API boundary and this
-    contract gives it nowhere to go
-    (`test_the_neutral_embedding_request_carries_no_encoding_format`).
+    itself from the float vector and always asks the provider for floats, so the field
+    stops at the API boundary and this contract gives it nowhere to go.
     """
 
     model: str
@@ -239,8 +229,7 @@ class EmbeddingUsage(_Contract):
     product publishes, so reusing `Usage` could only mean writing a zero into a
     field with no meaning - and a zero-filled count is exactly what the rule
     against zero-filling usage exists to prevent, hidden behind a field that
-    always looks populated (an earlier change decision F,
-    `test_embedding_usage_has_exactly_two_counts`).
+    always looks populated.
     """
 
     prompt_tokens: int
@@ -253,8 +242,7 @@ class Embedding(_Contract):
     `index` is carried rather than implied by tuple position because it is the
     caller's only way back to its own rows: a provider that serialises its
     answers out of order is reordered by this field, and one that numbers them in
-    any way other than `0..n-1` is refused
-    (`tests/providers/test_local_embeddings.py::test_indices_that_are_not_zero_to_n_minus_one_raise`).
+    any way other than `0..n-1` is refused.
     """
 
     index: int

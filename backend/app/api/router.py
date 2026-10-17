@@ -13,7 +13,7 @@ public port by the gateway Ingress, not by a key.
 
 A new route added under a parent is checked without declaring anything. A route
 added outside both parents and outside `OPEN_PATHS` fails
-`test_every_route_is_covered_by_the_one_auth_layer`, so the build goes red
+the route coverage test, so the build goes red
 rather than shipping an open route.
 """
 
@@ -34,8 +34,7 @@ from app.api.routes.model_list import router as model_list_router
 from app.api.routes.redact import router as redact_router
 
 OPEN_PATHS: tuple[str, ...] = ("/healthz", "/readyz")
-"""Paths that skip both auth checks. Pinned by
-`test_the_open_list_is_exactly_healthz_and_readyz`."""
+"""Paths that skip both auth checks."""
 
 CLUSTER_ONLY_PATHS: tuple[str, ...] = ("/metrics",)
 """Paths that are unauthenticated in the app but kept off the public port by

@@ -1,6 +1,6 @@
 """The Postgres write path: residency evidence and cost rows now, eval rows later.
 
-the design gives this package the project's Postgres writes, and an earlier change is the
+This package holds the project's Postgres writes, and the residency log is the
 first of them, so the connection pool, the migration runner and the schema
 convention arrive here rather than in the one table that needed them first.
 

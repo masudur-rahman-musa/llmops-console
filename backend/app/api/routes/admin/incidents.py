@@ -6,9 +6,7 @@ arrives here rather than as a code path. What it stores, and why each field is
 checked before any statement runs, is `app.storage.console_events`.
 
 Behind the admin key (`admin_key`): a working tenant key is 401 on both, and an
-unset admin key authorises nobody rather than everybody
-(`test_every_console_event_route_is_401_without_an_admin_key`,
-`test_admin_routes_reject_every_caller_when_no_admin_key_is_configured`). Neither
+unset admin key authorises nobody rather than everybody. Neither
 route is counted by the request metrics (`COUNTED_PATH_PREFIX` is `/v1/`), both
 are traced, and both are cluster-internal.
 """
@@ -27,8 +25,7 @@ from app.storage.console_events import (
 )
 
 ADMIN_INCIDENTS = "/admin/incidents"
-"""Where an incident is recorded. Pinned against the mounted route by
-`test_the_admin_console_event_paths_and_statuses_are_pinned`."""
+"""Where an incident is recorded."""
 
 ADMIN_INCIDENT = "/admin/incidents/{incident_id}"
 """Where one is resolved. Pinned by the same case."""
@@ -43,7 +40,7 @@ def record_incident(body: IncidentCreate, writer: ConsoleEventsDep) -> IncidentC
 
     201 rather than 200: this creates a record the caller can address afterwards,
     and the id in the body is that address. `uuid4().hex` rather than a slug the
-    caller supplies (decision A), so two incidents filed in the same minute cannot
+    caller supplies, so two incidents filed in the same minute cannot
     collide on a name someone typed twice and no client string reaches a primary
     key.
 
@@ -85,8 +82,8 @@ def resolve_incident(
     told apart by their messages, which `storage.console_events` owns:
     `ErrorCode.VALIDATION` is fixed at 422, and a 404 or a 409 carrying that code
     would break the one-status-per-code table
-    `tests/api/test_error_contract.py` holds. Resolving twice is a refusal
-    rather than a no-op (decision E), because the second call would otherwise
+    the error contract tests hold. Resolving twice is a refusal
+    rather than a no-op, because the second call would otherwise
     overwrite the timestamp a postmortem's duration is computed from.
 
     Answers the id it resolved, so the response has the same shape as the create's

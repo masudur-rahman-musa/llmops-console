@@ -1,4 +1,4 @@
-r"""`ops-eval baseline-guard`: #42's rule over `backend/evals/baseline.json`.
+r"""`ops-eval baseline-guard`: the rule over `backend/evals/baseline.json`.
 
 Pure, for `gate.py`'s reason one step further along: the same commits give the
 same verdict on a laptop and in `.github/workflows/eval-gate.yml`, so every way
@@ -6,22 +6,20 @@ of bypassing the rule is a test row rather than a pull request somebody has to
 open. The git read and the exit code live in `cli/evals.py`; what lives here is
 the comparison.
 
-The rule, from the design and #42: a commit that touches the baseline is clean
-only when its subject starts `baseline:` AND the same commit carries a file under
-the project notes. Same commit, not same pull request - a merge
-and a revert can split a baseline change from its justification across a PR, and
-`a87abf2` is the shape this repo already has
-(`test_the_shape_commit_a87abf2_already_has_passes`).
+The rule: a commit that touches the baseline is clean only when its subject
+starts `baseline:` AND the same commit carries a file under the decision records
+folder. Same commit, not same pull request - a merge and a revert can split a baseline change
+from its justification across a PR
+.
 
 Both halves are checked, and a commit breaking both is ONE offence carrying two
-reasons (`test_a_commit_breaking_both_halves_is_one_offence_carrying_both_reasons`):
+reasons:
 the same sha printed twice reads as two bad commits.
 
 `BASELINE_PATH` is compared as an exact string and `ADR_PREFIX` carries its
 trailing slash, because the loose forms of both are how a guard stops being one -
 `baseline.json.bak` is not the baseline and `docs/adrs/` is not the ADR directory
-(`test_a_path_that_is_not_exactly_the_baseline_is_not_examined`,
-`test_only_a_file_under_the_adr_directory_counts_as_the_justification`).
+.
 """
 
 from __future__ import annotations
@@ -34,14 +32,14 @@ from pydantic import BaseModel, ConfigDict
 
 BASELINE_PATH: Final[str] = "backend/evals/baseline.json"
 """The one file this guard watches, matched as an EXACT path and never as a
-prefix or a substring (`test_the_four_constants_are_exactly_the_published_values`)."""
+prefix or a substring."""
 
 BASELINE_PREFIX: Final[str] = "baseline:"
 """What the subject of a commit touching that file must start with.
 
 The one commit subject in this repository that carries a colon: the house style
 has no `type: subject` prefixes, and this rule names the literal string. Published
-in `docs/eval-gate.md` since an earlier change."""
+in `docs/eval-gate.md`."""
 
 ADR_PREFIX: Final[str] = "dev/adr/"
 """The directory the justification must land in, trailing slash included: without
@@ -51,9 +49,7 @@ MAX_REF_LENGTH: Final[int] = 256
 """The longest `--base` or `--head` the CLI accepts, inclusive.
 
 A ref reaches a subprocess argument list, so it is pre-checked against a cap and a
-pattern before git is asked anything - 256 in, 257 out
-(`test_a_ref_of_exactly_the_cap_gets_past_the_pre_check`,
-`test_a_ref_pre_check_refusal_is_one_line_and_exit_two`)."""
+pattern before git is asked anything - 256 in, 257 out."""
 
 REF_PATTERN: Final[re.Pattern[str]] = re.compile(r"(?!.*\.\.)[A-Za-z0-9_][A-Za-z0-9._/-]*")
 r"""What a `--base` or `--head` may be, applied with `re.fullmatch`.
@@ -62,12 +58,10 @@ Three refusals matter and each is structural rather than a later check: the firs
 character cannot be `-`, so no value can be read by git as an option
 (`-upload-pack=evil`); the lookahead refuses `..`, so no value can smuggle a
 second range in; and `fullmatch` refuses a trailing newline, CRLF or space, which
-`^...$` with `.match` would accept
-(`test_the_ref_pattern_matches_whole_values_only`)."""
+`^...$` with `.match` would accept."""
 
 MISSING_PREFIX_REASON: Final[str] = 'the subject does not start "baseline:"'
-"""Half of what a reviewer is told, pinned exactly because the CLI prints it
-(`test_the_three_published_strings_are_exactly_what_the_cli_prints`)."""
+"""Half of what a reviewer is told, pinned exactly because the CLI prints it."""
 
 MISSING_ADR_REASON: Final[str] = "the commit adds no file under dev/adr/"
 """The other half. Named separately so a commit that got the subject right and
@@ -78,15 +72,13 @@ GUARD_PASSED_LINE: Final[str] = "baseline guard passed: {checked} commits checke
 
 `{checked}` is how many commits the range HELD, not how many touched the baseline:
 a shallow checkout resolves an empty range and would otherwise report "passed"
-having read nothing, which is risk 2
-(`test_a_clean_range_exits_zero_with_one_line_on_stdout`)."""
+having read nothing."""
 
 
 class Commit(BaseModel):
     """One commit as the git read hands it over: `sha`, `subject`, `files`.
 
-    Frozen, so the check cannot rewrite what it is judging
-    (`test_the_models_are_frozen`).
+    Frozen, so the check cannot rewrite what it is judging.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -96,10 +88,8 @@ class Commit(BaseModel):
     files: tuple[str, ...]
     exact_moves: tuple[tuple[str, str], ...] = ()
     """(old, new) pairs git reported as byte-identical moves (`R100`). Both sides are
-    also in `files`, so moving the baseline away is still judged
-    (`test_moving_the_baseline_away_is_still_judged`). Empty by default, so a caller
-    that knows nothing of moves keeps working
-    (`test_commit_exact_moves_defaults_to_empty`)."""
+    also in `files`, so moving the baseline away is still judged. Empty by default, so a caller
+    that knows nothing of moves keeps working."""
 
 
 class Offence(BaseModel):
@@ -132,10 +122,9 @@ def check(commits: Sequence[Commit]) -> GuardVerdict:
     """Answer the verdict for one range of commits.
 
     Pure: no git, no clock, no module state, so two calls over the same commits are
-    equal (`test_check_is_pure_over_the_same_commits`). Every commit is examined -
+    equal. Every commit is examined -
     there is no early return on the first clean one, which is the shape a two-commit
-    PR would otherwise use to carry an undocumented change behind a documented one
-    (`test_only_the_second_of_two_baseline_commits_being_malformed_still_fails`).
+    PR would otherwise use to carry an undocumented change behind a documented one.
     """
     offences: list[Offence] = []
     for commit in commits:
@@ -154,12 +143,10 @@ def check(commits: Sequence[Commit]) -> GuardVerdict:
 def _only_moves_the_baseline_in(commit: Commit) -> bool:
     """True when the commit lands a byte-identical `baseline.json` on `BASELINE_PATH`.
 
-    The content did not change, so there is nothing for an ADR to justify
-    (`test_an_exact_move_onto_the_baseline_with_no_prefix_or_adr_passes`). The old
+    The content did not change, so there is nothing for an ADR to justify. The old
     name must be a `baseline.json` too, or any file moved onto the baseline would
-    replace it unjudged (`test_another_file_moved_exactly_onto_the_baseline_is_still_judged`);
-    the new name must be the baseline, or moving it away would pass
-    (`test_moving_the_baseline_away_is_still_judged`).
+    replace it unjudged;
+    the new name must be the baseline, or moving it away would pass.
     """
     return any(
         new == BASELINE_PATH and old.rsplit("/", 1)[-1] == "baseline.json"
@@ -172,6 +159,6 @@ def offence_line(offence: Offence) -> str:
 
     The sha is first because it is what the author has to act on, and the reasons
     are joined rather than rendered as a tuple: a repr in a CI log is how a guard
-    gets ignored (`test_an_offence_line_names_the_sha_the_file_and_every_reason`).
+    gets ignored.
     """
     return f"{offence.sha}: touches {BASELINE_PATH} but {' and '.join(offence.reasons)}"

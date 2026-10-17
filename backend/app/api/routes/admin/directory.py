@@ -1,36 +1,32 @@
 """`POST /admin/directory`: the operator endpoint that seeds a tenant's display names.
 
 The third route behind the admin key, and it is behind that key rather than a
-tenant's own for the reason an earlier change decision A gives: a directory is
+tenant's own for a reason: a directory is
 operator-configured state like the routing policy, and it decides what the
 gateway redacts out of that tenant's traffic. A tenant able to rewrite its own
 would be able to switch the control off; a tenant able to rewrite another's would
 be able to name that tenant's staff. So the key space is `admin_key_sha256`, the
 dependency is `admin.admin_key` imported rather than reimplemented, and the
 tenant is a field of the BODY - an operator seeds a tenant it is not
-authenticating as (`test_the_directory_route_rejects_a_tenant_api_key`,
-`test_a_push_names_the_tenant_from_the_body`).
+authenticating as.
 
-A push MERGES (decision C) and there is no delete in this plan.
+A push MERGES and there is no delete.
 
 Two client-supplied things reach a store here and both are pre-checked in the
 route, before `put` is called at all.
 
 * `tenant` shapes a Redis key, so it goes through the resolver's own
   `IDENTIFIER_PATTERN` and `MAX_IDENTIFIER_LENGTH` - `fullmatch`, never `match`,
-  or a trailing newline would put a caller-controlled line break in a key
-  (`test_a_push_for_a_malformed_tenant_is_422_before_any_store_write`).
+  or a trailing newline would put a caller-controlled line break in a key.
 * `names` goes through `checked_entries` against what the tenant already holds,
   which is the same function the store applies. Checking here as well is not
   duplication: `RecordingDirectoryStore` in the endpoint's tests is the shape of
   every wrapper, and "the refusal happened before anything was written" is only
-  observable if the route never called `put`
-  (`test_a_push_outside_a_cap_is_422_before_any_store_write`).
+  observable if the route never called `put`.
 
 Nothing here logs or echoes a name. The response is a count, the refusal names
-the field and the cap, and both are asserted for the absence of the value
-(`test_the_response_carries_no_name_back`,
-`test_a_pushed_name_never_reaches_a_log_line`). That is the criterion this route
+the field and the cap, and both are asserted for the absence of the value. That is the criterion
+this route
 exists under: a directory that leaks through an admin endpoint's error body is
 still a directory in someone's proxy log.
 
@@ -38,9 +34,8 @@ Like `/admin/routing`, this path is not counted by the request metrics
 (`COUNTED_PATH_PREFIX` is `/v1/`), is traced because `TracingMiddleware` spans
 every scope, and is cluster-internal: the `gateway` Ingress routes `/v1` and
 nothing wider, so no public router matches `/admin/directory`
-(`infra/tests/infra/test_k8s_apps.py::test_no_public_router_matches_an_admin_path_or_the_scrape`,
-which imports `ADMIN_DIRECTORY` from this module). The admin key above is
-unchanged and is still the control an in-cluster caller meets. Row 21a's
+(the infra tests import `ADMIN_DIRECTORY` from this module to check that). The admin key above is
+unchanged and is still the control an in-cluster caller meets. The
 NetworkPolicies are a separate layer again: they decide which pods may open a
 connection to the gateway, and Traefik is one of them, so what closed the path
 was the router rule and not the policy.
@@ -62,12 +57,11 @@ from app.redaction import (
 )
 
 ADMIN_DIRECTORY = "/admin/directory"
-"""The published route path. Pinned against the mounted route by
-`test_the_directory_path_is_the_published_one`."""
+"""The published route path."""
 
 TENANT_FIELD = "tenant"
 """The body field the directory is filed under, and the `param` every rejection of
-it names (`test_a_push_for_a_malformed_tenant_is_422_before_any_store_write`)."""
+it names."""
 
 
 class DirectoryPush(BaseModel):
@@ -76,8 +70,7 @@ class DirectoryPush(BaseModel):
     Frozen and `extra="forbid"` like every other model on this API boundary. A
     caller sending `replace: true` would otherwise get a 200 for a request whose
     meaning the gateway silently dropped, and a misspelled `names` would answer
-    200 having stored nothing
-    (`test_a_body_of_the_wrong_shape_is_422_before_any_store_write`).
+    200 having stored nothing.
 
     Neither field carries a pydantic length constraint. The caps belong to the
     directory and their message has to name the field and the cap without the
@@ -99,7 +92,7 @@ class DirectoryPushResult(BaseModel):
     which is what an operator paging a large directory needs in order to know it
     is not silently at the cap. It is deliberately not the names themselves: an
     echo is how a directory ends up in a proxy log or a CI transcript that nobody
-    classified as personal data (`test_the_response_carries_no_name_back`).
+    classified as personal data.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -114,7 +107,7 @@ def checked_tenant(value: str) -> str:
     The cap and the pattern are the resolver's own rather than numbers copied
     here, exactly as `/admin/routing`'s filter does it, so the name a directory
     accepts and the name the request path authenticates cannot disagree. The
-    inclusive boundary is `test_a_tenant_at_the_identifier_cap_is_accepted`.
+    boundary is inclusive.
     """
     return checked_identifier(value, TENANT_FIELD, param=TENANT_FIELD)
 
@@ -124,7 +117,7 @@ def held_names(store: DirectoryStore, tenant: str) -> tuple[str, ...]:
 
     `DirectoryStoreUnavailable` is a `LibraryDependencyUnavailable`, not a
     `GatewayError` (`ErrorCode.PROVIDER_ERROR` already belongs to `ProviderError`
-    and `test_error_code_set_is_exhaustive` allows one concrete class per code),
+    and the error code set allows one concrete class per code),
     so letting it escape would answer a 500 with no code. `as_gateway_error`
     renders it as the retryable 502 its base names. The directory store is an
     outbound dependency like a provider and like the map store, which is why it
@@ -147,8 +140,7 @@ def push_directory(body: DirectoryPush, store: DirectoryStoreDep) -> DirectoryPu
     The order is the safety property. The tenant is validated, the tenant's
     current directory is read, the whole push is validated against it, and only
     then is anything written - so a refusal leaves the directory exactly as it
-    was and the store was never asked to write
-    (`test_a_push_outside_a_cap_is_422_before_any_store_write`).
+    was and the store was never asked to write.
 
     `DirectoryNameInvalid` is a `LibraryInputInvalid`; `as_gateway_error` renders
     it as a 422 `VALIDATION` carrying its own message, which names the field and

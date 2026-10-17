@@ -54,7 +54,7 @@ class ReloadResult(BaseModel):
 
     `providers` is the sorted key set of `app.state.adapters` after the rebuild,
     which is what makes "the reload dropped a provider" observable from outside
-    the process (`test_a_reload_rebuilds_the_adapter_set_for_the_new_policy`). A
+    the process. A
     failed reload is a 422 and produces no body of this shape at all.
     """
 
@@ -71,10 +71,9 @@ class IncidentCreate(BaseModel):
     incident is born OPEN, a NULL `resolved_at` is what "open" means on the
     timeline, and a body offering one would let an operator file an outage that
     was never open. A caller sending the key anyway has it ignored by Pydantic's
-    default extra handling rather than stored
-    (`test_the_incident_post_returns_a_thirty_two_hex_id_and_never_sets_resolved_at`).
+    default extra handling rather than stored.
 
-    `id` is absent for the other half of decision A: the server generates it, so
+    `id` is absent for the other half of the rule: the server generates it, so
     no client string shapes a primary key.
     """
 
@@ -91,7 +90,7 @@ class IncidentCreated(BaseModel):
     """The 201 body: the id the caller needs in order to resolve this incident later.
 
     The whole row is not echoed. The caller sent every other field, and the id is
-    the one thing it does not already know (decision A).
+    the one thing it does not already know.
     """
 
     model_config = ConfigDict(frozen=True)

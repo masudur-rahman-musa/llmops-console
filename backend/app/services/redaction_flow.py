@@ -27,7 +27,7 @@ class RedactedBatch:
     Frozen because the two halves have to stay in step: the route writes `mapping`
     to the store and returns `texts` to the caller, so anything able to rewrite
     one of them afterwards would put the stored map and the answer out of step
-    with no error anywhere (`test_the_batch_is_frozen`).
+    with no error anywhere.
     """
 
     texts: tuple[str, ...]
@@ -38,15 +38,14 @@ class RedactedBatch:
     Derived from the same walk that mints them rather than by parsing `mapping`'s
     keys, so the count and the map can never disagree about what a placeholder is.
     One entry is one redacted VALUE, which is what makes the same address in three
-    turns count once (`test_a_repeated_value_across_turns_counts_once`)."""
+    turns count once."""
 
     @property
     def redacted(self) -> bool:
         """Whether at least one value was actually replaced.
 
-        This is what `X-Gateway-Redacted` reports (decision C): evidence about the
-        payload, not about the rule. A clean body on a redact class answers False
-        (`test_the_batch_reports_redaction_only_when_a_value_was_replaced`).
+        This is what `X-Gateway-Redacted` reports: evidence about the
+        payload, not about the rule. A clean body on a redact class answers False.
         """
         return bool(self.mapping)
 
@@ -55,8 +54,7 @@ REDACT_SPAN = "redact"
 """The stage span around a redaction pass. Emitted only where redaction actually
 runs, which on the model routes is inside the `redaction_applies` branch and not
 around the check: a `redact` span on an `internal` request would tell an auditor
-that something was redacted when nothing touched it
-(`test_redact_span_is_absent_on_a_non_redact_class`)."""
+that something was redacted when nothing touched it."""
 
 
 def tenant_directory(store: DirectoryStore, tenant: str) -> NameDirectory:
@@ -70,11 +68,9 @@ def tenant_directory(store: DirectoryStore, tenant: str) -> NameDirectory:
     and never an empty directory. That is decision H, and it is the same
     deny-by-default rule residency holds: a request redacted without the tenant's
     names and served anyway carries the values this control exists to remove out
-    to a provider, with `X-Gateway-Redacted: true` on the answer
-    (`test_an_unreachable_directory_store_is_502_with_no_outbound_call`). The
+    to a provider, with `X-Gateway-Redacted: true` on the answer. The
     message is this module's own words, exactly as `filed_map_id`'s is: the
-    client's name an internal host and port
-    (`test_a_directory_store_failure_does_not_put_the_clients_words_in_front_of_a_caller`).
+    client's name an internal host and port.
     """
     try:
         names = store.get(tenant)
@@ -86,23 +82,21 @@ def tenant_directory(store: DirectoryStore, tenant: str) -> NameDirectory:
 def redact_batch(texts: Sequence[str], directory: NameDirectory | None = None) -> RedactedBatch:
     """Redact every string under one shared map and one shared numbering.
 
-    Raises `RedactionInputTooLong` for any string over
-    `MAX_REDACTION_INPUT_CHARS`, per string and not over the joined request
-    (decision F); the caps come from `redact` itself rather than from a second
-    comparison here (`test_a_string_over_the_cap_raises_wherever_it_sits`,
-    `test_strings_at_the_cap_are_accepted_however_many_there_are`).
+        Raises `RedactionInputTooLong` for any string over
+        `MAX_REDACTION_INPUT_CHARS`, per string and not over the joined request
+    ; the caps come from `redact` itself rather than from a second
+        comparison here.
 
-    The engine does the detection and the overlap resolution; only the
-    placeholder walk is repeated here, over the whole call rather than over one
-    string, because `redact` numbers from 1 every time it is called. Keys are
-    `(kind, raw value)` exactly as the engine's are, so the same address in two
-    turns is one placeholder and two addresses are never one.
+        The engine does the detection and the overlap resolution; only the
+        placeholder walk is repeated here, over the whole call rather than over one
+        string, because `redact` numbers from 1 every time it is called. Keys are
+        `(kind, raw value)` exactly as the engine's are, so the same address in two
+        turns is one placeholder and two addresses are never one.
 
-    The taken-token set is the UNION over every input string, which is why
-    `taken_placeholders` is public. A `<KIND_N>` token a caller wrote in message
-    0 must not be handed out for a value in message 1: rehydrating message 0
-    would otherwise inject a value nobody wrote there
-    (`test_a_placeholder_written_in_one_string_is_never_handed_out_for_another`).
+        The taken-token set is the UNION over every input string, which is why
+        `taken_placeholders` is public. A `<KIND_N>` token a caller wrote in message
+        0 must not be handed out for a value in message 1: rehydrating message 0
+        would otherwise inject a value nobody wrote there.
     """
     originals = tuple(texts)
     detected = tuple(redact(original, directory).detections for original in originals)
@@ -145,15 +139,13 @@ def redact_or_reject(
 
     `RedactionInputTooLong` is a `LibraryInputInvalid`, not a `GatewayError`
     (`ErrorCode.VALIDATION` already belongs to `IdentifierInvalid` and
-    `test_error_code_set_is_exhaustive` allows one class per code), so a route
+    only one class is allowed per code), so a route
     that let it escape would answer a 500 with no code. The inline paths have no
     request model to refuse an over-cap string on - the cap belongs to redaction,
-    not to the chat or embeddings wire shape - so this is where it becomes a 422
-    (`test_a_chat_message_over_the_cap_is_422_with_no_outbound_call`).
+    not to the chat or embeddings wire shape - so this is where it becomes a 422.
 
     `as_gateway_error` reads the base and returns the 422 `IdentifierInvalid` it
-    names, so the status is not hand-picked here
-    (`test_the_converter_maps_an_input_invalid_to_validation`). The conversion
+    names, so the status is not hand-picked here. The conversion
     lives in one place for both routes: two `except` blocks would be two chances
     to answer differently for the same refusal.
     """
@@ -173,8 +165,7 @@ def redaction_applies(policy: Policy, tenant: str, data_class: DataClass) -> boo
     False for a tenant or a class the policy does not define, rather than a
     `KeyError` that would surface as a 500 with no typed code. Neither is
     reachable on a served request - `resolve()` has already refused both by the
-    time a route asks - so the honest answer is "no rule says to redact"
-    (`test_redaction_applies_is_false_for_a_tenant_the_policy_does_not_define`).
+    time a route asks - so the honest answer is "no rule says to redact".
     """
     tenant_config = policy.tenants.get(tenant)
     if tenant_config is None:
@@ -188,7 +179,7 @@ def filed_map_id(store: RedactionMapStore, tenant: str, mapping: Mapping[str, st
 
     `RedactionMapStoreUnavailable` is a `LibraryDependencyUnavailable`, not a
     `GatewayError` (`ErrorCode.PROVIDER_ERROR` already belongs to `ProviderError`
-    and `test_error_code_set_is_exhaustive` allows one concrete class per code),
+    and only one concrete class is allowed per code),
     so a route that let it escape would answer a 500 with no code at all and a
     caller could not tell a dependency outage from a bug in its own request. The
     map store is an outbound dependency like a provider, which is why it lands on
@@ -196,9 +187,7 @@ def filed_map_id(store: RedactionMapStore, tenant: str, mapping: Mapping[str, st
 
     `as_gateway_error` does the conversion, with the message this route's own
     words. The client's carry an internal host and port, and they stay in the
-    chained cause where the log line reads them, never in the converted error
-    (`test_a_store_that_cannot_be_reached_is_502_with_a_typed_code`,
-    `test_a_store_failure_does_not_put_the_clients_words_in_front_of_a_caller`).
+    chained cause where the log line reads them, never in the converted error.
 
     The converter sets `retryable=True`, classifying the failure rather than
     asking for anything: an unreachable Redis is the transient class. Nothing

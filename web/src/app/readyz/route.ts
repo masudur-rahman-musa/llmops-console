@@ -7,7 +7,7 @@ import { secretIsUsable } from "@/lib/session";
  * notice and a Traefik 503 would replace it. The body never names the
  * failing value and never carries one. The session-secret length rule lives in
  * `secretIsUsable` and the API-url check in `apiIsConfigured`, so there is one home
- * for each. Pinned by tests/probes.test.ts and tests/screens.test.tsx.
+ * for each.
  */
 export const dynamic = "force-dynamic";
 

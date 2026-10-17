@@ -13,7 +13,7 @@ class _Wire(BaseModel):
 
     Rejected rather than ignored, as on the chat and embeddings routes: a
     misspelled `texts` would otherwise be a 200 that redacted nothing the caller
-    sent (`test_an_unknown_field_in_the_body_is_422`).
+    sent.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -23,9 +23,7 @@ def _within_cap(value: str, field: str) -> str:
     """Refuse one string the engine would refuse, before anything is stored.
 
     The number is the engine's own constant. Inclusive: `MAX_REDACTION_INPUT_CHARS`
-    characters is accepted and one more is not
-    (`test_a_string_at_the_cap_is_accepted`,
-    `test_a_string_over_the_cap_is_422_before_any_store_write`).
+    characters is accepted and one more is not.
     """
     if len(value) > MAX_REDACTION_INPUT_CHARS:
         raise ValueError(f"{field}: longer than {MAX_REDACTION_INPUT_CHARS} characters")
@@ -49,9 +47,7 @@ class RedactMessage(_Wire):
         """Apply the per-string cap to every turn, not only the first.
 
         On the message rather than on the list, so a 64-turn body is refused for
-        the one turn that is too long rather than for its total
-        (`test_the_cap_applies_to_a_later_message_too`,
-        `test_two_messages_each_at_the_cap_are_accepted`).
+        the one turn that is too long rather than for its total.
         """
         _within_cap(self.content, "content")
         return self
@@ -62,9 +58,8 @@ class RedactRequest(_Wire):
 
     `data_class` is the closed enum, so an unknown one is a 422 rather than a
     coercion onto the default: the class is stored alongside the map and read
-    back by an earlier change, and silently filing `secret` as `confidential` labels it
-    with something the caller never asked for
-    (`test_an_unknown_body_data_class_is_422_before_any_store_write`).
+    back later, and silently filing `secret` as `confidential` labels it
+    with something the caller never asked for.
     """
 
     text: str | None = None
@@ -78,8 +73,7 @@ class RedactRequest(_Wire):
         Both is not a merge and not a silent preference for `text`: the answer
         has one `redaction_map_id`, and a caller that sent both cannot tell which
         half it describes. On the model, so the refusal happens before the route
-        body and therefore before any store write
-        (`test_a_body_that_is_not_exactly_one_shape_is_422_before_any_store_write`).
+        body and therefore before any store write.
         """
         if (self.text is None) == (self.messages is None):
             raise ValueError("exactly one of text or messages is required")

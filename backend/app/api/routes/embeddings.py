@@ -15,8 +15,7 @@ from app.services.chat_accounting import Clients
 from app.services.embedding_pipeline import EmbeddingsResult, embed_texts
 
 EMBEDDINGS = "/v1/embeddings"
-"""The published route path, spelled as an OpenAI SDK posts it. Pinned by
-`test_the_route_path_is_the_published_one`."""
+"""The published route path, spelled as an OpenAI SDK posts it."""
 
 
 router = APIRouter()

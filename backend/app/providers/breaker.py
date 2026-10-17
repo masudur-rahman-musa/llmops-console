@@ -1,16 +1,15 @@
 """One per-provider circuit breaker: when to stop dialling a provider that is failing.
 
-It lives beside the adapters rather than in `routing/` because what it observes is
-the outcome of a provider CALL. `routing/resolver.py` stays a pure function over a
-policy snapshot, which is what makes `test_eu_tenant_never_gets_non_eu_provider` a
+It lives beside the adapters rather than in `model_routing/` because what it observes is
+the outcome of a provider CALL. `model_routing/resolver.py` stays a pure function over a
+policy snapshot, which keeps the residency rule a
 proof rather than a sample; a breaker holding mutable state inside that function
 would end that. The routes join the two through the seam the resolver already
 takes: `is_healthy` becomes "an adapter exists AND this breaker allows it", so an
 open provider is invisible to a resolution in exactly the way a missing adapter
 already is, and residency is still decided before health.
 
-**The three numbers are SPEC section 6's**, and each is pinned exactly by
-`test_the_three_numbers_are_the_spec_ones_exactly`. Five failures inside a rolling
+**The three numbers are fixed by the spec.** Five failures inside a rolling
 sixty seconds open it; thirty seconds later it offers one trial request; the trial
 closes it or re-opens it.
 
@@ -18,27 +17,24 @@ closes it or re-opens it.
 failures still inside the window. If it were, a breaker that opened at t=0 would
 read closed again at t=61 with nothing having recovered, and full traffic would go
 back to a provider that has passed nothing. So opening records a time and clears
-the count, and only `record_success` closes it
-(`test_the_open_state_survives_the_failure_window_emptying`,
-`test_one_trial_failure_reopens_it_and_restarts_the_thirty_seconds`).
+the count, and only `record_success` closes it.
 
 **Why the clock is an argument.** The half-open boundary is thirty seconds, so a
 breaker built on `time.monotonic` could only be tested by sleeping through it. The
 default is still `time.monotonic`, which is what a wall clock's jumps make
 necessary: an NTP correction must not half-open every breaker in the process.
 
-**Why the state is per process.** a design note. Sharing it through Redis would give
+**Why the state is per process.** Sharing it through Redis would give
 the breaker a dependency of its own, and a Redis outage would then either fail
 open (no breaker at all) or fail closed (no traffic at all), both of which are
 worse than each replica learning within five requests of its own that a provider
-is down. The gateway runs one replica today; the ADR says what changes when it
+is down. The gateway runs one replica today; this changes when it
 does not.
 
 **Half-open hands the trial to the first caller only.** `allows()` claims the
 trial inside the lock so only the first HALF_OPEN caller gets True; every later
 caller is refused until the trial resolves or `HALF_OPEN_AFTER_SECONDS` passes
-with no resolution. The lock guards the RECORD only, never a provider call
-(`test_half_open_hands_the_trial_to_only_the_first_caller`).
+with no resolution. The lock guards the RECORD only, never a provider call.
 """
 
 from __future__ import annotations
@@ -66,7 +62,7 @@ class CircuitState(IntEnum):
 
     The values are the gauge's, not an implementation detail: an operator's alert
     is written against `== 2`, so an auto-numbered enum would make it fire on a
-    healthy provider (`test_the_state_values_are_the_ones_the_gauge_publishes`).
+    healthy provider.
     """
 
     CLOSED = 0
@@ -104,7 +100,7 @@ class CircuitBreaker:
 
         A provider nothing is known about is CLOSED: a breaker that denied what it
         had no record of would be an allow list, and a fresh process would serve
-        nothing until something failed (`test_an_unknown_provider_is_allowed`).
+        nothing until something failed.
         """
         with self._lock:
             record = self._records.get(provider)
@@ -120,9 +116,6 @@ class CircuitBreaker:
         resolves or `HALF_OPEN_AFTER_SECONDS` passes with no resolution, at
         which point the trial is re-offered. The claim happens inside the lock
         so two concurrent callers cannot both win it.
-
-        Pins: `test_half_open_hands_the_trial_to_only_the_first_caller`,
-              `test_an_unresolved_trial_is_re_offered_after_thirty_seconds`.
         """
         now = self._clock()
         with self._lock:
@@ -149,8 +142,7 @@ class CircuitBreaker:
 
         One success closes an open breaker and clears the count behind it, so a
         recovered provider is not left at one request per thirty seconds and the
-        next failure inside the old window cannot re-open it immediately
-        (`test_one_trial_success_closes_it_and_clears_the_count`).
+        next failure inside the old window cannot re-open it immediately.
 
         A success while the breaker is CLOSED deliberately does not touch the
         window, and that is the difference between "five failures in sixty
@@ -158,7 +150,7 @@ class CircuitBreaker:
         error rate serves one request in five, so a breaker that cleared its count
         on every success would never open on the most ordinary kind of outage, and
         every request would keep paying that provider's retries and read timeout
-        before falling back (`test_a_success_does_not_clear_a_closed_breakers_window`).
+        before falling back.
         """
         with self._lock:
             record = self._records.get(provider)
@@ -170,16 +162,14 @@ class CircuitBreaker:
 
         A failure while the breaker is HALF_OPEN is the trial's: it re-opens from
         NOW rather than keeping the original opening time, which is what makes the
-        backoff a backoff
-        (`test_one_trial_failure_reopens_it_and_restarts_the_thirty_seconds`).
+        backoff a backoff.
 
         A failure while the breaker is still OPEN is neither, and is deliberately
         ignored. Such a failure exists - several worker threads can pass the health
         seam together, and the ones behind the fifth land after it opened - and
         letting each of them re-open would push the half-open moment further out
         every time, so a burst of concurrent failures would make recovery take
-        longer than the thirty seconds the boundary promises
-        (`test_a_failure_while_open_does_not_push_the_recovery_out`).
+        longer than the thirty seconds the boundary promises.
         """
         now = self._clock()
         with self._lock:

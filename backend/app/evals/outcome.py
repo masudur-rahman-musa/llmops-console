@@ -1,16 +1,12 @@
 """What one case actually produced: the seam between the runner and the verdict.
 
-A dumb record with no logic. `evals.target` fills it from a real target run and
-`16c` writes its measured fields into a report and `16d` into an `eval_cases` row;
-`assertions` reads it and nothing else, which is what lets the whole deterministic verdict be
-pinned before anything here can reach a network.
+A dumb record with no logic. `evals.target` fills it from a real target run;
+`assertions` reads it and nothing else, which is what lets the whole deterministic
+verdict be pinned before anything here can reach a network.
 
 Defaults read as "nothing observed" rather than as an observation: `refused` and
 `clarified` are False and every sequence is empty, so an outcome the runner never
-filled cannot look like a refusal. Pinned by
-`test_the_outcome_record_carries_what_the_runner_measures`, which also pins the
-four measured fields (`latency_ms`, `cost_usd`, `provider`, `region`) this plan
-asserts nothing about and `16c`'s `CaseReport` carries straight through.
+filled cannot look like a refusal.
 """
 
 from __future__ import annotations
@@ -40,10 +36,11 @@ class CaseOutcome(BaseModel):
 
     Frozen, because `assert_case` is pure and may not sort a citation list or
     casefold a reply in place - the corruption would depend on the order the
-    assertions ran in (`test_asserting_a_case_does_not_mutate_the_case_or_the_outcome`).
+    assertions ran in.
 
-    `other_tenant_markers` is supplied here rather than read from the golden line: the Helpdesk owns the line format, and the runner is
-    what knows which other tenants the seed carries.
+    `other_tenant_markers` is supplied here rather than read from the golden line:
+    the Helpdesk owns the line format, and the runner is what knows which other
+    tenants the seed carries.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

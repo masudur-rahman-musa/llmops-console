@@ -4,32 +4,29 @@ Three things live here, and nothing else does. The process-wide `TracerProvider`
 every span in this codebase comes from; `SpanAttributes`, the CLOSED set of
 labels a span may carry; and `build_exporter`, the switch that decides whether
 those spans leave the process at all. The middleware that opens a request's root
-span is in `gateway/app.py`, because a root span is a gateway concern and `core/`
-does not import from `gateway/`.
+span is in the app module, because a root span is a gateway concern and `core/`
+does not import from the app layer.
 
 **Why the attribute set is a type.** "Telemetry never carries user identity" is a
 rule someone has to keep, and a rule kept by review is kept until the review that
 misses it. `SpanAttributes` forbids unknown fields, so a `user`, an `email` or a
 `prompt` is a `ValidationError` at the call site rather than a value on a trace
 backend that sits outside this system's residency and redaction guarantees. The
-field set is pinned whole by `test_the_attribute_key_set_is_exactly_the_allowlist`
-and the leak it prevents by `test_no_message_content_reaches_a_span`.
+field set is pinned whole by tests.
 
 **Why there is no exporter by default.** An unconfigured gateway builds spans and
 drops them. The alternative most SDKs reach for - a console
 exporter - would print every request's tenant, session and region to stdout in
 production, which is a disclosure nobody asked for and a log bill nobody costed.
-`build_exporter` answers `None` unless an endpoint is configured, pinned by
-`test_no_exporter_is_installed_without_an_endpoint`.
+`build_exporter` answers `None` unless an endpoint is configured.
 
 **Why the request's context is carried in the ASGI scope.** The routes are `def`,
 so Starlette runs them in a worker thread, and a stage span that relied on the
 ambient OpenTelemetry context surviving that hop would silently become the root
 of a second trace on the day it does not. The root span's `Context` is put in the
 scope under `TRACE_SCOPE_KEY` and passed to every stage span explicitly, so the
-parent is an argument rather than an assumption. Told by
-`test_the_stage_spans_share_the_roots_trace_id`, which asserts one trace id
-across all five spans of one request.
+parent is an argument rather than an assumption. A test asserts one trace id across all five spans
+of one request.
 """
 
 from __future__ import annotations
@@ -69,20 +66,19 @@ with whatever else a deployment mounts and would make a name collision someone
 else's bug."""
 
 ROOT_SPAN_NAME = "http.request"
-"""What the root span is called. Deliberately not pinned by a test: an earlier change
-fixes the four STAGE names and says nothing about this one, so the tests identify
+"""What the root span is called. Deliberately not pinned by a test: only the four STAGE names are
+fixed,
+so the tests identify
 the root structurally (the one span with no local parent) and stay true if it is
 renamed."""
 
 SAMPLED_PARENT_FLAGS = TraceFlags(TraceFlags.SAMPLED)
 """A continued trace is treated as sampled. The gateway samples everything in
-this plan, so honouring an upstream "not sampled" would drop the very requests a
+this system, so honouring an upstream "not sampled" would drop the very requests a
 caller is trying to follow across two services."""
 
 ERROR_STATUS_FLOOR = 400
-"""The response status at and above which a root span is marked failed. Pinned by
-`test_a_residency_refusal_records_the_code_on_the_span` (451) and
-`test_an_unauthorized_request_still_emits_a_trace` (401)."""
+"""The response status at and above which a root span is marked failed."""
 
 _provider: TracerProvider | None = None
 
@@ -95,7 +91,7 @@ def tracer_provider() -> TracerProvider:
     would either warn and be ignored or quietly serve spans from the first app's
     provider. Everything here goes through this function instead, which is also
     what lets the suite attach one in-memory exporter to it once
-    (`tests/gateway/conftest.py`, the `span_exporter` fixture).
+    (the `span_exporter` fixture in the tests).
 
     The service name comes from the environment rather than from the `Settings`
     an app was built with, because a resource is a property of the PROCESS and the
@@ -122,24 +118,22 @@ class SpanAttributes(BaseModel):
     unresolved request does not claim a provider and an unpriced one does not
     claim a cost. `extra="forbid"` is the point of the class: it is what makes "no
     user identity on a trace" a property of the type rather than a promise in a
-    review, and `test_the_attribute_key_set_is_exactly_the_allowlist` pins both
+    review, and tests pin both
     halves - the exact field set, and that an unknown key raises.
 
     `session` is here and there is no user field to omit: a session is a
     conversation, not a person, and it is what an operator needs to follow one
     caller's traffic through the gateway.
 
-    `cache` and `cost_usd` are named by the design and nothing sets them yet.
+    `cache` and `cost_usd` are named in the design and nothing sets them yet.
     They are declared here so the plans that need them add a value rather than a
     field. The `cache` STAGE SPAN is a different thing and does now exist, on
-    every chat request (an earlier change,
-    `test_the_cache_span_is_emitted_on_a_miss_and_on_a_hit`): the outcome it
+    every chat request: the outcome it
     would put in this field is on the response header and on
     `gateway_requests_total`'s `cache` label instead. Only the `ledger` span is
-    still absent, pinned by `test_no_ledger_span_is_emitted`.
+    still absent.
     `fallback_count` was the third and is now set, by the routes' fallback loop
-    and only on a request that actually fell back
-    (`test_a_fallback_is_recorded_on_the_trace_as_a_count`).
+    and only on a request that actually fell back.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -164,12 +158,11 @@ class SpanAttributes(BaseModel):
 class RequestTrace:
     """One request's root span, the context to parent stage spans on, and its failure code.
 
-    `error_code` is written by the error handlers in `gateway/errors.py`, the only
+    `error_code` is written by the error handlers, the only
     place that knows which `ErrorCode` a failure carried; the middleware reads it
     when it closes the root span. The code travels as a string rather than as the
     exception itself, because an exception on a span brings its message with it
-    and a provider's message is exactly what must not reach a trace backend
-    (`test_a_provider_failure_records_the_code_on_the_span`).
+    and a provider's message is exactly what must not reach a trace backend.
     """
 
     span: Span
@@ -188,8 +181,7 @@ def parent_context(trace_id: str, span_id: str) -> Context:
 
     `is_remote=True` is what tells a backend the parent lives in another service,
     which is the whole of "one trace shared with the Helpdesk": without it the
-    root would claim a local parent no exporter ever sent
-    (`test_a_valid_traceparent_is_continued`).
+    root would claim a local parent no exporter ever sent.
     """
     return set_span_in_context(
         NonRecordingSpan(
@@ -248,8 +240,7 @@ def stage_span(scope: Scope, name: str) -> Iterator[Span | None]:
 
     Yields `None` when no root span was started, which is what keeps every call
     site a plain `with` rather than a conditional: a router mounted on an app
-    without the middleware still serves, it is just not traced
-    (`test_an_untraced_scope_still_runs_every_stage`).
+    without the middleware still serves, it is just not traced.
 
     The parent comes from the scope rather than from the ambient context on
     purpose - see this module's docstring on the worker-thread hop.
@@ -260,9 +251,7 @@ def stage_span(scope: Scope, name: str) -> Iterator[Span | None]:
     and sets a status description built from it - so a residency refusal would
     write the alias and the regions a tenant may not reach onto the trace, and a
     provider failure would write the provider's own message there, both of which
-    the wire contract already refuses to disclose
-    (`test_a_residency_refusal_records_the_code_on_the_span`,
-    `test_a_provider_failure_records_the_code_on_the_span`). What a failure is
+    the wire contract already refuses to disclose. What a failure is
     allowed to say is the typed code, and the root span says it once.
     """
     record = request_trace(scope)
@@ -295,8 +284,7 @@ def otlp_headers(raw: str | None) -> dict[str, str] | None:
 def build_exporter(settings: Settings) -> SpanExporter | None:
     """The OTLP/HTTP exporter, or `None` when no endpoint is configured.
 
-    Decision D: no endpoint means no exporter at all, not a fallback one. Pinned
-    by `test_no_exporter_is_installed_without_an_endpoint`.
+    No endpoint means no exporter at all, not a fallback one.
     """
     if settings.otlp_endpoint is None:
         return None
@@ -311,7 +299,7 @@ def install_exporter(settings: Settings) -> None:
     `BatchSpanProcessor` rather than the simple one: it hands spans to a
     background thread, so a trace backend that is slow or unreachable costs a
     request nothing. That is the difference between an observability tool and an
-    outage (`test_an_exporter_that_raises_changes_no_response`).
+    outage.
     """
     exporter = build_exporter(settings)
     if exporter is not None:

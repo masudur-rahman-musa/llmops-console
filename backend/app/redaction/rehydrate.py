@@ -14,15 +14,13 @@ The substitution is ONE `re.sub` over an alternation of the mapping's keys, not
 a loop of `str.replace` per key. The difference is visible whenever a restored
 value contains something placeholder-shaped: the loop rescans the text it has
 already rewritten and substitutes inside its own output, while a single pass
-cannot look at a span it has just emitted
-(`tests/redaction/test_rehydrate.py::test_a_restored_value_containing_a_placeholder_is_not_substituted_again`).
+cannot look at a span it has just emitted.
 
 The alternation is built from the mapping's OWN keys, `re.escape`d, so a
 placeholder the map does not name is not matched at all and survives exactly as
 the model wrote it - an implementation scanning for the generic `<KIND_N>` shape
 and looking each hit up would have to decide what to do with a miss, and every
-answer to that is worse than leaving it alone
-(`test_a_placeholder_absent_from_the_map_is_left_alone`).
+answer to that is worse than leaving it alone.
 """
 
 from __future__ import annotations
@@ -40,15 +38,14 @@ def rehydrate(text: str, mapping: Mapping[str, str]) -> str:
 
     An empty mapping is the identity and compiles nothing: an alternation built
     from no branches is the empty pattern, which matches at every position and
-    would rewrite a string that has no placeholder in it at all
-    (`test_an_empty_map_is_the_identity`).
+    would rewrite a string that has no placeholder in it at all.
 
     Branches are sorted longest-first. Python's alternation is first-match, not
     longest-match, so with `<EMAIL_1>` before `<EMAIL_11>` the shorter branch
     would win on the longer token and leave a stray `1>` behind. Every key ends
     in `>`, so the escaped branches cannot in fact overlap and the order is
     belt-and-braces rather than load-bearing - stated here because the test that
-    covers the pair (`test_a_longer_placeholder_is_not_eaten_by_a_shorter_one`)
+    covers the pair
     stays green with the sort removed, and a reader is owed the reason.
     """
     if not mapping:
@@ -63,27 +60,22 @@ class StreamRehydrator:
     A streamed answer is a sequence of text deltas, and a placeholder can be cut
     anywhere: `<EMAIL_` in one frame and `1>` in the next. Substituting per frame
     would miss every such split, so `feed` holds back the tail that could still
-    turn into a placeholder and answers the rest
-    (`tests/redaction/test_rehydrate.py::test_a_placeholder_split_across_two_deltas_is_rehydrated`).
+    turn into a placeholder and answers the rest.
 
     What is held is the longest suffix of the buffer that is a PROPER PREFIX of
-    one of the mapping's own keys (decision B). The hold is then bounded by the
+    one of the mapping's own keys. The hold is then bounded by the
     longest key rather than by the answer - a stray `<` the map can never
     complete (`a < b`, a snippet of HTML) is emitted at once instead of being
-    kept until the stream ends
-    (`test_the_buffer_holds_less_than_the_longest_key`,
-    `test_text_that_cannot_complete_a_placeholder_is_not_held`).
+    kept until the stream ends.
 
     The buffer is RAW: it holds what the provider sent, never what this object
     has already emitted, and emitted text is never looked at again. That is what
     carries `rehydrate`'s one-pass guarantee onto the stream - a restored value
     ending in something placeholder-shaped cannot be completed by a later
-    fragment and substituted a second time
-    (`test_a_restored_value_is_not_rescanned_by_a_later_delta`).
+    fragment and substituted a second time.
 
     An empty mapping is the identity, exactly as `rehydrate` is: `feed` answers
-    its argument whole and holds nothing
-    (`test_an_empty_map_makes_every_feed_the_identity`).
+    its argument whole and holds nothing.
 
     Not thread-safe and not reusable across two streams at once: one instance
     serves one answer, built where that answer's frames are rendered.
@@ -101,7 +93,7 @@ class StreamRehydrator:
 
         Answers `""` when the whole fragment could still be part of a placeholder,
         which is what makes a split invisible to a client rather than delivered
-        twice (decision D: the route emits no frame for an empty answer).
+        twice (the route emits no frame for an empty answer).
         """
         self._buffer += text
         keep = len(self._buffer) - self._held_length()
@@ -114,9 +106,8 @@ class StreamRehydrator:
 
         Called before every non-text event and at the end of the stream, so a
         partial placeholder the provider never completed is still delivered
-        rather than dropped (decisions E and F). Emptying is what stops the same
-        span being emitted a second time by the next flush
-        (`test_flush_answers_the_remainder_and_empties_the_buffer`).
+        rather than dropped. Emptying is what stops the same
+        span being emitted a second time by the next flush.
         """
         remainder, self._buffer = self._buffer, ""
         return rehydrate(remainder, self._mapping)

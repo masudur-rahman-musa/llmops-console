@@ -1,4 +1,4 @@
-r"""`ops-eval tradeoff`: N published runs as one comparison table (#32, part).
+r"""`ops-eval tradeoff`: N published runs as one comparison table.
 
 Pure, in `gate.py`'s shape: one manifest and N `report.json` documents in, two
 rendered files out, and no clock, no network and no environment variable in
@@ -10,32 +10,25 @@ What the module refuses to do is the point of it:
 
 * every cost is a `Decimal` from first read to published string, and both are
   serialised as JSON STRINGS, so a per-turn price the ledger computed exactly
-  cannot reach the table as `0.30000000000000004`
-  (`test_every_published_cost_is_a_json_string_and_never_a_number`);
+  cannot reach the table as `0.30000000000000004`;
 * a self-hosted option is priced from the throughput the box actually delivered
   over the run - `len(report.cases)` over the wall-clock hours between the two
-  timestamps (decision C) - and never from a case count the manifest or the
-  metrics block supplies
-  (`test_the_turn_count_is_the_reports_case_rows_and_never_a_number_in_its_metrics`);
+  timestamps - and never from a case count the manifest or the metrics block
+  supplies;
 * a metric nobody measured is `null` in the JSON and `NA` in the markdown, never
   `0`, and its option is left out of the winner computation rather than crowned
-  by it (decision F,
-  `test_an_option_with_no_accuracy_stays_in_the_table_and_never_wins`);
-* the conclusion is COMPUTED under the one rule `_winner` states (decision D), so
-  a table whose cheapest option is an API says so in `SELF_HOSTING_LOST_CLAUSE`
-  and cannot quietly flatter the GPU
-  (`test_an_api_winner_carries_the_pinned_self_hosting_lost_clause`).
+  by it;
+* the conclusion is COMPUTED under the one rule `_winner` states, so a table
+  whose cheapest option is an API says so in `SELF_HOSTING_LOST_CLAUSE` and
+  cannot quietly flatter the GPU.
 
 The winner rule, in full. A CANDIDATE is a row carrying both a
 `decision_accuracy` and a `usd_per_1000_turns`; `best` is the highest accuracy
 among the candidates; a candidate QUALIFIES when its accuracy is at least
 `best - ACCURACY_TOLERANCE`, inclusively; the winner is the qualifying candidate
 with the lowest cost, ties going to the earlier manifest entry so two identical
-runs give one stable answer
-(`test_the_accuracy_band_is_inclusive_at_exactly_the_tolerance`,
-`test_a_tie_inside_the_band_is_won_by_the_earlier_manifest_entry`). With no
-candidate at all the table still publishes every row and names no winner
-(`test_with_no_option_carrying_both_numbers_the_pinned_no_winner_line_is_rendered`).
+runs give one stable answer. With no
+candidate at all the table still publishes every row and names no winner.
 
 `ACCURACY_TOLERANCE` is applied to the metric as `scores.py` emits it, which is
 POINTS (0-100). The two published documents carry the tolerance beside the table
@@ -44,8 +37,7 @@ front of them.
 
 The five metric names a row reads are asserted against `metrics.METRIC_NAMES` at
 import, so a rename there is an `ImportError`-loud failure here rather than a
-column that silently empties
-(`test_the_five_row_metrics_and_the_cost_metric_are_members_of_metric_names`).
+column that silently empties.
 """
 
 from __future__ import annotations
@@ -68,28 +60,25 @@ TRADEOFF_MD_NAME: Final[str] = "tradeoff.md"
 tradeoff`, the README and the console all read a fixed path."""
 
 TRADEOFF_JSON_NAME: Final[str] = "tradeoff.json"
-"""The same table as data, for the console, which cannot read markdown (decision E)."""
+"""The same table as data, for the console, which cannot read markdown."""
 
 OPTION_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"[a-z][a-z0-9-]{0,31}")
 """The store-shaping input of this module: this id keys the JSON document's
 option object and names a markdown row. Matched with `re.fullmatch` and never
-`.match`, because `$` in Python also matches before a trailing newline
-(a project rule, `test_an_option_id_outside_the_pattern_is_refused`)."""
+`.match`, because `$` in Python also matches before a trailing newline."""
 
 MIN_OPTIONS: Final[int] = 2
-"""A table of one compares nothing, so a manifest of one is refused
-(`test_a_manifest_of_fewer_than_two_options_is_refused`)."""
+"""A table of one compares nothing, so a manifest of one is refused."""
 
 COST_SCALE: Final[int] = 4
 """Decimal places on every published cost and throughput, `ROUND_HALF_UP`. Four
 rather than the ledger's six because the figure is per 1,000 turns: six places
-there is a hundredth of a cent nobody can act on
-(`test_the_bounds_and_the_scales_are_the_published_numbers`)."""
+there is a hundredth of a cent nobody can act on."""
 
 ACCURACY_TOLERANCE: Final[Decimal] = Decimal("0.02")
 """The band inside which two `decision_accuracy` values count as equal, in the
 points `scores.py` emits. Widening it lets a materially less accurate option win
-on price (`test_the_accuracy_band_is_inclusive_at_exactly_the_tolerance`)."""
+on price."""
 
 TURNS_PER_1000: Final[Decimal] = Decimal(1000)
 """The unit both cost formulas publish in, as a `Decimal` so no multiplication in
@@ -122,13 +111,13 @@ for _name in (*ROW_METRIC_NAMES, COST_METRIC_NAME):
 
 NA: Final[str] = "n/a"
 """What a null metric renders as in the markdown. A blank cell reads as a
-rendering bug and a `0` reads as a measurement nobody made (decision F)."""
+rendering bug and a `0` reads as a measurement nobody made."""
 
 METHODOLOGY_HEADING: Final[str] = "## Methodology"
 """Where a reader finds the report and the commit behind every published row."""
 
 CONCLUSION_HEADING: Final[str] = "## Conclusion"
-"""Where the one computed sentence lives; 27c writes its paragraph around it."""
+"""Where the one computed sentence lives."""
 
 TABLE_HEADINGS: Final[tuple[str, ...]] = (
     "Option",
@@ -141,8 +130,7 @@ TABLE_HEADINGS: Final[tuple[str, ...]] = (
     "USD per 1,000 turns",
 )
 """The markdown table's header cells. The first cell of every option row is the
-option's id, which is what `test_each_row_carries_the_five_metrics_under_their_own_names`
-and its neighbours locate a row by."""
+option's id, which is what the tests locate a row by."""
 
 NO_WINNER_LINE: Final[str] = (
     "No option carries both a decision accuracy and a cost, so this table names no winner."
@@ -154,8 +142,7 @@ SELF_HOSTING_LOST_CLAUSE: Final[str] = (
     "Self-hosting did not win here: the cheapest option inside the band is an API."
 )
 """Appended when the winner's kind is `api`, and rendered nowhere else: the whole
-point of publishing this table is that it is free to say self-hosting lost
-(`test_a_self_hosted_winner_carries_no_self_hosting_lost_clause`)."""
+point of publishing this table is that it is free to say self-hosting lost."""
 
 LEDGER_NOTE: Final[str] = (
     "API cost per turn comes from the ledger's recorded spend for the run, not from a list price."
@@ -177,8 +164,7 @@ class TradeoffInputInvalid(Exception):
     report can be wrong arrives at the CLI as ONE class, so the refusal block
     prints one line and answers `EXIT_USAGE` rather than letting an `OSError`, a
     `JSONDecodeError` or a pydantic `ValidationError` reach an operator as a
-    traceback
-    (`test_every_refusal_exits_two_with_one_line_on_stderr_and_an_empty_out_directory`).
+    traceback.
     """
 
     def __init__(self, reason: str, *, path: Path) -> None:
@@ -190,11 +176,8 @@ class TradeoffInputInvalid(Exception):
 def _one_line(exc: ValidationError) -> str:
     """One pydantic `ValidationError` as ONE line: the first problem, and how many more.
 
-    `gate._one_line`'s body, kept here rather than imported from a module this
-    plan does not touch. `str(exc)` runs to a line per field plus a documentation
-    URL for each, and this message travels to a terminal as a single stderr line
-    (`test_every_refusal_exits_two_with_one_line_on_stderr_and_an_empty_out_directory`
-    asserts the line count).
+    `str(exc)` runs to a line per field plus a documentation URL for each, and
+    this message travels to a terminal as a single stderr line.
     """
     problems = exc.errors()
     if not problems:
@@ -211,27 +194,23 @@ class TradeoffOption(BaseModel):
     """One option in the comparison, and the run that measured it.
 
     `extra="forbid"` so an operator who writes `hourly_cost` for `hourly_usd`
-    gets a refusal rather than a table priced from nothing
-    (`test_an_unknown_key_on_an_option_is_refused`).
+    gets a refusal rather than a table priced from nothing.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str
     """The store-shaping input, checked against `OPTION_ID_PATTERN` here and so
-    BEFORE any report file is read
-    (`test_an_option_id_is_refused_before_any_report_file_is_read`)."""
+    BEFORE any report file is read."""
     label: str
     kind: Literal["api", "self_hosted"]
     report: Path
     """That option's `report.json`. A relative path resolves against the
-    manifest's own directory, never the process's working directory
-    (`test_a_relative_report_path_resolves_against_the_manifests_own_directory`)."""
+    manifest's own directory, never the process's working directory."""
     hourly_usd: Decimal | None = None
     """What the box costs per hour, required on `self_hosted` and forbidden on
     `api`. Read only from a JSON STRING: `1.006` as a binary float is
-    1.00599999999999978, which drifts in the fourth place this module publishes
-    (`test_an_hourly_price_given_as_a_json_number_is_refused`)."""
+    1.00599999999999978, which drifts in the fourth place this module publishes."""
     notes: str | None = None
 
     @field_validator("id")
@@ -266,8 +245,7 @@ class TradeoffManifest(BaseModel):
 
     set_name: str
     """Every option's report must carry this set, or the table compares two
-    different exams
-    (`test_a_report_for_another_golden_set_is_refused_and_the_message_names_both_names`)."""
+    different exams."""
     options: Annotated[tuple[TradeoffOption, ...], Field(min_length=MIN_OPTIONS)]
 
     @model_validator(mode="after")
@@ -313,10 +291,9 @@ class TradeoffTable(BaseModel):
 def load_manifest(path: Path) -> TradeoffManifest:
     """Read the manifest, or raise `TradeoffInputInvalid` naming the path.
 
-    `gate.load_baseline`'s three guards: a mistyped path, a half-written file and
-    a document from another schema all become one typed refusal, which is what
-    lets the CLI's pre-check block stay one `except`
-    (`test_a_manifest_path_that_does_not_exist_is_refused_and_the_message_names_it`).
+    A mistyped path, a half-written file and a document from another schema all
+    become one typed refusal, which is what lets the CLI's pre-check block stay
+    one `except`.
     """
     try:
         text = path.read_text(encoding="utf-8")
@@ -341,8 +318,7 @@ def _load_report(path: Path) -> RunReport:
 
     Never by picking the five read metrics out of whatever the file holds: a
     hand-written document carrying `decision_accuracy` and nothing else would
-    otherwise be published as a measured run
-    (`test_a_report_that_is_not_a_run_report_is_refused_naming_its_path`).
+    otherwise be published as a measured run.
     """
     try:
         text = path.read_text(encoding="utf-8")
@@ -374,8 +350,7 @@ def _elapsed_hours(started_at: datetime, finished_at: datetime) -> Decimal:
 def _quantised(value: Decimal) -> Decimal:
     """One published number at `COST_SCALE` places, half rounding UP.
 
-    Banker's rounding would render 0.00012345 per turn as 0.1234 per 1,000
-    (`test_an_api_cost_per_1000_turns_is_the_ledgers_per_turn_cost_times_1000`).
+    Banker's rounding would render 0.00012345 per turn as 0.1234 per 1,000.
     """
     return value.quantize(Decimal(1).scaleb(-COST_SCALE), rounding=ROUND_HALF_UP)
 
@@ -393,9 +368,7 @@ def _row(option: TradeoffOption, report: RunReport, path: Path) -> TradeoffRow:
 
     Both refusals here are divisions this module will not make: equal or reversed
     timestamps give a zero or negative elapsed time, and a self-hosted run of no
-    cases gives a throughput of zero
-    (`test_a_report_whose_run_did_not_move_forward_in_time_is_refused`,
-    `test_a_self_hosted_option_whose_report_holds_no_cases_is_refused`).
+    cases gives a throughput of zero.
     """
     if report.finished_at <= report.started_at:
         raise TradeoffInputInvalid(
@@ -412,9 +385,7 @@ def _row(option: TradeoffOption, report: RunReport, path: Path) -> TradeoffRow:
     turns_per_hour = Decimal(turns) / _elapsed_hours(report.started_at, report.finished_at)
     # Branching on the PRICE and not on the kind, because `_price_pairs_with_the_kind`
     # makes the two the same question - a priced option is a self-hosted one and an
-    # unpriced one is an API - and this way no branch here is unreachable
-    # (`test_a_self_hosted_option_without_an_hourly_price_is_refused`,
-    # `test_an_api_option_carrying_an_hourly_price_is_refused`).
+    # unpriced one is an API - and this way no branch here is unreachable.
     price = option.hourly_usd
     cost: Decimal | None
     if price is not None:
@@ -457,8 +428,7 @@ def _winner(rows: Sequence[TradeoffRow]) -> TradeoffRow | None:
 
     The rule the module docstring states, in one place. `min` over the qualifying
     rows in manifest order is what breaks a tie by the earlier entry, because
-    `min` keeps the first of equal keys
-    (`test_a_tie_inside_the_band_is_won_by_the_earlier_manifest_entry`).
+    `min` keeps the first of equal keys.
     """
     candidates = [
         row for row in rows if _accuracy(row) is not None and row.usd_per_1000_turns is not None
@@ -480,7 +450,7 @@ def _winner(rows: Sequence[TradeoffRow]) -> TradeoffRow | None:
 
 
 def _conclusion(winner: TradeoffRow | None) -> str:
-    """The one computed sentence (decision D), and the clause an API winner earns."""
+    """The one computed sentence, and the clause an API winner earns."""
     if winner is None:
         return NO_WINNER_LINE
     line = WINNER_LINE.format(
@@ -499,7 +469,7 @@ def build_table(manifest: TradeoffManifest, *, base_dir: Path) -> TradeoffTable:
 
     Every report is loaded and checked before any row is built, and nothing is
     written from here at all, so a refusal on the last option cannot leave a
-    half-rendered table behind (the shape `_gate` already has in `cli/evals.py`).
+    half-rendered table behind.
     """
     rows: list[TradeoffRow] = []
     for option in manifest.options:
@@ -527,11 +497,10 @@ def _published(value: Decimal | None) -> str | None:
 
 
 def tradeoff_json(table: TradeoffTable) -> str:
-    """The table as the console reads it (decision E).
+    """The table as the console reads it.
 
     `order` is beside `options` because a mapping keyed by id has no order of its
-    own, and the order an operator wrote is the order the table reads in
-    (`test_both_files_present_the_options_in_manifest_order_under_a_shuffled_cost_manifest`).
+    own, and the order an operator wrote is the order the table reads in.
     """
     document = {
         "set_name": table.set_name,
@@ -577,8 +546,7 @@ def _methodology_lines(table: TradeoffTable) -> list[str]:
     """One bullet per option, carrying what a reader needs to reproduce its row.
 
     The report id and the commit are what separate a table rebuilt from a stale
-    report from a fresh one
-    (`test_the_methodology_block_names_each_options_report_id_and_git_sha`).
+    report from a fresh one.
     """
     lines = [
         METHODOLOGY_HEADING,
@@ -616,8 +584,7 @@ def write_tradeoff(out: Path, table: TradeoffTable) -> None:
     """Write both files into `out`, overwriting whatever a previous run left.
 
     `write_text` and never an append: two tables under one heading would publish
-    the previous run's winner beneath the new one
-    (`test_a_second_run_over_the_same_out_overwrites_both_files`).
+    the previous run's winner beneath the new one.
     """
     (out / TRADEOFF_JSON_NAME).write_text(tradeoff_json(table), encoding="utf-8")
     (out / TRADEOFF_MD_NAME).write_text(tradeoff_markdown(table), encoding="utf-8")

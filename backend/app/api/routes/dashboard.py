@@ -11,18 +11,15 @@ Seven routes, all behind `app.api.deps.admin_key`:
     GET /console/releases      deploys, each with its eval result
 
 The console reads through here and never touches Postgres or Prometheus itself.
-A working tenant key is 401 on all seven, as on `/admin/*`
-(`test_every_console_route_is_401_with_a_tenant_key`). The sums and source
+A working tenant key is 401 on all seven, as on `/admin/*`. The sums and source
 helpers are `app.services.dashboard`; the page shapes are `app.schemas.dashboard`.
 
 **Inputs.** `days` is an integer from `MIN_DAYS` to `MAX_DAYS`, refused as 422
 `VALIDATION` naming `days` by the request validation handler before the route body
-runs (`test_the_days_boundary_is_inclusive`,
-`test_a_non_integer_days_is_422_naming_days`). `tenant` is pre-checked by
+runs. `tenant` is pre-checked by
 `app.api.deps.checked_tenant` before any query, because it is interpolated into a
-PromQL label matcher (`test_the_tenant_rejection_table`). The reliability page's
-SLO error budgets read a fixed 30-day window and ignore `days`
-(`test_slos_ignore_days`).
+PromQL label matcher. The reliability page's
+SLO error budgets read a fixed 30-day window and ignore `days`.
 """
 
 from __future__ import annotations
@@ -77,9 +74,7 @@ CONSOLE_PATHS: Final[tuple[str, ...]] = (
     CONSOLE_INCIDENTS,
     CONSOLE_RELEASES,
 )
-"""All seven, pinned as literals against the app's OpenAPI document by
-`test_the_seven_console_paths_are_pinned` and kept off every public router by
-`infra/tests/infra/test_k8s_apps.py::test_no_public_router_matches_a_console_path`."""
+"""All seven, spelled as literals and kept off every public router."""
 
 DAYS_PARAM: Final[str] = "days"
 MIN_DAYS: Final[int] = 1
@@ -90,7 +85,7 @@ SECONDS_PER_DAY: Final[int] = 86_400
 
 CIRCUIT_STATE_NAMES: Final[dict[int, str]] = {0: "closed", 1: "half_open", 2: "open"}
 """`gateway_circuit_state`'s values as the page shows them. Any other value is
-skipped rather than guessed at (`test_the_reliability_body_reads_the_named_series`)."""
+skipped rather than guessed at."""
 
 Days = Annotated[int, Query(ge=MIN_DAYS, le=MAX_DAYS)]
 
@@ -100,7 +95,7 @@ router = APIRouter()
 
 @router.get(CONSOLE_HOME)
 def home(request: Request) -> HomePage:
-    """Today from the live ledger (decision F), p95 and error rate from Prometheus."""
+    """Today from the live ledger, p95 and error rate from Prometheus."""
     now = datetime.now(UTC)
     pg, read = postgres(request, "home", lambda reader: reader.home(now=now))
     prom, rates = prometheus(
@@ -151,11 +146,9 @@ def cost(
 
 @router.get(CONSOLE_QUALITY)
 def quality(request: Request, days: Days = DEFAULT_DAYS) -> QualityPage:
-    """Eval runs over the window, and what regressed behind each blocked release (decision G)."""
+    """Eval runs over the window, and what regressed behind each blocked release."""
     now = datetime.now(UTC)
-    pg, read = postgres(
-        request, "quality", lambda reader: reader.quality(days=days, now=now)
-    )
+    pg, read = postgres(request, "quality", lambda reader: reader.quality(days=days, now=now))
     if read is None:
         return QualityPage(
             sources=Sources(postgres=pg, prometheus=SourceState.UNCONFIGURED),

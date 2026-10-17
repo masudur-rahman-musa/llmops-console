@@ -1,7 +1,7 @@
-"""Calibrating the judge against human labels: the file, the kappa, the trust flag (#36).
+"""Calibrating the judge against human labels: the file, the kappa, the trust flag.
 
 A judge nobody checked is an opinion with a version hash. This module scores a
-file of human-graded replies through the SAME judge a run uses - 17c's fixed
+file of human-graded replies through the SAME judge a run uses - the fixed
 prompt, `JUDGE_TEMPERATURE`, `JUDGE_SAMPLES` samples and the median - and reports
 how well the two agree, as one number a later gate can refuse to trust.
 
@@ -12,25 +12,19 @@ Four properties are worth more than the arithmetic.
   kappa cannot tell them apart. The weight of a disagreement is
   `(i - j)**2 / (JUDGE_MAX_SCORE - JUDGE_MIN_SCORE)**2`, so one step of the 1..5
   scale costs a sixteenth of what the full span costs
-  (`test_one_step_of_disagreement_is_zero_point_nine_two_nine` is the vector that
-  separates quadratic weights from linear ones; linear weights answer 0.857 there
-  and agree with both other vectors exactly).
-* **`Sigma w*E == 0` is `None` and never `1.0`** (decision C). Both raters
+  (a one-step test vector separates quadratic weights from linear ones; linear
+  weights answer 0.857 there and agree with the other vectors exactly).
+* **`Sigma w*E == 0` is `None` and never `1.0`**. Both raters
   constant means the agreement is real and completely uninformative, and a gate
-  reading `1.0` there would trust a judge nothing measured
-  (`test_a_table_with_no_expected_disagreement_has_no_kappa`,
-  `test_a_constant_table_reports_no_kappa_and_is_not_trusted`).
-* **`MIN_CALIBRATION_LABELS` is applied twice** (decision B): to the file's
+  reading `1.0` there would trust a judge nothing measured.
+* **`MIN_CALIBRATION_LABELS` is applied twice**: to the file's
   record count in `load_labels`, before a single request is paid for, and to the
   pairs that SURVIVE the drops in `calibrate`. A kappa over a dozen pairs read as
-  calibration is worse than no calibration
-  (`test_a_file_of_thirty_nine_labels_is_refused_before_any_request`,
-  `test_seven_unscorable_labels_of_forty_six_refuses_and_writes_nothing`).
-* **A label the judge could not score is DROPPED and counted** (decision D),
+  calibration is worse than no calibration.
+* **A label the judge could not score is DROPPED and counted**,
   never scored as a zero and never as the human's own number - the first is a
   category off the scale the weights would take seriously, the second is an
-  agreement nobody observed
-  (`test_six_unscorable_labels_of_forty_six_are_dropped_and_counted`).
+  agreement nobody observed.
 
 Nothing here opens a socket of its own: the `JudgeClient` is handed in, so the
 whole module is drivable against `httpx.MockTransport` with no gateway up,
@@ -60,13 +54,12 @@ from app.evals.judge import (
 )
 
 MIN_CALIBRATION_LABELS: Final[int] = 40
-"""How many labels a calibration needs, at both ends (decision B).
+"""How many labels a calibration needs, at both ends.
 
 The file must carry this many records before anything is sent, and this many
 pairs must survive the judge's drops before an artifact is written. Forty is the
-number #36 states; what matters here is that it is a floor rather than a hint,
-because 17f reads a written `calibration.json` as trust and publishes it
-(`test_the_calibration_constants_are_the_published_ones`)."""
+number; what matters here is that it is a floor rather than a hint,
+because the run reads a written `calibration.json` as trust and publishes it."""
 
 MAX_LABEL_ID_LENGTH: Final[int] = 128
 """The longest `id` a label line may name, inclusive.
@@ -74,50 +67,44 @@ MAX_LABEL_ID_LENGTH: Final[int] = 128
 a project rule: the id is written into `calibration.json`'s rows, which has no
 cap of its own. Wider than the resolver's `MAX_IDENTIFIER_LENGTH` on purpose - a
 label id names a graded reply and is not a tenant or an alias - so the cap is its
-own integer while the VOCABULARY is still the gateway's `IDENTIFIER_PATTERN`
-(`test_the_id_length_boundary_is_inclusive`)."""
+own integer while the VOCABULARY is still the gateway's `IDENTIFIER_PATTERN`."""
 
 MAX_LABEL_TEXT_LENGTH: Final[int] = 20000
 """The longest `output` and the longest `judge_rubric`, in characters, inclusive.
 
 The two strings that are SENT. Uncapped, a pasted transcript becomes a judge
 request the gateway refuses per sample, three times, after the earlier labels
-have been paid for
-(`test_the_output_length_boundary_is_inclusive`,
-`test_the_judge_rubric_length_boundary_is_inclusive`)."""
+have been paid for."""
 
 KAPPA_SCALE: Final[int] = 3
-"""Decimal places the kappa is published at (decision F).
+"""Decimal places the kappa is published at.
 
 Three and not the metric set's `ACCURACY_SCALE`, because the threshold is `0.7`
 on a scale running `-1` to `1`: two places cannot separate `0.699` from `0.700`,
-which is exactly the pair `JUDGE_TRUST_MIN` has to decide between
-(`test_a_kappa_below_the_trust_floor_is_not_trusted`)."""
+which is exactly the pair `JUDGE_TRUST_MIN` has to decide between."""
 
 JUDGE_TRUST_MIN: Final[float] = 0.7
 """The lowest kappa that is still trusted, INCLUSIVE.
 
 Read with `>=` and never `>`: a judge that met the published bar exactly is
-trusted, and `0.699` is not (`test_a_kappa_of_exactly_the_trust_floor_is_trusted`,
-`test_a_kappa_below_the_trust_floor_is_not_trusted`). A `None` kappa is never
+trusted, and `0.699` is not. A `None` kappa is never
 trusted, whatever the comparison would do with it."""
 
 MAX_LABELS_NAME_LENGTH: Final[int] = 128
 """The longest `labels_name` a READ artifact may carry, inclusive.
 
-a project rule on the one string in this document an operator chose: it is the
-name of the file they calibrated from, and 17f copies it into `report.json` and
+The one string in this document an operator chose: it is the
+name of the file they calibrated from, and the run copies it into `report.json` and
 into the `eval_runs.metrics` `jsonb` - neither of which has a length of its own.
 `MAX_LABEL_ID_LENGTH`'s integer and not its constant, because the two cap
-different things and sharing one would tie a file name to an id vocabulary
-(`test_a_labels_name_of_exactly_the_cap_is_accepted_and_one_over_is_refused`)."""
+different things and sharing one would tie a file name to an id vocabulary."""
 
 KAPPA_MIN: Final[float] = -1.0
 """The lowest kappa a read artifact may carry, INCLUSIVE.
 
 `-1.0` is a real weighted kappa - a judge that inverts the human every time - and
 the most informative calibration there is, so the floor is the scale's own end
-and never `JUDGE_TRUST_MIN` (`test_a_kappa_at_either_bound_is_accepted`)."""
+and never `JUDGE_TRUST_MIN`."""
 
 KAPPA_MAX: Final[float] = 1.0
 """The highest kappa a read artifact may carry, INCLUSIVE.
@@ -125,15 +112,12 @@ KAPPA_MAX: Final[float] = 1.0
 Both bounds are checked on the way IN rather than trusted from the file: the
 number lands in `eval_runs.judge_kappa`, a `double precision` column with no
 bounds of its own, so a hand-edited `9.9` would otherwise publish a judge as
-superhumanly agreeing and the eval gate's comment would carry it as evidence
-(`test_a_kappa_one_thousandth_past_either_bound_is_refused`)."""
+superhumanly agreeing and the eval gate's comment would carry it as evidence."""
 
 CALIBRATION_JSON_NAME: Final[str] = "calibration.json"
 """The one file a calibration writes, named by a constant and never derived from
 a label id or a clock - `read_calibration` and `ops-eval run --calibration` read
-it back by this name
-(`test_the_artifact_carries_exactly_the_published_keys`,
-`test_read_calibration_round_trips_what_write_calibration_wrote`)."""
+it back by this name."""
 
 CALIBRATION_INDENT: Final[int] = 2
 """How `calibration.json` is indented, `report.py`'s `REPORT_INDENT` again: the
@@ -144,11 +128,11 @@ UNDEFINED_KAPPA_REASON: Final[str] = (
     "no expected disagreement: one of the two raters gave the same score to every label, "
     "so chance agreement is total and the kappa is undefined"
 )
-"""Why a published kappa is `null` (decision C).
+"""Why a published kappa is `null`.
 
 The artifact's only clue for a reader who finds an empty column, and the
-distinction a design note draws one level down: "nothing measured this" is not
-"everything failed it" (`test_a_constant_table_reports_no_kappa_and_is_not_trusted`)."""
+distinction drawn one level down: "nothing measured this" is not
+"everything failed it"."""
 
 
 class CalibrationSetInvalid(LibraryInputInvalid):
@@ -157,15 +141,14 @@ class CalibrationSetInvalid(LibraryInputInvalid):
     `EvalSetInvalid`'s shape and its reasons: a `LibraryInputInvalid`, not a
     `GatewayError`, because an unloadable file is an operator error reported to
     whoever ran the harness and never an answer to a caller, and
-    `tests/api/test_error_contract.py` walks `GatewayError.__subclasses__()`
+    the error contract test walks `GatewayError.__subclasses__()`
     asserting one class per wire code - the `LibraryError` hierarchy never enters
-    it (`test_every_library_failure_shares_the_base`). Raised only at load, never
+    it. Raised only at load, never
     converted to HTTP, so the base's 422 mapping stays unused.
 
     `line` is the 1-based FILE line, comments and blank lines included, or `None`
     when the file itself is at fault - which is what the
-    `MIN_CALIBRATION_LABELS` refusal is
-    (`test_a_comment_and_a_blank_line_are_skipped_and_the_file_line_is_still_reported`).
+    `MIN_CALIBRATION_LABELS` refusal is.
     """
 
     def __init__(self, reason: str, *, path: Path, line: int | None = None) -> None:
@@ -181,12 +164,11 @@ class CalibrationRefused(LibraryError):
 
     Separate from `CalibrationSetInvalid` because the file was fine: what failed
     is the judge, and the operator's next move is to look at the gateway rather
-    than at the file (decision B,
-    `test_seven_unscorable_labels_of_forty_six_refuses_and_writes_nothing`).
+    than at the file.
 
     A `LibraryError` directly, under neither middle base: it is neither a bad
     input nor a store outage, so it carries no HTTP mapping and the converter
-    never sees it (`test_every_library_failure_shares_the_base`).
+    never sees it.
     """
 
 
@@ -194,7 +176,8 @@ def _checked_label_id(value: str) -> str:
     """Validate a label id: the gateway's vocabulary at this module's own cap.
 
     The pattern is imported rather than restated so a label id and a case id
-    cannot drift into two vocabularies, and `re.fullmatch` and never `.match`: `$` also matches before a trailing newline in Python, and
+    cannot drift into two vocabularies, and `re.fullmatch` and never `.match`: `$` also matches
+    before a trailing newline in Python, and
     this value is written into `calibration.json`.
     """
     if len(value) > MAX_LABEL_ID_LENGTH:
@@ -209,11 +192,10 @@ class CalibrationLabel(BaseModel):
 
     `extra="forbid"`, so a misspelt or invented field is a refusal rather than a
     silently dropped column - a line carrying `{"human_score": 4, "score": 2}`
-    would otherwise calibrate against a number nobody meant
-    (`test_a_fifth_field_is_refused`).
+    would otherwise calibrate against a number nobody meant.
 
-    `judge_rubric` is inline on the label and not looked up in a golden set
-    (decision A): `calibrate` then needs one file, with no pinned set SHA and no
+    `judge_rubric` is inline on the label and not looked up in a golden set: `calibrate` then needs
+    one file, with no pinned set SHA and no
     dependency on a set the labels may outlive. `note` is the one optional field,
     for the human who wants to say why they scored what they did; it is never
     sent to the judge.
@@ -239,9 +221,7 @@ class CalibrationLabel(BaseModel):
 
         Both fields on one validator so the pair cannot drift into two caps - one
         written for `output` only would leave the rubric unbounded, which is the
-        likeliest shape of this defect
-        (`test_the_output_length_boundary_is_inclusive`,
-        `test_the_judge_rubric_length_boundary_is_inclusive`).
+        likeliest shape of this defect.
         """
         if len(value) > MAX_LABEL_TEXT_LENGTH:
             raise ValueError(f"{info.field_name}: longer than {MAX_LABEL_TEXT_LENGTH} characters")
@@ -254,8 +234,7 @@ class CalibrationLabel(BaseModel):
 
         A 0 or a 6 is a typo, and the weights would take it as a real category -
         a `(6, 1)` cell weighs 25/16, larger than the formula's own maximum, so
-        one mistyped digit moves the whole agreement
-        (`test_a_human_score_outside_the_scale_is_refused`).
+        one mistyped digit moves the whole agreement.
         """
         if not JUDGE_MIN_SCORE <= value <= JUDGE_MAX_SCORE:
             raise ValueError(f"human_score: outside {JUDGE_MIN_SCORE}..{JUDGE_MAX_SCORE}")
@@ -267,8 +246,7 @@ class CalibrationRow(BaseModel):
 
     The audit trail a bad kappa is debugged from - without it the artifact is a
     single number with nothing behind it. One row per SCORED label, in file
-    order, so a reader can find the record beside the id
-    (`test_the_artifact_carries_exactly_the_published_keys`).
+    order, so a reader can find the record beside the id.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -281,16 +259,15 @@ class CalibrationRow(BaseModel):
 class CalibrationReport(BaseModel):
     """One calibration: what was scored, how well it agreed, and whether to trust it.
 
-    `judge_prompt_version` is 17c's sha256 of the prompt file's bytes, and it is
+    `judge_prompt_version` is the sha256 of the prompt file's bytes, and it is
     the field that keeps this document honest across time: a calibration computed
     under one prompt and read against a run made under another is a stale number
     worn as trust. Nothing checks that HERE - `read_calibration` validates the
-    document and `cli/evals.py` refuses the mismatch, before the run starts (17f
-    decision D, `test_a_calibration_computed_against_another_prompt_is_refused_before_the_run`).
+    document and `cli/evals.py` refuses the mismatch, before the run starts.
 
     `kappa` is `None` when chance agreement was total, and `reason` says so;
     `trusted` is `False` whenever `kappa` is `None`, whatever the comparison
-    would have done with it (decision C).
+    would have done with it.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -315,15 +292,13 @@ def load_labels(path: Path) -> tuple[CalibrationLabel, ...]:
     reported line number is still the FILE's - which is what makes it findable in
     an editor - and every per-line failure becomes a `CalibrationSetInvalid`
     naming that line with the original as its `__cause__`, so a caller catches one
-    type to report one file problem. Loaded whole or not at all
-    (`test_nothing_is_returned_when_a_later_line_is_bad`): forty of forty-one
+    type to report one file problem. Loaded whole or not at all: forty of forty-one
     labels is a calibration that silently excluded the record an author most
     wants to look at.
 
-    The `MIN_CALIBRATION_LABELS` floor is HERE and not in `calibrate` (decision
-    B): downstream it would cost 39 labels times `JUDGE_SAMPLES` of real spend
-    before the refusal (`test_a_file_of_thirty_nine_labels_is_refused_before_any_request`
-    asserts that no request was made).
+    The `MIN_CALIBRATION_LABELS` floor is HERE and not in `calibrate`: downstream it would cost 39
+    labels times `JUDGE_SAMPLES` of real spend
+    before the refusal.
     """
     try:
         text = path.read_text(encoding="utf-8")
@@ -373,9 +348,9 @@ def _disagreement(left: int, right: int) -> int:
     that denominator being 16 on the 1..5 scale. It is carried here as the
     numerator alone because the denominator appears in BOTH sums of
     `1 - (Sigma w*O) / (Sigma w*E)` and cancels out of the ratio exactly - which
-    is also why no vector in `tests/evals/test_calibration.py` can pin its value:
+    is also why no test vector can pin its value:
     every choice of denominator gives the same kappa. What the vectors do pin is
-    that the weight is quadratic (`test_one_step_of_disagreement_is_zero_point_nine_two_nine`).
+    that the weight is quadratic.
     """
     return (left - right) ** 2
 
@@ -387,8 +362,8 @@ def weighted_kappa(human: Sequence[int], judge: Sequence[int]) -> float | None:
     then divided: both sums carry the same weight denominator and the same
     number of pairs, so the whole expression reduces to
     `1 - N * Sigma_pairs (h - j)**2 / Sigma_ij n_h(i) n_j(j) (i - j)**2` with no
-    floating point anywhere. That matters at exactly one place - the tie in
-    `test_the_kappa_rounds_half_up_and_not_to_the_nearest_even`, where a kappa of
+    floating point anywhere. That matters at exactly one place - the tie
+    where rounding half up and half to even differ, where a kappa of
     0.8125 computed through two inexact divisions lands a digit either side of
     the tie and rounds by luck.
 
@@ -399,8 +374,7 @@ def weighted_kappa(human: Sequence[int], judge: Sequence[int]) -> float | None:
     number; the arithmetic that produced it never was one.
 
     `None` when `Sigma w*E` is zero: one of the two raters gave every label the
-    same score, so chance agreement is total and the ratio is undefined
-    (`test_a_table_with_no_expected_disagreement_has_no_kappa`).
+    same score, so chance agreement is total and the ratio is undefined.
     """
     pairs = len(human)
     observed = sum(_disagreement(left, right) for left, right in zip(human, judge, strict=True))
@@ -427,18 +401,17 @@ def calibrate(
     """Score every label through the judge and report the agreement.
 
     One `score_reply(rubric, reply)` per label, in file order, on the caller's own
-    client (decision E): calibration has no `EvalCase` and no `CaseOutcome`, and
+    client: calibration has no `EvalCase` and no `CaseOutcome`, and
     building synthetic ones would make two records' required fields part of this
-    module's contract for no reason
-    (`test_calibrate_reaches_the_judge_through_score_reply_with_the_labels_own_strings`).
+    module's contract for no reason.
 
-    A label the judge could not score - 17c's unusable sample, retried once and
+    A label the judge could not score - an unusable sample, retried once and
     then `None` - is dropped and counted, never scored as a zero and never as the
-    human's own number (decision D). What survives is checked against
+    human's own number. What survives is checked against
     `MIN_CALIBRATION_LABELS` again, and a run that falls below it raises
     `CalibrationRefused` and writes nothing: a floor checked only against the
     file's record count would publish a kappa over 39 pairs the moment a judge
-    got flaky (`test_seven_unscorable_labels_of_forty_six_refuses_and_writes_nothing`).
+    got flaky.
     """
     rows: list[CalibrationRow] = []
     dropped = 0
@@ -476,20 +449,16 @@ def read_calibration(path: Path) -> CalibrationReport:
     """Read one `calibration.json` back, or raise `CalibrationSetInvalid` naming the path.
 
     The other half of `write_calibration`, and the only reader this artifact has:
-    17f's `ops-eval run --calibration` hands a run what a calibration measured, so
+    `ops-eval run --calibration` hands a run what a calibration measured, so
     every way the file can be wrong has to become ONE typed refusal the CLI's
     existing pre-check block prints as a single line - a missing file, a
     half-written one, a document from a schema nobody can identify, and a number
-    outside the scale
-    (`test_an_artifact_that_does_not_exist_is_refused_naming_the_path`,
-    `test_an_artifact_that_is_not_json_is_refused_naming_the_path`,
-    `test_an_artifact_with_a_field_the_model_forbids_is_refused`).
+    outside the scale.
 
     Validated through `CalibrationReport` itself with its `extra="forbid"`, and
     never by picking the two fields a run needs out of the document: a reader that
     took `kappa` and `trusted` alone would accept a hand-edited file and publish
-    trust computed by something nobody can retrace
-    (`test_read_calibration_round_trips_what_write_calibration_wrote`).
+    trust computed by something nobody can retrace.
 
     The two bounds are applied AFTER that validation, because both are facts about
     values the model's own types admit: `kappa` is a `float` and `labels_name` a
@@ -526,11 +495,10 @@ def write_calibration(out: Path, report: CalibrationReport) -> None:
     """Write exactly `CALIBRATION_JSON_NAME` into `out`, overwriting what is there.
 
     One file, named by a constant and never derived from a label id or a clock,
-    so 17f reads a known path and a rerun into the same directory leaves one
+    so the run reads a known path and a rerun into the same directory leaves one
     document that parses. Nothing is caught here: a write that fails is the
     caller's to report as a usage error naming the path, rather than a traceback
-    over a calibration already paid for
-    (`test_the_artifact_carries_exactly_the_published_keys`).
+    over a calibration already paid for.
     """
     (out / CALIBRATION_JSON_NAME).write_text(
         report.model_dump_json(indent=CALIBRATION_INDENT) + "\n", encoding="utf-8"

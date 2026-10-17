@@ -86,14 +86,12 @@ COST_HEADER = "X-Gateway-Cost-USD"
 Its value is the ledger row's own `cost_usd`, rendered at exactly six decimal
 places - the quantum `app.limits.cost` prices at and the scale
 `cost_ledger.cost_usd` stores - so the header, the row and
-`gateway_cost_usd_total` are one number computed once (an earlier change decision G,
-`test_the_cost_header_is_the_booked_cost`). A float would lose the sixth place on
+`gateway_cost_usd_total` are one number computed once. A float would lose the sixth place on
 the way out and make a client's total disagree with the invoice.
 
 Added by the ROUTE rather than by `gateway_headers`, and that is what keeps it
 off a stream: the six headers are on the wire before the first frame, and the
-usage a stream is priced from does not exist yet at that point
-(`test_the_cost_header_is_absent_on_a_stream`). A cache hit does carry it, reading
+usage a stream is priced from does not exist yet at that point. A cache hit does carry it, reading
 `0.000000`, because zero is what a hit cost.
 """
 
@@ -101,15 +99,13 @@ usage a stream is priced from does not exist yet at that point
 ROUTE_SPAN = "route"
 """The stage span around `resolve()`. Shared with the embeddings route, which
 imports it from here for the same reason it imports `gateway_headers`: one name
-in one place, so two routes cannot disagree about what a stage is called. Pinned
-by `test_the_emitted_span_names_are_exactly_the_stages_that_exist`."""
+in one place, so two routes cannot disagree about what a stage is called."""
 
 
 CACHE_SPAN = "cache"
 """The stage span around the exact-match lookup, on this route only.
 
-Emitted on every chat request, hit or miss, by
-`test_the_cache_span_is_emitted_on_a_miss_and_on_a_hit`:
+Emitted on every chat request, hit or miss:
 a span present only on hits would make every trace that carries one a hit by
 construction, and an operator could not see how long a lookup that found nothing
 took. It wraps the LOOKUP and not the write, because the write happens after the
@@ -126,8 +122,7 @@ slow embedder reads as a slow cache, which is the wrong thing to page on.
 
 Emitted on an eligible HIT and an eligible MISS alike, and on no ineligible
 request - so its mere presence in a trace says the tier ran, not that it found
-something (`test_the_semantic_span_is_emitted_on_an_eligible_miss_and_on_an_eligible_hit`,
-`test_no_semantic_span_is_emitted_on_an_ineligible_request`). It wraps the
+something. It wraps the
 lookup and not the write, exactly as `CACHE_SPAN` does, because the write
 happens after the answer is on its way."""
 
@@ -136,7 +131,7 @@ PROVIDER_SPAN_PREFIX = "provider:"
 """What a provider span's name starts with. The suffix is the RESOLVED provider,
 never the alias the caller sent: an alias names a policy entry and a provider
 names what actually served the request, which is the one question this span
-exists to answer (`test_the_provider_span_names_the_resolved_provider`)."""
+exists to answer."""
 
 
 def provider_span_name(provider: str) -> str:
@@ -167,24 +162,19 @@ def record_served(
     more request before the next five failures re-open it.
 
     `failed` is how many candidates were tried and failed before this one, so it is
-    the fallback count the design names and zero on an ordinary request. Both the
-    counter and the attribute move once per REQUEST rather than once per attempt
-    (`test_a_fallback_is_counted_once_against_the_serving_provider`,
-    `test_a_fallback_is_recorded_on_the_trace_as_a_count`), and neither is touched
-    at all when nothing fell back
-    (`test_a_request_that_needed_no_fallback_counts_none`).
+    the fallback count and zero on an ordinary request. Both the
+    counter and the attribute move once per REQUEST rather than once per attempt,
+    and neither is touched at all when nothing fell back.
 
     The residency row is written here, and here is the ONLY place it is written,
     which is what makes "one row per served request" true of all three paths -
     both chat paths and `/v1/embeddings` reach the log through this function and
     through nothing else. It names `chosen`, so a request that fell back records
-    the candidate that SERVED
-    (`test_a_chat_request_that_fell_back_logs_the_serving_provider`). On a stream
+    the candidate that SERVED. On a stream
     that is still before the first frame is on the wire, so a stream that dies
     mid-answer has already recorded where its data went. The write is guarded
     inside `record_residency`: it cannot change a status
-    code, a body or a header on any of the three paths
-    (`test_a_failing_writer_changes_no_status_body_or_header`).
+    code, a body or a header on any of the three paths.
     """
     breaker.record_success(chosen.provider)
     from app.core.metrics import record_circuit_state
@@ -209,9 +199,7 @@ def _token_sink(
     needs have to be captured here, where they are known, rather than looked up
     there. It is a closure over the resolver's answer for the same reason the
     non-streamed call above passes `chosen.model`: the model label is the resolved
-    id, never the alias and never what the provider called it
-    (`test_tokens_are_recorded_from_the_streams_usage_chunk`,
-    `test_the_token_model_label_is_the_resolved_model_not_the_alias`).
+    id, never the alias and never what the provider called it.
 
     The cost row is booked from the same event and through the same `book_cost`
     the three non-streamed paths use, so a streamed request is one measured row
@@ -239,12 +227,11 @@ def _estimated_cost_sink(
 ) -> Callable[[int], None]:
     """The callback a stream books an ESTIMATED row through when it reported no usage.
 
-    Decision E: `UsageTotal` is sent by every stream that finishes, so its absence
+    `UsageTotal` is sent by every stream that finishes, so its absence
     is a typed failure after the first frame or a client that went away - and the
     provider has already charged for what it sent either way. Booking nothing
     would make "every served request writes a row" false exactly when an operator
-    is looking at an incident
-    (`test_a_stream_that_fails_after_its_first_frame_books_one_estimated_row`).
+    is looking at an incident.
 
     The row carries `estimated=true`, from `record_cost`'s own absent-usage path:
     the tokens are `app.limits.cost`'s four-characters-a-token
@@ -281,8 +268,7 @@ def prompt_characters(body: ChatCompletionRequest) -> int:
     the row flags as one. It is counted on the OUTBOUND body, so what it measures
     is what actually left the box - a redacted prompt is priced as the
     placeholders the provider was sent. The estimator itself is pinned on the
-    COMPLETION side, where the characters sent are known exactly
-    (`test_a_stream_that_reports_no_usage_books_one_estimated_row`); this half is
+    COMPLETION side, where the characters sent are known exactly; this half is
     a count with no branch in it and no case separates a right answer from a
     wrong one.
     """
@@ -301,24 +287,23 @@ def _redacted(
     Returns the body unchanged and `False` when the tenant's rule for this data
     class does not ask for redaction, which is what keeps a `public` caller from
     getting placeholders it never asked for and keeps the 16384-character cap off
-    a route that had none (`test_the_redaction_cap_does_not_apply_on_a_non_redact_class`).
+    a route that had none.
 
     The directory is loaded INSIDE that branch, after the check, for the same
     reason: a class that is not redacted must not depend on the directory store
     at all, or a Redis incident would take down `public` traffic that never reads
-    a name (`test_a_non_redact_class_is_served_while_the_directory_store_is_down`).
+    a name.
     Once, for the whole conversation, because the matcher is compiled from up to
     2000 names and every turn is scanned with the same one.
 
     Every turn goes through ONE `redact_or_reject` call, so the numbering is
     shared across the conversation: the same address in turn 0 and turn 2 is one
-    placeholder, which is what #19 means by stable within a request
-    (`test_every_chat_message_is_redacted_under_one_numbering`).
+    placeholder, which is what stable within a request means.
 
     A turn with no `content` (an assistant turn that is only tool calls) keeps its
     `None` rather than becoming an empty string: `_neutral_messages` reads the two
     the same way, but a body rebuilt with the wrong one would be a silent shape
-    change on the way to an earlier change's admin surface.
+    change on the way to the admin surface.
     """
     if not redaction_applies(policy, context.tenant, context.data_class):
         return body, False
@@ -352,7 +337,7 @@ def walk_candidates[T](
 
     This is the one fallback loop for every path: chat, streaming chat,
     embeddings, and the semantic probe all call it so the retry rule is written
-    once (`test_walk_candidates_*` pins each case).
+    once.
     """
     if not candidates:
         raise AllProvidersUnavailable("no candidates: the resolver answered an empty tuple")
@@ -389,8 +374,7 @@ def complete_chat(
     tiers, redaction, the fallback loop, cost booking.  The route adds nothing
     except the HTTP layer (response headers, streaming setup).
 
-    Returns `ChatResult` for a non-streaming body, `StreamPlan` for a streaming one
-    (see `test_complete_chat_returns_a_stream_plan_...` in test_thin_routes.py).
+    Returns `ChatResult` for a non-streaming body, `StreamPlan` for a streaming one.
     """
     check_rate_limit(clients, context)
     _check_budget(clients, context, override=budget_override)
