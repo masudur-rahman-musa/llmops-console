@@ -19,7 +19,7 @@ helpers are `app.services.dashboard`; the page shapes are `app.schemas.dashboard
 `VALIDATION` naming `days` by the request validation handler before the route body
 runs (`test_the_days_boundary_is_inclusive`,
 `test_a_non_integer_days_is_422_naming_days`). `tenant` is pre-checked by
-`app.api.deps._checked_tenant` before any query, because it is interpolated into a
+`app.api.deps.checked_tenant` before any query, because it is interpolated into a
 PromQL label matcher (`test_the_tenant_rejection_table`). The reliability page's
 SLO error budgets read a fixed 30-day window and ignore `days`
 (`test_slos_ignore_days`).
@@ -33,7 +33,7 @@ from typing import Annotated, Final
 
 from fastapi import APIRouter, Query, Request
 
-from app.api.deps import PricesDep, _checked_tenant
+from app.api.deps import PricesDep, checked_tenant
 from app.schemas.dashboard import (
     BlockedItem,
     Circuit,
@@ -49,7 +49,7 @@ from app.schemas.dashboard import (
     Sources,
 )
 from app.schemas.dashboard import SourceState as SourceState
-from app.services.dashboard import _budgets, _first, _postgres, _prometheus, _slos
+from app.services.dashboard import budgets, first, postgres, prometheus, slos
 from app.services.prometheus_reads import (
     CIRCUITS_QUERY,
     ERROR_RATE_QUERY,
@@ -102,18 +102,18 @@ router = APIRouter()
 def home(request: Request) -> HomePage:
     """Today from the live ledger (decision F), p95 and error rate from Prometheus."""
     now = datetime.now(UTC)
-    postgres, read = _postgres(request, "home", lambda reader: reader.home(now=now))
-    prometheus, rates = _prometheus(
+    pg, read = postgres(request, "home", lambda reader: reader.home(now=now))
+    prom, rates = prometheus(
         request,
         "home",
         lambda client: (
-            _first(client.instant_query(P95_QUERY)),
-            _first(client.instant_query(ERROR_RATE_QUERY)),
+            first(client.instant_query(P95_QUERY)),
+            first(client.instant_query(ERROR_RATE_QUERY)),
         ),
     )
     p95, error_rate = rates if rates is not None else (None, None)
     return HomePage(
-        sources=Sources(postgres=postgres, prometheus=prometheus),
+        sources=Sources(postgres=pg, prometheus=prom),
         requests_today=None if read is None else read.requests_today,
         cost_usd_today=None if read is None else read.cost_usd_today,
         p95_seconds=p95,
@@ -130,21 +130,21 @@ def cost(
 ) -> CostPage:
     """The rollup's days, estimated cache savings, budgets and cost per request."""
     if tenant is not None:
-        _checked_tenant(tenant)
+        checked_tenant(tenant)
     now = datetime.now(UTC)
-    postgres, read = _postgres(
+    pg, read = postgres(
         request,
         "cost",
         lambda reader: reader.cost(days=days, tenant=tenant, now=now, prices=prices.table),
     )
     return CostPage(
-        sources=Sources(postgres=postgres, prometheus=SourceState.UNCONFIGURED),
+        sources=Sources(postgres=pg, prometheus=SourceState.UNCONFIGURED),
         rollup_populated=None if read is None else read.rollup_populated,
         days=() if read is None else read.days,
         savings=() if read is None else read.savings,
         savings_usd_total=None if read is None else read.savings_usd_total,
         estimated=True,
-        budgets=_budgets(request, tenant),
+        budgets=budgets(request, tenant),
         cost_per_request=() if read is None else read.cost_per_request,
     )
 
@@ -153,12 +153,12 @@ def cost(
 def quality(request: Request, days: Days = DEFAULT_DAYS) -> QualityPage:
     """Eval runs over the window, and what regressed behind each blocked release (decision G)."""
     now = datetime.now(UTC)
-    postgres, read = _postgres(
+    pg, read = postgres(
         request, "quality", lambda reader: reader.quality(days=days, now=now)
     )
     if read is None:
         return QualityPage(
-            sources=Sources(postgres=postgres, prometheus=SourceState.UNCONFIGURED),
+            sources=Sources(postgres=pg, prometheus=SourceState.UNCONFIGURED),
             runs=(),
             release_markers=(),
             categories=(),
@@ -166,7 +166,7 @@ def quality(request: Request, days: Days = DEFAULT_DAYS) -> QualityPage:
             blocked=(),
         )
     return QualityPage(
-        sources=Sources(postgres=postgres, prometheus=SourceState.UNCONFIGURED),
+        sources=Sources(postgres=pg, prometheus=SourceState.UNCONFIGURED),
         runs=read.runs,
         release_markers=read.release_markers,
         categories=read.categories,
@@ -190,12 +190,12 @@ def residency(
 ) -> ResidencyPage:
     """Requests per tenant, region and provider, violations, and redactions by kind."""
     if tenant is not None:
-        _checked_tenant(tenant)
+        checked_tenant(tenant)
     now = datetime.now(UTC)
-    postgres, read = _postgres(
+    pg, read = postgres(
         request, "residency", lambda reader: reader.residency(days=days, tenant=tenant, now=now)
     )
-    prometheus, redactions = _prometheus(
+    prom, redactions = prometheus(
         request,
         "residency",
         lambda client: tuple(
@@ -206,7 +206,7 @@ def residency(
         ),
     )
     return ResidencyPage(
-        sources=Sources(postgres=postgres, prometheus=prometheus),
+        sources=Sources(postgres=pg, prometheus=prom),
         by_region=() if read is None else read.by_region,
         violations=None if read is None else read.violations,
         redactions=redactions or (),
@@ -222,7 +222,7 @@ def reliability(request: Request, days: Days = DEFAULT_DAYS) -> ReliabilityPage:
     def read(client: PrometheusClient) -> ReliabilityPage:
         return ReliabilityPage(
             sources=Sources(postgres=SourceState.UNCONFIGURED, prometheus=SourceState.OK),
-            slos=_slos(client),
+            slos=slos(client),
             latency_p95=tuple(client.range_query(P95_QUERY, start=start, end=end)),
             error_rate=tuple(client.range_query(ERROR_RATE_QUERY, start=start, end=end)),
             circuits=tuple(
@@ -241,11 +241,11 @@ def reliability(request: Request, days: Days = DEFAULT_DAYS) -> ReliabilityPage:
             ),
         )
 
-    prometheus, page = _prometheus(request, "reliability", read)
+    prom, page = prometheus(request, "reliability", read)
     if page is not None:
         return page
     return ReliabilityPage(
-        sources=Sources(postgres=SourceState.UNCONFIGURED, prometheus=prometheus),
+        sources=Sources(postgres=SourceState.UNCONFIGURED, prometheus=prom),
         slos=(),
         latency_p95=(),
         error_rate=(),
@@ -257,9 +257,9 @@ def reliability(request: Request, days: Days = DEFAULT_DAYS) -> ReliabilityPage:
 @router.get(CONSOLE_INCIDENTS)
 def incidents(request: Request) -> IncidentsPage:
     """The newest `ROW_LIMIT` incidents, each marked `open` while unresolved."""
-    postgres, read = _postgres(request, "incidents", lambda reader: reader.incidents())
+    pg, read = postgres(request, "incidents", lambda reader: reader.incidents())
     return IncidentsPage(
-        sources=Sources(postgres=postgres, prometheus=SourceState.UNCONFIGURED),
+        sources=Sources(postgres=pg, prometheus=SourceState.UNCONFIGURED),
         incidents=() if read is None else read,
     )
 
@@ -267,8 +267,8 @@ def incidents(request: Request) -> IncidentsPage:
 @router.get(CONSOLE_RELEASES)
 def releases(request: Request) -> ReleasesPage:
     """The newest `ROW_LIMIT` deploys, each with its linked eval run's result or `null`."""
-    postgres, read = _postgres(request, "releases", lambda reader: reader.releases())
+    pg, read = postgres(request, "releases", lambda reader: reader.releases())
     return ReleasesPage(
-        sources=Sources(postgres=postgres, prometheus=SourceState.UNCONFIGURED),
+        sources=Sources(postgres=pg, prometheus=SourceState.UNCONFIGURED),
         releases=() if read is None else read,
     )

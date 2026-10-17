@@ -12,9 +12,10 @@ from itertools import chain
 from app.core.errors import GatewayError, ProviderError
 from app.core.http_errors import error_body
 from app.model_routing.resolver import Resolved
-from app.providers.base import Adapter, StreamEvent, TextDelta, ToolCallDelta, Usage, UsageTotal
+from app.providers.base import Adapter, StreamEvent
 from app.redaction import StreamRehydrator, rehydrate
 from app.schemas.chat import ChatCompletionRequest
+from app.schemas.provider import TextDelta, ToolCallDelta, Usage, UsageTotal
 from app.services.wire_mapping import (
     COMPLETION_ID_BYTES,
     COMPLETION_ID_PREFIX,
@@ -237,7 +238,7 @@ def sse_frames(
     yield _frame(DONE_SENTINEL)
 
 
-def _streamed(
+def streamed(
     adapter: Adapter,
     body: ChatCompletionRequest,
     chosen: Resolved,

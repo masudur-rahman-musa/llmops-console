@@ -46,7 +46,6 @@ from pydantic import BaseModel, ConfigDict
 
 from app.limits.cost import cost_for
 from app.limits.prices import PriceTable
-from app.providers.base import Usage
 from app.schemas.dashboard import (
     AliasCost,
     CategoryCount,
@@ -61,6 +60,7 @@ from app.schemas.dashboard import (
     Saving,
     TagCount,
 )
+from app.schemas.provider import Usage
 from app.storage.db import DEFAULT_SCHEMA, checked_schema
 
 ROW_LIMIT: Final[int] = 100

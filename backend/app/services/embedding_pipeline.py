@@ -26,16 +26,17 @@ from app.schemas.embeddings import (
     WireEmbedding,
     WireEmbeddingUsage,
 )
-from app.services.chat_pipeline import (
-    COST_HEADER,
-    ROUTE_SPAN,
+from app.services.chat_accounting import (
     Clients,
     book_cost,
     check_budget,
     check_rate_limit,
-    gateway_headers,
-    health_seam,
-    label_candidate,
+)
+from app.services.chat_cache import health_seam
+from app.services.chat_headers import gateway_headers, label_candidate
+from app.services.chat_pipeline import (
+    COST_HEADER,
+    ROUTE_SPAN,
     provider_span_name,
     record_served,
     walk_candidates,

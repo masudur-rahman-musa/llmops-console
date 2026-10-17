@@ -39,7 +39,7 @@ SLO_WINDOW: Final[str] = "30d"
 never follows `days` (`test_slos_rows_are_availability_latency_residency_in_order`)."""
 
 
-def _postgres[T](
+def postgres[T](
     request: Request, page: str, read: Callable[[ConsoleReader], T]
 ) -> tuple[SourceState, T | None]:
     """One page's Postgres read, as a state and a value.
@@ -57,7 +57,7 @@ def _postgres[T](
         return SourceState.ERROR, None
 
 
-def _prometheus[T](
+def prometheus[T](
     request: Request, page: str, read: Callable[[PrometheusClient], T]
 ) -> tuple[SourceState, T | None]:
     """One page's Prometheus reads, as a state and a value. One failure fails them all."""
@@ -71,11 +71,11 @@ def _prometheus[T](
         return SourceState.ERROR, None
 
 
-def _first(samples: list[tuple[dict[str, str], float]]) -> float | None:
+def first(samples: list[tuple[dict[str, str], float]]) -> float | None:
     return samples[0][1] if samples else None
 
 
-def _budgets(request: Request, tenant: str | None) -> tuple[Budget, ...]:
+def budgets(request: Request, tenant: str | None) -> tuple[Budget, ...]:
     """Each tenant's cap from the policy against its spend counter for this UTC month.
 
     Read from neither source: the counter is the budget store the chat route
@@ -104,7 +104,7 @@ def _budgets(request: Request, tenant: str | None) -> tuple[Budget, ...]:
     return tuple(budgets)
 
 
-def _slos(client: PrometheusClient) -> tuple[Slo, ...]:
+def slos(client: PrometheusClient) -> tuple[Slo, ...]:
     """The three gateway-measured SLO budgets over the fixed `SLO_WINDOW`.
 
     No traffic makes both ratios `0 / 0`, which Prometheus answers `NaN` and the
@@ -115,9 +115,9 @@ def _slos(client: PrometheusClient) -> tuple[Slo, ...]:
     with everything else
     (`test_a_failing_budget_query_is_200_with_empty_slos_prometheus_error_and_an_error_log`).
     """
-    bad = _first(client.instant_query(AVAILABILITY_BUDGET_QUERY))
-    under = _first(client.instant_query(LATENCY_BUDGET_QUERY))
-    violations = _first(client.instant_query(RESIDENCY_VIOLATIONS_30D_QUERY))
+    bad = first(client.instant_query(AVAILABILITY_BUDGET_QUERY))
+    under = first(client.instant_query(LATENCY_BUDGET_QUERY))
+    violations = first(client.instant_query(RESIDENCY_VIOLATIONS_30D_QUERY))
     return (
         Slo(
             name="availability",

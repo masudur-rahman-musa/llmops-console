@@ -21,7 +21,7 @@ import pytest
 
 from app.limits.cost import _WARNED_KEYS, Cost, cost_for, estimate_tokens
 from app.limits.prices import PriceEntry, PriceTable
-from app.providers.base import Usage
+from app.schemas.provider import Usage
 
 KEY = "prov-a/model-a"
 """A made-up `provider/model` pair in `Adapter.price_key`'s format."""

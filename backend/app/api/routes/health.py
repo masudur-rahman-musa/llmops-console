@@ -25,7 +25,7 @@ on that would put the reason for a failure in a log line that says only
 with the service name (`test_the_redis_probe_answers_a_bool_for_every_client`,
 `test_the_postgres_probe_answers_a_bool_for_every_connection`,
 `test_the_qdrant_probe_answers_false_when_the_call_raises`,
-`test_the_provider_probe_needs_one_adapter_that_answers_healthy`).
+`test_the_provider_probe_is_ready_when_an_adapter_exists`).
 
 It is bounded. The clients the probes run over come from `core/clients.py`, each
 carrying `PROBE_TIMEOUT_SECONDS` on connect and read.
@@ -37,14 +37,13 @@ request (`test_the_postgres_probe_runs_a_statement_rather_than_only_connecting`,
 `test_the_qdrant_probe_reads_the_status`).
 
 The provider probe is the exception to that last rule, and it is honest about it
-here rather than in a plan file: `Adapter.healthcheck()` currently answers True
-without calling out, so today this probe proves only that at least one adapter
-was BUILT - which is what tells an operator that no provider key reached the
-process. The circuit breaker did NOT change that: it learns from the outcomes of
-real requests through the routes' `is_healthy` seam and calls `healthcheck()`
-nowhere, so a provider it has taken out of rotation still reads green here. Read
-a green `provider` as "the gateway has somewhere to send a request", not as "a
-provider answered".
+here rather than in a plan file: it proves only that the adapter mapping is
+non-empty, which tells an operator that at least one provider key reached the
+process. The circuit breaker (`providers/breaker.py`) learns from the outcomes
+of real requests through the routes' `is_healthy` seam; a provider it has taken
+out of rotation still reads green on the readiness probe. Read a green
+`provider` as "the gateway has somewhere to send a request", not as "a provider
+answered".
 
 Registration is configured-only: a store probe exists when
 its URL is set and does not exist otherwise, while the provider probe is always
@@ -218,28 +217,19 @@ def qdrant_probe(client: httpx.Client, base_url: str) -> Probe:
 
 
 def provider_probe(adapters: Mapping[str, Adapter]) -> Probe:
-    """A probe answering whether at least ONE built adapter calls itself healthy.
+    """A probe answering whether at least one adapter was built.
 
-    `any`, not `all`: a gateway with a dead US provider and a live EU one can
-    still serve every request the residency rules let it serve, so failing
-    readiness there would take out a pod that works. An empty mapping is False -
-    a process that built no adapter has nowhere to send anything - and an adapter
-    whose `healthcheck()` raises counts as unhealthy rather than stopping the
-    walk (`test_the_provider_probe_needs_one_adapter_that_answers_healthy`).
+    True when the mapping is non-empty; False when empty. No adapter method is
+    called: the gateway is ready to serve as soon as it has somewhere to send
+    a request, which is exactly what a non-empty mapping means. Circuit breaker
+    state (`providers/breaker.py`) tracks whether each provider is healthy at
+    request time.
 
-    What this proves today is narrower than its name: see the module docstring.
+    Pinned by `test_the_provider_probe_is_ready_when_an_adapter_exists`.
     """
 
     def probe() -> bool:
-        for name, adapter in adapters.items():
-            try:
-                healthy = bool(adapter.healthcheck())
-            except Exception:
-                logger.warning("readiness: adapter %s raised on healthcheck", name, exc_info=True)
-                continue
-            if healthy:
-                return True
-        return False
+        return bool(adapters)
 
     return probe
 

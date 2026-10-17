@@ -30,10 +30,6 @@ import pytest
 
 from app.core.errors import ProviderError
 from app.providers.anthropic import (
-    CONNECT_TIMEOUT,
-    MAX_RETRIES,
-    READ_TIMEOUT,
-    STREAM_READ_TIMEOUT,
     AnthropicAdapter,
     from_anthropic_events,
 )
@@ -46,6 +42,12 @@ from app.providers.base import (
     TextDelta,
     ToolCallDelta,
     UsageTotal,
+)
+from app.providers.transport import (
+    CONNECT_TIMEOUT,
+    MAX_RETRIES,
+    READ_TIMEOUT,
+    STREAM_READ_TIMEOUT,
 )
 
 from .conftest import (

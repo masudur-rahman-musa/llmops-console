@@ -360,19 +360,14 @@ def test_the_qdrant_probe_asks_for_the_readiness_path_on_the_configured_url() ->
 
 
 class ProbeAdapter(StubAdapter):
-    """A stub adapter whose `healthcheck` can answer false or raise."""
+    """A stub adapter kept for the registration group below (bare_app needs it).
 
-    def __init__(self, name: str, *, healthy: bool = True, error: Exception | None = None) -> None:
+    The new probe test uses plain objects instead; this class stays only so
+    bare_app() can put a real-shaped adapter on app.state.adapters.
+    """
+
+    def __init__(self, name: str) -> None:
         super().__init__(name=name)
-        self._healthy = healthy
-        self._healthcheck_error = error
-        self.healthchecks = 0
-
-    def healthcheck(self) -> bool:
-        self.healthchecks += 1
-        if self._healthcheck_error is not None:
-            raise self._healthcheck_error
-        return self._healthy
 
 
 def adapters(*built: ProbeAdapter) -> Mapping[str, Adapter]:
@@ -380,53 +375,31 @@ def adapters(*built: ProbeAdapter) -> Mapping[str, Adapter]:
     return {adapter.name: adapter for adapter in built}
 
 
-PROVIDER_CASES: list[tuple[str, Mapping[str, Adapter], bool]] = [
-    ("no adapter was built at all", adapters(), False),
-    ("one healthy adapter", adapters(ProbeAdapter("anthropic")), True),
-    ("one unhealthy adapter", adapters(ProbeAdapter("anthropic", healthy=False)), False),
-    (
-        "one adapter whose healthcheck raises",
-        adapters(ProbeAdapter("anthropic", error=RuntimeError("adapter blew up"))),
-        False,
-    ),
-    (
-        "a raising adapter before a healthy one",
-        adapters(
-            ProbeAdapter("anthropic", error=RuntimeError("adapter blew up")),
-            ProbeAdapter("local"),
-        ),
-        True,
-    ),
-    (
-        "an unhealthy adapter before a healthy one",
-        adapters(ProbeAdapter("anthropic", healthy=False), ProbeAdapter("local")),
-        True,
-    ),
-    (
-        "every adapter unhealthy",
-        adapters(
-            ProbeAdapter("anthropic", healthy=False),
-            ProbeAdapter("local", healthy=False),
-        ),
-        False,
-    ),
-]
+def _bare_adapters(*names: str) -> Mapping[str, Adapter]:
+    """Plain objects with NO healthcheck — probe must not call any method."""
+
+    class _NoMethodAdapter:
+        def __init__(self, n: str) -> None:
+            self.name = n
+
+        def chat(self, request: object) -> object:  # pragma: no cover
+            raise AssertionError("chat must not be called by the probe")
+
+        def stream_chat(self, request: object) -> object:  # pragma: no cover
+            raise AssertionError("stream_chat must not be called by the probe")
+
+        def price_key(self, model: str) -> str:  # pragma: no cover
+            raise AssertionError("price_key must not be called by the probe")
+
+    return {n: _NoMethodAdapter(n) for n in names}
 
 
-@pytest.mark.parametrize(
-    ("case", "built", "expected"), PROVIDER_CASES, ids=[c[0] for c in PROVIDER_CASES]
-)
-def test_the_provider_probe_needs_one_adapter_that_answers_healthy(
-    case: str, built: Mapping[str, Adapter], expected: bool
-) -> None:
-    """Catches a probe written `all(...)` instead of `any(...)`, and one that reports
-    `True` for an empty mapping because `any` of nothing is false but `all` of nothing is
-    true: the empty row and the mixed rows disagree under those two readings, and the
-    raising adapter is placed FIRST so a probe that propagates its error cannot reach the
-    healthy one."""
-    probe = provider_probe(built)
-
-    assert probe() is expected
+def test_the_provider_probe_is_ready_when_an_adapter_exists() -> None:
+    """Catches a probe that still calls adapter.healthcheck() (which raises
+    AttributeError on a plain object with no such method), and one that returns
+    the wrong bool for a non-empty or empty mapping."""
+    assert provider_probe(_bare_adapters("anthropic"))() is True
+    assert provider_probe({})() is False
 
 
 # --------------------------------------------------------------------------

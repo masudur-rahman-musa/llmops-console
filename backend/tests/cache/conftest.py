@@ -19,7 +19,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.providers.base import ChatResponse, ToolCall, Usage
+from app.providers.base import ChatResponse
+from app.schemas.provider import ToolCall, Usage
 
 TENANT = "evals"
 OTHER_TENANT = "cuan"

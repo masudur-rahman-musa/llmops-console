@@ -15,7 +15,7 @@ available to this tenant" - and deliberately not the `RoutingError` base.
 
 `?tenant=` is the one client-supplied input on this surface and is pre-checked
 against the resolver's own `MAX_IDENTIFIER_LENGTH` and `IDENTIFIER_PATTERN` by
-`app.api.deps._checked_tenant` before any lookup happens
+`app.api.deps.checked_tenant` before any lookup happens
 (`test_the_tenant_filter_length_boundary_is_inclusive`,
 `test_the_tenant_filter_rejection_table`). A valid but unknown tenant is an empty
 view rather than an error (`test_an_unknown_but_valid_tenant_is_an_empty_view`).
@@ -34,7 +34,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, Request
 
-from app.api.deps import PolicyDep, ResidencyModeDep, _checked_tenant
+from app.api.deps import PolicyDep, ResidencyModeDep, checked_tenant
 from app.core.validation import IdentifierInvalid
 from app.model_routing.errors import (
     AliasUnknown,
@@ -98,7 +98,7 @@ def routing_view(
     tens of calls; it is not a hot path and is not cached.
     """
     if tenant is not None:
-        _checked_tenant(tenant)
+        checked_tenant(tenant)
 
     policy = store.policy
     names = [tenant] if tenant is not None else list(policy.tenants)

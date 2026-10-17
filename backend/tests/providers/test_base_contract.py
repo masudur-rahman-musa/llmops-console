@@ -165,17 +165,6 @@ def test_adapter_satisfies_the_runtime_protocol() -> None:
     assert adapter.name == "anthropic-eu"
 
 
-def test_healthcheck_is_true_without_calling_the_provider() -> None:
-    """Catches a healthcheck that pings the provider: it would need a live key in CI and
-    would put a network call on the readiness path. The breaker did NOT replace this seam:
-    it learns from the outcomes of real requests through the routes' `is_healthy` and
-    calls `healthcheck()` nowhere, so this method is still always-true by design."""
-    adapter, scripted = make_adapter([ok("plain")])
-
-    assert adapter.healthcheck() is True
-    assert scripted.request_count == 0
-
-
 # Provider vocabulary that must never appear in the neutral contract, so the
 # OpenAI, Azure and llama.cpp adapters of later plans implement it unchanged.
 FORBIDDEN_VOCABULARY: list[str] = [

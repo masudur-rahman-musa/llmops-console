@@ -20,14 +20,16 @@ from app.core.errors import ProviderError
 from app.providers.anthropic import (
     ANTHROPIC_BASE_URL,
     ANTHROPIC_VERSION,
+    AnthropicAdapter,
+)
+from app.providers.base import ChatMessage, ChatRequest
+from app.providers.transport import (
     CONNECT_TIMEOUT,
     MAX_RETRIES,
     PROVIDER_MESSAGE_LIMIT,
     READ_TIMEOUT,
     RETRY_BASE_DELAY,
-    AnthropicAdapter,
 )
-from app.providers.base import ChatMessage, ChatRequest
 
 from .conftest import (
     PROVIDER_DETAIL_MARKER,

@@ -18,12 +18,11 @@ from app.limits.cost import cost_for, estimate_tokens
 from app.limits.prices import PriceTable
 from app.model_routing.policy import DataClass, Policy, Residency
 from app.model_routing.resolver import Resolved
-from app.providers.base import Usage
+from app.schemas.provider import Usage
 from app.storage.cost_ledger import CACHED_COST_USD, CostLedgerRow, CostLedgerWriter
 from app.storage.residency_log import ResidencyLogRow, ResidencyLogWriter
 
-# Re-export so callers that import the three together from here get everything they need.
-__all__ = ["record_cost", "record_residency", "region_allowed"]
+__all__ = ["record_cost", "record_residency"]
 
 
 def _utcnow_cost() -> datetime:

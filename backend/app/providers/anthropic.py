@@ -42,6 +42,14 @@ from app.core.errors import ProviderError
 from app.core.validation import IdentifierInvalid
 from app.providers.base import (
     DEFAULT_MAX_TOKENS,
+    HttpAdapter,
+    checked_tool_name,
+)
+from app.providers.transport import (
+    ProviderTransport,
+    unreadable,
+)
+from app.schemas.provider import (
     ChatMessage,
     ChatRequest,
     ChatResponse,
@@ -53,41 +61,11 @@ from app.providers.base import (
     ToolCallDelta,
     Usage,
     UsageTotal,
-    checked_tool_name,
-)
-from app.providers.transport import (
-    CONNECT_TIMEOUT,
-    MAX_RETRIES,
-    PROVIDER_MESSAGE_LIMIT,
-    READ_TIMEOUT,
-    RETRY_BASE_DELAY,
-    STREAM_READ_TIMEOUT,
-    ProviderTransport,
-    unreadable,
 )
 
 __all__ = [
-    # Re-exported from `providers.transport`, which owns the HTTP policy every
-    # adapter shares (the design). Named here for one reason only: an earlier change's tests
-    # import them from this module, and the an earlier change extraction that moved them
-    # was meant to change no behaviour and edit no test
-    # (`grep -n "from app.providers.anthropic import" -A 10 tests/providers/`
-    # shows both `test_anthropic_transport.py` and `test_anthropic_streaming.py`
-    # reading them here). Nothing in this module uses them.
     "ANTHROPIC_BASE_URL",
-    "ANTHROPIC_TOOL_CHOICE_BY_MODE",
-    "ANTHROPIC_VERSION",
-    "CONNECT_TIMEOUT",
-    "MAX_RETRIES",
-    "MESSAGES_PATH",
-    "PROVIDER_MESSAGE_LIMIT",
-    "READ_TIMEOUT",
-    "RETRY_BASE_DELAY",
-    "STREAM_READ_TIMEOUT",
     "AnthropicAdapter",
-    "from_anthropic",
-    "from_anthropic_events",
-    "to_anthropic",
 ]
 
 ANTHROPIC_BASE_URL = "https://api.anthropic.com"
@@ -479,7 +457,7 @@ def from_anthropic_events(lines: Iterable[str]) -> Iterator[StreamEvent]:
     )
 
 
-class AnthropicAdapter:
+class AnthropicAdapter(HttpAdapter):
     """One Anthropic account, addressed by its policy provider name.
 
     `name` is that policy name rather than the vendor, so two Anthropic accounts
@@ -558,25 +536,3 @@ class AnthropicAdapter:
                 yield from from_anthropic_events(response.iter_lines())
             except httpx.RequestError as exc:
                 raise self.http.transport_error(exc) from exc
-
-    def healthcheck(self) -> bool:
-        """Always true, and it calls nothing.
-
-        The seam is still unfilled, and naming what filled it elsewhere would be
-        wrong: `providers/breaker.py` learns from the outcomes of REAL requests,
-        through the routes' `is_healthy`, and calls this method nowhere. So the
-        `provider` readiness probe still proves only that an adapter was built.
-
-        Probing the provider here would put a network call - and a live key in
-        CI - on the readiness path, which
-        `test_healthcheck_is_true_without_calling_the_provider` forbids.
-        """
-        return True
-
-    def price_key(self, model: str) -> str:
-        """The stable `"<provider>/<model>"` string the ledger stores."""
-        return f"{self.name}/{model}"
-
-    def close(self) -> None:
-        """Release the connection pool."""
-        self.http.close()

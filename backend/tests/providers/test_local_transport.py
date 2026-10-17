@@ -328,16 +328,6 @@ def test_price_key_is_the_policy_provider_name_slash_model() -> None:
     assert adapter.name == LOCAL_PROVIDER_NAME
 
 
-def test_healthcheck_is_true_without_calling_the_provider() -> None:
-    """Catches a healthcheck that probes the model server: readiness would then depend on
-    a CPU box that takes seconds to answer, and every readiness probe would load a slot
-    that a real request needs."""
-    adapter, scripted = make_local_adapter([local_ok("plain")])
-
-    assert adapter.healthcheck() is True
-    assert scripted.request_count == 0
-
-
 def test_close_releases_the_client() -> None:
     """Catches a `close()` that does not: `build_adapters` mints one client per adapter,
     so a policy reload that drops adapters without closing them leaks a connection pool."""

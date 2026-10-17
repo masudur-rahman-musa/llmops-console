@@ -11,7 +11,7 @@ from app.api.deps import ClientsDep, Context, ProviderLimiterDep
 from app.core.context import RequestContext
 from app.limits.budget import BUDGET_OVERRIDE_HEADER
 from app.schemas.embeddings import EmbeddingsRequest, EmbeddingsResponse
-from app.services.chat_pipeline import Clients
+from app.services.chat_accounting import Clients
 from app.services.embedding_pipeline import EmbeddingsResult, embed_texts
 
 EMBEDDINGS = "/v1/embeddings"

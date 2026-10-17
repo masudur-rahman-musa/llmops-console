@@ -53,7 +53,7 @@ from app.core.validation import (
 from app.limits.prices import PriceStore
 from app.model_routing.policy import DataClass, PolicyStore, ResidencyMode
 from app.redaction import DirectoryStore, RedactionMapStore
-from app.services.chat_pipeline import Clients
+from app.services.chat_accounting import Clients
 from app.services.routing_reload import RUNTIME_SCOPE_KEY, RoutingRuntime
 from app.storage import ConsoleEventWriter
 
@@ -302,7 +302,7 @@ TENANT_PARAM = "tenant"
 rejection of it names (`test_the_tenant_filter_rejection_table`)."""
 
 
-def _checked_tenant(value: str) -> str:
+def checked_tenant(value: str) -> str:
     """Validate the `?tenant=` filter before it is used to look anything up.
 
     a project rule applied to the one client-supplied string on this surface.

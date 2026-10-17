@@ -54,6 +54,11 @@ import httpx
 from app.core.errors import ProviderError
 from app.providers.base import (
     DEFAULT_MAX_TOKENS,
+    HttpAdapter,
+    checked_tool_name,
+)
+from app.providers.transport import ProviderTransport, unreadable
+from app.schemas.provider import (
     ChatMessage,
     ChatRequest,
     ChatResponse,
@@ -69,9 +74,7 @@ from app.providers.base import (
     ToolCallDelta,
     Usage,
     UsageTotal,
-    checked_tool_name,
 )
-from app.providers.transport import ProviderTransport, unreadable
 
 CHAT_COMPLETIONS_PATH = "/chat/completions"
 """Appended to the policy's `base_url`, which already ends in `/v1`.
@@ -626,7 +629,7 @@ def from_openai_embedding(payload: Mapping[str, Any]) -> EmbeddingResponse:
         raise unreadable(exc) from exc
 
 
-class OpenAICompatibleAdapter:
+class OpenAICompatibleAdapter(HttpAdapter):
     """One OpenAI-compatible endpoint, addressed by its policy provider name.
 
     `name` is that policy name, never the kind: `local` and `vllm` are the same
@@ -789,24 +792,3 @@ class OpenAICompatibleAdapter:
                 yield from from_openai_events(response.iter_lines())
             except httpx.RequestError as exc:
                 raise self.http.transport_error(exc) from exc
-
-    def healthcheck(self) -> bool:
-        """Always true, and it calls nothing.
-
-        The seam is still unfilled, and naming what filled it elsewhere would be
-        wrong: `providers/breaker.py` learns from the outcomes of REAL requests,
-        through the routes' `is_healthy`, and calls this method nowhere. So the
-        `provider` readiness probe still proves only that an adapter was built.
-
-        Probing here would load a slot on a CPU box for every readiness probe
-        (`test_healthcheck_is_true_without_calling_the_provider`).
-        """
-        return True
-
-    def price_key(self, model: str) -> str:
-        """The stable `"<provider>/<model>"` string the ledger stores."""
-        return f"{self.name}/{model}"
-
-    def close(self) -> None:
-        """Release the connection pool."""
-        self.http.close()

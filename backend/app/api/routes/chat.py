@@ -9,15 +9,12 @@ from fastapi.responses import StreamingResponse
 from starlette.types import Scope
 
 from app.api.deps import ClientsDep, Context, ProviderLimiterDep
+from app.cache import CACHE_HEADER
 from app.core.context import RequestContext
 from app.limits.budget import BUDGET_OVERRIDE_HEADER
 from app.schemas.chat import ChatCompletion, ChatCompletionRequest
-from app.services.chat_pipeline import (
-    CACHE_HEADER,
-    ChatResult,
-    Clients,
-    complete_chat,
-)
+from app.services.chat_accounting import ChatResult, Clients
+from app.services.chat_pipeline import complete_chat
 from app.services.streaming import StreamPlan
 from app.services.wire_mapping import REHYDRATE_HEADER
 

@@ -35,7 +35,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from pydantic import BaseModel, ConfigDict
 
 from app.limits.prices import PriceTable, price_for, price_version
-from app.providers.base import Usage
+from app.schemas.provider import Usage
 
 logger = logging.getLogger(__name__)
 
