@@ -391,7 +391,7 @@ def _bare_adapters(*names: str) -> Mapping[str, Adapter]:
         def price_key(self, model: str) -> str:  # pragma: no cover
             raise AssertionError("price_key must not be called by the probe")
 
-    return {n: _NoMethodAdapter(n) for n in names}
+    return {n: _NoMethodAdapter(n) for n in names}  # type: ignore[misc]
 
 
 def test_the_provider_probe_is_ready_when_an_adapter_exists() -> None:

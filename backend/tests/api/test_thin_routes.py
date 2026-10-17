@@ -24,17 +24,13 @@ from app.core.errors import ProviderError
 from app.model_routing.errors import AllProvidersUnavailable
 from app.model_routing.resolver import Resolved
 from app.providers.breaker import CircuitBreaker, CircuitState
-from app.services.chat_pipeline import (
-    ChatResult,
-    Clients,
-    StreamPlan,
-    complete_chat,
-    walk_candidates,
-)
+from app.services.chat_accounting import ChatResult, Clients
+from app.services.chat_pipeline import complete_chat, walk_candidates
 from app.services.embedding_pipeline import (
     EmbeddingsResult,
     embed_texts,
 )
+from app.services.streaming import StreamPlan
 
 # ---------------------------------------------------------------------------
 # Helpers shared across walk_candidates tests
@@ -52,7 +48,7 @@ def _make_resolved(provider: str) -> Resolved:
 
 def _fake_scope(path: str) -> Scope:
     """A minimal ASGI scope dict for a POST to the given path."""
-    return {  # type: ignore[return-value]
+    return {
         "type": "http",
         "method": "POST",
         "path": path,

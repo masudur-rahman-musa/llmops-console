@@ -74,6 +74,7 @@ import httpx
 import pytest
 
 from app.cli import evals as cli
+from app.cli import evals_commands
 from app.cli.evals import (
     EXIT_FAILED,
     EXIT_OK,
@@ -266,7 +267,7 @@ class RecordingRunner:
 
 def install(monkeypatch: pytest.MonkeyPatch, runner: RecordingRunner) -> None:
     """Replace the runner the CLI calls, leaving every pre-check it owns in place."""
-    monkeypatch.setattr(cli, "run_set", runner)
+    monkeypatch.setattr(evals_commands, "run_set", runner)
 
 
 def argv(
@@ -1039,8 +1040,8 @@ def install_store(monkeypatch: pytest.MonkeyPatch, store: RecordingStore) -> lis
         return store
 
     monkeypatch.setenv("OPSCONSOLE_DATABASE_URL", DATABASE_URL)
-    monkeypatch.setattr(cli, "build_pool", fake_build_pool)
-    monkeypatch.setattr(cli, "PostgresEvalStore", fake_store)
+    monkeypatch.setattr(evals_commands, "build_pool", fake_build_pool)
+    monkeypatch.setattr(evals_commands, "PostgresEvalStore", fake_store)
     return pooled
 
 
@@ -1051,8 +1052,8 @@ def forbid_store(monkeypatch: pytest.MonkeyPatch) -> None:
         raise AssertionError("a pool or a store was built with no database URL configured")
 
     monkeypatch.delenv("OPSCONSOLE_DATABASE_URL", raising=False)
-    monkeypatch.setattr(cli, "build_pool", forbidden)
-    monkeypatch.setattr(cli, "PostgresEvalStore", forbidden)
+    monkeypatch.setattr(evals_commands, "build_pool", forbidden)
+    monkeypatch.setattr(evals_commands, "PostgresEvalStore", forbidden)
 
 
 @pytest.mark.parametrize(
@@ -1164,7 +1165,7 @@ def install_push(monkeypatch: pytest.MonkeyPatch, *, answer: str | None) -> list
         calls.append((metrics, pushgateway_url))
         return answer
 
-    monkeypatch.setattr(cli, "push_metrics", fake_push_metrics)
+    monkeypatch.setattr(evals_commands, "push_metrics", fake_push_metrics)
     return calls
 
 
@@ -1177,7 +1178,7 @@ def forbid_push(monkeypatch: pytest.MonkeyPatch) -> None:
             "push_metrics was called with no --pushgateway-url on the command line"
         )
 
-    monkeypatch.setattr(cli, "push_metrics", forbidden)
+    monkeypatch.setattr(evals_commands, "push_metrics", forbidden)
 
 
 def test_with_no_pushgateway_url_nothing_is_pushed(
@@ -1469,7 +1470,7 @@ class CalibrationJudge:
                 timeout=timeout,
             )
 
-        monkeypatch.setattr(cli, "JudgeClient", build)
+        monkeypatch.setattr(evals_commands, "JudgeClient", build)
 
 
 def run_calibrate(

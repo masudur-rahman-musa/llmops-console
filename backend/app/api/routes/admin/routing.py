@@ -27,9 +27,15 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Query
 
-from app.api.deps import PolicyDep, ResidencyModeDep, checked_tenant
+from app.api.deps import (
+    PolicyDep,
+    ProviderEnvironDep,
+    ResidencyModeDep,
+    RoutingStoreDep,
+    checked_tenant,
+)
 from app.core.validation import IdentifierInvalid
 from app.model_routing.errors import (
     AliasUnknown,
@@ -39,7 +45,6 @@ from app.model_routing.errors import (
 from app.model_routing.policy import DataClass, Policy, ResidencyMode
 from app.model_routing.resolver import resolve
 from app.schemas.admin import AliasView, ReloadResult, ResolvedEntry, RoutingView, TenantView
-from app.services.routing_reload import RoutingRuntimeStore
 
 ADMIN_ROUTING = "/admin/routing"
 """The resolved-routing view."""
@@ -102,7 +107,9 @@ def routing_view(
 
 
 @router.post(ADMIN_ROUTING_RELOAD)
-def reload_routing(request: Request, store: PolicyDep) -> ReloadResult:
+def reload_routing(
+    store: PolicyDep, routing_store: RoutingStoreDep, environ: ProviderEnvironDep
+) -> ReloadResult:
     """Re-read `routing.yaml`, swap the policy, adapters and breaker as one, close the old set.
 
     `RoutingRuntimeStore.reload` parses the new policy outside the lock, so a
@@ -116,9 +123,8 @@ def reload_routing(request: Request, store: PolicyDep) -> ReloadResult:
     to escape as a 500: the file is this endpoint's input, so a bad one is a
     request-level validation failure rather than a gateway fault.
     """
-    routing_store: RoutingRuntimeStore = request.app.state.routing_store
     try:
-        providers = routing_store.reload(request.app.state.provider_environ)
+        providers = routing_store.reload(environ)
     except PolicyInvalid as exc:
         raise IdentifierInvalid(str(exc), param="routing.yaml") from exc
     return ReloadResult(reloaded=True, providers=providers)

@@ -97,8 +97,9 @@ __all__ = [
     "UNJUDGED_LINE",
     "UNSTORED_LINE",
     "UNTRUSTED_JUDGE_LINE",
-    "main",
 ]
+# `main` is defined here, not re-exported, and is reached through the
+# `ops-eval` script in `backend/pyproject.toml`, so it needs no entry above.
 
 # Re-export as Final so tests that pin the exact values still pass.
 EXIT_OK_: Final[int] = EXIT_OK

@@ -288,7 +288,8 @@ class PostgresCostLedgerWriter:
                 # flush() barrier: signal the waiter and keep running.
                 item.set()
                 continue
-            self._insert(item)
+            if isinstance(item, CostLedgerRow):
+                self._insert(item)
 
     def _insert(self, row: CostLedgerRow) -> None:
         """Insert one row and count the outcome. Never raises."""

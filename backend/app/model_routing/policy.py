@@ -27,19 +27,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 # here with the explicit `as` form so the call sites that import it from the
 # policy keep resolving and `routing.yaml` stays the home of the policy types.
 from app.core.config import ResidencyMode as ResidencyMode
+from app.core.context import DataClass as DataClass
 from app.model_routing.errors import PolicyInvalid
 
 if TYPE_CHECKING:
     from app.limits.prices import PriceTable
-
-
-class DataClass(StrEnum):
-    """The sensitivity classes a request can declare. A closed set on purpose."""
-
-    PUBLIC = "public"
-    INTERNAL = "internal"
-    CONFIDENTIAL = "confidential"
-    PII = "pii"
 
 
 class Residency(StrEnum):

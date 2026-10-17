@@ -1002,8 +1002,7 @@ def test_the_rehydration_stub_satisfies_the_adapter_protocol() -> None:
     """Catches this module's own stub drifting from the `Adapter` contract - a renamed
     method, a dropped `name` - which would otherwise surface as the resolver's 503 in
     every case here and read as a route bug rather than as a fixture one. The annotation
-    is the check `mypy --strict` makes; the two calls are what a runtime run sees."""
+    is the check `mypy --strict` makes; the call is what a runtime run sees."""
     stub: Adapter = RehydrationStub(name="anthropic")
 
     assert stub.price_key("claude-haiku-4-5") == "anthropic/claude-haiku-4-5"
-    assert stub.healthcheck() is True

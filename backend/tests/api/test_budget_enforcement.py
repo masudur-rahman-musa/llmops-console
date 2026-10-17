@@ -73,11 +73,7 @@ from app.limits.budget import (
 from app.main import create_app
 from app.model_routing.policy import Policy
 from app.providers.base import Adapter
-from app.services.chat_pipeline import (
-    CACHE_STATUS_HIT,
-    CACHE_STATUS_MISS,
-    CACHE_STATUS_SEMANTIC,
-)
+from app.services.chat_headers import CACHE_STATUS_HIT, CACHE_STATUS_MISS, CACHE_STATUS_SEMANTIC
 from app.storage import CostLedgerRow, CostLedgerWriter, InMemoryCostLedgerWriter
 
 from .conftest import (

@@ -27,3 +27,7 @@ c93d8e89a4233378f249c32cc65a9d4e10858471:services/console/tests/login-route.test
 7a9b255362c92c7f468f0da6cfcd2f008d8ef897:tests/cache/test_key.py:generic-api-key:93
 7a9b255362c92c7f468f0da6cfcd2f008d8ef897:tests/cache/test_redis_cache.py:generic-api-key:58
 7a9b255362c92c7f468f0da6cfcd2f008d8ef897:tests/cache/test_redis_cache.py:generic-api-key:61
+
+# Console screen test session values (plan 75).
+99c056ef46f9cf82600755c9b1be9d7be5cf1afe:web/tests/screens.test.tsx:generic-api-key:38
+99c056ef46f9cf82600755c9b1be9d7be5cf1afe:web/tests/screens.test.tsx:generic-api-key:39

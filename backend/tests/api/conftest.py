@@ -1174,10 +1174,28 @@ in tests/gateway/test_rate_limit_enforcement.py - so raising a fixture cannot
 quietly raise production, and this file is not where limits are tested."""
 
 
+EU_PRICES = "prices:\n" + "".join(
+    f"""  {provider}/{model}:
+    - effective_from: 2025-01-01
+      input_usd_per_1m: "1.00"
+      output_usd_per_1m: "5.00"
+"""
+    for provider, model in (
+        (EU_FIRST_PROVIDER, "model-eu-first"),
+        (EU_SECOND_PROVIDER, "model-eu-second"),
+        (EU_EXCLUDED_PROVIDER, "model-us-only"),
+    )
+)
+"""A price for every pair `EU_POLICY` can reach. The app refuses to start on a
+policy with an unpriced pair, and the amounts do not matter to any case here."""
+
+
 @pytest.fixture(scope="session")
 def eu_policy_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """`EU_POLICY` on disk, written once."""
-    path = tmp_path_factory.mktemp("eu-policy") / "routing.yaml"
+    """`EU_POLICY` on disk, written once, with `EU_PRICES` beside it."""
+    folder = tmp_path_factory.mktemp("eu-policy")
+    (folder / "prices.yaml").write_text(EU_PRICES, encoding="utf-8")
+    path = folder / "routing.yaml"
     path.write_text(EU_POLICY, encoding="utf-8")
     return path
 
@@ -1196,7 +1214,11 @@ def eu_app(
     eu_policy_path: Path, eu_adapters: dict[str, FallbackStubAdapter]
 ) -> Iterator[TestClient]:
     """An app on the EU policy with all three adapters, built once."""
-    settings = Settings(api_keys=API_KEYS, routing_policy_path=eu_policy_path)
+    settings = Settings(
+        api_keys=API_KEYS,
+        routing_policy_path=eu_policy_path,
+        prices_path=eu_policy_path.parent / "prices.yaml",
+    )
     with build_chat_client(settings, eu_adapters) as client:
         yield client
 

@@ -58,7 +58,7 @@ def test_the_provider_worker_limit_is_exactly_32() -> None:
     psycopg_pool's default — leaving the provider pool either too small
     to absorb a traffic spike or large enough to let a slow provider
     grab every worker on a small machine."""
-    from app.core.concurrency import PROVIDER_POOL_SIZE  # type: ignore[import]
+    from app.core.concurrency import PROVIDER_POOL_SIZE
 
     assert PROVIDER_POOL_SIZE == 32
 
@@ -72,8 +72,8 @@ def test_the_chat_and_embeddings_routes_are_async() -> None:
     """Catches an implementation that left either route as `def`, which puts
     every call on the one shared thread pool and lets a slow provider stall
     all other routes."""
-    from app.api.routes.chat import create_chat_completion  # type: ignore[import]
-    from app.api.routes.embeddings import create_embeddings  # type: ignore[import]
+    from app.api.routes.chat import create_chat_completion
+    from app.api.routes.embeddings import create_embeddings
 
     assert asyncio.iscoroutinefunction(create_chat_completion)
     assert asyncio.iscoroutinefunction(create_embeddings)
@@ -102,7 +102,7 @@ def _make_spy(
         calls.append((func, args, kwargs))
         return func(*args, **kwargs)
 
-    return _spy  # type: ignore[return-value]
+    return _spy
 
 
 def test_provider_work_is_dispatched_on_the_dedicated_limiter(
@@ -111,7 +111,7 @@ def test_provider_work_is_dispatched_on_the_dedicated_limiter(
     """Catches an implementation that calls the pipeline directly in the async
     route instead of offloading it to the dedicated provider limiter, which
     would block the event loop for the duration of every provider call."""
-    from app.api.deps import get_provider_limiter  # type: ignore[import]
+    from app.api.deps import get_provider_limiter
 
     fake_limiter = MagicMock()
     to_thread_calls: list[tuple[Callable[..., object], tuple[object, ...], dict[str, object]]] = []
@@ -173,7 +173,7 @@ def test_closing_the_async_frame_wrapper_releases_the_provider_stream() -> None:
     exit, which leaves the provider's HTTP response checked out of the
     connection pool until the GC runs — exhausting the pool under load."""
     from app.providers.base import ChatMessage
-    from app.services.streaming import sse_frames  # type: ignore[import]
+    from app.services.streaming import sse_frames
 
     stub = StubAdapter(name="anthropic")
     events = stub.stream_chat(

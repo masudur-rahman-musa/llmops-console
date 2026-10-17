@@ -53,7 +53,7 @@ import httpx
 from pydantic import ValidationError
 
 from app.cache.probe import SEMANTIC_THRESHOLD
-from app.cache.store import RESPONSE_CACHE_TTL_SECONDS
+from app.cache.store import RESPONSE_CACHE_TTL_SECONDS as RESPONSE_CACHE_TTL_SECONDS
 from app.core.validation import checked_identifier
 from app.providers.base import ChatResponse
 

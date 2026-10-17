@@ -52,7 +52,7 @@ def test_the_provider_probe_is_ready_when_an_adapter_exists() -> None:
 
     fake = _NoMethodAdapter()
 
-    assert provider_probe({"fake": fake})() is True  # type: ignore[arg-type]
+    assert provider_probe({"fake": fake})() is True  # type: ignore[dict-item]
     assert provider_probe({})() is False
 
 

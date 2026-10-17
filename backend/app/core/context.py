@@ -7,9 +7,22 @@ use it import it from here, and nothing in them has to know `app.api` exists.
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 from pydantic import BaseModel, ConfigDict
 
-from app.model_routing.policy import DataClass
+
+class DataClass(StrEnum):
+    """The sensitivity classes a request can declare. A closed set on purpose.
+
+    Kept in `core` so the request context can name it without importing the
+    routing package; `app.model_routing.policy` imports it from here.
+    """
+
+    PUBLIC = "public"
+    INTERNAL = "internal"
+    CONFIDENTIAL = "confidential"
+    PII = "pii"
 
 
 class RequestContext(BaseModel):

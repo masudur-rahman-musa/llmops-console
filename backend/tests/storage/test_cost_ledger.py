@@ -462,6 +462,7 @@ def test_an_identifier_at_exactly_the_length_cap_is_accepted(field: str) -> None
 
     writer.write(a_row(**{field: AT_IDENTIFIER_CAP}))
 
+    writer.flush()
     assert len(pool.inserts()) == 1
 
 
@@ -475,6 +476,7 @@ def test_a_model_at_exactly_the_length_cap_is_accepted() -> None:
 
     writer.write(a_row(model="m" * MAX_MODEL_LENGTH))
 
+    writer.flush()
     assert len(pool.inserts()) == 1
     with pytest.raises(IdentifierInvalid):
         writer_over(ForbiddenPool()).write(a_row(model="m" * (MAX_MODEL_LENGTH + 1)))
@@ -489,6 +491,7 @@ def test_a_price_version_at_exactly_the_cap_is_accepted() -> None:
 
     writer.write(a_row(price_version="v" * MAX_PRICE_VERSION_LENGTH))
 
+    writer.flush()
     assert len(pool.inserts()) == 1
 
 
@@ -503,6 +506,7 @@ def test_a_trace_id_of_exactly_thirty_two_hex_characters_is_accepted() -> None:
     writer.write(a_row(trace_id=TRACE_ID))
     writer.write(a_row(trace_id="f" * TRACE_ID_LENGTH))
 
+    writer.flush()
     assert len(pool.inserts()) == 2
 
 
@@ -525,6 +529,7 @@ def test_a_row_with_every_field_at_its_cap_is_still_written() -> None:
         )
     )
 
+    writer.flush()
     assert len(pool.inserts()) == 1
 
 

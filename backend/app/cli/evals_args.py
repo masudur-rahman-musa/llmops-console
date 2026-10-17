@@ -22,6 +22,7 @@ from app.evals.baseline_guard import (
 from app.evals.calibration import (
     read_calibration,
 )
+from app.evals.cases import EvalCase
 from app.evals.judge import judge_prompt_version
 from app.evals.report import (
     SET_SHA_PATTERN,
@@ -257,7 +258,7 @@ def _checked_policy(path: Path, tenant: str) -> Policy:
     return policy
 
 
-def _other_tenant_markers(cases: tuple, tenant: str) -> tuple[str, ...]:
+def _other_tenant_markers(cases: tuple[EvalCase, ...], tenant: str) -> tuple[str, ...]:
     """The other tenants the set names, which a reply may not mention.
 
     The seed's markers, derived from the set itself rather than configured: a

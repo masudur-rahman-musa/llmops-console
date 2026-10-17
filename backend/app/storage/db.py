@@ -143,6 +143,20 @@ def _rendered(text: str, schema: str) -> sql.SQL:
     return sql.SQL(text.replace(SCHEMA_PLACEHOLDER, f'"{schema}"'))
 
 
+def pool_conninfo(database_url: str) -> str:
+    """`database_url` with the connect and statement timeouts added.
+
+    `make_conninfo` takes a URL or a key=value string and answers one libpq
+    accepts. Text glued onto the end of a URL is refused, and then every
+    connection fails.
+    """
+    return make_conninfo(
+        database_url,
+        connect_timeout=int(DB_CONNECT_TIMEOUT),
+        options=f"-c statement_timeout={STATEMENT_TIMEOUT_MS}ms",
+    )
+
+
 def build_pool(database_url: str) -> ConnectionPool[Connection[TupleRow]]:
     """An opened connection pool for the residency log and the cost ledger.
 
@@ -154,13 +168,8 @@ def build_pool(database_url: str) -> ConnectionPool[Connection[TupleRow]]:
     - `statement_timeout` in the conninfo: 2000 ms — PostgreSQL cancels any
       statement that runs longer than 2 seconds, so a stuck query gives up fast.
     """
-    conninfo = make_conninfo(
-        database_url,
-        connect_timeout=int(DB_CONNECT_TIMEOUT),
-        options=f"-c statement_timeout={STATEMENT_TIMEOUT_MS}ms",
-    )
     return ConnectionPool(
-        conninfo,
+        pool_conninfo(database_url),
         min_size=MIN_POOL_SIZE,
         max_size=MAX_POOL_SIZE,
         open=True,

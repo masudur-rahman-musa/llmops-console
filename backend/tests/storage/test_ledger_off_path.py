@@ -23,7 +23,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.storage import CostLedgerRow, PostgresCostLedgerWriter
-from app.storage.cost_ledger import LEDGER_QUEUE_SIZE  # type: ignore[import]
+from app.storage.cost_ledger import LEDGER_QUEUE_SIZE
 
 from .conftest import Pool, requires_postgres
 
@@ -82,7 +82,7 @@ class RaisingPool:
     @contextmanager
     def connection(self) -> Iterator[NoReturn]:
         raise RuntimeError("db is down")
-        yield  # type: ignore[misc]  # make it a generator
+        yield  # make it a generator
 
 
 class RecordingConnection:
@@ -109,7 +109,7 @@ class RecordingPool:
 
 def _counter_value(label_result: str) -> float:
     """Current value of gateway_ledger_writes_total for one result label."""
-    from app.core.metrics import registry  # type: ignore[import]
+    from app.core.metrics import registry
 
     for family in registry().collect():
         if family.name == "gateway_ledger_writes":
@@ -165,7 +165,7 @@ def test_a_successful_insert_counts_ok_and_lands_the_row(pool: Pool, migrated_sc
     or one that counts ok before the insert rather than after."""
     from psycopg import sql
 
-    from app.storage.cost_ledger import COST_LEDGER  # type: ignore[import]
+    from app.storage.cost_ledger import COST_LEDGER
 
     before = _counter_value("ok")
     writer = PostgresCostLedgerWriter(pool, schema=migrated_schema)
@@ -210,7 +210,7 @@ def test_a_full_ledger_queue_drops_and_counts() -> None:
     writer = PostgresCostLedgerWriter(pool)  # type: ignore[arg-type]
 
     # Simulate a full queue without racing against the background worker.
-    with _patch.object(writer._queue, "put_nowait", side_effect=_Full()):  # type: ignore[attr-defined]
+    with _patch.object(writer._queue, "put_nowait", side_effect=_Full()):
         writer.write(a_row())
 
     assert _counter_value("dropped") - before == 1.0

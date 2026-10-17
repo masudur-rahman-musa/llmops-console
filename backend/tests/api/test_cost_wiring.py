@@ -73,7 +73,7 @@ from app.cache import (
     InProcessResponseCache,
     InProcessSemanticCache,
 )
-from app.core.config import Settings
+from app.core.config import DEFAULT_PRICES_PATH, Settings
 from app.core.errors import ProviderError
 from app.limits import PriceStore, PriceTableInvalid, price_for
 from app.main import close_adapters, create_app
@@ -86,11 +86,7 @@ from app.providers.base import (
     EmbeddingResponse,
     StreamEvent,
 )
-from app.services.chat_pipeline import (
-    CACHE_STATUS_HIT,
-    CACHE_STATUS_MISS,
-    CACHE_STATUS_SEMANTIC,
-)
+from app.services.chat_headers import CACHE_STATUS_HIT, CACHE_STATUS_MISS, CACHE_STATUS_SEMANTIC
 from app.storage import (
     CostLedgerRow,
     CostLedgerWriter,
@@ -1149,11 +1145,11 @@ def test_the_price_store_is_built_over_the_configured_path(tmp_path: Path) -> No
     """Catches a factory that ignores `settings.prices_path` and hardcodes the shipped
     file: every case above would still pass, and a deployment pointing at its own price
     table would silently bill against ours. The key asserted here exists in no shipped
-    `prices.yaml`, so only a store built over this path can answer it."""
+    `prices.yaml`, so only a store built over this path can answer it. The shipped
+    rows come first because the app refuses a policy with an unpriced pair."""
     path = tmp_path / "prices.yaml"
     path.write_text(
-        "prices:\n"
-        "  someprovider/some-model:\n"
+        DEFAULT_PRICES_PATH.read_text(encoding="utf-8") + "  someprovider/some-model:\n"
         "    - effective_from: 2026-01-01\n"
         '      input_usd_per_1m: "2.00"\n'
         '      output_usd_per_1m: "9.00"\n',

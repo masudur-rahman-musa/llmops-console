@@ -6,6 +6,7 @@ import { POST as login } from "@/app/api/login/route";
 import { POST as logout } from "@/app/api/logout/route";
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "@/lib/login";
 import { safeNext } from "@/lib/nav";
+import { readSessionSecret } from "@/lib/session";
 
 // createHash stays real; the spy only records whether the handler reached hashing.
 vi.mock("node:crypto", async (importOriginal) => {
@@ -127,6 +128,8 @@ describe("POST /api/login", () => {
   it("an unset or short secret refuses every login and logs an error", async () => {
     // Catches a handler that signs with a missing or 31-character secret, or refuses without logging an ERROR; the password here is correct.
     for (const secret of [undefined, "", SECRET.slice(0, 31)]) {
+      // The ERROR logs once per bad spell, so a good read first makes each case a new spell.
+      readSessionSecret({ CONSOLE_SESSION_SECRET: SECRET });
       vi.stubEnv("CONSOLE_SESSION_SECRET", secret);
       errorSpy.mockClear();
       const response = await login(post({ password: PASSWORD, next: "/cost" }));

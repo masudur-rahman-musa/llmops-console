@@ -137,8 +137,9 @@ tests/gateway/test_budget_enforcement.py, which is where the store that decides
 it lives."""
 
 CACHE_HITS = "gateway_cache_hits_total"
+LEDGER_WRITES = "gateway_ledger_writes_total"
 
-ELSEWHERE_FED_FAMILIES = (RESIDENCY_VIOLATIONS, CACHE_HITS)
+ELSEWHERE_FED_FAMILIES = (RESIDENCY_VIOLATIONS, CACHE_HITS, LEDGER_WRITES)
 """Declared, empty after every request THIS file makes, and fed elsewhere in the
 session - so neither tuple above can hold them.
 
@@ -150,6 +151,8 @@ request eligible for the cache - a stated `temperature: 0` or the
 `X-Gateway-Cache: allow` header - and no request in this file is either, which is
 why every `cache` label asserted here reads `miss`.
 tests/gateway/test_exact_cache.py is where its samples come from.
+`gateway_ledger_writes_total` is fed by the Postgres ledger writer's background
+worker, and every request in this file writes to the in-memory ledger instead.
 
 The distinction matters because the emptiness case below reads the PROCESS
 registry: a family another module fed would fail it for a reason that has
@@ -157,8 +160,8 @@ nothing to do with the claim."""
 
 DECLARED_FAMILIES = frozenset(FED_FAMILIES) | frozenset(ELSEWHERE_FED_FAMILIES)
 
-DECLARED_FAMILY_COUNT = 11
-"""Nine fed by a request in this file and two fed only from elsewhere in the
+DECLARED_FAMILY_COUNT = 12
+"""Nine fed by a request in this file and three fed only from elsewhere in the
 session. The plan's own number, so a family added or dropped fails here as well
 as in the set comparison - and it did NOT change when an earlier change filled the last
 declared-and-empty family, because a plan here adds a value, never a family.

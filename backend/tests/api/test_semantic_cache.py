@@ -82,14 +82,9 @@ from app.providers.base import (
     StreamEvent,
 )
 from app.schemas.embeddings import MAX_EMBEDDING_INPUT_CHARS
-from app.services.chat_pipeline import (
-    CACHE_SPAN,
-    CACHE_STATUS_HIT,
-    CACHE_STATUS_MISS,
-    CACHE_STATUS_SEMANTIC,
-    EMBED_ALIAS,
-    SEMANTIC_SPAN,
-)
+from app.services.chat_cache import EMBED_ALIAS
+from app.services.chat_headers import CACHE_STATUS_HIT, CACHE_STATUS_MISS, CACHE_STATUS_SEMANTIC
+from app.services.chat_pipeline import CACHE_SPAN, SEMANTIC_SPAN
 from app.storage import InMemoryResidencyLogWriter, ResidencyLogRow
 
 from .conftest import (
@@ -515,16 +510,36 @@ NO_EMBED_ALIAS_POLICY = REFUSAL_POLICY.replace(
 )
 
 
+POLICY_PRICES = "prices:\n" + "".join(
+    f"""  {provider}/{model}:
+    - effective_from: 2025-01-01
+      input_usd_per_1m: "1.00"
+      output_usd_per_1m: "5.00"
+"""
+    for provider, model in (
+        (CHAT_EU_PROVIDER, "model-chat-eu"),
+        (EMBED_US_PROVIDER, "model-embed-us"),
+    )
+)
+"""A price for every pair either policy above can reach. The app refuses to start on
+a policy with an unpriced pair, and the amounts do not matter to any case here."""
+
+
 def written(tmp_path_factory: pytest.TempPathFactory, name: str, policy: str) -> Path:
-    """One policy document on disk, written once."""
-    path = tmp_path_factory.mktemp(name) / "routing.yaml"
+    """One policy document on disk, written once, with `POLICY_PRICES` beside it."""
+    folder = tmp_path_factory.mktemp(name)
+    (folder / "prices.yaml").write_text(POLICY_PRICES, encoding="utf-8")
+    path = folder / "routing.yaml"
     path.write_text(policy, encoding="utf-8")
     return path
 
 
 def policy_client(path: Path, adapters: Mapping[str, Adapter]) -> TestClient:
-    """An app built on the policy at `path` with the given stubs."""
-    return build_chat_client(Settings(api_keys=API_KEYS, routing_policy_path=path), adapters)
+    """An app built on the policy at `path`, priced by the file beside it, with the given stubs."""
+    settings = Settings(
+        api_keys=API_KEYS, routing_policy_path=path, prices_path=path.parent / "prices.yaml"
+    )
+    return build_chat_client(settings, adapters)
 
 
 @pytest.fixture(scope="module")

@@ -27,6 +27,7 @@ import hashlib
 import hmac
 import re
 import secrets
+from collections.abc import Mapping
 from typing import Annotated, Protocol
 
 from fastapi import Depends, Header, Request
@@ -52,7 +53,7 @@ from app.limits.prices import PriceStore
 from app.model_routing.policy import DataClass, PolicyStore, ResidencyMode
 from app.redaction import DirectoryStore, RedactionMapStore
 from app.services.chat_accounting import Clients
-from app.services.routing_reload import RUNTIME_SCOPE_KEY, RoutingRuntime
+from app.services.routing_reload import RUNTIME_SCOPE_KEY, RoutingRuntime, RoutingRuntimeStore
 from app.storage import ConsoleEventWriter
 
 MAX_KEY_LENGTH = 256
@@ -416,6 +417,18 @@ def get_provider_limiter(request: Request) -> asyncio.Semaphore:
     return limiter
 
 
+def get_routing_store(request: Request) -> RoutingRuntimeStore:
+    """The store that swaps the policy, adapters and breaker as one, built in `create_app`."""
+    store: RoutingRuntimeStore = request.app.state.routing_store
+    return store
+
+
+def get_provider_environ(request: Request) -> Mapping[str, str]:
+    """The environment the provider keys are read from, set in `create_app`."""
+    environ: Mapping[str, str] = request.app.state.provider_environ
+    return environ
+
+
 ClientsDep = Annotated[Clients, Depends(get_clients)]
 PolicyDep = Annotated[PolicyStore, Depends(get_policy)]
 ResidencyModeDep = Annotated[ResidencyMode, Depends(get_residency_mode)]
@@ -424,3 +437,5 @@ RedactionMapStoreDep = Annotated[RedactionMapStore, Depends(get_redaction_map_st
 DirectoryStoreDep = Annotated[DirectoryStore, Depends(get_directory_store)]
 ConsoleEventsDep = Annotated[ConsoleEventWriter, Depends(get_console_events)]
 ProviderLimiterDep = Annotated[asyncio.Semaphore, Depends(get_provider_limiter)]
+RoutingStoreDep = Annotated[RoutingRuntimeStore, Depends(get_routing_store)]
+ProviderEnvironDep = Annotated[Mapping[str, str], Depends(get_provider_environ)]
