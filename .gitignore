@@ -54,3 +54,6 @@ crash.log
 # Scratch work, never committed
 /scratch/
 /backend/scratch/
+
+# Private working notes
+dev/notes/
