@@ -48,6 +48,22 @@ services:
       postgres: { condition: service_healthy }
       qdrant: { condition: service_healthy }
 
+  # The console web app on port 3001, behind the `app` profile like the Helpdesk's
+  # containers, so a plain `docker compose up -d` stays the backing services and
+  # the gateway. `make up` turns the profile on. It reads `web/.env.local` for
+  # its login values, and reaches the gateway by service name, not localhost.
+  console:
+    profiles: ["app"]
+    build: web
+    env_file:
+      - path: web/.env.local
+        required: false
+    environment:
+      CONSOLE_API_URL: http://gateway:8080
+    ports: ["3001:3001"]
+    depends_on:
+      gateway: { condition: service_started }
+
   redis:
     image: redis:7
     command: ["redis-server", "--save", "", "--appendonly", "no"]

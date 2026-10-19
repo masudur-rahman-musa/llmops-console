@@ -1,4 +1,4 @@
-.PHONY: help setup run test fast test-slowest lint typecheck format verify security eval infra-check k8s-check k8s-aws-check k8s-server-check server-secrets server-helpdesk-data k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate purge-residency refresh-rollup secrets-encrypt secrets-decrypt secrets-check load
+.PHONY: help setup run up down rebuild all gateway console test fast test-slowest lint typecheck format verify security eval infra-check k8s-check k8s-aws-check k8s-server-check server-secrets server-helpdesk-data k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate purge-residency refresh-rollup secrets-encrypt secrets-decrypt secrets-check load
 
 # The console's checks run through pnpm, and are skipped only in a checkout that
 # has no web, so the intended gate stays visible in this file. The
@@ -22,6 +22,18 @@ help:       ## Show all targets
 setup:      ## Install dependencies and pre-commit hooks
 	uv sync --project backend && $(UV_ROOT) pre-commit install
 	$(call console,install)
+up:         ## Start everything in Docker: backing services, gateway and the console on 3001
+	docker compose --profile app up -d --build
+down:       ## Stop the whole Docker stack, keeping its data
+	docker compose --profile app down
+# `make rebuild` or `make rebuild all`: rebuild and restart the gateway and the console,
+# never the databases. `make rebuild gateway` (or console) does just that one.
+# The words after `rebuild` are empty targets so make accepts them.
+REBUILD_WHAT = $(filter-out rebuild,$(MAKECMDGOALS))
+rebuild:    ## Rebuild gateway and console, never the databases: make rebuild [all|gateway|console]
+	docker compose --profile app up -d --build --no-deps $(if $(filter-out all,$(REBUILD_WHAT)),$(filter-out all,$(REBUILD_WHAT)),gateway console)
+all gateway console:
+	@:
 run:        ## Run the project locally
 	docker compose up -d && $(UV_ROOT) python -c 'from app.main import serve; serve(reload=True)'
 # The packages that carry a guarantee rather than a feature. They are gated at
