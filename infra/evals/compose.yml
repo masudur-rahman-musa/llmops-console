@@ -1,0 +1,35 @@
+# The eval gate's stack: `make eval`, never `docker compose up` on its own.
+#
+# An override over `docker-compose.yml`, like `infra/load/compose.yml`. The
+# gateway is the real image; its providers are the mock, through a whole
+# routing policy of its own, so no turn can reach a real model. The mock runs in
+# golden-set mode, reading the help desk's own set from its checkout
+# (`HELPDESK_DIR`), so the agent gets the answers the set expects.
+#
+# No credential is written in this file. `make eval` makes a throwaway gateway
+# key per run and passes its digest here as environment only.
+services:
+  gateway:
+    environment:
+      # Written out rather than derived: it must match the mount target below,
+      # or the gateway refuses to start.
+      OPSCONSOLE_ROUTING_POLICY_PATH: /etc/opsconsole/routing.evals.yaml
+      OPSCONSOLE_API_KEYS: ${OPSCONSOLE_API_KEYS}
+    volumes:
+      - ./infra/evals/routing.evals.yaml:/etc/opsconsole/routing.evals.yaml:ro
+    depends_on:
+      mock-provider: { condition: service_healthy }
+
+  mock-provider:
+    build: infra/load/mock-provider
+    profiles: [evals]
+    environment:
+      MOCK_GOLDEN_SET: /golden/helpdesk-v1.jsonl
+    volumes:
+      - ${HELPDESK_DIR:-../ai-help-desk-governed-access}/backend/evals/golden:/golden:ro
+    healthcheck:
+      # The slim image carries no curl, so the check is the interpreter itself.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10

@@ -170,6 +170,10 @@ DATASOURCE_ACCESS = "proxy"
 #: `gateway_` name still fails against the real registry instead of being waved through here.
 CLUSTER_INFRA_METRIC_NAMES: frozenset[str] = frozenset(
     {
+        # An earlier change: the Helpdesk's own counters, scraped from its agent api and scheduler.
+        "helpdesk_turn_endings_total",
+        "helpdesk_turns_to_file_bucket",
+        "helpdesk_chats_waiting",
         "kube_pod_container_status_restarts_total",
         "kube_pod_status_phase",
         "kube_node_status_condition",

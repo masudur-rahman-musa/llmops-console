@@ -394,9 +394,12 @@ spec:
       containers:
         - name: helpdesk-scheduler
           image: helpdesk-scheduler
-          # No `ports`, no Service and no probes (decision F). It serves
-          # nothing, so a Service in front of it would be an address with no
-          # listener behind it.
+          # Still no probes (decision F): it serves no traffic. It does serve
+          # its stuck chat counters on 8082, so that port and the Service
+          # below exist for Prometheus to scrape, and for nothing else.
+          ports:
+            - name: metrics
+              containerPort: 8082
           envFrom:
             - configMapRef:
                 name: helpdesk-config
@@ -411,3 +414,21 @@ spec:
               cpu: 50m
             limits:
               memory: 256Mi
+
+---
+# Only for the metrics scrape: Prometheus reaches the scheduler's counters by
+# this name. Nothing else calls the scheduler.
+apiVersion: v1
+kind: Service
+metadata:
+  name: helpdesk-scheduler
+  namespace: apps
+  labels:
+    app.kubernetes.io/name: helpdesk-scheduler
+spec:
+  selector:
+    app.kubernetes.io/name: helpdesk-scheduler
+  ports:
+    - name: metrics
+      port: 8082
+      targetPort: metrics

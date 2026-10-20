@@ -114,8 +114,44 @@ purge-residency: ## Drop residency log partitions past the retention
 	$(UV_ROOT) ops-purge-residency
 refresh-rollup: ## Refresh the daily cost rollup the console reads
 	$(UV_ROOT) ops-refresh-rollup
-eval:       ## Project evals: golden set vs backend/evals/baseline.json
-	$(UV_ROOT) ops-eval run --target http://localhost:8080 --set "$$GOLDEN_SET" --tenant evals --out backend/evals/reports/local
+# The eval gate: the help desk's golden set against the real help
+# desk agent, with this gateway beside it and the mock standing in for the
+# model, so no key is needed. One run and one gate check per tenant; either
+# failing fails the target. HELPDESK_DIR is the help desk checkout (CI checks it
+# out to `helpdesk/`). Each run makes two throwaway gateway keys, one per
+# tenant: the digests go to the gateway, the keys to the help desk, and nothing
+# is stored. A run's own exit code is ignored, because failed cases are the
+# gate's input; a run that wrote no report fails its gate check instead. The
+# gateway's response cache is cleared first, so no answer from an older mock
+# or an older set is served again. A help desk scheduler left running on a
+# laptop is stopped first: its review job writes the same rows as the reset.
+HELPDESK_DIR ?= ../ai-help-desk-governed-access
+EVAL_HELPDESK = $(abspath $(HELPDESK_DIR))
+EVAL_SET = $(EVAL_HELPDESK)/backend/evals/golden/helpdesk-v1.jsonl
+EVAL_REPORTS = backend/evals/reports/local
+EVAL_HELPDESK_COMPOSE = docker compose --project-directory $(EVAL_HELPDESK) -f $(EVAL_HELPDESK)/docker-compose.yml -f infra/evals/helpdesk.compose.yml --profile app
+eval:       ## The eval gate: help desk golden set, real agent, mock model, both tenants
+	@nord=$$(openssl rand -hex 32); cuan=$$(openssl rand -hex 32); \
+	nord_digest=$$(printf '%s' "$$nord" | openssl dgst -sha256 -r | cut -d' ' -f1); \
+	cuan_digest=$$(printf '%s' "$$cuan" | openssl dgst -sha256 -r | cut -d' ' -f1); \
+	export OPSCONSOLE_API_KEYS="nordlicht:$$nord_digest,cuan:$$cuan_digest"; \
+	export HELPDESK_GATEWAY_API_KEYS="nordlicht:$$nord,cuan:$$cuan"; \
+	export HELPDESK_DIR=$(EVAL_HELPDESK); \
+	stack="docker compose -f docker-compose.yml -f infra/evals/compose.yml --profile evals"; \
+	$$stack up -d --build --wait gateway mock-provider || exit $$?; \
+	$$stack exec -T gateway ops-migrate || exit $$?; \
+	$$stack exec -T redis sh -c 'redis-cli --scan --pattern "response:*" | xargs -r redis-cli del' >/dev/null || exit $$?; \
+	(cd $(EVAL_HELPDESK) && docker compose up -d --wait postgres redis qdrant) || exit $$?; \
+	$(EVAL_HELPDESK_COMPOSE) stop helpdesk-scheduler || exit $$?; \
+	infra/evals/prepare_helpdesk.sh $(EVAL_HELPDESK) || exit $$?; \
+	$(EVAL_HELPDESK_COMPOSE) up -d --build --wait helpdesk-mcp-server helpdesk-agent-api || exit $$?
+	@rm -rf $(EVAL_REPORTS); status=0; \
+	for tenant in nordlicht cuan; do \
+	  $(UV_ROOT) ops-eval run --target http://localhost:8000 --set $(EVAL_SET) --tenant $$tenant \
+	    --policy infra/evals/routing.evals.yaml --run-kind ci --out $(EVAL_REPORTS)/$$tenant; \
+	  $(UV_ROOT) ops-eval gate --report $(EVAL_REPORTS)/$$tenant/report.json \
+	    --baseline backend/evals/baseline.json --comment $(EVAL_REPORTS)/$$tenant/comment.md || status=1; \
+	done; exit $$status
 # The published comparison (the design). Pure: it reads a manifest and the
 # report.json each option names, so it needs no stack and no key. MANIFEST and
 # OUT are overridable because the measured run builds its table from its own

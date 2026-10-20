@@ -191,6 +191,9 @@ class CaseReport(BaseModel):
     residency: ResidencyVerdict | None
     judge: JudgeVerdict | None
     error: str | None
+    step_prompt_versions: dict[str, str] = {}
+    """The prompt sha256 each agent step ran on for this case, from the target's
+    header. Defaulted so a report written before the field existed still loads."""
 
     @field_serializer("cost_usd")
     def _serialise_cost(self, value: Decimal | None) -> str | None:
@@ -260,6 +263,10 @@ class RunReport(BaseModel):
     when nothing was judged. At the RUN level and not per case,
     because one process reads one prompt file and a hash repeated on two hundred
     rows is the same fact two hundred times."""
+    step_prompt_versions: dict[str, str] = {}
+    """The agent's step prompts, when every answered case named the same map,
+    and empty when they disagree or none named any. The markdown tells those two
+    apart (`mixed` against `none`). Defaulted like `calibration` below."""
     calibration: RunCalibration | None = None
     """The calibration this run was handed, or `null` when it was given none.
 
@@ -294,7 +301,33 @@ def _case_report(run: CaseRun) -> CaseReport:
         residency=run.residency,
         judge=run.judge,
         error=run.error,
+        step_prompt_versions={} if outcome is None else outcome.step_prompt_versions,
     )
+
+
+def _agreed_step_versions(cases: list[CaseReport]) -> dict[str, str]:
+    """The map every answered case named, or empty when two disagree.
+
+    A turn that never answered named nothing and is left out, so one broken
+    case does not blank the run's map
+    (`test_the_run_carries_the_step_versions_every_case_agreed_on`).
+    """
+    answered = [case.step_prompt_versions for case in cases if case.error is None]
+    if not answered or any(versions != answered[0] for versions in answered):
+        return {}
+    return dict(answered[0])
+
+
+def _step_versions_text(report: RunReport) -> str:
+    """`compose=..., intent=...` sorted by step, `mixed` when cases disagreed,
+    `none` when no case named any."""
+    if report.step_prompt_versions:
+        return ", ".join(
+            f"{step}={digest}" for step, digest in sorted(report.step_prompt_versions.items())
+        )
+    if any(case.step_prompt_versions for case in report.cases):
+        return "mixed"
+    return "none"
 
 
 def _categories(result: RunResult) -> dict[str, dict[str, object]]:
@@ -387,6 +420,7 @@ def build_report(
         "target": target,
         "passed": result.failed_count == 0,
         "judge_prompt_version": judge_prompt_version,
+        "step_prompt_versions": _agreed_step_versions(cases),
         "calibration": calibration,
         "metrics": {
             "cases": result.cases,
@@ -469,6 +503,7 @@ def _identity_lines(report: RunReport) -> list[str]:
         f"- tenant: {report.tenant}",
         f"- target: {report.target}",
         f"- judge prompt: {report.judge_prompt_version or 'none'}",
+        f"- step prompts: {_step_versions_text(report)}",
         f"- started: {report.started_at.isoformat()}",
         f"- finished: {report.finished_at.isoformat()}",
         f"- result: {'passed' if report.passed else 'FAILED'}",

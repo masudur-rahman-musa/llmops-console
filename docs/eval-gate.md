@@ -128,22 +128,41 @@ jobs that fail for different reasons.
 
 `baseline-guard` is the rule above, unconditional.
 
-`eval` runs the golden set and compares it to the baseline. **It is skipped
-unless the repository variable `EVAL_TARGET_URL` is set**, and today nothing
-serves the eval target contract, so it is skipped everywhere. A stub target would
-score itself against a baseline this repository wrote, and its green tick would
-read like evidence.
-the project notes has the reasoning.
-Setting that variable is what turns the eval half on, with no code change.
+`eval` runs on every pull request, with no condition. It checks out the help
+desk repository beside this one (it is private, so the job reads it with the
+`HELPDESK_REPO_TOKEN` secret, a read-only token), writes the help desk's
+`.env.demo` from its `.env.example`, and runs `make eval`. Until that secret is
+set the checkout fails, and the job with it; it never skips.
 
-When it does run: the stack comes up, the run happens against the target with
-`backend/config/routing.ci.yaml` merged over `routing.yaml` (which caps the
-`evals` tenant at `$2.00` for the run), then `ops-eval gate` produces the verdict
-and the comment. The report directory is uploaded as a build artifact whatever
-the verdict, because a failed gate is when somebody opens it. The comment is
-posted once per pull request and edited in place on a re-run; on a fork's pull
-request the token is read-only, so the comment is skipped and the artifact is
-still published.
+`make eval` does the whole run, the same on a laptop
+(`HELPDESK_DIR` names the help desk checkout, `../ai-help-desk-governed-access`
+by default):
+
+1. It makes two throwaway gateway keys, one per help desk tenant. The digests go
+   to the gateway and the keys to the help desk. Nothing is stored.
+2. It starts the gateway with `infra/evals/compose.yml`: every provider in
+   `infra/evals/routing.evals.yaml` is the mock in `infra/load/mock-provider/`,
+   run in golden-set mode. No model key is needed and nothing is spent.
+3. It resets and seeds the help desk's database and loads its policy text
+   (`infra/evals/prepare_helpdesk.sh`), then starts its agent API and tool
+   server with the eval routes switched on (`infra/evals/helpdesk.compose.yml`).
+4. It runs the help desk's golden set, `helpdesk-v1.jsonl`, once per tenant
+   (`nordlicht`, then `cuan`), and checks each report against the baseline.
+   Either check failing fails the target.
+
+In golden-set mode the mock answers each structured call from the golden case
+it is about: the case's expected intent, then its expected tool calls with ids
+filled from the help desk's own data, then an empty plan. So the run proves the
+help desk's own code (policy, refusal, risk class, tools, residency, citations),
+not its prompt wording; a prompt change is caught by the nightly run with a real
+model. the project notes has the
+reasoning. The judge stays off in CI: a mock judge scores nothing.
+
+The two tenants' comments are joined into one, and the report directory is
+uploaded as a build artifact whatever the verdict, because a failed gate is when
+somebody opens it. The comment is posted once per pull request and edited in
+place on a re-run; on a fork's pull request the token is read-only, so the
+comment is skipped and the artifact is still published.
 
 ## What the comment carries
 

@@ -58,3 +58,6 @@ class CaseOutcome(BaseModel):
     cost_usd: Decimal | None = None
     provider: str | None = None
     region: str | None = None
+    step_prompt_versions: dict[str, str] = {}
+    """Each agent step's prompt sha256, by step name, as the target's
+    `X-Prompt-Versions` header named them. Empty when the target sent none."""

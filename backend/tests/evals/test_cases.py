@@ -358,6 +358,7 @@ ACCEPTED_PRINCIPALS: list[tuple[str, str]] = [
     ("an email-shaped principal", "sam@acme.example"),
     ("a numeric directory id", "u-1042"),
     ("an underscore", "svc_desk"),
+    ("a help desk seed seat", "seed:it.it_admin.3"),
     ("exactly the cap", MAX_PRINCIPAL),
 ]
 

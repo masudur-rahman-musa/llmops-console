@@ -699,11 +699,12 @@ def test_the_json_document_carries_every_identity_field_by_its_published_name() 
     """Catches a serialiser that renames or drops a field on the way out - an alias, an
     exclusion of `None`, a nested `run` object - while `RunReport` itself still looks
     right. `docs/eval-report.md` publishes these key names and `16d` reads them, so the
-    document's own keys are the contract rather than the model's attributes. Fifteen keys:
-    `judge_prompt_version` is 17c's and `calibration` is 17f's, and both are published in
-    every document whatever the run held, so a reader never has to tell an absent key from
-    a null one. Twelve case keys: `judge` is 17c's verdict, published as `"judge": null`
-    in `docs/eval-report.md` whenever no judge ran, for the same reason."""
+    document's own keys are the contract rather than the model's attributes. Sixteen keys:
+    `judge_prompt_version` is 17c's, `calibration` is 17f's and `step_prompt_versions` is
+    an earlier change's, and all are published in every document whatever the run held, so a reader
+    never has to tell an absent key from a null one. Thirteen case keys: `judge` is 17c's
+    verdict, published as `"judge": null` in `docs/eval-report.md` whenever no judge ran,
+    for the same reason, and `step_prompt_versions` is an earlier change's."""
     document = json.loads(report_json(build(MIXED)))
 
     assert set(document) == {
@@ -720,6 +721,7 @@ def test_the_json_document_carries_every_identity_field_by_its_published_name() 
         "passed",
         "metrics",
         "judge_prompt_version",
+        "step_prompt_versions",
         "calibration",
         "cases",
     }
@@ -736,6 +738,7 @@ def test_the_json_document_carries_every_identity_field_by_its_published_name() 
         "error",
         "tags",
         "judge",
+        "step_prompt_versions",
     }
 
 
@@ -1394,6 +1397,7 @@ def test_the_json_document_publishes_the_calibration_record_field_by_field() -> 
         "passed",
         "metrics",
         "judge_prompt_version",
+        "step_prompt_versions",
         "calibration",
         "cases",
     }
@@ -1489,3 +1493,101 @@ def test_an_untrusted_calibration_with_no_kappa_at_all_still_notes_it_as_null() 
         "- cost_usd_total: 0.002000",
         "- cost_usd_per_turn: 0.001000",
     ]
+
+
+# --------------------------------------------------------------------------
+# the agent step prompt versions
+# --------------------------------------------------------------------------
+
+STEP_VERSIONS_A = {
+    "system": "4" * 64,
+    "compose": "1" * 64,
+    "plan": "3" * 64,
+    "intent": "2" * 64,
+}
+"""Four steps in an order that is NOT sorted, so a renderer that prints the map in the
+order it arrived cannot pass the sorted-line case by luck."""
+
+STEP_VERSIONS_B = {**STEP_VERSIONS_A, "intent": "9" * 64}
+"""The same four steps with one hash changed: a prompt edited between two cases."""
+
+
+def run_with_versions(case_id: str, versions: dict[str, str]) -> CaseRun:
+    """A passing case whose outcome carries the given step versions."""
+    outcome = CaseOutcome(
+        reply="Done.",
+        latency_ms=120,
+        cost_usd=Decimal("0.0010"),
+        provider="anthropic_eu",
+        region="eu",
+        step_prompt_versions=versions,
+    )
+    return make_run(case_id, outcome=outcome)
+
+
+def test_the_run_carries_the_step_versions_every_case_agreed_on() -> None:
+    """Catches a report that drops the versions, one that records them on the run only or
+    on the cases only, and one that lets a turn that never answered (no outcome, so no
+    versions) count as a disagreement and blank the run's map."""
+    result = RunResult(
+        runs=(
+            run_with_versions("alpha", STEP_VERSIONS_A),
+            run_with_versions("beta", STEP_VERSIONS_A),
+            make_run("gamma", verdict="broken"),
+        )
+    )
+
+    report = build(result)
+
+    assert dict(report.step_prompt_versions) == STEP_VERSIONS_A
+    assert dict(report.cases[0].step_prompt_versions) == STEP_VERSIONS_A
+    assert dict(report.cases[1].step_prompt_versions) == STEP_VERSIONS_A
+    assert dict(report.cases[2].step_prompt_versions) == {}
+    document = json.loads(report_json(report))
+    assert document["step_prompt_versions"] == STEP_VERSIONS_A
+    assert document["cases"][0]["step_prompt_versions"] == STEP_VERSIONS_A
+
+
+def test_cases_that_disagree_leave_the_run_map_empty_and_print_mixed() -> None:
+    """Catches a run map taken from the first case or the last, which would print one
+    prompt version for a run that used two. Each case keeps its own map; the run's is empty
+    and the markdown says `mixed`."""
+    result = RunResult(
+        runs=(
+            run_with_versions("alpha", STEP_VERSIONS_A),
+            run_with_versions("beta", STEP_VERSIONS_B),
+        )
+    )
+
+    report = build(result)
+
+    assert dict(report.step_prompt_versions) == {}
+    assert dict(report.cases[0].step_prompt_versions) == STEP_VERSIONS_A
+    assert dict(report.cases[1].step_prompt_versions) == STEP_VERSIONS_B
+    assert "- step prompts: mixed" in report_markdown(report).splitlines()
+
+
+def test_the_markdown_prints_the_step_versions_next_to_the_judge_prompt() -> None:
+    """Catches a line placed anywhere but right after the judge prompt line, a map printed in
+    arrival order instead of sorted by step, and a line that prints only the step names."""
+    result = RunResult(runs=(run_with_versions("alpha", STEP_VERSIONS_A),))
+
+    lines = report_markdown(build(result, judge_prompt_version=JUDGE_VERSION)).splitlines()
+
+    position = next(i for i, line in enumerate(lines) if line.startswith("- judge prompt:"))
+    assert lines[position + 1] == (
+        f"- step prompts: compose={'1' * 64}, intent={'2' * 64}, plan={'3' * 64}, system={'4' * 64}"
+    )
+
+
+def test_a_report_without_step_versions_still_parses() -> None:
+    """Catches a new required field, which would make every report written before this plan
+    (the published worked example included) fail to load under `extra="forbid"`. The
+    shipped fixture has no such key and must load with an empty map at both levels."""
+    payload = json.loads(REPORT_FIXTURE.read_text(encoding="utf-8"))
+    assert "step_prompt_versions" not in payload
+
+    report = RunReport.model_validate(payload)
+
+    assert dict(report.step_prompt_versions) == {}
+    assert [dict(case.step_prompt_versions) for case in report.cases] == [{}] * 4

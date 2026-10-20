@@ -45,6 +45,22 @@ the connection or answers a non-2xx is a FAILED case; the run continues and the
 case is never retried. A retried case is a second sample of a non-deterministic
 system, which would quietly lift the score.
 
+## The prompt versions header
+
+A workload may name the prompt each of its steps ran on in an
+`X-Prompt-Versions` response header, because the envelope refuses extra fields:
+
+```
+X-Prompt-Versions: intent=<sha256>,plan=<sha256>,compose=<sha256>,system=<sha256>
+```
+
+Each entry is a step name (lowercase letters, digits and `_`, starting with a
+letter, at most 32 characters) and the 64 lowercase hex characters of that
+prompt's `sha256`. At most 16 steps, each named once. The report carries the map
+(`step_prompt_versions` in `docs/eval-report.md`). No header is fine: the map is
+empty. A header that breaks any of these rules fails that turn as
+`provider_error`, because a half-read map would name prompts nobody ran.
+
 ## The envelope
 
 The answer is an envelope, not a chat completion. The harness reads the intent,

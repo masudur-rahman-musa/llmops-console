@@ -1,7 +1,7 @@
 {
   "uid": "helpdesk-agent",
   "title": "Helpdesk agent",
-  "description": "Requests, latency, cost and residency violations filtered to the Helpdesk-shaped routing aliases (agent-default, agent-strong, embed - from this repo's routing.yaml), plus pod health for the three Helpdesk workloads. No Helpdesk tenant or metric exists in any committed file yet, so this dashboard reads the same gateway families every other dashboard reads, scoped by alias rather than by a tenant id nobody has created. Provisioned from infra/k8s/monitoring/dashboards/; edits made in the Grafana UI are not saved.",
+  "description": "Requests, latency, cost and residency violations filtered to the Helpdesk-shaped routing aliases (agent-default, agent-strong, embed - from this repo's routing.yaml), pod health for the three Helpdesk workloads, and stuck chats read from the help desk's own counters: how each turn ended, how many turns it took to file a request, and how many chats wait on a question for 30 minutes or more. Provisioned from infra/k8s/monitoring/dashboards/; edits made in the Grafana UI are not saved.",
   "tags": ["helpdesk", "opsconsole"],
   "timezone": "utc",
   "schemaVersion": 39,
@@ -144,6 +144,77 @@
           "range": true,
           "legendFormat": "{{pod}} {{phase}}",
           "expr": "kube_pod_status_phase{pod=~\"helpdesk-api.*|helpdesk-worker.*|helpdesk-scheduler.*\"}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Turn endings per second, by how they ended",
+      "description": "How each help desk turn ended (answered, asked a question, refused, failed and so on), from the agent API's own counter. A rise in questions or refusals is where chats get stuck.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "fieldConfig": {
+        "defaults": { "unit": "reqps", "min": 0 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "{{outcome}}",
+          "expr": "sum by (outcome) (rate(helpdesk_turn_endings_total[5m]))"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Turns to file a request, p50 and p95",
+      "description": "How many of the person's messages it took before a request was filed, from the agent API's histogram over the last hour.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "min": 0 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "p50",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(helpdesk_turns_to_file_bucket[1h])))"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "p95",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(helpdesk_turns_to_file_bucket[1h])))"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Chats waiting on a question for 30 minutes or more",
+      "description": "Chats whose last turn asked the person something and got no answer for 30 minutes or more, from the scheduler's sweep. Summed over every tenant, because the gauge's tenant label is an id, not a name.",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 32 },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "min": 0 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "range": true,
+          "legendFormat": "waiting",
+          "expr": "sum(helpdesk_chats_waiting)"
         }
       ]
     }

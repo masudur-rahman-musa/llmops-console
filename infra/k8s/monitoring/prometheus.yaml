@@ -95,6 +95,16 @@ data:
         metrics_path: /metrics
         static_configs:
           - targets: ["pushgateway.evals.svc.cluster.local:9091"]
+      # The help desk's own counters: how turns end and how many chats wait
+      # on a question (agent API), and the stuck chat sweep (scheduler).
+      - job_name: helpdesk-agent-api
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["helpdesk-agent-api.apps.svc.cluster.local:8000"]
+      - job_name: helpdesk-scheduler
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["helpdesk-scheduler.apps.svc.cluster.local:8082"]
   # A literal copy of `../../infra/k8s/monitoring/alerts/rules.yml`. Held as
   # its own key, mounted next to `prometheus.yml` in the same ConfigMap, rather
   # than a `configMapGenerator` of its own - the same object-count reasoning

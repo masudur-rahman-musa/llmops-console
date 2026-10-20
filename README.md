@@ -144,7 +144,9 @@ measured rather than assumed. The report shape is in
 
 `project-evals/baseline.json` holds the committed numbers. The CI gate compares
 a run against them and fails the pull request when a metric falls below its
-floor, described in [docs/eval-gate.md](docs/eval-gate.md). The baseline changes
+floor, described in [docs/eval-gate.md](docs/eval-gate.md). On every pull
+request it runs the help desk's own golden set against the real help desk agent,
+with a mock standing in for the model, so it needs no key. The baseline changes
 only through a commit that carries its own decision record, and never to make a
 failing run pass. Metrics are percentages with an explicit null for "no
 evidence", so an empty slice cannot read as a perfect score.
@@ -258,7 +260,7 @@ the project notes these are the ones that shape the system most.
 - The residency log write is off the request's critical path
 - Budget overrides are signed with their own scoped secret
 - Eval metrics are percentages with a null for no evidence
-- The eval gate ships inert without a target
+- The eval gate runs the help desk on the mock, which replaces the gate shipping inert
 - Terraform Cloud holds the state, not a bucket we operate
 - Images are named by commit and scanned after push
 - The metrics stack is hand-written rather than the upstream chart

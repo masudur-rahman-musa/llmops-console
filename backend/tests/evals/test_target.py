@@ -469,3 +469,108 @@ def test_a_failed_reset_raises_target_unreachable_naming_the_url(
         make_client(handler).reset()
 
     assert f"{BASE_URL}{RESET_PATH}" in str(raised.value)
+
+
+# --------------------------------------------------------------------------
+# the step prompt versions header
+# --------------------------------------------------------------------------
+
+PROMPT_VERSIONS_HEADER = "X-Prompt-Versions"
+INTENT_SHA = "1" * 64
+PLAN_SHA = "ab" * 32
+
+
+def answer_with_versions(value: str | None) -> TargetClient:
+    """A client whose target answers the worked envelope with one header value, or none."""
+    headers = {} if value is None else {PROMPT_VERSIONS_HEADER: value}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=envelope_payload(), headers=headers)
+
+    return make_client(handle)
+
+
+def test_the_prompt_versions_header_becomes_the_outcomes_step_versions() -> None:
+    """Catches an implementation that ignores the header, one that keeps only the first
+    step, and one that fills the map from the wrong side of the `=`: exactly the two
+    steps the header names must come back, each with its own hash."""
+    client = answer_with_versions(f"intent={INTENT_SHA},plan={PLAN_SHA}")
+
+    _, outcome = client.run_case(make_case())
+
+    assert dict(outcome.step_prompt_versions) == {"intent": INTENT_SHA, "plan": PLAN_SHA}
+
+
+def test_no_prompt_versions_header_gives_an_empty_map() -> None:
+    """Catches an implementation that fails a turn with no header, which would break every
+    older target, or one that invents placeholder versions for steps nobody named."""
+    _, outcome = answer_with_versions(None).run_case(make_case())
+
+    assert dict(outcome.step_prompt_versions) == {}
+
+
+MALFORMED_VERSION_HEADERS: list[tuple[str, str]] = [
+    ("a 63 character version", f"intent={'a' * 63}"),
+    ("a 65 character version", f"intent={'a' * 65}"),
+    ("an uppercase hex version", f"intent={'A' * 64}"),
+    ("a non hex version", f"intent={'g' * 64}"),
+    ("a version with a trailing space", f"intent={'a' * 64} "),
+    ("a version with a trailing newline", f"intent={'a' * 64}\n"),
+    ("a version with a trailing CRLF", f"intent={'a' * 64}\r\n"),
+    ("an uppercase step name", f"Intent={'a' * 64}"),
+    ("a step name with a trailing space", f"intent ={'a' * 64}"),
+    ("a step name starting with a digit", f"1intent={'a' * 64}"),
+    ("a 33 character step name", f"{'s' * 33}={'a' * 64}"),
+    ("17 steps", ",".join(f"s{index}={'a' * 64}" for index in range(17))),
+    ("an entry with no equals sign", "intent"),
+    ("an entry with no version", "intent="),
+]
+"""Each row breaks exactly one rule of the header, and every other part is valid, so
+only the rule named can be what refuses it (the step name rows keep a valid hash, the
+version rows keep a valid step name)."""
+
+
+@pytest.mark.parametrize(
+    ("label", "value"),
+    MALFORMED_VERSION_HEADERS,
+    ids=[row[0] for row in MALFORMED_VERSION_HEADERS],
+)
+def test_a_malformed_prompt_versions_header_fails_the_turn(label: str, value: str) -> None:
+    """Catches a reader that trusts the header: a bad hash would be stored in a report as
+    if it named a prompt. The turn must fail as `provider_error` and name the case. The
+    anchors matter: a pattern written with `$` and `.match` lets the trailing newline row
+    through."""
+    with pytest.raises(TurnFailed) as raised:
+        answer_with_versions(value).run_case(make_case("case-77"))
+
+    assert raised.value.kind is TurnFailureKind.PROVIDER_ERROR
+    assert "case-77" in str(raised.value)
+
+
+VALID_VERSION_HEADERS: list[tuple[str, str, dict[str, str]]] = [
+    ("a 64 hex version", f"intent={'a' * 64}", {"intent": "a" * 64}),
+    ("a 32 character step name", f"{'s' * 32}={'b' * 64}", {"s" * 32: "b" * 64}),
+    ("a one character step name", f"x={'c' * 64}", {"x": "c" * 64}),
+    ("digits and underscores in a step name", f"step_2={'d' * 64}", {"step_2": "d" * 64}),
+    (
+        "16 steps",
+        ",".join(f"s{index}={'e' * 64}" for index in range(16)),
+        {f"s{index}": "e" * 64 for index in range(16)},
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "value", "expected"),
+    VALID_VERSION_HEADERS,
+    ids=[row[0] for row in VALID_VERSION_HEADERS],
+)
+def test_a_prompt_versions_header_at_its_limits_is_accepted(
+    label: str, value: str, expected: dict[str, str]
+) -> None:
+    """Pins each limit from the inside: a 64 hex version, a 32 character step name and 16
+    steps all pass. Catches an off-by-one that refuses the limit itself, which the
+    one-over rows above cannot see."""
+    _, outcome = answer_with_versions(value).run_case(make_case())
+
+    assert dict(outcome.step_prompt_versions) == expected

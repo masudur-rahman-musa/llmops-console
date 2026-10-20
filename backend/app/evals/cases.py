@@ -52,8 +52,13 @@ Wider than `MAX_IDENTIFIER_LENGTH` because a principal is a directory name and
 routinely an email address. It is stored as a column.
 """
 
-PRINCIPAL_PATTERN: Final[re.Pattern[str]] = re.compile(r"[a-z0-9]+(?:[._@-][a-z0-9]+)*")
+PRINCIPAL_PATTERN: Final[re.Pattern[str]] = re.compile(r"(?:seed:)?[a-z0-9]+(?:[._@-][a-z0-9]+)*")
 """The vocabulary of a `principal_user`: the identifier's, plus `.` and `@`.
+
+One optional `seed:` in front, and no other colon: the help desk's golden set
+names a seeded seat as `seed:<department>.<principal>.<index>`, which its eval
+route looks up (`test_a_realistic_principal_is_accepted`). A colon anywhere
+else is still refused.
 
 Used with `re.fullmatch` and never with `.match` - in Python `$` also matches
 before a trailing newline, so an anchored `.match` would accept

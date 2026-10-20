@@ -263,6 +263,39 @@ spec:
         - protocol: TCP
           port: http
 
+# Prometheus scraping the help desk's own counters: the agent API on its `http`
+# port (8000) and the scheduler on its `metrics` port (8082). Named ports, and
+# each pod carries only one of the two names, so this admits no other pairing.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: helpdesk-metrics-from-prometheus
+  namespace: apps
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+          - helpdesk-agent-api
+          - helpdesk-scheduler
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: http
+        - protocol: TCP
+          port: metrics
+
 # Six destinations and no `ipBlock` at all (decision B). The Helpdesk holds no
 # provider key and this is what makes that structural rather than conventional:
 # even a bug in the companion repo cannot dial a provider, because there is no

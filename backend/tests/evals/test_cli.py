@@ -311,6 +311,19 @@ def argv(
     return arguments
 
 
+def write_one_tenant_set(tmp_path: Path, tenant: str) -> Path:
+    """`valid_set.jsonl` with every case moved to `tenant`. A run keeps only the named
+    tenant's cases, so a case about a tenant name needs a set that has one."""
+    lines = [
+        json.dumps({**json.loads(line), "tenant": tenant})
+        for line in VALID_SET.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    path = tmp_path / "one_tenant_set.jsonl"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
 def run_cli(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -473,7 +486,13 @@ def test_a_tenant_of_exactly_the_cap_is_accepted(
     downstream tolerating it."""
     runner = RecordingRunner()
 
-    code = run_cli(monkeypatch, tmp_path, runner=runner, tenant=MAX_TENANT)
+    code = run_cli(
+        monkeypatch,
+        tmp_path,
+        runner=runner,
+        tenant=MAX_TENANT,
+        case_set=write_one_tenant_set(tmp_path, MAX_TENANT),
+    )
 
     assert code == EXIT_OK
     assert runner.calls == [MAX_TENANT]
@@ -535,7 +554,13 @@ def test_the_policy_defaults_to_the_shipped_routing_yaml(
     runner = RecordingRunner()
     install(monkeypatch, runner)
 
-    code = cli.main(argv(tenant=SHIPPED_EVAL_TENANT, out=tmp_path / "reports"))
+    code = cli.main(
+        argv(
+            tenant=SHIPPED_EVAL_TENANT,
+            case_set=write_one_tenant_set(tmp_path, SHIPPED_EVAL_TENANT),
+            out=tmp_path / "reports",
+        )
+    )
 
     assert code == EXIT_OK
     assert runner.calls == [SHIPPED_EVAL_TENANT]
@@ -2604,3 +2629,114 @@ def test_baseline_guard_fails_a_commit_that_moves_the_baseline_away(
     assert printed.err.strip().splitlines() == [
         f"{sha}: touches {BASELINE_PATH} but {MISSING_PREFIX_REASON} and {MISSING_ADR_REASON}"
     ]
+
+
+# --------------------------------------------------------------------------
+# one tenant's cases out of a set that names several
+# --------------------------------------------------------------------------
+
+
+class CapturingRunner(RecordingRunner):
+    """A `RecordingRunner` that also keeps the case ids and markers it was handed."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.case_ids: list[str] = []
+        self.markers: list[tuple[str, ...]] = []
+
+    def __call__(
+        self,
+        *,
+        client: TargetClient,
+        cases: tuple[EvalCase, ...],
+        policy: Policy,
+        tenant: str,
+        other_tenant_markers: tuple[str, ...] = (),
+        judge: object | None = None,
+    ) -> RunResult:
+        self.case_ids = [case.id for case in cases]
+        self.markers.append(other_tenant_markers)
+        return super().__call__(
+            client=client,
+            cases=cases,
+            policy=policy,
+            tenant=tenant,
+            other_tenant_markers=other_tenant_markers,
+            judge=judge,
+        )
+
+
+def write_two_tenant_set(tmp_path: Path) -> Path:
+    """A three-case set named like the shipped one: two cases for nordlicht, one for cuan."""
+    rows = [
+        ("nord-1", "nordlicht"),
+        ("cuan-1", "cuan"),
+        ("nord-2", "nordlicht"),
+    ]
+    lines = [
+        json.dumps(
+            {
+                "id": case_id,
+                "category": "helpdesk",
+                "tenant": tenant,
+                "principal_user": "dana.okafor",
+                "messages": [{"role": "user", "content": f"Question {case_id}"}],
+                "expected": {"intent": "troubleshoot"},
+            }
+        )
+        for case_id, tenant in rows
+    ]
+    path = tmp_path / "helpdesk-v1.jsonl"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def test_run_keeps_only_the_named_tenants_cases_and_markers_from_the_rest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Catches a run that sends every case in the file to the target under one tenant (3
+    instead of 2), and one that filters the cases first and then takes the markers from the
+    filtered list, which would leave no marker and make every leak check report `skipped`.
+    The report must name the real file, not a per-tenant copy."""
+    runner = CapturingRunner()
+    out = tmp_path / "reports"
+
+    code = run_cli(
+        monkeypatch,
+        tmp_path,
+        runner=runner,
+        tenant="nordlicht",
+        case_set=write_two_tenant_set(tmp_path),
+        out=out,
+    )
+
+    assert code == EXIT_OK
+    assert runner.case_ids == ["nord-1", "nord-2"]
+    assert runner.markers == [("cuan",)]
+    report = read_report(out)
+    assert report["set_name"] == "helpdesk-v1.jsonl"
+    assert report["tenant"] == "nordlicht"
+    assert [case["case_id"] for case in report["cases"]] == ["nord-1", "nord-2"]
+
+
+def test_a_tenant_with_no_case_in_the_set_exits_two(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Catches a run that answers green over zero cases when the tenant has none in the
+    set: an empty run has no failures, so it would pass the gate. The policy DEFINES the
+    tenant, so the only thing that can refuse it is the empty selection. Nothing may be
+    sent to the target."""
+    runner = CapturingRunner()
+
+    code = run_cli(
+        monkeypatch,
+        tmp_path,
+        runner=runner,
+        tenant="globex",
+        case_set=write_two_tenant_set(tmp_path),
+        policy_tenants=("globex", "nordlicht", "cuan"),
+    )
+
+    assert code == EXIT_USAGE
+    assert runner.calls == []
+    assert "globex" in capsys.readouterr().err

@@ -31,7 +31,7 @@ from app.evals.calibration import (
     load_labels,
     write_calibration,
 )
-from app.evals.cases import EvalSetInvalid, load_golden_set
+from app.evals.cases import EvalCase, EvalSetInvalid, load_golden_set
 from app.evals.gate import (
     GateInputInvalid,
     evaluate,
@@ -170,6 +170,21 @@ def _calibration_summary(report: CalibrationReport) -> str:
     )
 
 
+def _tenant_cases(cases: tuple[EvalCase, ...], tenant: str, case_set: Path) -> tuple[EvalCase, ...]:
+    """The set's cases for `tenant`, in file order, or `UsageError` when it has none.
+
+    One file holds every tenant's cases, so the report names the real set and
+    each tenant is one run. The other tenants' markers are still taken from the
+    whole file. A tenant with no case is refused: a run over nothing has no
+    failure and would pass the gate
+    (`test_a_tenant_with_no_case_in_the_set_exits_two`).
+    """
+    kept = tuple(case for case in cases if case.tenant == tenant)
+    if not kept:
+        raise UsageError(f"--tenant: {tenant!r} has no case in {case_set}")
+    return kept
+
+
 def _run(options: argparse.Namespace) -> int:
     """Run one golden set and answer the process exit code.
 
@@ -187,7 +202,8 @@ def _run(options: argparse.Namespace) -> int:
         judge_url = _eargs._checked_judge_url(options.judge_url)
         calibration = _eargs._checked_calibration(options.calibration, judge_url)
         case_set = Path(options.case_set)
-        cases = load_golden_set(case_set)
+        all_cases = load_golden_set(case_set)
+        cases = _tenant_cases(all_cases, tenant, case_set)
         set_sha, set_sha_source = _eargs._set_sha(supplied_sha, case_set)
     except (IdentifierInvalid, UsageError, EvalSetInvalid, CalibrationSetInvalid) as exc:
         print(exc, file=sys.stderr)
@@ -205,7 +221,7 @@ def _run(options: argparse.Namespace) -> int:
                 cases=cases,
                 policy=policy,
                 tenant=tenant,
-                other_tenant_markers=_eargs._other_tenant_markers(cases, tenant),
+                other_tenant_markers=_eargs._other_tenant_markers(all_cases, tenant),
                 judge=_judge(judge_url, http),
             )
         except TargetUnreachable as exc:

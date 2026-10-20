@@ -30,6 +30,7 @@ score.
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Final
@@ -47,6 +48,19 @@ RESET_PATH: Final[str] = "/admin/test/reset"
 TURN_PATH: Final[str] = "/v1/eval/turn"
 """Where one case's turn is sent. Pinned by the same test, and published in
 `docs/eval-target.md`."""
+
+PROMPT_VERSIONS_HEADER: Final[str] = "X-Prompt-Versions"
+"""Where a target names the prompt each of its steps ran on:
+`intent=<sha256>,plan=<sha256>,...`. A header and not an envelope field, because
+the envelope refuses extras. Published in `docs/eval-target.md`."""
+
+PROMPT_VERSION_ENTRY: Final[re.Pattern[str]] = re.compile(r"[a-z][a-z0-9_]{0,31}=[0-9a-f]{64}")
+"""One `step=sha256` entry: a lowercase step name of 1 to 32 characters and a
+64-character lowercase hex digest. Matched with `fullmatch`, so a trailing
+newline cannot slip past a `$`."""
+
+MAX_PROMPT_STEPS: Final[int] = 16
+"""More steps than any agent has; a longer header is a broken target, not data."""
 
 DEFAULT_CASE_TIMEOUT_SECONDS: Final[float] = 60.0
 """How long one turn may take before it is a failed case.
@@ -91,7 +105,7 @@ class TurnFailed(Exception):
     `kind` is set at the raise site rather than read back out of the message: the
     message is a human sentence naming a case id and a URL, and a taxonomy
     deciding a stored tag by searching it for "timed out" would depend on prose
-    that is edited for readability. Each of the four raise sites in `run_case`
+    that is edited for readability. Each of the five raise sites in `run_case`
     carries the kind its own cause determines.
     """
 
@@ -138,8 +152,35 @@ class EvalEnvelope(BaseModel):
     region: str | None = None
 
 
+def parse_prompt_versions(value: str | None) -> dict[str, str]:
+    """The header's step-to-sha256 map, or `ValueError` naming what is wrong.
+
+    No header is an empty map, so a target that predates the header still runs.
+    A header that is there but malformed is refused whole: a half-read map would
+    put a hash in a report that names no prompt
+    (`test_a_malformed_prompt_versions_header_fails_the_turn`).
+    """
+    if value is None:
+        return {}
+    entries = value.split(",")
+    if len(entries) > MAX_PROMPT_STEPS:
+        raise ValueError(f"{len(entries)} steps, more than {MAX_PROMPT_STEPS}")
+    versions: dict[str, str] = {}
+    for entry in entries:
+        if PROMPT_VERSION_ENTRY.fullmatch(entry) is None:
+            raise ValueError(f"{entry!r} is not step=<64 lowercase hex>")
+        step, digest = entry.split("=", 1)
+        if step in versions:
+            raise ValueError(f"step {step!r} is named twice")
+        versions[step] = digest
+    return versions
+
+
 def to_outcome(
-    envelope: EvalEnvelope, *, other_tenant_markers: tuple[str, ...] = ()
+    envelope: EvalEnvelope,
+    *,
+    other_tenant_markers: tuple[str, ...] = (),
+    step_prompt_versions: dict[str, str] | None = None,
 ) -> CaseOutcome:
     """Map one envelope onto the record `assert_case` reads.
 
@@ -164,6 +205,7 @@ def to_outcome(
         cost_usd=envelope.cost_usd,
         provider=envelope.provider,
         region=envelope.region,
+        step_prompt_versions=step_prompt_versions or {},
     )
 
 
@@ -251,4 +293,15 @@ class TargetClient:
                 f"{case.id}: the answer is not a valid envelope: {exc}",
                 kind=TurnFailureKind.PROVIDER_ERROR,
             ) from exc
-        return envelope, to_outcome(envelope, other_tenant_markers=other_tenant_markers)
+        try:
+            versions = parse_prompt_versions(response.headers.get(PROMPT_VERSIONS_HEADER))
+        except ValueError as exc:
+            raise TurnFailed(
+                f"{case.id}: the {PROMPT_VERSIONS_HEADER} header is malformed: {exc}",
+                kind=TurnFailureKind.PROVIDER_ERROR,
+            ) from exc
+        return envelope, to_outcome(
+            envelope,
+            other_tenant_markers=other_tenant_markers,
+            step_prompt_versions=versions,
+        )

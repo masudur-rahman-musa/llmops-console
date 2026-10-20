@@ -1,8 +1,7 @@
 # The CI budget overlay (the design's "$2 hard budget per run").
 #
-# A PARTIAL document, not a policy: `eval-gate.yml` merges it over the shipped
-# `routing.yaml` and points both the compose gateway and `ops-eval run` at the
-# result. The prod number stays `10.00` in `routing.yaml`, which is what a
+# A PARTIAL document, not a policy: merged over the shipped `routing.yaml`, with
+# both the compose gateway and `ops-eval run` pointed at the result. The prod number stays `10.00` in `routing.yaml`, which is what a
 # tenant gets outside a gate run.
 #
 # The cap lives in config because it cannot live anywhere else: `limits/budget.py`
@@ -12,9 +11,10 @@
 # The budget is a STRING. The policy loader reads these as decimal strings, and a
 # bare `2.00` is a YAML float - a number that looks right and does not merge.
 #
-# Inert today: nothing merges this until the repository variable `EVAL_TARGET_URL`
-# is set, because with no eval target the `eval` job is skipped entirely. See
-# the project notes.
+# Not used by the pull request gate: that runs the help desk on the mock with its
+# own whole policy, `infra/evals/routing.evals.yaml`, which spends nothing. See
+# the project notes. This cap is
+# for a gate run against a real model.
 tenants:
   evals:
     budget_usd_month: "2.00"

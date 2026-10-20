@@ -139,6 +139,8 @@ SCRAPE_TARGETS: frozenset[str] = frozenset(
         "prometheus.monitoring.svc.cluster.local:9090",
         "cert-manager.cert-manager.svc.cluster.local:9402",
         "pushgateway.evals.svc.cluster.local:9091",
+        "helpdesk-agent-api.apps.svc.cluster.local:8000",
+        "helpdesk-scheduler.apps.svc.cluster.local:8082",
     }
 )
 
@@ -729,12 +731,12 @@ def test_every_scraped_container_port_is_named_metrics_on_its_agreed_number(
     )
 
 
-def test_the_scrape_config_carries_exactly_the_seven_static_targets(
+def test_the_scrape_config_carries_exactly_the_nine_static_targets(
     built: list[dict[str, Any]],
 ) -> None:
     """Criterion 3 and decision C, over the PARSED `prometheus.yml` the ConfigMap holds as a
-    string: seven jobs (an earlier change decision A adds `cert-manager`, an earlier change adds
-    `evals-pushgateway`), each with exactly one `static_configs` entry, the targets by set
+    string: nine jobs (an earlier change decision A adds `cert-manager`, an earlier change adds
+    `evals-pushgateway`, an earlier change adds the help desk agent API and scheduler), each with exactly one `static_configs` entry, the targets by set
     equality, every `metrics_path` `/metrics`, and no key ending `_sd_configs` anywhere in the
     document.
 

@@ -31,6 +31,7 @@ the report for.
 | `passed` | boolean | true when no case failed |
 | `metrics` | object | the counts, below |
 | `judge_prompt_version` | string or `null` | the `sha256` of the judge prompt this run scored with, `null` when nothing was judged |
+| `step_prompt_versions` | object | each agent step's prompt `sha256`, by step name, when every answered case named the same ones; `{}` when they disagree or none named any |
 | `calibration` | object or `null` | what this run was told about its judge, below; `null` when the run was given no calibration |
 | `cases` | array | one entry per case, in the order the set listed them |
 
@@ -177,6 +178,7 @@ means the two raters never disagreed enough to measure agreement at all, and
 | `residency` | object or `null` | the region verdict, or `null` |
 | `judge` | object or `null` | the LLM judge's verdict, or `null` when nothing judged this case |
 | `error` | string or `null` | why the turn never answered |
+| `step_prompt_versions` | object | the prompt `sha256` each agent step ran on for this case, from the target's `X-Prompt-Versions` header; `{}` when it sent none |
 
 `cost_usd` is a string and never a JSON number: a cost written through a float
 stops being the number the ledger computed, and `0.0000001` is a real per-token

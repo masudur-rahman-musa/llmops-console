@@ -136,14 +136,13 @@ def test_the_baseline_guard_job_invokes_the_subcommand(jobs: dict[str, Any]) -> 
     assert len(guard_steps) == 1
 
 
-def test_the_eval_job_runs_only_when_a_target_url_is_configured(
+def test_the_eval_job_has_no_condition_and_always_runs(
     jobs: dict[str, Any],
 ) -> None:
-    """Decision A: with no eval target anywhere, the eval half ships inert and becomes real
-    when the repository variable is set. Catches the condition being dropped, which makes
-    every PR fail on a compose stack with nothing to evaluate, and catches it being written
-    against some other variable name than the one the docs tell an operator to set."""
-    assert "EVAL_TARGET_URL" in str(jobs["eval"]["if"])
+    """An earlier change (a design note replaces decision A): the help desk now serves the eval turn, so the
+    eval half runs on every pull request. Catches the old `EVAL_TARGET_URL` condition coming
+    back, or any other `if` on the job, which would make the gate green because it skipped."""
+    assert "if" not in jobs["eval"]
 
 
 def test_the_report_artifact_is_uploaded_even_when_the_gate_fails(
@@ -190,16 +189,17 @@ def test_the_gate_step_passes_the_report_the_baseline_and_the_comment(
     assert len(gate_steps) == 1
 
 
-def test_the_eval_job_uses_the_ci_routing_overlay(jobs: dict[str, Any]) -> None:
-    """Decision D: the $2 cap lives in a file, because `limits/budget.py`'s signed override
-    can only RAISE a cap. Catches an overlay that is checked in and never referenced, where
-    a CI run bills against the prod tenant's `10.00` and the number in the repo is
-    decoration."""
-    overlay_steps = [
-        step for step in steps(jobs["eval"]) if "backend/config/routing.ci.yaml" in run_of(step)
-    ]
+def test_the_eval_job_uses_the_evals_overlay(jobs: dict[str, Any]) -> None:
+    """An earlier change: the run's policy is `infra/evals/routing.evals.yaml`, which points every
+    provider at the mock. Catches a job that runs `make eval` with the overlay unreferenced,
+    where a pull request could reach a real provider. The overlay is named by the job's own
+    steps or by the `make eval` recipe they call, and the recipe must name its compose file."""
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    scripts = "\n".join(run_of(step) for step in steps(jobs["eval"]))
 
-    assert overlay_steps != []
+    assert "make eval" in scripts
+    assert "infra/evals/compose.yml" in makefile
+    assert (REPO_ROOT / "infra" / "evals" / "routing.evals.yaml").is_file()
 
 
 def test_the_ci_overlay_caps_the_evals_tenant_at_two_dollars() -> None:

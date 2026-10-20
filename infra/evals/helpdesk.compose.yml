@@ -1,0 +1,17 @@
+# The help desk's containers as the eval gate runs them: `make eval` only.
+#
+# An override over the help desk's own `docker-compose.yml`, passed with
+# `--project-directory` set to the help desk checkout, so every relative path
+# in that file still means what it means there. This file names no path.
+#
+# `environment` wins over the help desk's `.env.demo`, so a laptop's own help
+# desk settings are left as they are. The gateway keys are made fresh by
+# `make eval` for each run; no credential is written here.
+services:
+  helpdesk-agent-api:
+    environment:
+      GATEWAY_API_KEYS: ${HELPDESK_GATEWAY_API_KEYS}
+      EVAL_ROUTES_ENABLED: "true"
+  helpdesk-mcp-server:
+    environment:
+      GATEWAY_API_KEYS: ${HELPDESK_GATEWAY_API_KEYS}
