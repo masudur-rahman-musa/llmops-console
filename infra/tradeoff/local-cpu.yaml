@@ -1,7 +1,7 @@
 # Option `local-cpu`: llama.cpp on the ARM CPU host, no GPU.
 #
 # A PARTIAL policy, deep-merged over the shipped `routing.yaml` by
-# `dev/scripts/tradeoff_policy.py`.
+# `infra/scripts/tradeoff_policy.py`.
 #
 # No `data_class_rules` change here, and none in `gpu-vllm.yaml` either: this
 # provider's region is `self`, which the shipped `confidential` rule already

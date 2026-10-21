@@ -1,0 +1,138 @@
+"""An earlier change moves three public scripts out of `dev/`, which is stripped before release.
+
+Every case reads committed files or runs a script for a few seconds; none needs
+a service, so none carries the `db` marker. Old-path needles are built from
+parts so this file is not a hit for its own search.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+HOMES = {
+    "check_root.py": Path(".github") / "scripts" / "check_root.py",
+    "tradeoff_policy.py": Path("infra") / "scripts" / "tradeoff_policy.py",
+    "redaction_report.py": Path("backend") / "scripts" / "redaction_report.py",
+}
+BUILD_ONLY = {"auto_lock.py", "env_keys.py", "git-pre-push-guard.sh"}
+# History files that keep the old paths as written.
+HISTORY = (
+    "dev/plans",
+    "dev/docs/log.md",
+    "dev/docs/restructure.md",
+    "dev/docs/placeholders.md",
+)
+OLD_DIR = "/".join(("dev", "scripts"))
+
+
+def _git(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True, check=False
+    )
+
+
+def _run_root_hook(file_path: Path) -> subprocess.CompletedProcess[str]:
+    payload = {"tool_name": "Write", "tool_input": {"file_path": str(file_path)}}
+    return subprocess.run(
+        ["python3", str(HOMES["check_root.py"]), "--claude-hook"],
+        cwd=REPO_ROOT,
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_each_script_sits_at_its_public_home() -> None:
+    """Catches a move that leaves a script in `dev/scripts/` (or copies instead of
+    moving), so the public repo would lose a tool CI and the README rely on.
+    """
+    for name, home in HOMES.items():
+        assert (REPO_ROOT / home).is_file(), home
+        assert not (REPO_ROOT / OLD_DIR / name).exists(), (OLD_DIR, name)
+
+
+def test_dev_scripts_holds_only_build_process_tools() -> None:
+    """Catches a fourth tracked file left in `dev/scripts/`, such as a stray copy
+    of a public script that would then ship nowhere.
+    """
+    result = _git("ls-files", OLD_DIR)
+    assert result.returncode == 0, result.stderr
+    tracked = {Path(line).name for line in result.stdout.splitlines() if line}
+    assert tracked == BUILD_ONLY, tracked
+
+
+@pytest.mark.parametrize("name", sorted(HOMES))
+def test_no_live_file_names_an_old_script_path(name: str) -> None:
+    """Catches a moved script whose old path is still named by a live file
+    (workflow, hook, README, test), which would break once `dev/` is stripped.
+    """
+    slash_form = f"{OLD_DIR}/{name}"
+    path_form = " / ".join(('"dev"', '"scripts"', f'"{name}"'))
+    pathspec = [":(exclude)" + item for item in HISTORY]
+    for needle in (slash_form, path_form):
+        result = _git("grep", "-n", "-F", "-e", needle, "--", ".", *pathspec)
+        assert result.returncode == 1, (needle, result.stdout)
+
+
+def test_every_caller_names_the_new_path() -> None:
+    """Catches a caller that was never repointed, or repointed to a wrong home,
+    so CI, the hook, the overlay script or the README would run a missing file.
+    """
+    root_check = HOMES["check_root.py"].as_posix()
+    expectations = {
+        Path(".github") / "workflows" / "ci.yml": (root_check, 1),
+        Path(".pre-commit-config.yaml"): (root_check, 1),
+        Path(".claude") / "settings.json": (root_check, 2),
+        Path("infra") / "scripts" / "tradeoff_run.sh": (HOMES["tradeoff_policy.py"].as_posix(), 1),
+        Path("README.md"): (HOMES["redaction_report.py"].as_posix(), 1),
+    }
+    for file, (needle, count) in expectations.items():
+        text = (REPO_ROOT / file).read_text(encoding="utf-8")
+        assert text.count(needle) >= count, (file, needle, text.count(needle))
+
+
+def test_root_check_passes_from_its_new_home() -> None:
+    """Catches a moved root check that cannot find the repo root from its new
+    folder, or that rejects the tree it guards.
+    """
+    result = subprocess.run(
+        ["python3", str(HOMES["check_root.py"])],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+
+
+def test_root_hook_blocks_a_stray_root_file_and_names_its_new_home() -> None:
+    """Catches a moved hook whose BLOCKED message still names the old folder, or
+    that stops blocking a stray root file after the move.
+    """
+    result = _run_root_hook(REPO_ROOT / "stray.txt")
+    assert result.returncode == 2, (result.returncode, result.stderr)
+    # "BLOCKED" proves the script ran; a missing file also exits 2 and names the path.
+    assert "BLOCKED" in result.stderr, result.stderr
+    assert HOMES["check_root.py"].as_posix() in result.stderr, result.stderr
+
+
+def test_redaction_report_check_runs_as_a_fresh_process() -> None:
+    """Catches a moved report that still points `TESTS_ROOT` at the gone root
+    `tests/`, so the README's own command fails in a fresh process.
+    """
+    result = subprocess.run(
+        [sys.executable, str(HOMES["redaction_report.py"]), "--check"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, (result.stdout[-500:], result.stderr[-500:])

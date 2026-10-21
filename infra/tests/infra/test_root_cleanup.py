@@ -7,7 +7,7 @@ the root check refuses a root `.env`, the allowlist names only two compose files
 
 Text, YAML and filesystem reads over the repository, plus two subprocesses run against
 throwaway copies in `tmp_path`: one `docker compose ... config --quiet` (skipped when docker is
-not on PATH) and one run of the real `dev/scripts/check_root.py` inside a fresh git repo. No
+not on PATH) and one run of the real `.github/scripts/check_root.py` inside a fresh git repo. No
 import of any `app`, `infra` or `tests` module. The compose call passes `--quiet` so it never
 prints a resolved value, even by accident.
 """
@@ -35,7 +35,7 @@ OLD_LOAD_OVERLAY = REPO_ROOT / "docker-compose.load.yml"
 TRADEOFF_OVERLAY = REPO_ROOT / "infra" / "tradeoff" / "compose.yml"
 OLD_TRADEOFF_OVERLAY = REPO_ROOT / "docker-compose.tradeoff.yml"
 SERVER_SECRETS = REPO_ROOT / "infra" / "scripts" / "server_secrets.sh"
-CHECK_ROOT = REPO_ROOT / "dev" / "scripts" / "check_root.py"
+CHECK_ROOT = REPO_ROOT / ".github" / "scripts" / "check_root.py"
 ROOT_ALLOWLIST = REPO_ROOT / ".claude" / "root-allowlist"
 EDITORCONFIG = REPO_ROOT / ".editorconfig"
 

@@ -1,7 +1,7 @@
 # Option `gpu-vllm`: vLLM serving Qwen2.5-7B-Instruct on one GPU host.
 #
 # A PARTIAL policy, deep-merged over the shipped `routing.yaml` by
-# `dev/scripts/tradeoff_policy.py`.
+# `infra/scripts/tradeoff_policy.py`.
 #
 # The shipped `vllm` provider is disabled and addressed at its in-cluster Service
 # name, which is right for the long-lived cluster and wrong for this run: the

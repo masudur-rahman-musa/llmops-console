@@ -1,7 +1,7 @@
 # Option `strong-api`: the strong API tier.
 #
 # A PARTIAL policy, deep-merged over the shipped `routing.yaml` by
-# `dev/scripts/tradeoff_policy.py`. See `cheap-api.yaml` for why the two API options
+# `infra/scripts/tradeoff_policy.py`. See `cheap-api.yaml` for why the two API options
 # widen `confidential` and why every option turns the semantic cache off.
 #
 # The alias narrowed is still `agent-default`, not `agent-strong`: the table

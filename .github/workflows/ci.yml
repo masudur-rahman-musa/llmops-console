@@ -80,7 +80,7 @@ jobs:
       # The repo root holds only the names in .claude/root-allowlist (also a
       # pre-commit and a Claude hook). An explicit step so a stray root reddens
       # here by name, not only folded inside the pre-commit bundle.
-      - run: python3 dev/scripts/check_root.py
+      - run: python3 .github/scripts/check_root.py
       # `make lint`, `typecheck` and `test` also run the console's scripts now
       # that web exists, so this job needs pnpm and its install too.
       - uses: pnpm/action-setup@v4

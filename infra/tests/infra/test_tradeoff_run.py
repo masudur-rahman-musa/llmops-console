@@ -55,7 +55,7 @@ from infra.test_hetzner_module import (
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "infra" / "scripts" / "tradeoff_run.sh"
-POLICY_SCRIPT = REPO_ROOT / "dev" / "scripts" / "tradeoff_policy.py"
+POLICY_SCRIPT = REPO_ROOT / "infra" / "scripts" / "tradeoff_policy.py"
 OVERLAY_DIR = REPO_ROOT / "infra" / "tradeoff"
 MANIFEST = REPO_ROOT / "infra" / "tradeoff" / "tradeoff.json"
 COMPOSE_OVERLAY = REPO_ROOT / "infra" / "tradeoff" / "compose.yml"
@@ -365,7 +365,7 @@ def flag(tokens: list[str], name: str) -> str | None:
 
 
 def policy_builds(run: Run) -> list[tuple[int, list[str]]]:
-    """Every `python3 dev/scripts/tradeoff_policy.py <id> <out>` call, in call order."""
+    """Every `python3 infra/scripts/tradeoff_policy.py <id> <out>` call, in call order."""
     return [
         (index, tokens)
         for index, tokens in calls(run, "python3")

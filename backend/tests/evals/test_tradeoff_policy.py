@@ -1,4 +1,4 @@
-r"""`dev/scripts/tradeoff_policy.py` and `infra/tradeoff/`: the per-option effective policy.
+r"""`infra/scripts/tradeoff_policy.py` and `infra/tradeoff/`: the per-option effective policy.
 
 The measurement run resolves one alias four different ways. Rather than four full
 copies of `routing.yaml` that drift silently, each option ships a PARTIAL overlay that is
@@ -43,7 +43,7 @@ from app.evals.tradeoff import OPTION_ID_PATTERN
 from app.model_routing.policy import load_policy
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SCRIPT = REPO_ROOT / "dev" / "scripts" / "tradeoff_policy.py"
+SCRIPT = REPO_ROOT / "infra" / "scripts" / "tradeoff_policy.py"
 OVERLAY_DIR = REPO_ROOT / "infra" / "tradeoff"
 ROUTING = REPO_ROOT / "backend" / "config" / "routing.yaml"
 GPU_VLLM_MANIFEST = REPO_ROOT / "infra" / "k8s" / "gpu" / "vllm.yaml"

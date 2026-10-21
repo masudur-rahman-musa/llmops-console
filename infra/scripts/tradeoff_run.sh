@@ -48,7 +48,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MODULE_DIR="$REPO_ROOT/infra/terraform/aws-gpu"
 GPU_OVERLAY="$REPO_ROOT/infra/k8s/gpu"
-POLICY_BUILDER="$REPO_ROOT/dev/scripts/tradeoff_policy.py"
+POLICY_BUILDER="$REPO_ROOT/infra/scripts/tradeoff_policy.py"
 EVIDENCE_ROOT="${TRADEOFF_TEST_ROOT:-$REPO_ROOT}/docs/tradeoff-run"
 
 COMPOSE=(docker compose -f "$REPO_ROOT/docker-compose.yml" -f "$REPO_ROOT/infra/tradeoff/compose.yml" --profile tradeoff --profile local-model)

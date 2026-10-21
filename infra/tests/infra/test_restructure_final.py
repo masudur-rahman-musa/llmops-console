@@ -21,7 +21,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 ROOT_ALLOWLIST = REPO_ROOT / ".claude" / "root-allowlist"
-CHECK_ROOT = REPO_ROOT / "dev" / "scripts" / "check_root.py"
+CHECK_ROOT = REPO_ROOT / ".github" / "scripts" / "check_root.py"
 PRECOMMIT = REPO_ROOT / ".pre-commit-config.yaml"
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
@@ -205,7 +205,7 @@ def test_check_root_passes() -> None:
         check=False,
     )
     assert completed.returncode == 0, (
-        f"`python3 dev/scripts/check_root.py` exited {completed.returncode}:\n"
+        f"`python3 .github/scripts/check_root.py` exited {completed.returncode}:\n"
         f"{completed.stdout}{completed.stderr}"
     )
 
@@ -241,14 +241,14 @@ def test_every_moved_root_exists() -> None:
 
 def test_precommit_and_ci_run_check_root() -> None:
     """Catches the root check being defined but never wired in: a pre-commit config with no
-    local check-root hook, or a CI workflow that never runs dev/scripts/check_root.py, would
+    local check-root hook, or a CI workflow that never runs .github/scripts/check_root.py, would
     let a bad root land because no gate actually runs the check."""
     precommit = PRECOMMIT.read_text(encoding="utf-8")
     assert "- repo: local" in precommit, "pre-commit config has no `- repo: local` section"
     assert "check-root" in precommit, "pre-commit config defines no `check-root` hook"
 
     ci = CI_WORKFLOW.read_text(encoding="utf-8")
-    assert "dev/scripts/check_root.py" in ci, "CI workflow does not run dev/scripts/check_root.py"
+    assert ".github/scripts/check_root.py" in ci, "CI workflow does not run .github/scripts/check_root.py"
 
 
 def test_the_one_alert_rules_copy() -> None:

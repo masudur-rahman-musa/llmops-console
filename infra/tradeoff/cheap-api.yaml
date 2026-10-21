@@ -1,7 +1,7 @@
 # Option `cheap-api`: the cheap API tier.
 #
 # A PARTIAL policy, deep-merged over the shipped `routing.yaml` by
-# `dev/scripts/tradeoff_policy.py`. Only what makes this option different is written
+# `infra/scripts/tradeoff_policy.py`. Only what makes this option different is written
 # here; everything else stays whatever the shipped file says, so this overlay
 # cannot drift from the policy the gateway really runs.
 #

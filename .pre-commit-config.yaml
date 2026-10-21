@@ -34,7 +34,7 @@ repos:
       # check runs in CI (ci.yml) and as a Claude PreToolUse hook.
       - id: check-root
         name: check repo root against the allowlist
-        entry: python3 dev/scripts/check_root.py
+        entry: python3 .github/scripts/check_root.py
         language: system
         pass_filenames: false
         always_run: true
