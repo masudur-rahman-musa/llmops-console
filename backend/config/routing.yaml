@@ -32,6 +32,7 @@ providers:
     region: us
     base_url: https://api.openai.com/v1
     key_env: OPENAI_API_KEY
+    enabled: false
   azure_eu:
     kind: azure_openai
     region: eu
@@ -87,8 +88,7 @@ aliases:
       - { provider: anthropic_eu, model: claude-sonnet-5-5 }
   judge:
     candidates:
-      - { provider: anthropic, model: claude-sonnet-5-5 }
-      - { provider: openai, model: gpt-4o }
+      - { provider: anthropic, model: claude-haiku-4-5 }
   embed:
     candidates:
       - { provider: local_embed, model: bge-small-en-v1.5 }
@@ -111,7 +111,7 @@ tenants:
     # (`test_nordlicht_confidential_stays_local_under_strict`, a design note).
     overrides:
       agent-default:
-        - { provider: openai, model: gpt-4o }
+        - { provider: anthropic, model: claude-haiku-4-5 }
         - { provider: local, model: qwen2.5-3b-instruct }
   cuan:
     residency: eu
@@ -120,8 +120,8 @@ tenants:
       internal: { allow_regions: [us, eu, self] }
       confidential: { allow_regions: [eu, self], redact: true }
       pii: { allow_regions: [self], redact: true }
-    budget_usd_month: "15.00"
-    rate_limit: { rpm: 60, tpm: 60000 }
+    budget_usd_month: "60.00"
+    rate_limit: { rpm: 6000, tpm: 6000000 }
   # The eval harness. No residency regime, because it is our own traffic and the
   # judge runs on a US provider.
   evals:

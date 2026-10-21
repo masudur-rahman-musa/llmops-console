@@ -300,28 +300,18 @@ def test_shipped_policy_exhaustive() -> None:
     assert checked > 0
 
 
-def test_judge_has_two_candidates_when_the_openai_key_is_set() -> None:
-    """Catches a factory with no `openai` branch: the shipped `judge` alias
-    names a second candidate, and without an adapter for it the health seam drops that
-    candidate, so a judge request that fails on the first provider has nowhere to fall.
-
-    The tuple is asserted whole and in order, so a branch that builds the adapter under
-    the kind rather than under the policy provider name fails here too."""
+def test_judge_stays_on_anthropic_when_the_openai_key_is_set() -> None:
+    """Catches a judge that reaches OpenAI while the `openai` provider is turned off: a set
+    `OPENAI_API_KEY` must not bring back a second candidate the policy has switched off."""
     candidates = judge_candidates(
         {ANTHROPIC_KEY_ENV: FAKE_ANTHROPIC_KEY, OPENAI_KEY_ENV: FAKE_OPENAI_KEY}
     )
 
-    assert candidates == [
-        ("anthropic", "claude-sonnet-5-5", "us"),
-        ("openai", "gpt-4o", "us"),
-    ]
+    assert candidates == [("anthropic", "claude-haiku-4-5", "us")]
 
 
 def test_judge_has_one_candidate_when_it_is_not() -> None:
-    """Catches a branch that builds the vendor adapter whatever the environment holds - an
-    unset or empty `OPENAI_API_KEY` included: `judge` would gain a second candidate that
-    401s on every request, turning a deployment that never configured that vendor into one
-    that bills latency and a failed fallback for every judged eval."""
+    """Catches a judge pointed anywhere but the cheaper Anthropic model."""
     candidates = judge_candidates({ANTHROPIC_KEY_ENV: FAKE_ANTHROPIC_KEY})
 
-    assert candidates == [("anthropic", "claude-sonnet-5-5", "us")]
+    assert candidates == [("anthropic", "claude-haiku-4-5", "us")]

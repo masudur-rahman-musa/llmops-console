@@ -678,7 +678,7 @@ def unconfigured_body(path: str) -> dict[str, Any]:
         body["estimated"] = True
         body["budgets"] = [
             {"tenant": "nordlicht", "cap_usd": 15.0, "spent_usd": 0.0, "ratio": 0.0},
-            {"tenant": "cuan", "cap_usd": 15.0, "spent_usd": 0.0, "ratio": 0.0},
+            {"tenant": "cuan", "cap_usd": 60.0, "spent_usd": 0.0, "ratio": 0.0},
             {"tenant": "evals", "cap_usd": 10.0, "spent_usd": 0.0, "ratio": 0.0},
         ]
     return body
@@ -958,7 +958,7 @@ def test_budgets_read_the_policy_cap_and_the_store_spend(wired: Wired) -> None:
     assert response.status_code == 200, response.text
     assert response.json()["budgets"] == [
         {"tenant": "nordlicht", "cap_usd": 15.0, "spent_usd": 12.0, "ratio": 0.8},
-        {"tenant": "cuan", "cap_usd": 15.0, "spent_usd": None, "ratio": None},
+        {"tenant": "cuan", "cap_usd": 60.0, "spent_usd": None, "ratio": None},
         {"tenant": "evals", "cap_usd": 10.0, "spent_usd": 2.5, "ratio": 0.25},
     ]
     assert {tenant for tenant, _ in store.asked} == {"nordlicht", "cuan", "evals"}

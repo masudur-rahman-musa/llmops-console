@@ -238,27 +238,30 @@ NORDLICHT = "nordlicht"
 CHAT_ALIAS = "agent-default"
 STRONG_ALIAS = "agent-strong"
 LOCAL_MODEL = "qwen2.5-3b-instruct"
-OPENAI_MODEL = "gpt-4o"
 
 
 def shipped() -> Policy:
     return load_policy(SHIPPED_POLICY_PATH)
 
 
-def test_nordlicht_confidential_resolves_to_openai_under_relaxed() -> None:
+def test_nordlicht_confidential_resolves_to_anthropic_under_relaxed() -> None:
     """Catches the two halves of the demo being broken separately: a widening that reaches
     no US candidate because `routing.yaml` never got one, and an override still pinned to
     `local` alone, which would resolve the local model however wide the regions are.
 
     First rather than present, because the first entry is the one a completion actually
-    uses: an OpenAI candidate appended behind the mis-extracting local model would leave
+    uses: an Anthropic candidate appended behind the mis-extracting local model would leave
     the demo exactly as it was."""
     result = resolve(
         shipped(), NORDLICHT, CHAT_ALIAS, DataClass.CONFIDENTIAL.value, mode=ResidencyMode.RELAXED
     )
 
     assert result
-    assert (result[0].provider, result[0].model, result[0].region) == ("openai", OPENAI_MODEL, "us")
+    assert (result[0].provider, result[0].model, result[0].region) == (
+        "anthropic",
+        "claude-haiku-4-5",
+        "us",
+    )
 
 
 def test_nordlicht_confidential_stays_local_under_strict() -> None:
