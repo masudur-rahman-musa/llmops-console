@@ -12,7 +12,7 @@ really runs.
 | File | What it pins |
 | --- | --- |
 | `cheap-api.yaml` | `anthropic` / `claude-haiku-4-5`, and `confidential` widened to `[us, eu, self]` |
-| `strong-api.yaml` | `anthropic` / `claude-opus-5`, and the same widening |
+| `strong-api.yaml` | `anthropic` / `claude-sonnet-5-5`, and the same widening |
 | `local-cpu.yaml` | `local` / `qwen2.5-3b-instruct` |
 | `gpu-vllm.yaml` | `vllm` / `qwen2.5-7b-instruct`, the provider enabled, and its NodePort address |
 

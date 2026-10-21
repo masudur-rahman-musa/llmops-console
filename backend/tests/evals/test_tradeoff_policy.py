@@ -70,7 +70,7 @@ def read(path: Path) -> str:
 #: provider with the wrong model is the drift this table exists to see.
 OPTIONS: tuple[tuple[str, dict[str, str]], ...] = (
     ("cheap-api", {"provider": "anthropic", "model": "claude-haiku-4-5"}),
-    ("strong-api", {"provider": "anthropic", "model": "claude-opus-5"}),
+    ("strong-api", {"provider": "anthropic", "model": "claude-sonnet-5-5"}),
     ("local-cpu", {"provider": "local", "model": "qwen2.5-3b-instruct"}),
     ("gpu-vllm", {"provider": "vllm", "model": "qwen2.5-7b-instruct"}),
 )

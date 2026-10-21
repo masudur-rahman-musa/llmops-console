@@ -46,6 +46,11 @@ prices:
       input_usd_per_1m: "5.00"
       output_usd_per_1m: "25.00"
 
+  anthropic/claude-sonnet-5-5:
+    - effective_from: 2026-10-21
+      input_usd_per_1m: "2.00"
+      output_usd_per_1m: "10.00"
+
   # The EU provider is a different row of the same vendor at the same list
   # price. It is priced even though `anthropic_eu` ships disabled: enabling it
   # is a config change, and an enable that silently started booking `unpriced`
@@ -59,6 +64,11 @@ prices:
     - effective_from: 2025-11-24
       input_usd_per_1m: "5.00"
       output_usd_per_1m: "25.00"
+
+  anthropic_eu/claude-sonnet-5-5:
+    - effective_from: 2026-10-21
+      input_usd_per_1m: "2.00"
+      output_usd_per_1m: "10.00"
 
   # Two entries, and the only key here that has them. The August 2024 refresh
   # halved the input price, so this is a real re-pricing rather than a fixture:

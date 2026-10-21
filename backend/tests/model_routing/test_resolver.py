@@ -312,7 +312,7 @@ def test_judge_has_two_candidates_when_the_openai_key_is_set() -> None:
     )
 
     assert candidates == [
-        ("anthropic", "claude-opus-5", "us"),
+        ("anthropic", "claude-sonnet-5-5", "us"),
         ("openai", "gpt-4o", "us"),
     ]
 
@@ -324,4 +324,4 @@ def test_judge_has_one_candidate_when_it_is_not() -> None:
     that bills latency and a failed fallback for every judged eval."""
     candidates = judge_candidates({ANTHROPIC_KEY_ENV: FAKE_ANTHROPIC_KEY})
 
-    assert candidates == [("anthropic", "claude-opus-5", "us")]
+    assert candidates == [("anthropic", "claude-sonnet-5-5", "us")]

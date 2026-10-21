@@ -83,11 +83,11 @@ aliases:
   # candidate the alias does not honestly describe.
   agent-strong:
     candidates:
-      - { provider: anthropic, model: claude-opus-5 }
-      - { provider: anthropic_eu, model: claude-opus-5 }
+      - { provider: anthropic, model: claude-sonnet-5-5 }
+      - { provider: anthropic_eu, model: claude-sonnet-5-5 }
   judge:
     candidates:
-      - { provider: anthropic, model: claude-opus-5 }
+      - { provider: anthropic, model: claude-sonnet-5-5 }
       - { provider: openai, model: gpt-4o }
   embed:
     candidates:
