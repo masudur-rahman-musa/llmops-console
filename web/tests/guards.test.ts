@@ -59,7 +59,7 @@ const RENDERED: Record<PageName, Path[]> = {
     ["open_incidents"],
     ["last_eval", "finished_at"],
     ["last_eval", "passed"],
-    ["last_eval", "decision_accuracy"],
+    ["last_eval", "check_score"],
   ],
   cost: [
     ["sources"],
@@ -171,7 +171,7 @@ const RENDERED: Record<PageName, Path[]> = {
 
 describe("page body guards", () => {
   it("each page fixture passes its guard", () => {
-    // Catches a guard stricter than console-api's output: one refusing an extra field, a null where the contract allows null, or an absent decision_accuracy.
+    // Catches a guard stricter than console-api's output: one refusing an extra field, a null where the contract allows null, or an absent check_score.
     expect(Object.keys(GUARDS).sort()).toEqual(Object.keys(CONSOLE_PATHS).sort());
     for (const name of PAGES) {
       expect(passes(name, fixture(name)), name).toBe(true);
@@ -182,10 +182,10 @@ describe("page body guards", () => {
       nullHome[field] = null;
     }
     expect(passes("home", nullHome), "home all null").toBe(true);
-    expect(passes("home", withValue("home", ["last_eval", "decision_accuracy"], null)), "home accuracy null").toBe(true);
+    expect(passes("home", withValue("home", ["last_eval", "check_score"], null)), "home accuracy null").toBe(true);
 
-    expect(passes("quality", withValue("quality", ["runs", -1, "metrics", "decision_accuracy"], null)), "accuracy null").toBe(true);
-    expect(passes("quality", without("quality", ["runs", -1, "metrics", "decision_accuracy"])), "accuracy absent").toBe(true);
+    expect(passes("quality", withValue("quality", ["runs", -1, "metrics", "check_score"], null)), "accuracy null").toBe(true);
+    expect(passes("quality", without("quality", ["runs", -1, "metrics", "check_score"])), "accuracy absent").toBe(true);
     expect(passes("quality", withValue("quality", ["blocked", -1, "regressed"], [])), "regressed empty").toBe(true);
 
     const nullCost = withValue("cost", ["rollup_populated"], null);

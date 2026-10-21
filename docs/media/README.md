@@ -12,7 +12,7 @@ Expected files, named exactly:
 | `console-overview.png` | the console's overview page: spend, latency, errors |
 | `console-reliability.png` | the Reliability page with remaining error budgets |
 | `console-residency.png` | the Residency page and its refusal log |
-| `console-evals.png` | the Evaluations page: the golden set against the baseline |
+| `console-evals.png` | the Evaluations page: the conversation cases against the baseline |
 | `grafana-gateway.png` | the gateway overview dashboard in Grafana |
 
 Screenshots are taken at 1440 pixels wide against the local stack with seeded

@@ -8,7 +8,7 @@
       "pr_url": "https://github.com/example/helpdesk/pull/44",
       "eval_run_id": "run-2026-09-15-release",
       "eval_passed": true,
-      "decision_accuracy": 0.93
+      "check_score": 0.93
     },
     {
       "git_sha": "3f9c2a7b1e4d5c6f7a8b9c0d1e2f3a4b5c6d7e8f",
@@ -17,7 +17,7 @@
       "pr_url": "javascript:alert(1)",
       "eval_run_id": "run-2026-09-14-release",
       "eval_passed": false,
-      "decision_accuracy": 0.88
+      "check_score": 0.88
     },
     {
       "git_sha": "c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7",
@@ -26,7 +26,7 @@
       "pr_url": null,
       "eval_run_id": null,
       "eval_passed": null,
-      "decision_accuracy": null
+      "check_score": null
     }
   ]
 }

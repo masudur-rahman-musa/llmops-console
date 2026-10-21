@@ -1,4 +1,4 @@
-r"""`infra/k8s/evals/`: the Pushgateway and the nightly-eval CronJob an earlier change adds (#43).
+r"""`infra/k8s/evals/`: the Pushgateway. The nightly-eval CronJob is gone.
 
 The stream comes from the session-scoped `built` fixture in `infra/tests/infra/conftest.py`: one
 `kubectl kustomize infra/k8s` for the whole session, shared with every other
@@ -42,20 +42,8 @@ EVALS_OBJECTS: frozenset[tuple[str, str]] = frozenset(
     {
         ("Deployment", "pushgateway"),
         ("Service", "pushgateway"),
-        ("CronJob", "nightly-eval"),
     }
 )
-
-#: Design section 3's exact schedule, policy pair and history limits - a project rule, never
-#: a band. `"0 2 * * *"` is UTC per the k3s cluster's own clock; SPEC's "02:00 Europe/Berlin"
-#: is a comment the manifest owes, not a value this scan can check.
-CRONJOB_SCHEDULE = "0 2 * * *"
-CRONJOB_CONCURRENCY_POLICY = "Forbid"
-CRONJOB_RESTART_POLICY = "OnFailure"
-
-#: The one Secret the CronJob's container may reference (the new contract, disclosed
-#: separately from the plan's own file list): `OPSCONSOLE_DATABASE_URL` by `envFrom`.
-EVALS_SECRETS = "evals-secrets"
 
 #: The three keys every container in this namespace must declare (mirrors
 #: `test_k8s_platform.py`'s `REQUIRED_CONTAINER_KEYS`); no `limits.cpu` value is pinned here
@@ -257,49 +245,25 @@ def test_the_evals_directory_emits_exactly_the_objects_the_plan_names(
 # --------------------------------------------------------------------------
 
 
-def test_the_cronjob_schedule_and_policies_are_the_agreed_ones(
-    built: list[dict[str, Any]],
-) -> None:
-    """Catches the schedule string drifting off the design's `"0 2 * * *"` (a project rule:
-    a band like "runs nightly" is not a value a `CronJob.spec.schedule` field can hold, so
-    the exact cron string is pinned). Catches `concurrencyPolicy` left at its Kubernetes
-    default (`Allow`), which lets a slow nightly run overlap the next night's and spend the
-    `evals` tenant's whole budget twice in one calendar day, and catches `restartPolicy:
-    Always` on the pod template, which a CronJob's pod spec must never carry at all."""
-    cronjob = evals_object(built, "CronJob", "nightly-eval")
+def test_there_is_no_nightly_eval_cronjob(built: list[dict[str, Any]]) -> None:
+    """a design note: the in-cluster nightly CronJob goes, because its cases would be a copy of the
+    help desk's file baked into the image. `nightly-eval.yml` is the one nightly path. Catches
+    a CronJob still built into the cluster, its manifest still on disk, and a kustomization
+    that still lists it (which would fail the build the day the file is deleted)."""
+    cronjobs = [
+        name_of(obj) for obj in objects_of_kind(built, "CronJob") if namespace_of(obj) == EVALS
+    ]
 
-    assert cronjob["spec"]["schedule"] == CRONJOB_SCHEDULE
-    assert cronjob["spec"]["concurrencyPolicy"] == CRONJOB_CONCURRENCY_POLICY
-    assert pod_spec(cronjob)["restartPolicy"] == CRONJOB_RESTART_POLICY
+    assert cronjobs == []
+    assert not (EVALS_DIR / "nightly-eval-cronjob.yaml").exists()
+    assert "nightly-eval" not in read(EVALS_DIR / "kustomization.yaml")
 
 
-def test_the_cronjob_envfrom_names_only_the_evals_secret_and_no_literal_secret_is_written(
-    built: list[dict[str, Any]],
-) -> None:
-    """Criterion re decision on the new Secret contract. Catches the CronJob reading
-    `OPSCONSOLE_DATABASE_URL` from a literal `env` entry - which is a live database URL
-    checked into git - and catches an `envFrom` naming some other Secret than
-    `evals-secrets`, which would deploy against a contract nothing documents. The file scan
-    is of what is WRITTEN under `infra/k8s/evals/`, not of what is built, mirroring
-    `test_k8s_platform.py`'s own reasoning: a literal a later patch strips from the output is
-    still in the git history, and a project rule is about the repo. The scan asserts the
-    directory exists first, so a missing `evals/` is a loud, named red rather than a vacuous
-    pass over zero files."""
-    cronjob = evals_object(built, "CronJob", "nightly-eval")
-    containers = all_containers(cronjob)
-    assert containers, "CronJob/nightly-eval declares no containers"
-
-    for container in containers:
-        secret_refs = {
-            str(entry["secretRef"]["name"])
-            for entry in container.get("envFrom", [])
-            if isinstance(entry, dict) and isinstance(entry.get("secretRef"), dict)
-        }
-        assert secret_refs <= {EVALS_SECRETS}, (
-            f"{name_of(cronjob)}'s container {container.get('name')} envFrom's "
-            f"{sorted(secret_refs - {EVALS_SECRETS})}, which nothing supplies"
-        )
-
+def test_no_credential_is_written_inline_under_evals() -> None:
+    """a project rule: catches a literal secret in any manifest under `infra/k8s/evals/`. A
+    literal a later patch strips from the built output is still in git history, so the scan
+    is of what is written, and it asserts the directory exists first so a missing folder is a
+    named failure and not a pass over zero files."""
     assert EVALS_DIR.is_dir(), f"{EVALS_DIR} does not exist, so this scan reads no files"
     files = sorted(EVALS_DIR.glob("*.yaml"))
     assert files, f"{EVALS_DIR} holds no YAML at all"

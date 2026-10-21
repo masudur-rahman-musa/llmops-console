@@ -1,4 +1,4 @@
-r"""`ops-eval baseline-guard`: the rule over `backend/evals/baseline.json`.
+r"""`ops-eval baseline-guard`: the rule over both baseline files.
 
 Pure, for `gate.py`'s reason one step further along: the same commits give the
 same verdict on a laptop and in `.github/workflows/eval-gate.yml`, so every way
@@ -16,7 +16,11 @@ Both halves are checked, and a commit breaking both is ONE offence carrying two
 reasons:
 the same sha printed twice reads as two bad commits.
 
-`BASELINE_PATH` is compared as an exact string and `ADR_PREFIX` carries its
+Two files are watched (`BASELINE_PATHS`): the old `baseline.json` and the conversation
+baseline. A deletion counts as touching, because the path of a deleted file is in the
+commit's file list, and the plan's own swap commit deletes one and adds the other.
+
+Each path is compared as an exact string and `ADR_PREFIX` carries its
 trailing slash, because the loose forms of both are how a guard stops being one -
 `baseline.json.bak` is not the baseline and `docs/adrs/` is not the ADR directory
 .
@@ -30,9 +34,12 @@ from typing import Final
 
 from pydantic import BaseModel, ConfigDict
 
-BASELINE_PATH: Final[str] = "backend/evals/baseline.json"
-"""The one file this guard watches, matched as an EXACT path and never as a
-prefix or a substring."""
+BASELINE_PATHS: Final[tuple[str, ...]] = (
+    "backend/evals/baseline.json",
+    "backend/evals/conversation-baseline.json",
+)
+"""The files this guard watches, matched as EXACT paths and never as a prefix or a
+substring. The old one is watched so it cannot be brought back quietly."""
 
 BASELINE_PREFIX: Final[str] = "baseline:"
 """What the subject of a commit touching that file must start with.
@@ -103,6 +110,8 @@ class Offence(BaseModel):
 
     sha: str
     reasons: tuple[str, ...]
+    paths: tuple[str, ...]
+    """The watched paths this commit touched, in `BASELINE_PATHS` order."""
 
 
 class GuardVerdict(BaseModel):
@@ -121,14 +130,17 @@ class GuardVerdict(BaseModel):
 def check(commits: Sequence[Commit]) -> GuardVerdict:
     """Answer the verdict for one range of commits.
 
-    Pure: no git, no clock, no module state, so two calls over the same commits are
-    equal. Every commit is examined -
-    there is no early return on the first clean one, which is the shape a two-commit
-    PR would otherwise use to carry an undocumented change behind a documented one.
+    Pure: no git, no clock, no module state. Every commit is examined, with no early
+    return on the first clean one, which is the shape a two-commit PR would otherwise
+    use to carry an undocumented change behind a documented one.
     """
     offences: list[Offence] = []
     for commit in commits:
-        if BASELINE_PATH not in commit.files or _only_moves_the_baseline_in(commit):
+        moved_in = _moved_in(commit)
+        touched = tuple(
+            path for path in BASELINE_PATHS if path in commit.files and path not in moved_in
+        )
+        if not touched:
             continue
         reasons: list[str] = []
         if not commit.subject.startswith(BASELINE_PREFIX):
@@ -136,21 +148,22 @@ def check(commits: Sequence[Commit]) -> GuardVerdict:
         if not any(path.startswith(ADR_PREFIX) for path in commit.files):
             reasons.append(MISSING_ADR_REASON)
         if reasons:
-            offences.append(Offence(sha=commit.sha, reasons=tuple(reasons)))
+            offences.append(Offence(sha=commit.sha, reasons=tuple(reasons), paths=touched))
     return GuardVerdict(offences=tuple(offences))
 
 
-def _only_moves_the_baseline_in(commit: Commit) -> bool:
-    """True when the commit lands a byte-identical `baseline.json` on `BASELINE_PATH`.
+def _moved_in(commit: Commit) -> frozenset[str]:
+    """The watched paths a byte-identical file of the same name was moved onto.
 
-    The content did not change, so there is nothing for an ADR to justify. The old
-    name must be a `baseline.json` too, or any file moved onto the baseline would
-    replace it unjudged;
-    the new name must be the baseline, or moving it away would pass.
+    The content did not change, so there is nothing for an ADR to justify. The old name
+    must have the baseline's own file name, or any file moved onto the baseline would
+    replace it unjudged; the new name must be a watched path, so moving one away is
+    still judged.
     """
-    return any(
-        new == BASELINE_PATH and old.rsplit("/", 1)[-1] == "baseline.json"
+    return frozenset(
+        new
         for old, new in commit.exact_moves
+        if new in BASELINE_PATHS and old.rsplit("/", 1)[-1] == new.rsplit("/", 1)[-1]
     )
 
 
@@ -161,4 +174,6 @@ def offence_line(offence: Offence) -> str:
     are joined rather than rendered as a tuple: a repr in a CI log is how a guard
     gets ignored.
     """
-    return f"{offence.sha}: touches {BASELINE_PATH} but {' and '.join(offence.reasons)}"
+    return (
+        f"{offence.sha}: touches {' and '.join(offence.paths)} but {' and '.join(offence.reasons)}"
+    )

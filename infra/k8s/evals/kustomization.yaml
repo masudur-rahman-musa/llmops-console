@@ -1,4 +1,4 @@
-# The Pushgateway and the nightly-eval CronJob.
+# The Pushgateway. The nightly eval runs from a GitHub workflow, not from the cluster.
 #
 # No `namespace:` transformer, for the same reason `../platform` and `../apps` have none:
 # each file writes `metadata.namespace: evals` itself.
@@ -7,4 +7,3 @@ kind: Kustomization
 
 resources:
   - pushgateway.yaml
-  - nightly-eval-cronjob.yaml

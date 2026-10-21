@@ -9,27 +9,17 @@ from __future__ import annotations
 import argparse
 import hashlib
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
-from app.core.config import DEFAULT_ROUTING_POLICY_PATH, Settings
-from app.core.validation import checked_identifier
+from app.core.config import Settings
 from app.evals.baseline_guard import (
     MAX_REF_LENGTH,
     REF_PATTERN,
     Commit,
 )
-from app.evals.calibration import (
-    read_calibration,
-)
-from app.evals.cases import EvalCase
-from app.evals.judge import judge_prompt_version
-from app.evals.report import (
-    SET_SHA_PATTERN,
-    RunCalibration,
-)
-from app.model_routing.errors import PolicyInvalid
-from app.model_routing.policy import Policy, load_policy
+from app.evals.report import SET_SHA_PATTERN
 
 ALLOWED_TARGET_SCHEMES: frozenset[str] = frozenset({"http", "https"})
 
@@ -37,20 +27,11 @@ RUN_KINDS: tuple[str, ...] = ("ci", "nightly", "manual")
 
 DEFAULT_RUN_KIND: str = "manual"
 
+DEFAULT_LABELS_PATH: Path = Path("backend/evals/labels/conversation-labels.jsonl")
+
 
 class UsageError(Exception):
     """One argument was refused. Reported on stderr, and answered with `EXIT_USAGE`."""
-
-
-def _checked_tenant(value: str) -> str:
-    """Validate `--tenant` against the gateway's own identifier vocabulary.
-
-    The cap and the pattern are imported rather than restated, so a tenant the
-    running gateway serves cannot be one the harness refuses to evaluate.
-    `re.fullmatch` and never `.match`: in Python `$` also matches before a
-    trailing newline, and this value names a directory under `--out`.
-    """
-    return checked_identifier(value, "tenant")
 
 
 def _checked_target(value: str) -> str:
@@ -75,8 +56,8 @@ def _checked_judge_url_value(value: str) -> str:
     The message still names the
     flag the operator typed.
 
-    Split from `_checked_judge_url` because the flag is OPTIONAL on `run` and
-    REQUIRED on `calibrate`: one function answering `str | None` would
+    Split from `_checked_judge_url` because the flag is OPTIONAL on `conversations` and
+    REQUIRED on `calibrate` and `label`: one function answering `str | None` would
     leave the required caller narrowing a value argparse already guaranteed.
     """
     try:
@@ -86,16 +67,16 @@ def _checked_judge_url_value(value: str) -> str:
 
 
 def _checked_judge_url(value: str | None) -> str | None:
-    """`--judge-url` on `run`, where absent means the judge is simply off."""
+    """`--judge-url` on `conversations`, where absent means the judge is simply off."""
     if value is None:
         return None
     return _checked_judge_url_value(value)
 
 
 def _checked_judge_key() -> str:
-    """The judge key `calibrate` cannot run without.
+    """The judge key `calibrate` and `label` cannot run without.
 
-    Where `run` turns the judge OFF with no key and keeps its own exit code,
+    Where `conversations` turns the judge OFF with no key and keeps its own exit code,
     a calibration with no judge has nothing left to do, so it
     refuses rather than writing an artifact with no kappa in it - a
     `calibration.json` that exists is read as trust.
@@ -108,48 +89,6 @@ def _checked_judge_key() -> str:
             "OPSCONSOLE_EVAL_JUDGE_KEY: not set, and a calibration cannot be made without the judge"
         )
     return api_key
-
-
-def _checked_calibration(value: Path | None, judge_url: str | None) -> RunCalibration | None:
-    """Read `--calibration`, or answer `None` when the caller passed none.
-
-    Three refusals, all of them here in the pre-check block and none of them after
-    a request has been made: the file cannot be read or is not a calibration
-    (`read_calibration`'s own `CalibrationSetInvalid`, printed as one line by the
-    caller's guard); the artifact was computed under a DIFFERENT judge prompt than
-    this run will score with, which is a stale number worn as trust and whose fix
-    is to recalibrate;
-    and `--calibration` with no `--judge-url`, where the run judges nothing and a
-    kappa beside a null `judge_mean` is agreement about scores this run never
-    produced.
-
-    What comes back is the narrowed `RunCalibration` a report publishes, not the
-    whole document: the rows, the drop count and the clock stay in
-    `calibration.json`, which is the file a reader is sent to by `labels_name` and
-    `labels_sha`.
-    """
-    if value is None:
-        return None
-    if judge_url is None:
-        raise UsageError(
-            "--calibration: needs --judge-url, or the run judges nothing and the kappa "
-            "would stand beside a null judge_mean"
-        )
-    report = read_calibration(value)
-    if report.judge_prompt_version != judge_prompt_version():
-        raise UsageError(
-            f"--calibration: {value} was computed under judge prompt "
-            f"{report.judge_prompt_version}, and this run scores with "
-            f"{judge_prompt_version()}"
-        )
-    return RunCalibration(
-        judge_prompt_version=report.judge_prompt_version,
-        labels_name=report.labels_name,
-        labels_sha=report.labels_sha,
-        pairs=report.pairs,
-        kappa=report.kappa,
-        trusted=report.trusted,
-    )
 
 
 def _checked_ref(value: str, flag: str) -> str:
@@ -242,34 +181,6 @@ def _checked_out(value: Path) -> Path:
     return value
 
 
-def _checked_policy(path: Path, tenant: str) -> Policy:
-    """Load the routing policy and confirm it defines this tenant.
-
-    A well-formed tenant no policy defines would otherwise reach the run with no
-    allow list at all, and deny-by-default would report a residency violation per
-    case instead of an operator's typo.
-    """
-    try:
-        policy = load_policy(path)
-    except PolicyInvalid as exc:
-        raise UsageError(str(exc)) from exc
-    if tenant not in policy.tenants:
-        raise UsageError(f"--tenant: {tenant!r} is not a tenant of {path}")
-    return policy
-
-
-def _other_tenant_markers(cases: tuple[EvalCase, ...], tenant: str) -> tuple[str, ...]:
-    """The other tenants the set names, which a reply may not mention.
-
-    The seed's markers, derived from the set itself rather than configured: a
-    `cross_tenant` case exists to prove the agent cannot see another tenant's
-    data, and the other tenants in the file are exactly the ones the seed carries.
-    With none, the leak assertion reports `skipped` rather than claiming a pass
-    nothing checked.
-    """
-    return tuple(sorted({case.tenant for case in cases} - {tenant}))
-
-
 def _checked_set_sha(value: str | None) -> str | None:
     """Validate `--set-sha`, or answer `None` when the caller gave none.
 
@@ -288,7 +199,7 @@ def _checked_set_sha(value: str | None) -> str | None:
 def _set_sha(supplied: str | None, case_set: Path) -> tuple[str, str]:
     """Which version of the set this was, and how that answer was arrived at.
 
-    The golden set lives in the Helpdesk repo, whose commit this process cannot
+    The cases live in the Helpdesk repo, whose commit this process cannot
     see, so a caller who knows it passes it and everyone else gets the sha256 of
     the file's BYTES. The source travels with the value so no
     reader is ever told a content hash is a commit.
@@ -319,54 +230,89 @@ def _git_sha() -> str | None:
     return finished.stdout.strip() or None
 
 
+def _new_run_id() -> str:
+    """A run id for a run that was not given one: `run-` and the UTC second it started.
+
+    A lowercase slug, so it passes the same check a typed one does and names a file.
+    """
+    return "run-" + datetime.now(UTC).strftime("%Y%m%d%H%M%S")
+
+
 def _parser() -> argparse.ArgumentParser:
-    """`ops-eval` and its five subcommands: `run`, `calibrate`, `gate`, `baseline-guard`,
-    `tradeoff`."""
-    parser = argparse.ArgumentParser(prog="ops-eval", description="Run a golden set.")
-    subcommands = parser.add_subparsers(dest="command", required=True)
-    run = subcommands.add_parser("run", help="run a golden set against a target")
-    run.add_argument("--target", required=True, help="base URL of the target under evaluation")
-    run.add_argument("--set", required=True, dest="case_set", help="the golden set, JSONL")
-    run.add_argument("--tenant", required=True, help="the tenant the run is made as")
-    run.add_argument("--out", required=True, type=Path, help="where the two reports are written")
-    run.add_argument(
-        "--policy",
-        type=Path,
-        default=DEFAULT_ROUTING_POLICY_PATH,
-        help=f"the routing policy to read residency from (default: {DEFAULT_ROUTING_POLICY_PATH})",
+    """`ops-eval` and its six subcommands: `conversations`, `label`, `calibrate`, `gate`,
+    `baseline-guard`, `tradeoff`. The old `run` is gone: argparse refuses it with exit 2."""
+    parser = argparse.ArgumentParser(
+        prog="ops-eval", description="Play and score the help desk's conversation cases."
     )
-    run.add_argument(
+    subcommands = parser.add_subparsers(dest="command", required=True)
+
+    conversations = subcommands.add_parser(
+        "conversations", help="play the conversation cases against a help desk and score them"
+    )
+    conversations.add_argument(
+        "--target", required=True, help="base URL of the help desk under evaluation"
+    )
+    conversations.add_argument(
+        "--cases", required=True, type=Path, help="the help desk's conversation cases, JSONL"
+    )
+    conversations.add_argument(
+        "--out",
+        required=True,
+        type=Path,
+        help="where <run-id>.jsonl, report.json and report.md are written",
+    )
+    conversations.add_argument(
+        "--run-id",
+        dest="run_id",
+        help="a short lowercase name; the same name on a restart skips saved cases "
+        "(default: run- and the start time)",
+    )
+    conversations.add_argument(
         "--set-sha",
         dest="set_sha",
-        help="the commit the golden set came from; without it, the file's own sha256",
+        help="the commit the cases came from; without it, the file's own sha256",
     )
-    run.add_argument(
+    conversations.add_argument(
         "--run-kind",
         dest="run_kind",
         choices=RUN_KINDS,
         default=DEFAULT_RUN_KIND,
         help=f"why this run happened (default: {DEFAULT_RUN_KIND})",
     )
-    run.add_argument(
+    conversations.add_argument(
         "--judge-url",
         dest="judge_url",
         help="base URL of the gateway that serves the judge alias; without it, no judging",
     )
-    run.add_argument(
-        "--calibration",
-        type=Path,
-        help="a calibration.json from `ops-eval calibrate`; publishes its kappa and trust",
-    )
-    run.add_argument(
+    conversations.add_argument(
         "--pushgateway-url",
         dest="pushgateway_url",
         help="base URL of a Pushgateway; without it, gateway_eval_* metrics are not pushed",
     )
+
+    label = subcommands.add_parser(
+        "label", help="make the reference labels from a finished run, once"
+    )
+    label.add_argument("--cases", required=True, type=Path, help="the conversation cases, JSONL")
+    label.add_argument("--run", required=True, type=Path, help="the finished run's <run-id>.jsonl")
+    label.add_argument(
+        "--judge-url",
+        dest="judge_url",
+        required=True,
+        help="base URL of the gateway that serves the agent-strong alias",
+    )
+    label.add_argument(
+        "--out",
+        type=Path,
+        default=DEFAULT_LABELS_PATH,
+        help=f"the labels file; it must not exist yet (default: {DEFAULT_LABELS_PATH})",
+    )
+
     calibrate_command = subcommands.add_parser(
-        "calibrate", help="score human labels through the judge and report the agreement"
+        "calibrate", help="grade the labels through the judge and report the agreement"
     )
     calibrate_command.add_argument(
-        "--labels", required=True, type=Path, help="the human-labelled replies, JSONL"
+        "--labels", required=True, type=Path, help="the labelled replies, JSONL"
     )
     calibrate_command.add_argument(
         "--judge-url",
@@ -377,16 +323,26 @@ def _parser() -> argparse.ArgumentParser:
     calibrate_command.add_argument(
         "--out", required=True, type=Path, help="where calibration.json is written"
     )
+
     gate_command = subcommands.add_parser(
-        "gate", help="compare a published run against the baseline (SPEC 12.6)"
+        "gate", help="compare a published run against the conversation baseline"
     )
     gate_command.add_argument("--report", required=True, type=Path, help="the run's report.json")
     gate_command.add_argument(
-        "--baseline", required=True, type=Path, help="the checked-in backend/evals/baseline.json"
+        "--baseline",
+        required=True,
+        type=Path,
+        help="the checked-in backend/evals/conversation-baseline.json",
+    )
+    gate_command.add_argument(
+        "--calibration",
+        type=Path,
+        help="a calibration.json; the judge score gates only while its kappa is 0.7 or better",
     )
     gate_command.add_argument(
         "--comment", type=Path, help="where the PR comment markdown is written; without it, none"
     )
+
     guard_command = subcommands.add_parser(
         "baseline-guard",
         help="refuse a baseline change arriving without its prefix and its ADR",
@@ -395,8 +351,9 @@ def _parser() -> argparse.ArgumentParser:
         "--base", required=True, help="the ref the range starts after (exclusive)"
     )
     guard_command.add_argument("--head", required=True, help="the ref the range ends at")
+
     tradeoff_command = subcommands.add_parser(
-        "tradeoff", help="build the tradeoff table from N published runs (SPEC 11)"
+        "tradeoff", help="build the tradeoff table from N published runs"
     )
     tradeoff_command.add_argument(
         "--manifest", required=True, type=Path, help="the manifest naming the options and runs"

@@ -20,7 +20,7 @@ aliases:
   agent-default:
     semantic_cache: false
     candidates:
-      - { provider: anthropic, model: claude-haiku-4-5 }
+      - { provider: anthropic, model: claude-haiku-5-5 }
 
 tenants:
   evals:

@@ -12,54 +12,19 @@ case takes IS the claim it makes:
   accepted" case that only checked for the absence of an exception.
 
 The cases needing a real server live in tests/storage/test_eval_store_postgres.py
-(decision D: beside the ONE session pool, isolated by schema, a project rule)
 and are skipped without `OPSCONSOLE_TEST_DATABASE_URL`.
 
-a project rule on every pattern: `tenant`, `provider`, `region` and `case_id`
-are checked against the resolver's identifier rule, `git_sha` against
-`report.SET_SHA_PATTERN`, `run_kind` against the three words `ops-eval` accepts
-and `category` against 16a's twelve, so each rejection table below carries a
-trailing newline, a trailing CRLF and a trailing space.
+Every pattern is checked with `fullmatch`: `tenant`, `provider`, `region`, `case_id` and
+`category` against the resolver's identifier rule, `git_sha` against
+`report.SET_SHA_PATTERN`, `run_kind` against the three words `ops-eval` accepts. Each
+rejection table below carries a trailing newline, a trailing CRLF and a trailing space.
 
-The contract these cases are written against, before it exists:
-
-* `EvalRunRow` and `EvalCaseRow`, frozen and `extra="forbid"`, and DUMB records
-  in the shape `CostLedgerRow` established: they carry `str` where a vocabulary
-  is checked (`run_kind`, `category`), because a `Literal` field would make
-  pydantic the guard and every rejection row below would then pass whether or not
-  the writer checks anything. `EvalRunRow` carries `id`, `started_at`,
-  `finished_at`, `set_name`, `set_sha`, `set_sha_source`, `run_kind`, `target`,
-  `tenant`, `git_sha`, `metrics`, `passed`, `report_path` (a `str`, the text the
-  `text` column stores), and decision F's `alias_resolution` and `judge_kappa`,
-  both defaulting to `None`. Since `17f`, `judge_kappa` is filled from
-  `RunReport.calibration.kappa` - a typed field, never a lookup into the
-  `metrics` mapping - and stays `None` on a run that supplied no calibration.
-  `EvalCaseRow` carries `run_id`, `case_id`,
-  `category`, `passed`, `tags` (defaulting to `()`), `latency_ms`, `cost_usd`,
-  `provider`, `region` and `details`.
-* `rows_from_report(report, *, report_path) -> tuple[EvalRunRow,
-  tuple[EvalCaseRow, ...]]`, pure, deriving both rows from the `RunReport` `16c`
-  builds and nothing else.
-* `details` is a mapping of exactly `assertions`, `residency` and `error` - the
-  three things a `CaseReport` carries that no column of its own holds.
-* `MAX_SET_NAME_LENGTH`, `MAX_REPORT_PATH_LENGTH` and `MAX_TARGET_LENGTH`, the
-  three caps no other module publishes, pinned below as the exact integers
-  a project rule requires.
-* `PostgresEvalStore(pool, *, schema=...)`, whose `write(run_row, case_rows)`
-  runs every pre-check, then borrows one connection, opens ONE transaction
-  (decision G) and issues one statement for the run row and one `executemany`
-  over the cases.
-* every refusal is `IdentifierInvalid`, the class section 3 says this module
-  joins the raisers of.
-
-Two things the plan says that cannot both be true, reported rather than resolved
-here (they do not change a single assertion below, which is why the cases were
-still written): section 1 lists the run row's columns without `tenant` and then
-requires a `tenant` pre-check, so `tenant` is carried on `EvalRunRow` here; and
-section 1 says `run_kind` is checked against `cli.RUN_KINDS` while step 4 has
-`cli` import this module, which is a cycle - so the vocabulary is imported from
-`cli` by THIS FILE only, and the store is free to spell its own tuple as long as
-the two agree.
+An earlier change rewrote this file for the conversation report. A case row's `details` holds the
+three checks, the judged replies and the error. The four measured columns stay NULL
+because a conversation answer measures none of them. `category` is any slug, because the
+help desk names its own categories, so the old closed list of twelve is gone with the
+single-reply format. The tests that only covered the removed assertions, residency
+verdict, taxonomy tags and 1-to-5 judge verdict were deleted with those modules.
 """
 
 from __future__ import annotations
@@ -81,14 +46,8 @@ from psycopg_pool import ConnectionPool
 
 from app.cli.evals import RUN_KINDS
 from app.core.validation import MAX_IDENTIFIER_LENGTH, IdentifierInvalid
-from app.evals.assertions import AssertionResult, AssertionStatus, CaseAssertions
-from app.evals.cases import EvalCategory
-from app.evals.judge import JudgeVerdict
-from app.evals.outcome import CaseOutcome
-from app.evals.region_check import ResidencyVerdict
 from app.evals.report import REPORT_JSON_NAME, RunCalibration, RunReport, build_report
-from app.evals.runner import CaseRun, RunResult
-from app.evals.target import TurnFailureKind
+from app.evals.runner import CaseLine
 from app.storage.eval_store import (
     MAX_REPORT_PATH_LENGTH,
     MAX_SET_NAME_LENGTH,
@@ -99,6 +58,8 @@ from app.storage.eval_store import (
     rows_from_report,
 )
 
+from .builders import case_line
+
 Pool = ConnectionPool[Connection[TupleRow]]
 
 STARTED = datetime(2026, 3, 4, 9, 12, 31, 204512, tzinfo=UTC)
@@ -107,10 +68,10 @@ FINISHED = datetime(2026, 3, 4, 9, 14, 2, 881044, tzinfo=UTC)
 # Every identity value distinct from every other and of a different shape where
 # it can be helped, so a writer that fills one column from another argument shows
 # up as a wrong value rather than as a plausible one.
-SET_NAME = "helpdesk-golden-v1.jsonl"
+SET_NAME = "cases.jsonl"
 SET_SHA = "e4b2c0d9a71f3856cbb4d20e9f61a7c845d3e0b2"
 GIT_SHA = "b71f0c3a9d5e42188a6c0f37d21be9054c8a7f6d"
-TENANT = "nordlicht"
+TENANT = "all"
 TARGET = "https://helpdesk.example/gateway"
 RUN_ID = "9f2c1d7e4b0a48f5a6d3c1e0b7248f5a"
 PROVIDER = "anthropic_eu"
@@ -123,84 +84,10 @@ AT_IDENTIFIER_CAP = "t" * MAX_IDENTIFIER_LENGTH
 OVER_IDENTIFIER_CAP = "t" * (MAX_IDENTIFIER_LENGTH + 1)
 
 
-def make_outcome(
-    *,
-    latency_ms: int | None = 137,
-    cost_usd: Decimal | None = Decimal("0.001200"),
-    provider: str | None = PROVIDER,
-    region: str | None = REGION,
-) -> CaseOutcome:
-    """What the target measured on one turn, as `to_outcome` would have built it."""
-    return CaseOutcome(
-        reply="Done.",
-        latency_ms=latency_ms,
-        cost_usd=cost_usd,
-        provider=provider,
-        region=region,
-    )
-
-
-def make_run(
-    case_id: str,
-    *,
-    verdict: str = "pass",
-    category: EvalCategory = EvalCategory.HELPDESK,
-    outcome: CaseOutcome | None = None,
-    judge: JudgeVerdict | None = None,
-    failure_kind: TurnFailureKind | None = None,
-) -> CaseRun:
-    """One per-case record, as `run_set` would have built it.
-
-    `verdict` is one of `pass`, `fail`, `residency`, `broken`; `broken` is the
-    turn that never answered, which carries no assertions, no verdict and no
-    measurements at all. `failure_kind` only matters on a `broken` verdict.
-    """
-    if verdict == "broken":
-        return CaseRun(
-            case_id=case_id,
-            category=category,
-            assertions=None,
-            residency=None,
-            outcome=None,
-            error=f"turn failed: HTTP 502 for {case_id}",
-            failure_kind=failure_kind,
-            passed=False,
-        )
-
-    results = [AssertionResult(name="intent", status=AssertionStatus.PASSED)]
-    if verdict == "fail":
-        results.append(
-            AssertionResult(
-                name="decision",
-                status=AssertionStatus.FAILED,
-                expected="auto_approved",
-                actual="escalated",
-            )
-        )
-    observed = "us" if verdict == "residency" else REGION
-    return CaseRun(
-        case_id=case_id,
-        category=category,
-        assertions=CaseAssertions(case_id=case_id, results=tuple(results)),
-        residency=ResidencyVerdict(
-            case_id=case_id,
-            tenant=TENANT,
-            data_class="internal",
-            observed=observed,
-            allowed=("eu", "self"),
-            violation=verdict == "residency",
-        ),
-        outcome=outcome if outcome is not None else make_outcome(region=observed),
-        judge=judge,
-        error=None,
-        passed=verdict == "pass",
-    )
-
-
-def build(result: RunResult, *, run_kind: str = "ci") -> RunReport:
-    """`build_report` over one run, with the identity values above."""
+def build(lines: tuple[CaseLine, ...], *, run_kind: str = "ci") -> RunReport:
+    """`build_report` over saved case lines, with the identity values above."""
     return build_report(
-        result,
+        lines,
         started_at=STARTED,
         finished_at=FINISHED,
         set_name=SET_NAME,
@@ -213,22 +100,15 @@ def build(result: RunResult, *, run_kind: str = "ci") -> RunReport:
     )
 
 
-MIXED = RunResult(
-    runs=(
-        make_run("alpha", verdict="pass"),
-        make_run("beta", verdict="fail", category=EvalCategory.POLICY_QA),
-        make_run("gamma", verdict="residency", category=EvalCategory.CROSS_TENANT),
-        make_run(
-            "delta",
-            verdict="broken",
-            category=EvalCategory.INJECTION,
-            failure_kind=TurnFailureKind.PROVIDER_ERROR,
-        ),
-    )
+MIXED = (
+    case_line("alpha", passed=True, verdicts=["pass"], category="paraphrases"),
+    case_line("beta", passed=False, verdicts=["fail", "pass"], category="follow_ups"),
+    case_line("gamma", passed=False, category="attacks"),
+    case_line("delta", passed=False, error="turn failed: HTTP 502 for delta", category="typos"),
 )
-"""Four cases, one of each shape a real run produces, and no two alike in
-category, verdict or measurements - so a mapping that fills one row from another
-case's record cannot pass by coincidence."""
+"""Four cases, one of each shape a real run produces, and no two alike in category, verdict
+or judged replies - so a mapping that fills one row from another case's record cannot pass
+by coincidence."""
 
 
 def a_run_row(**overrides: Any) -> EvalRunRow:  # noqa: ANN401
@@ -257,13 +137,13 @@ def a_case_row(**overrides: Any) -> EvalCaseRow:  # noqa: ANN401
     fields: dict[str, Any] = {
         "run_id": RUN_ID,
         "case_id": "alpha",
-        "category": EvalCategory.HELPDESK.value,
+        "category": "paraphrases",
         "passed": True,
         "latency_ms": 137,
         "cost_usd": Decimal("0.001200"),
         "provider": PROVIDER,
         "region": REGION,
-        "details": {"assertions": None, "residency": None, "error": None},
+        "details": {"check": None, "judged": [], "error": None},
     }
     fields.update(overrides)
     return EvalCaseRow(**fields)
@@ -378,12 +258,11 @@ def written(**overrides: Any) -> RecordingPool:  # noqa: ANN401
 def test_the_run_row_carries_every_identity_field_from_the_report() -> None:
     """Catches a mapping that fills a column from the wrong field of the report - the two
     SHAs, the set name, the tenant and the target are all `text`, so `set_sha` written
-    into `git_sha` is a row PostgreSQL accepts without a murmur and a query nobody can
-    tell is wrong. `id`, `passed` and `metrics` are asserted from the report too, because
-    a store that generated its own run id would break the join every case row makes back
-    to it, and `metrics` is what the eval gate reads. Since 17d that mapping is compared against
-    the report's JSON form and not against the live `report.metrics`, because the two
-    costs in it are `Decimal` objects in the mapping and decimal strings in the column."""
+    into `git_sha` is a row PostgreSQL accepts without a murmur. `id`, `passed` and
+    `metrics` are asserted from the report too, because a store that generated its own run
+    id would break the join every case row makes back to it, and `metrics` is what the
+    gate reads. The metrics are compared against the report's JSON form, the exact bytes
+    the file holds."""
     report = build(MIXED)
 
     run_row, _ = rows_from_report(report, report_path=Path("/srv/evals/nightly/report.json"))
@@ -400,52 +279,40 @@ def test_the_run_row_carries_every_identity_field_from_the_report() -> None:
     assert run_row.git_sha == GIT_SHA
     assert run_row.passed is False
     assert run_row.metrics == json.loads(report.model_dump_json())["metrics"]
+    assert run_row.metrics["check_score"] == 25.0
 
 
 def test_there_is_one_case_row_per_case_report_in_report_order() -> None:
     """Catches a store that writes only the failures, only the cases that answered, or
-    de-duplicates by category - the per-category numbers are counted over these rows,
-    so a missing case shrinks the denominator every threshold is measured against. Order
-    is asserted as the report's own, which is the golden set's file order, because a set
-    keyed by nothing else is read back by `run_id` alone."""
+    de-duplicates by category: the denominator of every score is counted over these rows.
+    Order is the report's own, which is the cases file's order."""
     report = build(MIXED)
 
     run_row, case_rows = rows_from_report(report, report_path=Path("/tmp/report.json"))
 
     assert [row.case_id for row in case_rows] == ["alpha", "beta", "gamma", "delta"]
-    assert [row.category for row in case_rows] == [
-        EvalCategory.HELPDESK.value,
-        EvalCategory.POLICY_QA.value,
-        EvalCategory.CROSS_TENANT.value,
-        EvalCategory.INJECTION.value,
-    ]
+    assert [row.category for row in case_rows] == ["paraphrases", "follow_ups", "attacks", "typos"]
     assert [row.passed for row in case_rows] == [True, False, False, False]
     assert {row.run_id for row in case_rows} == {run_row.id}
 
 
-def test_the_measured_columns_come_from_the_case_that_measured_them() -> None:
-    """Catches the four measured columns filled from the run rather than from the case -
-    one latency and one cost repeated across every row would make a slow case invisible
-    and every per-case cost equal. The passing case is asserted whole, values and types
-    both: `cost_usd` reaching the row as a `float` is the drift `numeric(18, 6)` exists to
-    prevent, and it compares equal to the `Decimal` for kinder numbers than a real one."""
-    report = build(MIXED)
+def test_a_conversation_case_stores_no_measurements() -> None:
+    """Catches the four measured columns filled with `0` and `""`: a conversation answer
+    measures no latency, cost, provider or region, and a zero would be averaged in as a
+    free, instant success. `is None` on each, for every case, the answered ones too."""
+    _, case_rows = rows_from_report(build(MIXED), report_path=Path("/tmp/report.json"))
 
-    _, case_rows = rows_from_report(report, report_path=Path("/tmp/report.json"))
-
-    first = case_rows[0]
-    assert first.latency_ms == 137
-    assert first.cost_usd == Decimal("0.001200")
-    assert isinstance(first.cost_usd, Decimal)
-    assert first.provider == PROVIDER
-    assert first.region == REGION
+    for row in case_rows:
+        assert row.latency_ms is None
+        assert row.cost_usd is None
+        assert row.provider is None
+        assert row.region is None
+        assert row.tags == ()
 
 
 def test_the_report_path_is_the_report_json_that_was_written() -> None:
-    """Catches a store recording the `--out` DIRECTORY rather than the file: the eval gate
-    and the console both open `report_path` expecting a document, and a directory there is
-    a link that never resolves. Catches the other end too - a path invented from the run
-    id or from a constant - because the path asserted is the one the caller passed."""
+    """Catches a store recording the `--out` DIRECTORY rather than the file: the gate and
+    the console both open `report_path` expecting a document."""
     written_path = Path("/srv/evals/nightly") / REPORT_JSON_NAME
 
     run_row, _ = rows_from_report(build(MIXED), report_path=written_path)
@@ -454,106 +321,62 @@ def test_the_report_path_is_the_report_json_that_was_written() -> None:
     assert run_row.report_path.endswith(REPORT_JSON_NAME)
 
 
-def test_a_case_whose_turn_failed_stores_no_measurements_and_its_error() -> None:
-    """The criterion in one case. Catches a store filling the four measured columns with
-    `0` and `""` on a turn that never answered: a broken case would then be averaged in as
-    a free, instant, EU-served case, which lifts every latency and cost number `evals/scores.py`
-    reports exactly when the target is failing. `is None` on each, because `0 == None` is
-    False but `not 0` is not, and the error text is asserted so the row still says why."""
-    report = build(MIXED)
-
-    _, case_rows = rows_from_report(report, report_path=Path("/tmp/report.json"))
+def test_a_case_that_never_answered_keeps_its_error_in_the_details() -> None:
+    """Catches an error that is lost once `report.json` has been rotated away: the row is
+    all that is left, and it must still say why the case failed. `check` is `null`, not
+    absent."""
+    _, case_rows = rows_from_report(build(MIXED), report_path=Path("/tmp/report.json"))
 
     broken = case_rows[3]
     assert broken.case_id == "delta"
-    assert broken.latency_ms is None
-    assert broken.cost_usd is None
-    assert broken.provider is None
-    assert broken.region is None
     assert broken.details["error"] == "turn failed: HTTP 502 for delta"
-    assert broken.details["assertions"] is None
+    assert broken.details["check"] is None
 
 
-def test_the_details_column_carries_the_four_things_no_column_holds() -> None:
-    """Catches a `details` that drops the residency verdict or the assertion results,
-    which is everything a reader needs to tell an accuracy failure from a boundary breach
-    once `report.json` has been rotated away - the row is what survives. The residency
-    case is used because a verdict with every assertion passing is the shape a store that
-    derived `details` from the failed assertions alone would leave empty. The judge is the
-    fourth key since 17c and is asserted here as PRESENT on a case nothing judged: a key
-    that appears only on judged rows makes two rows of the same set unqueryable by one
-    expression (`test_the_details_carry_the_judge_verdict` asserts its value)."""
-    report = build(MIXED)
+def test_the_details_column_carries_the_judged_replies() -> None:
+    """Catches a `details` that drops the judged replies, which are the only record of WHY
+    a case whose three checks passed was still marked down by the judge. The keys are the
+    same on a case nothing judged (`judged` is an empty list), because a key that comes and
+    goes makes two rows of the same set unqueryable by one expression. The dump goes through
+    psycopg's `Jsonb` for real, since a pydantic model there is a `TypeError` at INSERT time."""
+    _, case_rows = rows_from_report(build(MIXED), report_path=Path("/tmp/report.json"))
 
-    _, case_rows = rows_from_report(report, report_path=Path("/tmp/report.json"))
-
-    violated = case_rows[2].details
-    assert set(violated) == {"assertions", "residency", "judge", "error"}
-    assert violated["residency"]["violation"] is True
-    assert violated["error"] is None
-    assert violated["assertions"] is not None
-    assert violated["judge"] is None
+    judged = case_rows[1].details
+    assert set(judged) == {"check", "judged", "error"}
+    assert [(r["turn"], r["verdict"]) for r in judged["judged"]] == [(1, "fail"), (2, "pass")]
+    assert case_rows[2].details["judged"] == []
+    dumper = JsonbBinaryDumper(Jsonb, Transformer())
+    assert dumper.dump(Jsonb(dict(judged))) is not None
 
 
-def test_row_seventeens_remaining_columns_still_arrive_empty_rather_than_absent() -> None:
-    """Decision F, for the two columns nothing fills on THIS path. Catches `judge_kappa`
-    or `alias_resolution` filled with `0.0`, which a dashboard would render as a
-    real, terrible score, on the run row a 17b-aware writer might otherwise touch
-    while filling `tags`. Since 17f `judge_kappa` is filled from the report's own
-    `calibration` record, and this report carries none - so the column stops shipping
-    NULL only when a calibration was supplied, and a writer that fills the column from
-    the `metrics` mapping (where the key now always exists) fails here rather than
-    storing a `None` that looks deliberate. Asserted exactly rather than as falsy,
-    because `0.0` and `None` are both falsy."""
-    report = build(MIXED)
-
-    run_row, _ = rows_from_report(report, report_path=Path("/tmp/report.json"))
+def test_the_columns_nothing_fills_arrive_empty_rather_than_absent() -> None:
+    """Catches `judge_kappa` or `alias_resolution` filled with `0.0`, which a dashboard
+    would render as a real, terrible score. This report carries no calibration, so both are
+    `None`. Asserted exactly rather than as falsy, because `0.0` and `None` are both falsy."""
+    run_row, _ = rows_from_report(build(MIXED), report_path=Path("/tmp/report.json"))
 
     assert run_row.judge_kappa is None
     assert run_row.alias_resolution is None
 
 
-def test_rows_from_report_fills_tags_from_the_report_case_by_case() -> None:
-    """The column row 17b is what fills. Catches `rows_from_report` still shipping
-    `tags=()` on every row - the prediction this plan repoints - and catches a
-    writer that emits the same non-empty placeholder tuple on every row: alpha
-    passed and carries nothing, beta failed a `decision` assertion and carries
-    exactly `wrong_decision`, and gamma is the residency-only failure that has no
-    failed assertion at all to derive a tag from otherwise."""
+def test_the_stored_metrics_are_the_json_the_report_file_carries() -> None:
+    """Catches a `metrics` column that differs from `report.json`'s: the two must state the
+    same numbers. `check_score` and `judge_score` are JSON-native, so the dump through
+    psycopg's `Jsonb` works; the old metric names are gone."""
     report = build(MIXED)
 
-    _, case_rows = rows_from_report(report, report_path=Path("/tmp/report.json"))
+    run_row, _ = rows_from_report(report, report_path=Path("/tmp/report.json"))
 
-    assert case_rows[0].tags == ()
-    assert case_rows[1].tags == ("wrong_decision",)
-    assert case_rows[2].tags == ("residency_violation",)
-    assert case_rows[3].tags == ("provider_error",)
+    assert run_row.metrics == json.loads(report.model_dump_json())["metrics"]
+    assert run_row.metrics["judge_score"] == 66.67
+    assert "decision_accuracy" not in run_row.metrics
+    dumper = JsonbBinaryDumper(Jsonb, Transformer())
+    assert dumper.dump(Jsonb(dict(run_row.metrics))) is not None
 
 
 # --------------------------------------------------------------------------
 # the caps this module publishes
 # --------------------------------------------------------------------------
-
-
-def test_the_stored_metrics_are_the_json_the_report_file_carries() -> None:
-    """Catches the one way 17d's metric set can break storage rather than a number: the
-    two costs are `Decimal`, psycopg's `Jsonb` dumps through `json.dumps`, and a `Decimal`
-    there is a `TypeError` at INSERT time - a whole run's rows lost after the report was
-    already written. The dump is exercised for real rather than reasoned about, and the
-    mapping is asserted equal to `report.json`'s own `metrics` so the column and the file
-    cannot state different numbers. `dict(report.metrics)` fails both halves."""
-    report = build(MIXED)
-
-    run_row, _ = rows_from_report(report, report_path=Path("/tmp/report.json"))
-
-    assert run_row.metrics["cost_usd_total"] == "0.003600"
-    assert run_row.metrics["categories"]["helpdesk"]["cost_usd_total"] == "0.001200"
-    assert run_row.metrics["categories"]["injection"]["cost_usd_total"] is None
-    assert run_row.metrics == json.loads(report.model_dump_json())["metrics"]
-    dumper = JsonbBinaryDumper(Jsonb, Transformer())
-    assert dumper.dump(Jsonb(dict(run_row.metrics))) is not None
-    with pytest.raises(TypeError):
-        dumper.dump(Jsonb(dict(report.metrics)))
 
 
 def test_the_length_caps_are_the_published_ones() -> None:
@@ -697,7 +520,7 @@ def test_a_case_that_measured_nothing_is_written_rather_than_refused() -> None:
                 cost_usd=None,
                 provider=None,
                 region=None,
-                details={"assertions": None, "residency": None, "error": "turn failed"},
+                details={"check": None, "judged": [], "error": "turn failed"},
             ),
         ),
     )
@@ -794,43 +617,54 @@ def test_write_refuses_a_run_kind_outside_the_three_before_any_sql(label: str, v
     write_refused(run_kind=value)
 
 
-def test_every_category_the_golden_format_allows_is_written() -> None:
-    """The other direction for the category check. Catches a vocabulary restated here
-    instead of taken from 16a's enum, which would refuse the categories a set may legally
-    use and lose their rows - and catches a check that refuses everything, which every
-    rejection row below would otherwise be satisfied by. All twelve, because a subset is
-    exactly the bug."""
+HELP_DESK_CATEGORIES = (
+    "attacks",
+    "changes_of_mind",
+    "follow_ups",
+    "for_other_people",
+    "live_failures",
+    "off_topic",
+    "other_languages",
+    "paraphrases",
+    "short_answers_and_picks",
+    "typos",
+)
+
+
+def test_every_category_the_help_desk_uses_is_written() -> None:
+    """Catches a check that refuses a category the help desk names: it owns the list, and a
+    refused category would lose the rows of a whole run at the last step. All ten, with
+    underscores, because a slug check that forgot them refuses most of the set."""
     pool = RecordingPool()
     store_over(pool).write(
         a_run_row(),
         tuple(
-            a_case_row(case_id=f"case-{index}", category=category.value)
-            for index, category in enumerate(EvalCategory)
+            a_case_row(case_id=f"case-{index}", category=category)
+            for index, category in enumerate(HELP_DESK_CATEGORIES)
         ),
     )
 
-    assert len(pool.executemany_calls[0][1]) == len(EvalCategory)
+    assert len(pool.executemany_calls[0][1]) == len(HELP_DESK_CATEGORIES)
 
 
 REJECTED_CATEGORIES: list[tuple[str, str]] = [
     ("empty", ""),
-    ("not one of the twelve", "support"),
     ("uppercase", "HELPDESK"),
-    ("a trailing newline", "helpdesk\n"),
-    ("a trailing CRLF", "helpdesk\r\n"),
-    ("a trailing space", "helpdesk "),
+    ("a space", "follow ups"),
+    ("a trailing newline", "typos\n"),
+    ("a trailing CRLF", "typos\r\n"),
+    ("a trailing space", "typos "),
 ]
 
 
 @pytest.mark.parametrize(
     ("label", "value"), REJECTED_CATEGORIES, ids=[row[0] for row in REJECTED_CATEGORIES]
 )
-def test_write_refuses_a_category_outside_the_twelve_before_any_sql(label: str, value: str) -> None:
-    r"""Catches a thirteenth bucket entering the table. Row 17 counts per category and the
-    per-category minimums are read off these strings, so `helpdesk\n` is a category with
-    one case in it and `helpdesk` is one case short - and neither reads as a mistake in a
-    grouped query. 16a refuses the same words at load time, but a report file reaches this
-    store without passing 16a's loader, so this check is the only one on this path."""
+def test_write_refuses_a_malformed_category_before_any_sql(label: str, value: str) -> None:
+    r"""Catches a category reaching the table as free text: `typos\n` is a category with one
+    case in it and `typos` is one case short, and neither reads as a mistake in a grouped
+    query. A report file reaches this store without passing the case loader, so this check
+    is the only one on this path."""
     case_write_refused(category=value)
 
 
@@ -855,41 +689,6 @@ def test_the_run_row_and_its_cases_are_written_in_one_transaction() -> None:
     assert len(pool.inserts()) >= 1
     assert len(pool.executemany_calls) == 1
     assert len(pool.executemany_calls[0][1]) == len(case_rows)
-
-
-# --------------------------------------------------------------------------
-# the judge verdict in `details` (17c)
-# --------------------------------------------------------------------------
-
-
-def test_the_details_carry_the_judge_verdict() -> None:
-    """The fourth thing no column of its own holds. Catches a `details` that kept the
-    assertions and the residency verdict and dropped the judge, which is the only record
-    of WHY a case with eleven passing assertions was failed - once `report.json` has been
-    rotated away the row is all there is. Catches a verdict stored as the model object
-    rather than through `model_dump(mode="json")` too: psycopg's `Jsonb` dumps through
-    `json.dumps`, which raises on a pydantic model, and the whole run's rows are lost at
-    INSERT time after the report was already written (17d's trap, on this plan's field).
-    The unjudged case is asserted `null` and not absent, because a key that comes and goes
-    makes two rows of the same set unqueryable by the same expression."""
-    judged = make_run(
-        "alpha",
-        verdict="fail",
-        judge=JudgeVerdict(median=2, samples=(5, 1, 2), reason="the reply cites nothing"),
-    )
-    result = RunResult(runs=(judged, make_run("beta", verdict="pass")))
-
-    _, case_rows = rows_from_report(build(result), report_path=Path("/tmp/report.json"))
-
-    assert set(case_rows[0].details) == {"assertions", "residency", "error", "judge"}
-    assert case_rows[0].details["judge"] == {
-        "median": 2,
-        "samples": [5, 1, 2],
-        "reason": "the reply cites nothing",
-    }
-    assert case_rows[1].details["judge"] is None
-    dumper = JsonbBinaryDumper(Jsonb, Transformer())
-    assert dumper.dump(Jsonb(dict(case_rows[0].details))) is not None
 
 
 # --------------------------------------------------------------------------

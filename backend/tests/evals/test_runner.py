@@ -1,547 +1,433 @@
-"""`evals/runner.py`: one reset, every case in file order, one `RunResult`.
+"""`evals/target.py` and `evals/runner.py`: play every case, save each one at once, resume.
 
-Driven end to end through `httpx.MockTransport`, so the whole loop - reset, turn,
-envelope, assertions, residency - is exercised with no target, no network and no
-backing service. The handler dispatches on the path and on the `case_id` in the
-body, which is also what lets a case be given its own answer.
+Driven through `httpx.MockTransport` (`StubTarget`), so the whole loop runs with no help
+desk, no network and no sleep.
 
-The contract these cases are written against, before it exists:
+Contract these tests are written against:
 
-* `CaseRun(case_id=..., category=..., assertions=..., residency=...,
-  outcome=..., error=None, passed=...)`, frozen and `extra="forbid"`;
-  `assertions` and `outcome` are `None` exactly when the turn failed, and
-  `error` carries that failure's message. `category` and `outcome` were added by
-  `16c`, whose report is built from this record and nothing else.
-* `RunResult(runs=(...))`, frozen, with `cases`, `passed_count`, `failed_count`,
-  `residency_violations` and `leaked` DERIVED from `runs`, so no caller can
-  report a count the per-case records do not support.
-* `run_set(*, client, cases, policy, tenant, other_tenant_markers=()) -> RunResult`.
-
-Two rules the cases below pin that no single assertion makes obvious:
-
-* a residency violation makes that `CaseRun` not passed even when every
-  assertion passed, because a turn that left the region is not a result the run
-  may count as correct (#38);
-* `assert_case` is imported and never re-implemented, which is why every
-  assertion expectation here is thin: what is under test is the LOOP.
+* `target.RESET_PATH = "/admin/test/reset"`, `target.CONVERSATION_PATH =
+  "/v1/eval/conversation"`, `TargetClient(base_url, *, client, timeout=...)` with
+  `reset()` (raises `TargetUnreachable` on a non-2xx or a transport failure) and
+  `play(case) -> ConversationAnswer` (posts exactly `case_id`, `tenant`, `principal_user`,
+  `turns`; raises `TurnFailed` on a non-2xx, a body that is not JSON, a body that is not an
+  answer, an answer for another case id, or an answer without exactly one record per turn,
+  numbered 1..n).
+* `runner.run_conversations(*, client, cases, run_id, reports_dir, judge=None)
+  -> tuple[CaseLine, ...]`. The run id is checked with `checked_identifier` (a slug of at
+  most 64 characters; `IdentifierInvalid` otherwise) before anything is sent or written.
+  The file is `reports_dir / f"{run_id}.jsonl"`, one `CaseLine` JSON object per line, written
+  and flushed as each case finishes. If the file has no line yet the target is reset once,
+  first; otherwise it is not reset at all. Cases already in the file are not played again
+  (an error line counts: it is a saved result). A `TurnFailed` becomes an error line and the
+  run goes on; any other exception propagates. The return value holds every case in file
+  order, saved ones included.
+* `judge.Grader`: a Protocol with `grade(rubric, reply) -> JudgeVerdict | None`; `JudgeClient`
+  satisfies it.
+* `CaseLine`: `case_id`, `category`, `passed`, `error`, `check` (a `CaseCheck`, or none when
+  the target failed), `judged` (a tuple of `JudgedReply(turn, rubric, reply, verdict, reason)`,
+  verdict `None` when the judge was unusable) and `answer` (the target's answer, kept so a
+  resumed run still knows which role names the run has seen).
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
-from decimal import Decimal
-from typing import Any
+from pathlib import Path
+from typing import Any, Literal, NoReturn
 
 import httpx
 import pytest
 
-from app.evals.assertions import AssertionStatus
-from app.evals.cases import EvalCase, EvalCategory, ExpectedOutcome
-from app.evals.judge import JUDGE_LOW_SCORE, JUDGE_PATH, JUDGE_SAMPLES, JudgeClient
-from app.evals.region_check import EVAL_DATA_CLASS
-from app.evals.runner import RunResult, run_set
-from app.evals.target import RESET_PATH, TURN_PATH, TargetClient, TurnFailureKind
-from app.model_routing.policy import (
-    DataClass,
-    DataClassRule,
-    Policy,
-    RateLimit,
-    Residency,
-    Tenant,
+from app.core.validation import MAX_IDENTIFIER_LENGTH, IdentifierInvalid
+from app.evals.conversations import ConversationCase
+from app.evals.judge import Grader, JudgeVerdict
+from app.evals.runner import CaseLine, run_conversations
+from app.evals.target import (
+    CONVERSATION_PATH,
+    RESET_PATH,
+    ConversationAnswer,
+    TargetClient,
+    TargetUnreachable,
+    TurnFailed,
 )
 
-BASE_URL = "https://target.example"
+from .builders import BASE_URL, StubTarget, answer, call, make_case, turn
 
-TENANT = "acme"
-
-POLICY = Policy(
-    providers={},
-    eu_regions=("eu", "self"),
-    aliases={},
-    tenants={
-        TENANT: Tenant(
-            residency=Residency.EU,
-            data_class_rules={
-                EVAL_DATA_CLASS: DataClassRule(allow_regions=("eu", "self")),
-                DataClass.PUBLIC: DataClassRule(allow_regions=("us", "eu", "self")),
-            },
-            budget_usd_month=Decimal("10.00"),
-            rate_limit=RateLimit(rpm=60, tpm=60_000),
-        )
-    },
-)
-"""One EU tenant. `us` is a region this policy knows (it is in the `public` rule)
-but not one an eval turn may use, so the residency case below can only be decided
-by the `internal` allow list and never by "that region does not exist"."""
+RUN_ID = "run-one"
 
 
-def make_case(
-    case_id: str,
-    *,
-    category: EvalCategory = EvalCategory.HELPDESK,
-    expected: ExpectedOutcome | None = None,
-    rubric: str | None = None,
-) -> EvalCase:
-    """One case; `expected` defaults to a thin case, which `assert_case` passes.
-
-    `rubric` defaults to `None`, which is what keeps every case above out of the
-    judge's way: a rubric is the only thing that makes a case judgeable (17c
-    criterion 1), so the existing cases assert the unjudged path unchanged.
-    """
-    return EvalCase(
-        id=case_id,
-        category=category,
-        tenant=TENANT,
-        principal_user="dana.okafor",
-        messages=[{"role": "user", "content": f"question for {case_id}"}],
-        expected=expected if expected is not None else ExpectedOutcome(),
-        judge_rubric=rubric,
-    )
+def ok_answer(case: ConversationCase, reply: str = "Fine.") -> ConversationAnswer:
+    return answer(case.id, *[turn(n + 1, f"{reply} {n + 1}") for n in range(len(case.turns))])
 
 
-def envelope(**fields: object) -> dict[str, object]:
-    """An envelope the policy is happy with, plus whatever a case overrides."""
-    payload: dict[str, object] = {
-        "decision": "auto_approved",
-        "reply": "Done.",
-        "latency_ms": 120,
-        "cost_usd": "0.0010",
-        "provider": "anthropic_eu",
-        "region": "eu",
-    }
-    payload.update(fields)
-    return payload
+def three_cases() -> list[ConversationCase]:
+    return [make_case(f"conv-00{n}") for n in (1, 2, 3)]
 
 
-class Target:
-    """A recording in-process target: one answer per case id, one call log.
-
-    The log holds `"reset"` and each case id in the order they were requested,
-    which is what makes "reset once, before the first case" and "file order"
-    assertable rather than assumed.
-    """
-
-    def __init__(
-        self,
-        answers: Mapping[str, dict[str, object]],
-        *,
-        raises: Mapping[str, Exception] | None = None,
-    ) -> None:
-        self.answers = answers
-        self.raises = raises if raises is not None else {}
-        self.calls: list[str] = []
-
-    def __call__(self, request: httpx.Request) -> httpx.Response:
-        if request.url.path == RESET_PATH:
-            self.calls.append("reset")
-            return httpx.Response(200, json={"status": "reset"})
-        assert request.url.path == TURN_PATH
-        body: dict[str, Any] = json.loads(request.content)
-        case_id = str(body["case_id"])
-        self.calls.append(case_id)
-        error = self.raises.get(case_id)
-        if error is not None:
-            raise error
-        return httpx.Response(200, json=self.answers[case_id])
-
-    def client(self) -> TargetClient:
-        return TargetClient(BASE_URL, client=httpx.Client(transport=httpx.MockTransport(self)))
+def saved(path: Path) -> list[dict[str, Any]]:
+    lines: list[dict[str, Any]] = [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+    ]
+    return lines
 
 
 def run(
-    target: Target,
-    cases: tuple[EvalCase, ...],
+    stub: StubTarget,
+    cases: list[ConversationCase],
+    reports: Path,
     *,
-    markers: tuple[str, ...] = (),
-    judge: JudgeClient | None = None,
-) -> RunResult:
-    """Run a set against a recording target, with the fixed tenant and policy.
-
-    `judge` defaults to `None`, which is the run every case above this line makes:
-    the judge is off unless a case hands one in (17c decision B).
-    """
-    return run_set(
-        client=target.client(),
+    run_id: str = RUN_ID,
+    judge: Grader | None = None,
+) -> tuple[CaseLine, ...]:
+    return run_conversations(
+        client=TargetClient(BASE_URL, client=stub.client()),
         cases=cases,
-        policy=POLICY,
-        tenant=TENANT,
-        other_tenant_markers=markers,
+        run_id=run_id,
+        reports_dir=reports,
         judge=judge,
     )
 
 
-THREE_CASES: tuple[EvalCase, ...] = (make_case("c-1"), make_case("c-2"), make_case("c-3"))
-
-ALL_FINE: Mapping[str, dict[str, object]] = {
-    "c-1": envelope(),
-    "c-2": envelope(),
-    "c-3": envelope(),
-}
+# --- the target client ------------------------------------------------------------
 
 
-def test_every_case_runs_once_in_file_order() -> None:
-    """Catches a runner that reorders the set (a dict keyed by id, a set, a sort), which
-    would make a report's rows disagree with the file an author reads, and one that drops
-    or repeats a case - either of which silently changes the denominator every threshold
-    in the eval gate is measured against. Order and counts are both asserted, so a runner that
-    runs all three in the wrong order still fails."""
-    target = Target(ALL_FINE)
-
-    result = run(target, THREE_CASES)
-
-    assert [record.case_id for record in result.runs] == ["c-1", "c-2", "c-3"]
-    assert target.calls == ["reset", "c-1", "c-2", "c-3"]
-    assert result.cases == 3
-    assert result.passed_count == 3
-    assert result.failed_count == 0
+def test_the_two_paths_are_the_help_desks_own() -> None:
+    """Catches the retired `/v1/eval/turn` route coming back, or a mistyped reset path that
+    404s every run."""
+    assert RESET_PATH == "/admin/test/reset"
+    assert CONVERSATION_PATH == "/v1/eval/conversation"
 
 
-def test_the_target_is_reset_exactly_once_before_the_first_case() -> None:
-    """Catches a reset per case, which throws away the state each case's predecessor built
-    and makes a multi-turn seed meaningless, and a reset after the first turn, which is
-    the same as no reset at all for that case. The call log's FIRST entry is asserted, not
-    just its presence, because "reset happened somewhere" is not decision F's claim."""
-    target = Target(ALL_FINE)
+def test_a_case_is_posted_with_exactly_the_four_fields_the_route_takes() -> None:
+    """Catches a body with extra keys (the route's model refuses them) or one that sends the
+    expected tool calls, the graded rubrics or the category to the system under test, which
+    would let it see the answers."""
+    case = make_case("conv-007", turns=("one", "two"))
+    stub = StubTarget({"conv-007": ok_answer(case)})
 
-    run(target, THREE_CASES)
+    TargetClient(BASE_URL, client=stub.client()).play(case)
 
-    assert target.calls.count("reset") == 1
-    assert target.calls[0] == "reset"
-
-
-def test_one_failing_case_does_not_stop_the_others() -> None:
-    """Catches a runner that stops at the first failure - a set is a measurement, not a
-    build, and stopping turns a 3% regression into an unknown score. The middle case is
-    the failing one, so a runner that stops leaves `c-3` unrun and the counts short; the
-    other two state nothing, so only `c-2`'s own expectation can fail."""
-    cases = (
-        make_case("c-1"),
-        make_case("c-2", expected=ExpectedOutcome(decision="auto_approved")),
-        make_case("c-3"),
-    )
-    target = Target({**ALL_FINE, "c-2": envelope(decision="escalated")})
-
-    result = run(target, cases)
-
-    assert [record.case_id for record in result.runs] == ["c-1", "c-2", "c-3"]
-    assert [record.passed for record in result.runs] == [True, False, True]
-    assert result.passed_count == 2
-    assert result.failed_count == 1
-    assert result.residency_violations == 0
+    [request] = stub.requests
+    assert str(request.url) == BASE_URL + CONVERSATION_PATH
+    assert json.loads(request.content) == {
+        "case_id": "conv-007",
+        "tenant": "nordlicht",
+        "principal_user": "seed:production.employee.5",
+        "turns": ["one", "two"],
+    }
 
 
-TURN_ERRORS: list[tuple[str, Exception]] = [
-    ("a per-case timeout", httpx.ReadTimeout("timed out")),
-    ("a transport error", httpx.ConnectError("connection refused")),
+def test_a_reset_that_does_not_answer_two_hundred_aborts_the_run() -> None:
+    """Catches a reset treated as optional: a run over a seed the last run changed is not
+    comparable to the baseline. A 404 means the route is off in this environment, and a
+    redirect means something else answered; neither is a reset."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404)
+
+    client = TargetClient(BASE_URL, client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    with pytest.raises(TargetUnreachable):
+        client.reset()
+
+
+def make_bad_answers(case: ConversationCase) -> list[tuple[str, int | dict[str, Any] | str]]:
+    good = ok_answer(case).model_dump(mode="json")
+    return [
+        ("server error", 500),
+        ("not json", "<html>"),
+        ("an extra field", {**good, "surprise": 1}),
+        ("another case's id", {**good, "case_id": "conv-099"}),
+        ("no turn records", {**good, "turns": []}),
+        ("one record short", {**good, "turns": good["turns"][:1]}),
+        ("one record too many", {**good, "turns": [*good["turns"], good["turns"][0]]}),
+        (
+            "records out of order",
+            {**good, "turns": [good["turns"][1], good["turns"][0]]},
+        ),
+    ]
+
+
+BAD_ANSWER_LABELS = [
+    "server error",
+    "not json",
+    "an extra field",
+    "another case's id",
+    "no turn records",
+    "one record short",
+    "one record too many",
+    "records out of order",
 ]
 
 
-@pytest.mark.parametrize(("label", "error"), TURN_ERRORS, ids=[row[0] for row in TURN_ERRORS])
-def test_a_case_that_times_out_is_a_failed_case_and_the_run_continues(
-    label: str, error: Exception
+@pytest.mark.parametrize("index", range(8), ids=BAD_ANSWER_LABELS)
+def test_an_answer_that_cannot_be_trusted_is_a_failed_turn(index: int) -> None:
+    """Catches a client that accepts an answer with no or too few turn records: every check
+    passes over nothing, so a target that answered `{"turns": []}` would score higher than
+    one that answered correctly. Each row breaks exactly one thing about a good answer."""
+    case = make_case("conv-001", turns=("a", "b"))
+    _, bad = make_bad_answers(case)[index]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if isinstance(bad, int):
+            return httpx.Response(bad)
+        if isinstance(bad, str):
+            return httpx.Response(200, content=bad)
+        return httpx.Response(200, json=bad)
+
+    client = TargetClient(BASE_URL, client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+    with pytest.raises(TurnFailed):
+        client.play(case)
+
+
+# --- saved as each case finishes ---------------------------------------------------
+
+
+def test_each_case_is_saved_when_it_finishes(tmp_path: Path) -> None:
+    """Catches a runner that writes the file at the end: case 2 fails at the target (an
+    error line) and case 3 crashes the whole process. The file must already hold case 1
+    and case 2's error line, because the paid results of a run that dies are the point of
+    saving as you go."""
+
+    def crash(request: httpx.Request) -> NoReturn:
+        raise RuntimeError("the machine went away")
+
+    cases = three_cases()
+    stub = StubTarget({"conv-001": ok_answer(cases[0]), "conv-002": 502, "conv-003": crash})
+
+    with pytest.raises(RuntimeError):
+        run(stub, cases, tmp_path)
+
+    lines = saved(tmp_path / f"{RUN_ID}.jsonl")
+    assert [line["case_id"] for line in lines] == ["conv-001", "conv-002"]
+    assert lines[0]["error"] is None
+    assert lines[1]["error"] is not None
+    assert lines[1]["passed"] is False
+    assert lines[1]["check"] is None
+
+
+def test_a_failed_case_does_not_stop_the_run(tmp_path: Path) -> None:
+    """Catches a runner that aborts on the first failed case: the other two are still
+    played and counted, and the failed one stays in the result as a failure."""
+    cases = three_cases()
+    stub = StubTarget(
+        {"conv-001": ok_answer(cases[0]), "conv-002": 500, "conv-003": ok_answer(cases[2])}
+    )
+
+    lines = run(stub, cases, tmp_path)
+
+    assert [line.case_id for line in lines] == ["conv-001", "conv-002", "conv-003"]
+    assert [line.error is None for line in lines] == [True, False, True]
+    assert stub.played == ["conv-001", "conv-002", "conv-003"]
+
+
+def test_the_target_is_reset_once_before_the_first_case_of_a_new_run(tmp_path: Path) -> None:
+    """Catches a runner that never resets (the seed carries the last run's changes), one that
+    resets before every case (cases act on what earlier ones filed), and one that resets
+    after the first case."""
+    cases = three_cases()
+    stub = StubTarget({c.id: ok_answer(c) for c in cases})
+
+    run(stub, cases, tmp_path)
+
+    paths = [r.url.path for r in stub.requests]
+    assert paths == [RESET_PATH, CONVERSATION_PATH, CONVERSATION_PATH, CONVERSATION_PATH]
+
+
+def test_a_restarted_run_skips_saved_cases_and_never_resets(tmp_path: Path) -> None:
+    """Catches a resume that plays everything again (paid twice), and the worse one that
+    resets the help desk first: the cases act on requests earlier cases filed, so a reset
+    would wipe what the saved cases left behind. Run one dies on case 3; run two, same
+    run id, must send only case 3 and no reset."""
+
+    def crash(request: httpx.Request) -> NoReturn:
+        raise RuntimeError("the machine went away")
+
+    cases = three_cases()
+    first = StubTarget(
+        {"conv-001": ok_answer(cases[0]), "conv-002": ok_answer(cases[1]), "conv-003": crash}
+    )
+    with pytest.raises(RuntimeError):
+        run(first, cases, tmp_path)
+    second = StubTarget({"conv-003": ok_answer(cases[2])})
+
+    lines = run(second, cases, tmp_path)
+
+    assert second.played == ["conv-003"]
+    assert second.resets == 0
+    assert [line.case_id for line in lines] == ["conv-001", "conv-002", "conv-003"]
+    assert [line["case_id"] for line in saved(tmp_path / f"{RUN_ID}.jsonl")] == [
+        "conv-001",
+        "conv-002",
+        "conv-003",
+    ]
+
+
+def test_a_saved_error_line_is_a_saved_result_and_is_not_played_again(tmp_path: Path) -> None:
+    """Catches a resume that replays failed cases: replaying would quietly give a flaky case
+    a second sample and lift the score. The first run saves conv-002 as an error."""
+    cases = three_cases()
+    first = StubTarget({c.id: (500 if c.id == "conv-002" else ok_answer(c)) for c in cases})
+    run(first, cases, tmp_path)
+    second = StubTarget({})
+
+    lines = run(second, cases, tmp_path)
+
+    assert second.requests == []
+    assert [line.error is None for line in lines] == [True, False, True]
+
+
+def test_a_different_run_id_is_a_fresh_run(tmp_path: Path) -> None:
+    """Catches a resume keyed on the directory and not the run id: a new id plays all cases
+    again and resets once."""
+    cases = three_cases()
+    run(StubTarget({c.id: ok_answer(c) for c in cases}), cases, tmp_path)
+    again = StubTarget({c.id: ok_answer(c) for c in cases})
+
+    run(again, cases, tmp_path, run_id="run-two")
+
+    assert again.resets == 1
+    assert again.played == ["conv-001", "conv-002", "conv-003"]
+
+
+# --- the run id is a file name -----------------------------------------------------
+
+
+def test_a_run_id_of_the_longest_allowed_length_is_accepted(tmp_path: Path) -> None:
+    """Catches an off-by-one on the cap: the run id names the file, and 64 characters is the
+    gateway's own identifier limit."""
+    case = make_case("conv-001")
+    run_id = "r" * MAX_IDENTIFIER_LENGTH
+
+    run(StubTarget({"conv-001": ok_answer(case)}), [case], tmp_path, run_id=run_id)
+
+    assert (tmp_path / f"{run_id}.jsonl").is_file()
+
+
+@pytest.mark.parametrize(
+    "run_id",
+    [
+        "r" * (MAX_IDENTIFIER_LENGTH + 1),
+        "run-one\n",
+        "run-one\r\n",
+        "run-one ",
+        "../run-one",
+        "run/one",
+        "Run-One",
+        "",
+    ],
+)
+def test_a_run_id_that_is_not_a_short_slug_is_refused_before_anything_happens(
+    tmp_path: Path, run_id: str
 ) -> None:
-    """Catches the three wrong answers to a broken turn: aborting the run, OMITTING the
-    case (which shrinks the denominator and lifts the score), and retrying it (decision E,
-    a second sample of a non-deterministic system). The attempt count is asserted because
-    a retry that eventually failed looks identical in every other field."""
-    target = Target(ALL_FINE, raises={"c-2": error})
+    """Catches a run id used as a file name unchecked (a path out of the reports folder, or
+    two spellings of one file) and a pattern that lets a trailing newline, CRLF or space
+    through. Nothing is sent to the target and nothing is written."""
+    case = make_case("conv-001")
+    stub = StubTarget({"conv-001": ok_answer(case)})
 
-    result = run(target, THREE_CASES)
+    with pytest.raises(IdentifierInvalid):
+        run(stub, [case], tmp_path, run_id=run_id)
 
-    assert [record.case_id for record in result.runs] == ["c-1", "c-2", "c-3"]
-    assert target.calls == ["reset", "c-1", "c-2", "c-3"]
-    assert result.cases == 3
-    assert result.failed_count == 1
-
-    broken = result.runs[1]
-    assert broken.passed is False
-    assert broken.assertions is None
-    assert broken.error is not None
-    assert "c-2" in broken.error
+    assert stub.requests == []
+    assert list(tmp_path.iterdir()) == []
 
 
-def test_a_broken_turns_kind_reaches_the_case_run() -> None:
-    """Catches a runner that catches `TurnFailed` and discards its `.kind`
-    (dropping to `None` on every failure), which would leave every broken case's
-    report untagged between `timeout` and `provider_error` - the split row 17b's
-    taxonomy exists to make. `httpx.ReadTimeout` is httpx's own timeout subtype,
-    so a runner reading the wrong attribute or hardcoding `provider_error` fails
-    only this case and not the plain-error case below."""
-    target = Target(ALL_FINE, raises={"c-2": httpx.ReadTimeout("timed out")})
-
-    result = run(target, THREE_CASES)
-
-    assert result.runs[1].failure_kind == TurnFailureKind.TIMEOUT
+# --- checks and the judge inside the loop -----------------------------------------
 
 
-def test_a_broken_turns_provider_error_kind_reaches_the_case_run() -> None:
-    """The other kind, and the reverse of the case above. Catches a runner that
-    always reports `timeout` regardless of the underlying error: a plain
-    `httpx.ConnectError` is not a timeout, so a runner hardcoding `timeout` for
-    every `TurnFailed` fails here while still passing the read-timeout case."""
-    target = Target(ALL_FINE, raises={"c-2": httpx.ConnectError("connection refused")})
-
-    result = run(target, THREE_CASES)
-
-    assert result.runs[1].failure_kind == TurnFailureKind.PROVIDER_ERROR
-
-
-def test_a_case_that_answered_carries_no_failure_kind() -> None:
-    """Catches `failure_kind` defaulted to anything but `None` on the success
-    path, which would make every clean case look like a broken turn to row 17b's
-    taxonomy and tag a passing run's cases with `timeout` or `provider_error`."""
-    target = Target(ALL_FINE)
-
-    result = run(target, THREE_CASES)
-
-    assert [record.failure_kind for record in result.runs] == [None, None, None]
-
-
-def test_a_residency_violation_fails_the_run_even_when_every_assertion_passed() -> None:
-    """Catches residency checked only for cases that already failed, or not checked at all.
-    Every case here states nothing, so all eleven assertions pass; the ONLY thing that can
-    make this run non-clean is the `us` region on `c-2`, and `us` is a region the policy
-    names under another data class, so a check reading the wrong rule passes it (#38,
-    a project rule)."""
-    target = Target({**ALL_FINE, "c-2": envelope(region="us")})
-
-    result = run(target, THREE_CASES)
-
-    assert result.residency_violations == 1
-    violating = result.runs[1]
-    assert violating.residency is not None
-    assert violating.residency.violation is True
-    assert violating.residency.observed == "us"
-    assert violating.assertions is not None
-    assert violating.assertions.passed is True
-    assert violating.passed is False
-
-
-def test_an_envelope_with_no_region_at_all_is_a_violation() -> None:
-    """Catches a runner that only checks residency when a region was reported - the shape a
-    half-implemented target actually produces. Skipping here would report a clean run for
-    a target that never proved where the data went, and the run would be counted against
-    the baseline as if it had."""
-    target = Target({**ALL_FINE, "c-2": envelope(region=None)})
-
-    result = run(target, THREE_CASES)
-
-    assert result.residency_violations == 1
-    assert result.runs[1].passed is False
-
-
-def test_residency_is_checked_on_every_case_and_not_only_the_first() -> None:
-    """Catches a check hoisted out of the loop (one region sampled, then trusted). Every
-    case here is compliant, so this row asserts the verdicts EXIST for all three: without
-    it, a runner checking only case one would pass every other residency case above."""
-    target = Target(ALL_FINE)
-
-    result = run(target, THREE_CASES)
-
-    assert [record.residency is not None for record in result.runs] == [True, True, True]
-    assert result.residency_violations == 0
-
-
-def test_a_cross_tenant_case_is_supplied_the_markers_so_the_leak_assertion_is_live() -> None:
-    """Catches a runner that never passes the seed's other-tenant markers through: the leak
-    assertion then reports `skipped` for every cross-tenant case, and the one control that
-    catches a tenant boundary breach is silently off while the report still shows the row.
-    The reply names another tenant's marker, so with the markers supplied the assertion can
-    only be `failed`."""
-    case = make_case("x-1", category=EvalCategory.CROSS_TENANT)
-    target = Target({"x-1": envelope(reply="Globex's invoice 88 is still open.")})
-
-    result = run(target, (case,), markers=("globex",))
-
-    record = result.runs[0]
-    assert record.assertions is not None
-    leak = next(item for item in record.assertions.results if item.name == "cross_tenant_leak")
-    assert leak.status is AssertionStatus.FAILED
-    assert result.leaked is True
-    assert record.passed is False
-
-
-def test_a_clean_cross_tenant_case_does_not_report_a_leak() -> None:
-    """Catches a `leaked` flag set by the case's CATEGORY rather than by the assertion's
-    verdict, which would fail every run that contains a cross-tenant case at all - and a
-    gate that fails always is a gate nobody keeps. Same markers, a reply that names none
-    of them."""
-    case = make_case("x-1", category=EvalCategory.CROSS_TENANT)
-    target = Target({"x-1": envelope(reply="I can only see your own tickets.")})
-
-    result = run(target, (case,), markers=("globex",))
-
-    assert result.leaked is False
-    assert result.passed_count == 1
-
-
-# --------------------------------------------------------------------------
-# the judge, on the cases that carry a rubric (17c)
-# --------------------------------------------------------------------------
-
-
-class Judge:
-    """A recording in-process judge, answering one score per rubric it is shown.
-
-    Keyed by rubric text rather than by case id, because the case id is exactly
-    what a judge request does NOT carry: the rubric and the reply reach it as
-    data (17c criterion 5), so matching on the rubric is the only thing that can
-    tell which case a sample belongs to - and it is also what proves the runner
-    handed the judge the right case's rubric rather than the first one's.
-
-    A rubric with a `None` score answers 500, which is the judge outage of
-    decision E; a rubric this map does not know is an error, so a runner that
-    judged a case with no rubric fails loudly rather than quietly.
-    """
-
-    def __init__(self, scores: Mapping[str, int | None]) -> None:
-        self.scores = scores
-        self.requests: list[str] = []
-
-    def __call__(self, request: httpx.Request) -> httpx.Response:
-        assert request.url.path == JUDGE_PATH
-        body: dict[str, Any] = json.loads(request.content)
-        sent = json.dumps(body["messages"])
-        matched = [rubric for rubric in self.scores if rubric in sent]
-        assert len(matched) == 1, f"the judge was shown {len(matched)} known rubrics"
-        self.requests.append(matched[0])
-        score = self.scores[matched[0]]
-        if score is None:
-            return httpx.Response(500, json={"error": "the judge is down"})
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": json.dumps({"score": score, "reason": "because"}),
-                        },
-                    }
-                ]
-            },
-        )
-
-    def client(self) -> JudgeClient:
-        return JudgeClient(
-            "https://gateway.example",
-            client=httpx.Client(transport=httpx.MockTransport(self)),
-            api_key="sk-eval-judge-not-a-real-key",
-        )
-
-
-def test_only_a_case_with_a_rubric_is_judged() -> None:
-    """Catches a runner that judges every case in the set, which triples the spend of a
-    two-hundred-case run and puts a score on cases no author ever wrote a standard for.
-    The judged case is the MIDDLE one, so a runner judging only the first, or only the
-    last, fails; and the samples are counted, so a runner that judged the right case once
-    instead of three times fails here rather than in `test_judge.py`."""
-    cases = (make_case("c-1"), make_case("c-2", rubric="rubric for c-2"), make_case("c-3"))
-    judge = Judge({"rubric for c-2": 4})
-
-    result = run(Target(ALL_FINE), cases, judge=judge.client())
-
-    assert judge.requests == ["rubric for c-2"] * JUDGE_SAMPLES
-    assert [record.judge is None for record in result.runs] == [True, False, True]
-    verdict = result.runs[1].judge
-    assert verdict is not None
-    assert verdict.median == 4
-    assert verdict.samples == (4, 4, 4)
-
-
-def test_a_case_with_no_rubric_is_not_judged_at_all() -> None:
-    """Risk 1, asserted where it costs money: the transport saw NO request. Catches a
-    runner that calls the judge for every case and lets the judge decide, which would still
-    produce `judge is None` on these records - the verdict alone cannot tell "not judged"
-    from "judged and discarded", and only one of those two is free."""
-    judge = Judge({"a rubric no case carries": 4})
-
-    result = run(Target(ALL_FINE), THREE_CASES, judge=judge.client())
-
-    assert judge.requests == []
-    assert [record.judge for record in result.runs] == [None, None, None]
-    assert result.passed_count == 3
-
-
-def test_a_case_that_passed_every_assertion_fails_on_a_low_judge_score() -> None:
-    """Risk 4 and criterion 6. Catches a judge whose verdict is recorded and never read:
-    every assertion here passes and the residency check is clean, so the ONLY thing that
-    can fail this case is the median of 2 - and a runner that stores `judge` without
-    folding it into `passed` reports a clean run beside a case the judge failed. The
-    assertions are asserted passed in the same breath, so a run that failed for the wrong
-    reason cannot be mistaken for this one."""
-    case = make_case("c-1", rubric="a rubric")
-    judge = Judge({"a rubric": 2})
-
-    result = run(Target(ALL_FINE), (case,), judge=judge.client())
-
-    record = result.runs[0]
-    assert record.judge is not None
-    assert record.judge.median == 2
-    assert record.assertions is not None
-    assert record.assertions.passed is True
-    assert record.residency is not None
-    assert record.residency.violation is False
-    assert record.passed is False
-    assert result.failed_count == 1
-
-
-@pytest.mark.parametrize("score", [JUDGE_LOW_SCORE, 4, 5], ids=["three", "four", "five"])
-def test_a_score_of_three_does_not_fail_the_case(score: int) -> None:
-    """The inclusive boundary of `JUDGE_LOW_SCORE`, which decision D fixes at "1 and 2
-    fail, 3 and above do not". Catches `<=` where `<` belongs - an implementation failing
-    every merely-adequate case would turn the judge into a gate nobody can pass - and
-    catches a judge that overrides a verdict the assertions already settled: the second
-    case in this run failed its `decision` assertion and is scored 5, so a runner that let
-    a good score PASS a failed case fails here."""
-    cases = (
-        make_case("c-1", rubric="the adequate case"),
-        make_case(
-            "c-2", expected=ExpectedOutcome(decision="auto_approved"), rubric="the wrong case"
-        ),
+def test_a_case_passes_only_when_its_checks_pass(tmp_path: Path) -> None:
+    """Catches a runner that marks every answered case as passed, or does not run the checks:
+    conv-001 calls the expected tool, conv-002 does not."""
+    expects = ({"name": "search_policy", "args_subset": {}},)
+    good = make_case("conv-001", turns=("q",), tool_calls=expects)
+    bad = make_case("conv-002", turns=("q",), tool_calls=expects)
+    stub = StubTarget(
+        {
+            "conv-001": answer("conv-001", turn(1, "Policy.", call("search_policy"))),
+            "conv-002": answer("conv-002", turn(1, "No idea.")),
+        }
     )
-    target = Target({**ALL_FINE, "c-2": envelope(decision="escalated")})
-    judge = Judge({"the adequate case": score, "the wrong case": 5})
 
-    result = run(target, cases, judge=judge.client())
+    lines = run(stub, [good, bad], tmp_path)
 
-    assert [record.passed for record in result.runs] == [True, False]
-    assert result.passed_count == 1
+    assert [line.passed for line in lines] == [True, False]
+    assert lines[1].check is not None
+    assert lines[1].check.tools_in_order is False
 
 
-def test_a_judge_that_never_answered_leaves_the_verdict_the_assertions_gave_it() -> None:
-    """Decision E, in the runner. Catches a judge outage counted as a case failure, which
-    would turn every run made while the gateway was down into a red gate that says nothing
-    about the agent under test, and catches the opposite - an unjudged case recorded with a
-    fabricated median. The failing case is here too, so a runner that answered "everything
-    passes when the judge is down" fails as well."""
-    cases = (
-        make_case("c-1", rubric="the unreachable case"),
-        make_case(
-            "c-2", expected=ExpectedOutcome(decision="auto_approved"), rubric="the failing case"
-        ),
+def test_a_role_name_from_an_earlier_case_is_known_to_a_resumed_run(tmp_path: Path) -> None:
+    """Catches a resume that forgets what saved cases returned: `Ledger Viewer` came from
+    conv-001's tool in run one. In run two (same run id) conv-002 names it with no tool
+    result of its own, which is made up, and only the saved answer can tell the checker
+    the role exists."""
+    first = make_case("conv-001", turns=("roles?",))
+    second = make_case("conv-002", turns=("roles?",))
+    roles = call("list_requestable_roles", result={"roles": [{"role_name": "Ledger Viewer"}]})
+    run(
+        StubTarget({"conv-001": answer("conv-001", turn(1, "Ledger Viewer exists.", roles))}),
+        [first],
+        tmp_path,
     )
-    target = Target({**ALL_FINE, "c-2": envelope(decision="escalated")})
-    judge = Judge({"the unreachable case": None, "the failing case": None})
 
-    result = run(target, cases, judge=judge.client())
+    lines = run(
+        StubTarget({"conv-002": answer("conv-002", turn(1, "Try Ledger Viewer."))}),
+        [first, second],
+        tmp_path,
+    )
 
-    assert [record.judge for record in result.runs] == [None, None]
-    assert [record.passed for record in result.runs] == [True, False]
-    assert result.passed_count == 1
+    assert lines[0].passed is True
+    assert lines[1].passed is False
+    assert lines[1].check is not None
+    assert lines[1].check.turns[0].no_made_up_name is False
 
 
-def test_a_run_with_no_judge_configured_judges_nothing() -> None:
-    """Criterion 6's last clause and decision B. Catches a runner that builds its own
-    judge from the environment when none was handed in, which is how a `make eval` on a
-    laptop with no gateway up starts making paid calls - and how the harness's behaviour
-    starts depending on a shell variable rather than on its arguments. The cases DO carry
-    rubrics, so a runner that judges whenever a rubric exists fails here."""
-    cases = (make_case("c-1", rubric="a rubric"), make_case("c-2", rubric="another rubric"))
+class FakeJudge:
+    def __init__(self, verdicts: dict[str, Literal["pass", "fail"] | None]) -> None:
+        self.verdicts = verdicts
+        self.asked: list[tuple[str, str]] = []
 
-    result = run(Target(ALL_FINE), cases)
+    def grade(self, rubric: str, reply: str) -> JudgeVerdict | None:
+        self.asked.append((rubric, reply))
+        verdict = self.verdicts.get(reply)
+        if verdict is None:
+            return None
+        return JudgeVerdict(verdict=verdict, votes=(verdict,) * 3, reasons=("r", "r", "r"))
 
-    assert [record.judge for record in result.runs] == [None, None]
-    assert result.passed_count == 2
+
+def test_only_graded_replies_are_judged_and_kept_word_for_word(tmp_path: Path) -> None:
+    """Catches a runner that judges every reply (paid for turns no rubric covers), one that
+    sends the judge anything but the rubric and the reply, and one that loses a verdict:
+    turns 1 and 3 are graded, turn 2 is not, and an unusable judge answer is kept as none,
+    not as a pass or a fail."""
+    case = make_case(
+        "conv-001", turns=("a", "b", "c"), graded=((1, "rubric one"), (3, "rubric three"))
+    )
+    stub = StubTarget(
+        {
+            "conv-001": answer(
+                "conv-001", turn(1, "reply one"), turn(2, "reply two"), turn(3, "reply three")
+            )
+        }
+    )
+    judge = FakeJudge({"reply one": "pass", "reply three": None})
+
+    [line] = run(stub, [case], tmp_path, judge=judge)
+
+    assert judge.asked == [("rubric one", "reply one"), ("rubric three", "reply three")]
+    assert [(j.turn, j.rubric, j.reply, j.verdict) for j in line.judged] == [
+        (1, "rubric one", "reply one", "pass"),
+        (3, "rubric three", "reply three", None),
+    ]
+
+
+def test_without_a_judge_nothing_is_judged(tmp_path: Path) -> None:
+    """Catches a runner that invents verdicts when no judge is given: the judge score must
+    stay empty so the gate does not read a number nobody measured."""
+    case = make_case("conv-001")
+    stub = StubTarget({"conv-001": ok_answer(case)})
+
+    [line] = run(stub, [case], tmp_path)
+
+    assert line.judged == ()

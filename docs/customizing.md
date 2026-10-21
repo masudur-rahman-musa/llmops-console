@@ -57,10 +57,13 @@ You do not have to touch any of these to run the gateway.
   [infra/secrets/](infra/secrets/).
 - **Running it.** `docker-compose.yml` brings the whole local stack up, and the
   [Makefile](Makefile) carries the commands the workflows use.
-- **Evaluations.** Your golden cases go in [project-evals/golden/](project-evals/golden/)
-  and the shape they take is described in [docs/eval-format.md](docs/eval-format.md).
-  `project-evals/baseline.json` is the scoreboard the CI gate compares against;
-  regenerate it once against your own cases, then leave it alone.
+- **Evaluations.** The eval engine plays conversation cases: what a person types,
+  which tools should be called, and when the person says yes. Write your cases in the
+  shape [docs/eval-format.md](docs/eval-format.md) describes, and serve them through
+  the two endpoints in [docs/eval-target.md](docs/eval-target.md).
+  `backend/evals/conversation-baseline.json` is the scoreboard the CI gate compares
+  against; make it once from a run on your own cases, then leave it alone. The gate
+  itself is in [docs/eval-gate.md](docs/eval-gate.md).
 - **Reliability.** The seven service level objectives are in
   the project notes their alerts in
   [infra/k8s/monitoring/alerts/](infra/k8s/monitoring/alerts/), and every alert has a response

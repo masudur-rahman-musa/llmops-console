@@ -1,17 +1,16 @@
 name: eval-gate
-# the design's pull request gate, in two halves that fail for different reasons.
+# The pull request gate, in two halves that fail for different reasons.
 #
-# `baseline-guard` enforces #42: a change to `backend/evals/baseline.json` arrives
-# in a commit whose subject starts `baseline:` and which carries its own ADR. It
-# runs on every pull request into main, unconditionally, and it is the half that
-# really executes in this repository today.
+# `baseline-guard` enforces that a change to `backend/evals/conversation-baseline.json`
+# (the old single-reply baseline file stays watched too) arrives in a commit whose subject starts `baseline:` and which carries its own ADR.
+# It runs on every pull request into main, unconditionally.
 #
-# `eval` runs the help desk's golden set against the real help desk agent, with
-# this gateway beside it and the mock provider standing in for the model, so it
-# needs no model key and runs on every pull request (#41). It proves the help
-# desk's own code (policy, refusal, risk class, tools, residency), not prompt
-# wording: that is the nightly run's job, with a real model. See
-# the project notes.
+# `eval` plays the help desk's 33 conversation cases against the real help desk
+# agent, with this gateway beside it and the real cheap model (`agent-default`)
+# answering, then checks the result against the stored baseline. It needs the
+# `ANTHROPIC_API_KEY` secret and costs roughly $1 to $2 a run. Until the owner adds
+# the secret the job fails, like the checkout does without `HELPDESK_REPO_TOKEN`.
+# See the project notes.
 #
 # Its own workflow rather than two more jobs in `ci.yml`: the design blocks a deploy
 # unless `ci.yml` AND `eval-gate.yml` are green, which is two required checks by
@@ -53,15 +52,17 @@ jobs:
 
   eval:
     # No condition: the gate always runs. Until the owner adds the
-    # `HELPDESK_REPO_TOKEN` secret, the help desk checkout fails, and the job
-    # with it; it never skips.
+    # `HELPDESK_REPO_TOKEN` and `ANTHROPIC_API_KEY` secrets, the job fails; it
+    # never skips.
     runs-on: ubuntu-latest
     env:
       COMMENT_MARKER: <!-- opsconsole-eval-gate -->
+      # Handed to the gateway container by `infra/evals/compose.yml`.
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       # CI-only: the help desk repo is private, so it is checked out with a
-      # read-only token beside this one, to build its images and read its set.
+      # read-only token beside this one, to build its images and read its cases.
       - uses: actions/checkout@v4
         with:
           repository: masudur-rahman-musa/ai-help-desk-governed-access
@@ -77,16 +78,33 @@ jobs:
       # containers itself.
       - name: Write the help desk's .env.demo
         run: grep -v '=$' helpdesk/backend/.env.example > helpdesk/backend/.env.demo
-      # A run that FAILS its cases is the normal input to the gate, and
-      # `make eval` runs both tenants and checks each against the baseline.
-      - name: Run the eval gate
+      # `make eval` plays the 33 cases and gates the report against
+      # `backend/evals/conversation-baseline.json` (with `calibration.json` when it
+      # exists). It writes `backend/evals/reports/local/` either way.
+      - name: Run the eval and gate it
         run: make eval HELPDESK_DIR=helpdesk
-      - name: Join the two tenants' comments
+      # The same read-only check again, after the run, so the verdict line and its
+      # reasons stand alone in the log and the comment file is rewritten if the
+      # report exists. It cannot change the result: `make eval` has already failed
+      # the job if the gate did. `|| true` keeps it from hiding the earlier failure.
+      - name: Write the gate comment
+        if: always()
+        run: |
+          report=backend/evals/reports/local/report.json
+          if [ -f "$report" ]; then
+            calibration=$(find backend/evals/labels -name calibration.json 2>/dev/null | head -1)
+            uv run --project backend ops-eval gate \
+              --report "$report" \
+              --baseline backend/evals/conversation-baseline.json \
+              ${calibration:+--calibration "$calibration"} \
+              --comment backend/evals/reports/local/comment.md || true
+          fi
+      - name: Collect the report
         if: always()
         run: |
           mkdir -p reports
           cp -r backend/evals/reports/local/. reports/ 2>/dev/null || true
-          cat reports/*/comment.md > reports/comment.md 2>/dev/null || echo "The eval run wrote no report." > reports/comment.md
+          [ -f reports/comment.md ] || echo "The eval run wrote no report." > reports/comment.md
       # `always()`, because a FAILED gate is exactly when somebody opens the
       # report. Deliberately not guarded on the fork condition below: the evidence
       # reaches a contributor's pull request even when the comment cannot.

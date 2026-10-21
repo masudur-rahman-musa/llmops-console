@@ -29,11 +29,11 @@ and the reverse import would be a cycle. A test over the command's tuple keeps
 the two from drifting apart in silence. The CHECK constraint in
 `003_eval_runs.sql` is the second guard, for the row somebody loads with `psql`.
 
-`tags` carries the failure taxonomy, read straight off the report's own
-`CaseReport.tags` rather than recomputed here, so the column and the file
-cannot disagree about why a case failed. `metrics` carries the fixed metric set
-the same way, in the report's own JSON form: the two costs are `Decimal` in the
-mapping and decimal STRINGS in the column, exactly as they are in the file.
+`tags` is read straight off the report's own `CaseReport.tags` (always empty for a
+conversation run) rather than recomputed here. `metrics` carries `check_score`,
+`judge_score` and the counts the same way, in the report's own JSON form, exactly as
+they are in the file. The `eval_runs.metrics` column is `jsonb`, so the swap from the
+old metric names needed no migration.
 `alias_resolution` still ships NULL, and the migration says so column by column.
 `judge_kappa` is filled off the report's own `RunCalibration` record and never
 out of the `metrics` mapping - a typed field is what keeps `mypy --strict` honest
@@ -59,7 +59,6 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, ConfigDict
 
 from app.core.validation import IdentifierInvalid, checked_identifier
-from app.evals.cases import EvalCategory
 from app.evals.report import SET_SHA_PATTERN, CaseReport, RunKind, RunReport
 from app.storage.db import DEFAULT_SCHEMA, checked_schema
 
@@ -74,9 +73,9 @@ from them and the Postgres tests read the catalogue by the
 same names, so a rename cannot reach only one of the two."""
 
 MAX_SET_NAME_LENGTH: Final[int] = 128
-"""The longest golden-set file name a run may record.
+"""The longest cases file name a run may record.
 
-Wider than an identifier because a set name is a FILE name - `helpdesk-golden-v1.jsonl`
+Wider than an identifier because a set name is a FILE name - `cases.jsonl`
 carries a version and an extension - and narrower than a path because it is one
 segment. Nothing else caps this value: it arrives as `--set`'s basename.
 """
@@ -102,12 +101,6 @@ RUN_KINDS: Final[tuple[str, ...]] = get_args(RunKind)
 restated - `app.cli.evals` imports this module, so importing `app.cli.evals.RUN_KINDS` back would be
 a cycle. A test parametrised over
 the command's own tuple pins the two together."""
-
-CATEGORIES: Final[frozenset[str]] = frozenset(category.value for category in EvalCategory)
-"""The twelve categories a case row may carry, taken from the eval category enum.
-
-A report file reaches this store without passing the case loader, so this is the
-only check on that path."""
 
 
 class EvalRunRow(BaseModel):
@@ -150,7 +143,7 @@ class EvalCaseRow(BaseModel):
     which is what keeps a broken turn out of every average.
 
     `details` carries the three things the report holds that no column of its own
-    does - the assertion results, the residency verdict and the error - so a row
+    does - the three checks, the judged replies and the error - so a row
     still says WHY a case failed once `report.json` has been rotated away.
     """
 
@@ -161,9 +154,8 @@ class EvalCaseRow(BaseModel):
     category: str
     passed: bool
     tags: tuple[str, ...] = ()
-    """The failure taxonomy for this case, in `taxonomy.TAG_ORDER` and empty when
-    it passed. Stored in an order-preserving `text[]`, so the array a query reads
-    back is the tuple the report published."""
+    """The tags the report carries for this case, always empty for a conversation run.
+    Stored in an order-preserving `text[]`."""
     latency_ms: int | None
     cost_usd: Decimal | None
     provider: str | None
@@ -185,20 +177,17 @@ class EvalStore(Protocol):
 
 
 def _details(case: CaseReport) -> dict[str, Any]:
-    """The four things a case carries that no column of its own holds.
+    """The three things a case carries that no column of its own holds.
 
-    Dumped in JSON mode rather than as Python objects, because the column is
-    `jsonb`: a `Decimal` or a `datetime` inside an assertion result would
-    otherwise reach the adapter as an object it cannot serialise, at the end of a
-    run already paid for. The judge verdict is the fourth key and takes the
-    same treatment - a pydantic model handed to `Jsonb` raises inside
-    `json.dumps`, which is an easy trap with a judge verdict. It is `null` and never absent on
-    a case nothing judged, so two rows of the same set answer one query.
+    Dumped in JSON mode rather than as Python objects, because the column is `jsonb`: a
+    pydantic model handed to `Jsonb` raises inside `json.dumps`, at the end of a run
+    already paid for. `check` is `null` for a case that never answered and `judged` is an
+    empty list for a case nothing judged, never absent, so two rows of the same set answer
+    one query.
     """
     return {
-        "assertions": None if case.assertions is None else case.assertions.model_dump(mode="json"),
-        "residency": None if case.residency is None else case.residency.model_dump(mode="json"),
-        "judge": None if case.judge is None else case.judge.model_dump(mode="json"),
+        "check": None if case.check is None else case.check.model_dump(mode="json"),
+        "judged": [reply.model_dump(mode="json") for reply in case.judged],
         "error": case.error,
     }
 
@@ -259,7 +248,7 @@ class PostgresEvalStore:
 
     A run whose cases half-landed is counted by every later query as a
     run with fewer cases, and nothing downstream can tell that from a shorter
-    golden set. So the run row and one `executemany` over the cases share a
+    cases file. So the run row and one `executemany` over the cases share a
     transaction, and a failure part way leaves neither table changed.
 
     Every pre-check runs BEFORE the borrow, and every one of
@@ -401,12 +390,9 @@ def _checked_run_kind(value: str) -> str:
 
 
 def _checked_category(value: str) -> str:
-    """One case's category, against the twelve.
+    """One case's category, against the gateway's slug vocabulary.
 
-    The score report counts per category and the per-category minimums are read off these
-    strings, so a thirteenth bucket is a number nobody reports on and
-    `helpdesk\\n` is a category with one case in it.
+    The help desk names its own categories, so there is no closed list here. A slug check
+    still keeps `paraphrases\\n` from becoming a category with one case in it.
     """
-    if value not in CATEGORIES:
-        raise IdentifierInvalid(f"category: not one of the {len(CATEGORIES)} the format allows")
-    return value
+    return checked_identifier(value, "category")

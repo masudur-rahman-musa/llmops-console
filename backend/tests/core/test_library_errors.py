@@ -22,7 +22,7 @@ from app.core.errors import (
 from app.core.http_errors import as_gateway_error
 from app.core.validation import IdentifierInvalid
 from app.evals.calibration import CalibrationRefused, CalibrationSetInvalid
-from app.evals.cases import EvalSetInvalid
+from app.evals.conversations import ConversationSetInvalid
 from app.evals.gate import GateInputInvalid
 from app.limits.errors import PriceTableInvalid
 from app.redaction.errors import (
@@ -41,7 +41,7 @@ LIBRARY_FAILURES: list[type[LibraryError]] = [
     DirectoryNameInvalid,
     DirectoryStoreUnavailable,
     PriceTableInvalid,
-    EvalSetInvalid,
+    ConversationSetInvalid,
     GateInputInvalid,
     CalibrationSetInvalid,
     CalibrationRefused,

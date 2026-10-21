@@ -15,9 +15,9 @@ afterAll(() => {
 });
 
 describe("readTradeoff", () => {
-  it("rows follow order with the five metrics in order", async () => {
+  it("rows follow order with the two scores in order", async () => {
     // Catches rows in the options object's key order, metrics in the file's key order, a missing metric other than null, or a dropped conclusion.
-    expect(TRADEOFF_METRICS).toEqual(["decision_accuracy", "refusal_recall", "citation_accuracy", "p50_latency_ms", "p95_latency_ms"]);
+    expect(TRADEOFF_METRICS).toEqual(["check_score", "judge_score"]);
 
     const table = await readTradeoff(FIXTURE);
     expect(table).not.toBeNull();
@@ -33,21 +33,21 @@ describe("readTradeoff", () => {
         id: "hosted-small",
         label: "Hosted small model",
         kind: "hosted",
-        metrics: [0.93, 0.95, 0.9, 420, 1100],
+        metrics: [0.93, 0.95],
         usd_per_1000_turns: "1.90",
       },
       {
         id: "hosted-large",
         label: "Hosted large model",
         kind: "hosted",
-        metrics: [0.94, 0.97, 0.92, 910, 2400],
+        metrics: [0.94, 0.97],
         usd_per_1000_turns: null,
       },
       {
         id: "local-8b",
         label: "Local 8B on one GPU",
         kind: "self_hosted",
-        metrics: [0.86, null, null, 640, 1850],
+        metrics: [0.86, null],
         usd_per_1000_turns: "0.67",
       },
     ]);

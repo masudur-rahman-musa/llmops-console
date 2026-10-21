@@ -307,7 +307,7 @@ def test_today_counts_only_the_current_utc_day(pool: Pool, migrated_schema: str)
         run_id="run-newest-start",
         started_at=newest_start,
         finished_at=newest_start + timedelta(minutes=5),
-        metrics={"decision_accuracy": 0.91},
+        metrics={"check_score": 0.91},
         passed=False,
     )
     insert_run(
@@ -316,7 +316,7 @@ def test_today_counts_only_the_current_utc_day(pool: Pool, migrated_schema: str)
         run_id="run-newest-finish",
         started_at=NOW - timedelta(hours=5),
         finished_at=NOW - timedelta(minutes=30),
-        metrics={"decision_accuracy": 0.5},
+        metrics={"check_score": 0.5},
     )
 
     insert_incident(pool, schema, incident_id=hex_id(1), started_at=NOW, resolved_at=None)
@@ -341,7 +341,7 @@ def test_today_counts_only_the_current_utc_day(pool: Pool, migrated_schema: str)
             id="run-newest-start",
             finished_at=newest_start + timedelta(minutes=5),
             passed=False,
-            decision_accuracy=0.91,
+            check_score=0.91,
         ),
         open_incidents=2,
     )
@@ -350,7 +350,7 @@ def test_today_counts_only_the_current_utc_day(pool: Pool, migrated_schema: str)
 def test_an_empty_ledger_answers_zeros_and_no_last_eval(pool: Pool, migrated_schema: str) -> None:
     """Catches `sum(cost_usd)` over no rows reaching the model as NULL (a validation error,
     so a 500 on a fresh install) instead of 0, and a missing eval run raising instead of
-    answering `last_eval: None`; the one run stored here has no `decision_accuracy`, which
+    answering `last_eval: None`; the one run stored here has no `check_score`, which
     must read as `None` rather than raise."""
     reader = PostgresConsoleReader(pool, schema=migrated_schema)
     assert reader.configured is True
@@ -368,7 +368,7 @@ def test_an_empty_ledger_answers_zeros_and_no_last_eval(pool: Pool, migrated_sch
     )
     last = reader.home(now=NOW).last_eval
     assert last is not None
-    assert last.decision_accuracy is None
+    assert last.check_score is None
 
 
 # --- cost ------------------------------------------------------------------------
@@ -745,13 +745,13 @@ def insert_accuracy_run(
     passed: bool = True,
     set_name: str = "helpdesk",
 ) -> None:
-    """One eval run carrying only `decision_accuracy`, started `days_ago` before `NOW`."""
+    """One eval run carrying only `check_score`, started `days_ago` before `NOW`."""
     insert_run(
         pool,
         schema,
         run_id=run_id,
         started_at=NOW - timedelta(days=days_ago),
-        metrics={"decision_accuracy": accuracy},
+        metrics={"check_score": accuracy},
         passed=passed,
         set_name=set_name,
     )
@@ -804,8 +804,8 @@ def test_blocked_releases_carry_their_regressions(pool: Pool, migrated_schema: s
             deployed_at=linked_at,
             pr_url=pr_url,
             eval_run_id="linked",
-            metrics={"decision_accuracy": 0.85},
-            previous_metrics={"decision_accuracy": 0.90},
+            metrics={"check_score": 0.85},
+            previous_metrics={"check_score": 0.90},
         ),
         BlockedRelease(
             git_sha="bad-unlinked",
@@ -820,7 +820,7 @@ def test_blocked_releases_carry_their_regressions(pool: Pool, migrated_schema: s
             deployed_at=first_at,
             pr_url=None,
             eval_run_id="p-old",
-            metrics={"decision_accuracy": 0.80},
+            metrics={"check_score": 0.80},
             previous_metrics=None,
         ),
     )
@@ -873,7 +873,7 @@ def test_incidents_are_newest_first_and_capped_at_100(pool: Pool, migrated_schem
 
 def test_releases_left_join_eval_runs_and_cap_at_100(pool: Pool, migrated_schema: str) -> None:
     """Catches an INNER join (the unlinked release vanishes), eval fields filled for an
-    unlinked release, `decision_accuracy` raising when a linked run lacks it, a read in
+    unlinked release, `check_score` raising when a linked run lacks it, a read in
     insertion order, and a missing `LIMIT` (103 releases are stored)."""
     schema = migrated_schema
     for hours in range(100, 0, -1):
@@ -884,9 +884,7 @@ def test_releases_left_join_eval_runs_and_cap_at_100(pool: Pool, migrated_schema
             deployed_at=NOW - timedelta(days=1, hours=hours),
         )
     ran_at = NOW - timedelta(hours=3)
-    insert_run(
-        pool, schema, run_id="run-scored", started_at=ran_at, metrics={"decision_accuracy": 0.88}
-    )
+    insert_run(pool, schema, run_id="run-scored", started_at=ran_at, metrics={"check_score": 0.88})
     insert_run(pool, schema, run_id="run-unscored", started_at=ran_at, metrics={}, passed=False)
     pr_url = "https://github.com/example/repo/pull/9"
     insert_release(
@@ -924,7 +922,7 @@ def test_releases_left_join_eval_runs_and_cap_at_100(pool: Pool, migrated_schema
             pr_url=pr_url,
             eval_run_id="run-scored",
             eval_passed=True,
-            decision_accuracy=0.88,
+            check_score=0.88,
         ),
         Release(
             git_sha="unlinked",
@@ -933,7 +931,7 @@ def test_releases_left_join_eval_runs_and_cap_at_100(pool: Pool, migrated_schema
             pr_url=None,
             eval_run_id=None,
             eval_passed=None,
-            decision_accuracy=None,
+            check_score=None,
         ),
         Release(
             git_sha="unscored",
@@ -942,7 +940,7 @@ def test_releases_left_join_eval_runs_and_cap_at_100(pool: Pool, migrated_schema
             pr_url=None,
             eval_run_id="run-unscored",
             eval_passed=False,
-            decision_accuracy=None,
+            check_score=None,
         ),
     )
     assert [row.git_sha for row in read[3:]] == [f"old{hours:04d}" for hours in range(1, 98)]

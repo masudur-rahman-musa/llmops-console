@@ -7,11 +7,8 @@ import { readFile } from "node:fs/promises";
  */
 
 export const TRADEOFF_METRICS = [
-  "decision_accuracy",
-  "refusal_recall",
-  "citation_accuracy",
-  "p50_latency_ms",
-  "p95_latency_ms",
+  "check_score",
+  "judge_score",
 ] as const;
 
 export type TradeoffRow = {

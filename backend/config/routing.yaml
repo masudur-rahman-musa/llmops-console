@@ -69,15 +69,12 @@ aliases:
   agent-default:
     semantic_cache: true
     candidates:
-      - { provider: anthropic, model: claude-haiku-4-5 }
-      - { provider: anthropic_eu, model: claude-haiku-4-5 }
+      # Haiku 5.5 is the cheap model the evals run on. OpenAI is not a
+      # candidate anywhere: the `openai` provider below stays, disabled, so turning it
+      # on later is one line, not a new block.
+      - { provider: anthropic, model: claude-haiku-5-5 }
+      - { provider: anthropic_eu, model: claude-haiku-5-5 }
       - { provider: local, model: qwen2.5-3b-instruct }
-      # LAST on purpose. `openai` is region `us`, so an `eu` tenant's clamp
-      # removes it under the default strict mode and nothing about today's
-      # resolution changes; appending rather than inserting also leaves the first
-      # choice for `cuan` and `evals` exactly where it was. It is reachable only
-      # under `OPSCONSOLE_RESIDENCY_MODE=relaxed`.
-      - { provider: openai, model: gpt-4o }
   # Both strong aliases are US-only until `anthropic_eu` is enabled, so a tenant
   # with `residency: eu` gets a 451 for them rather than a weaker model under a
   # strong name. Widen this by enabling the EU provider, never by adding a
@@ -86,9 +83,11 @@ aliases:
     candidates:
       - { provider: anthropic, model: claude-sonnet-5-5 }
       - { provider: anthropic_eu, model: claude-sonnet-5-5 }
+  # Haiku 5.5 while it agrees with the reference labels at 0.7 or better;
+  # below that this line becomes Sonnet 5.5 and the judge is calibrated once more.
   judge:
     candidates:
-      - { provider: anthropic, model: claude-haiku-4-5 }
+      - { provider: anthropic, model: claude-haiku-5-5 }
   embed:
     candidates:
       - { provider: local_embed, model: bge-small-en-v1.5 }
@@ -111,7 +110,7 @@ tenants:
     # (`test_nordlicht_confidential_stays_local_under_strict`, a design note).
     overrides:
       agent-default:
-        - { provider: anthropic, model: claude-haiku-4-5 }
+        - { provider: anthropic, model: claude-haiku-5-5 }
         - { provider: local, model: qwen2.5-3b-instruct }
   cuan:
     residency: eu

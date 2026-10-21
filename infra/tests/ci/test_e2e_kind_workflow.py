@@ -1,12 +1,14 @@
 r"""`.github/workflows/e2e-kind.yml`: pinned-string assertions in
 `infra/tests/ci/test_eval_gate_workflow.py`'s own pattern - the trigger, the pinned
-`kind` versions, the `kind load docker-image` step, the golden-set invocation,
+`kind` versions, the `kind load docker-image` step, the conversation-run invocation,
 the `if: always()` upload, and that no step reaching a real registry runs on a
 pull request from a fork.
 """
 
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +20,7 @@ WORKFLOW = REPO_ROOT / ".github" / "workflows" / "e2e-kind.yml"
 
 KIND_ACTION_VERSION = "v1.15.0"
 KIND_VERSION = "v0.33.0"
-GOLDEN_SET = "project-evals/golden/e2e-kind.jsonl"
+KIND_CASES = "backend/evals/kind-cases.jsonl"
 SMOKE_SCRIPT = "infra/k8s/kind/smoke.sh"
 SMOKE_SCRIPT = "infra/k8s/kind/smoke.sh"
 
@@ -151,14 +153,32 @@ def test_the_run_reaches_the_gateway_through_a_port_forward_never_a_public_addre
 def test_the_run_checks_the_gateway_with_the_model_free_smoke_script(
     job: dict[str, Any],
 ) -> None:
-    """While the local model is out of use: exactly one step runs `smoke.sh`
-    against the forwarded gateway, and no step runs the golden set, whose cases
-    all need that model and would fail every commit."""
+    """Exactly one step runs `smoke.sh` against the forwarded gateway. The
+    conversation run beside it is pinned by the next test."""
     scripts = [run_of(step) for step in steps(job)]
     smoke = [script for script in scripts if f"{SMOKE_SCRIPT} http://127.0.0.1:18080" in script]
     assert len(smoke) == 1
-    assert not any("ops-eval run" in script for script in scripts)
     assert (REPO_ROOT / SMOKE_SCRIPT).is_file()
+
+
+def test_the_kind_run_plays_the_small_conversation_file_against_the_stub(
+    job: dict[str, Any],
+) -> None:
+    """a design note: the kind run uses a small conversation file in this repo and the stub target
+    on the conversation route. Catches the removed `ops-eval run`, a run against the real
+    help desk's file (not in this checkout), and a cases file that is not there. Exactly one
+    step, so a second silent run cannot hide a failure."""
+    scripts = [run_of(step) for step in steps(job)]
+    plays = [script for script in scripts if "ops-eval conversations" in script]
+
+    assert len(plays) == 1
+    assert f"--cases {KIND_CASES}" in plays[0]
+    assert "--target http://127.0.0.1:" in plays[0]
+    assert not any("ops-eval run" in script for script in scripts)
+    cases = REPO_ROOT / KIND_CASES
+    assert cases.is_file()
+    ids = [json.loads(line)["id"] for line in cases.read_text().splitlines() if line.strip()]
+    assert ids and all(re.fullmatch(r"conv-[0-9]{3}", case_id) for case_id in ids)
 
 
 def test_the_report_artifact_is_uploaded_even_when_the_run_fails(

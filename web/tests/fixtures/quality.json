@@ -7,7 +7,7 @@
       "run_kind": "nightly",
       "git_sha": "5e2d8c1b9a7f6e5d4c3b2a19f8e7d6c5b4a39281",
       "passed": true,
-      "metrics": { "decision_accuracy": 0.93, "refusal_recall": 0.95, "citation_accuracy": 0.9 }
+      "metrics": { "check_score": 0.93, "judge_score": 0.95 }
     },
     {
       "id": "run-2026-09-12-nightly",
@@ -15,7 +15,7 @@
       "run_kind": "nightly",
       "git_sha": null,
       "passed": true,
-      "metrics": { "decision_accuracy": 0.91, "refusal_recall": 0.94, "citation_accuracy": 0.89 }
+      "metrics": { "check_score": 0.91, "judge_score": 0.94 }
     },
     {
       "id": "run-2026-09-15-pr",
@@ -23,7 +23,7 @@
       "run_kind": "pr",
       "git_sha": "3f9c2a7b1e4d5c6f7a8b9c0d1e2f3a4b5c6d7e8f",
       "passed": false,
-      "metrics": { "decision_accuracy": 0.88, "refusal_recall": 0.9, "citation_accuracy": 0.9 }
+      "metrics": { "check_score": 0.88, "judge_score": 0.9 }
     }
   ],
   "release_markers": [
@@ -44,14 +44,14 @@
       "deployed_at": "2026-09-15T09:00:00Z",
       "pr_url": "https://github.com/example/helpdesk/pull/41",
       "eval_run_id": "run-2026-09-15-pr",
-      "regressed": [{ "metric": "decision_accuracy", "value": 0.88, "previous": 0.93 }]
+      "regressed": [{ "metric": "check_score", "value": 0.88, "previous": 0.93 }]
     },
     {
       "git_sha": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
       "deployed_at": "2026-09-11T14:00:00Z",
       "pr_url": "javascript:alert(1)",
       "eval_run_id": null,
-      "regressed": [{ "metric": "refusal_recall", "value": 0.9, "previous": 0.95 }]
+      "regressed": [{ "metric": "judge_score", "value": 0.9, "previous": 0.95 }]
     }
   ]
 }

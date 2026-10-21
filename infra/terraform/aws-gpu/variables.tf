@@ -16,7 +16,7 @@ variable "admin_ips" {
 }
 
 variable "region" {
-  description = "AWS region. EU only, because the measurement runs the Helpdesk golden set."
+  description = "AWS region. EU only, because the measurement plays conversation cases."
   type        = string
   default     = "eu-central-1"
 

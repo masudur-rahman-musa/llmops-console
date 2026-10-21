@@ -1,10 +1,10 @@
-# The Pushgateway: where the nightly-eval CronJob (`nightly-eval-cronjob.yaml`) puts
+# The Pushgateway: where the nightly eval workflow (`.github/workflows/nightly-eval.yml`) puts
 # `gateway_eval_*` after each run, and the one thing Prometheus itself scrapes in this
 # namespace (`infra/k8s/monitoring/prometheus.yaml`'s new `evals-pushgateway` job).
 #
 # `core/metrics.py` deliberately never registers `gateway_eval_*` (its own docstring
 # says so): a value pushed here lives only as long as this Deployment keeps it in memory,
-# between the CronJob's nightly PUT and Prometheus's next scrape - long enough for the
+# between the workflow's nightly PUT and Prometheus's next scrape - long enough for the
 # scrape to see it, never a database.
 apiVersion: apps/v1
 kind: Deployment

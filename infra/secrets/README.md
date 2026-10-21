@@ -1,6 +1,6 @@
 # Secrets
 
-Ten Secrets the cluster needs and this repository does not contain. What is
+Nine Secrets the cluster needs and this repository does not contain. What is
 here is the contract for each one, the policy that encrypts them, and the
 workflow. What is never here is a private key or a filled-in value.
 
@@ -24,7 +24,7 @@ apply fails on the missing Secret, which is the intended direction - a
 placeholder with a working password in git would come up running and never
 mention itself again.
 
-## The ten contracts
+## The nine contracts
 
 | Secret | namespace | template |
 |---|---|---|
@@ -36,7 +36,6 @@ mention itself again.
 | `console-secrets` | `apps` | `console-secrets.example.yaml` |
 | `grafana-admin` | `monitoring` | `grafana-admin.example.yaml` |
 | `backup-secrets` | `platform` | `backup-secrets.example.yaml` |
-| `evals-secrets` | `evals` | `evals-secrets.example.yaml` |
 | `alertmanager-secrets` | `monitoring` | `alertmanager-secrets.example.yaml` |
 
 The key names and who reads them are in `../k8s/README.md`'s secrets table; the

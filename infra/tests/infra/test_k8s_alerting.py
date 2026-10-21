@@ -64,7 +64,7 @@ import re
 from typing import Any
 
 import yaml
-from opsconsole.core.metrics import registry
+from app.core.metrics import registry
 
 MONITORING = "monitoring"
 APPS = "apps"
@@ -616,8 +616,7 @@ def test_the_rules_file_is_mounted_and_every_expr_names_a_registered_family_or_a
 #: An earlier change decision A's exact expression, character for character: the
 #: median rather than the average, over the same 7-day window and the same 2-point drop.
 NIGHTLY_EVAL_REGRESSION_EXPR = (
-    "gateway_eval_decision_accuracy - "
-    "quantile_over_time(0.5, gateway_eval_decision_accuracy[7d]) < -2"
+    "gateway_eval_check_score - quantile_over_time(0.5, gateway_eval_check_score[7d]) < -2"
 )
 
 

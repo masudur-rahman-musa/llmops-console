@@ -1,193 +1,202 @@
-"""One reset, every case in file order, one `RunResult`.
+"""Play every case in file order, save each one the moment it finishes, and resume.
 
-The loop is the whole module: reset once before the first case, send
-each case in the order the file listed it, map the envelope, score it with
-`assert_case` - imported, never re-implemented - and check the region every turn
-reports. Nothing here writes a file: the report module owns `report.json` and
-`report.md`, the store module owns the `eval_runs` and `eval_cases` rows, and
-this module owns only the record both of them read.
+The loop is the whole module. The result of a case is a `CaseLine`, written as one
+flushed JSON line to `<reports_dir>/<run-id>.jsonl` as soon as the case is done
+, so a run that dies keeps every paid
+result. Starting again with the same run id plays only the cases not yet in the file,
+and never resets the help desk, because the cases act on what earlier ones filed
+. A new run id, or an empty
+file, resets once before the first case.
 
-Three rules the record keeps that no single field states:
+Rules the record keeps that no single field states:
 
-* a broken turn is a FAILED case and the run continues, one attempt, never a
-  retry and never omitted from the counts - omitting it would shrink
-  the denominator every threshold in the eval gate is measured against;
-* a residency violation makes that case not passed even when every assertion
-  passed: a turn that left its allowed region is not a result the run may count
-  as correct;
-* every count on `RunResult` is DERIVED from the per-case records, so no caller
-  can report a number the records do not support.
+* a failed case is a saved failure, and a resume does not replay it: replaying would
+  quietly give a flaky case a second sample;
+* a case passes exactly when its three checks pass; the judge never decides it;
+* the target's answer is kept on the line, so a resumed run still knows which role names
+  the run has seen.
+
+The run id names a file, so it is checked as a short slug before anything is sent or
+written.
 """
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+import os
+from collections.abc import Sequence
+from pathlib import Path
 
-from app.evals.assertions import AssertionStatus, CaseAssertions, assert_case
-from app.evals.cases import EvalCase, EvalCategory
-from app.evals.judge import JUDGE_LOW_SCORE, JudgeClient, JudgeVerdict
-from app.evals.outcome import CaseOutcome
-from app.evals.region_check import EVAL_DATA_CLASS, ResidencyVerdict, check_residency
-from app.evals.target import TargetClient, TurnFailed, TurnFailureKind
-from app.model_routing.policy import Policy
+from pydantic import BaseModel, ConfigDict, ValidationError
 
-LEAK_ASSERTION: str = "cross_tenant_leak"
-"""The assertion whose failure is a tenant boundary breach rather than a score.
-
-One of `assertions.ASSERTION_NAMES`, named here because `RunResult.leaked` reads
-it and the CLI puts a leak on the same exit code as a residency violation."""
+from app.core.validation import checked_identifier
+from app.evals.checks import CaseCheck, check_case, role_names_in
+from app.evals.conversations import ConversationCase, ConversationSetInvalid
+from app.evals.judge import Grader, Verdict
+from app.evals.target import ConversationAnswer, TargetClient, TurnFailed
 
 
-class CaseRun(BaseModel):
-    """What happened to one case: its verdict, its region, or why neither exists.
+class JudgedReply(BaseModel):
+    """One graded reply and what the judge said. `verdict` is `None` when it was unusable."""
 
-    `assertions` is `None` exactly when the turn failed, and `error` carries that
-    failure's message - so a report can tell "the agent answered wrongly" from
-    "the target never answered", which are not the same regression. `outcome` is
-    `None` in exactly the same place and for the same reason: a turn that never
-    answered measured nothing, and a report that filled its latency and its cost
-    with zeros would read as a free, instant success.
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
-    `category` and `outcome` are carried rather than re-derived because the
-    report is built from this record and nothing else, and neither the golden set
-    nor the turn is available to it.
+    turn: int
+    rubric: str
+    reply: str
+    verdict: Verdict | None
+    reason: str | None
 
-    `failure_kind` is the raised `TurnFailed`'s own kind, carried for the same
-    reason and set in exactly the same place as `error`: the taxonomy tags a
-    broken turn `timeout` or `provider_error` and has nothing else to read, since
-    a turn that never answered left no assertions behind. It is `None` on every
-    case that answered.
+
+class CaseLine(BaseModel):
+    """What happened to one case: its checks, its judged replies, or why it has neither.
+
+    `check` is `None` exactly when the target failed, and `error` carries that failure.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     case_id: str
-    category: EvalCategory
-    assertions: CaseAssertions | None
-    residency: ResidencyVerdict | None
-    outcome: CaseOutcome | None = None
-    error: str | None = None
-    failure_kind: TurnFailureKind | None = None
-    judge: JudgeVerdict | None = None
+    category: str
     passed: bool
+    error: str | None
+    check: CaseCheck | None
+    judged: tuple[JudgedReply, ...]
+    answer: ConversationAnswer | None
 
 
-class RunResult(BaseModel):
-    """Every case's record, and the counts the summary line and the report both read."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    runs: tuple[CaseRun, ...]
-
-    @property
-    def cases(self) -> int:
-        """How many cases ran. A broken turn is one of them."""
-        return len(self.runs)
-
-    @property
-    def passed_count(self) -> int:
-        """How many cases passed every assertion they stated and stayed in region."""
-        return sum(1 for run in self.runs if run.passed)
-
-    @property
-    def failed_count(self) -> int:
-        """The rest of them, whatever the reason."""
-        return self.cases - self.passed_count
-
-    @property
-    def residency_violations(self) -> int:
-        """How many turns were served somewhere the tenant's policy does not allow."""
-        return sum(1 for run in self.runs if run.residency is not None and run.residency.violation)
-
-    @property
-    def leaked(self) -> bool:
-        """True when a cross-tenant case's reply carried another tenant's marker.
-
-        Read off the assertion's VERDICT and never off the case's category, which
-        would fail every run containing a cross-tenant case at all - and a gate
-        that fails always is a gate nobody keeps.
-        """
-        return any(
-            result.name == LEAK_ASSERTION and result.status is AssertionStatus.FAILED
-            for run in self.runs
-            if run.assertions is not None
-            for result in run.assertions.results
-        )
-
-
-def run_set(
-    *,
-    client: TargetClient,
-    cases: tuple[EvalCase, ...],
-    policy: Policy,
-    tenant: str,
-    other_tenant_markers: tuple[str, ...] = (),
-    judge: JudgeClient | None = None,
-) -> RunResult:
-    """Reset the target, run every case in file order, and answer what happened.
-
-    The reset is first and happens once; a `TargetUnreachable` from it is not
-    caught here, because a run over an unreset seed is not comparable to the
-    baseline and the CLI turns that into exit `2`.
-
-    Residency is checked on every case that answered, not on the first one and
-    then trusted.
-
-    The judge is optional and OFF unless the CLI built one, and it scores only
-    the cases that carry a `judge_rubric`, after `assert_case` and on the same
-    loop - so a set with no rubric anywhere costs exactly what it cost before.
-    A median below `JUDGE_LOW_SCORE` fails the case, which is the one thing that
-    makes `passed` more than a statement about assertions and residency.
-    """
-    client.reset()
-
-    runs: list[CaseRun] = []
-    for case in cases:
-        try:
-            _, outcome = client.run_case(case, other_tenant_markers=other_tenant_markers)
-        except TurnFailed as exc:
-            runs.append(
-                CaseRun(
-                    case_id=case.id,
-                    category=case.category,
-                    assertions=None,
-                    residency=None,
-                    outcome=None,
-                    error=str(exc),
-                    failure_kind=exc.kind,
-                    passed=False,
-                )
-            )
-            continue
-
-        assertions = assert_case(case, outcome)
-        verdict = (
-            judge.score(case, outcome)
-            if judge is not None and case.judge_rubric is not None
-            else None
-        )
-        residency = check_residency(
-            policy,
-            case_id=case.id,
-            tenant=tenant,
-            data_class=EVAL_DATA_CLASS,
-            observed=outcome.region,
-        )
-        runs.append(
-            CaseRun(
-                case_id=case.id,
-                category=case.category,
-                assertions=assertions,
-                residency=residency,
-                outcome=outcome,
-                error=None,
-                failure_kind=None,
-                judge=verdict,
-                passed=(
-                    assertions.passed
-                    and not residency.violation
-                    and (verdict is None or verdict.median >= JUDGE_LOW_SCORE)
+def _judge_replies(
+    case: ConversationCase, answer: ConversationAnswer, judge: Grader | None
+) -> tuple[JudgedReply, ...]:
+    """Judge only the `graded` replies, each against its own rubric, and nothing else."""
+    if judge is None:
+        return ()
+    judged: list[JudgedReply] = []
+    for graded in case.graded:
+        reply = answer.turns[graded.turn - 1].reply
+        verdict = judge.grade(graded.rubric, reply)
+        judged.append(
+            JudgedReply(
+                turn=graded.turn,
+                rubric=graded.rubric,
+                reply=reply,
+                verdict=None if verdict is None else verdict.verdict,
+                reason=(
+                    None
+                    if verdict is None
+                    else next(
+                        (
+                            r
+                            for v, r in zip(verdict.votes, verdict.reasons, strict=True)
+                            if v == verdict.verdict
+                        ),
+                        None,
+                    )
                 ),
             )
         )
-    return RunResult(runs=tuple(runs))
+    return tuple(judged)
+
+
+def _saved_lines(path: Path) -> dict[str, CaseLine]:
+    """The lines already in the file, by case id.
+
+    A last line cut short by a killed process is dropped and the file is rewritten
+    without it; a bad line anywhere else is refused, since it is not a crash's doing.
+    """
+    if not path.exists():
+        return {}
+    raw = path.read_text(encoding="utf-8").splitlines()
+    kept: dict[str, CaseLine] = {}
+    for number, text in enumerate(raw, start=1):
+        if not text.strip():
+            continue
+        try:
+            line = CaseLine.model_validate_json(text)
+        except ValidationError as exc:
+            if number == len(raw):
+                path.write_text("".join(f"{t}\n" for t in raw[:-1]), encoding="utf-8")
+                break
+            raise ConversationSetInvalid(
+                "holds a saved result that cannot be read", path=path, line=number
+            ) from exc
+        kept[line.case_id] = line
+    return kept
+
+
+def load_run(path: Path) -> tuple[CaseLine, ...]:
+    """The saved lines of one finished or stopped run, in file order.
+
+    The label maker reads a run's replies and tool results from here, so the labels
+    come from the same run the baseline was set on and cost no second one.
+    """
+    return tuple(_saved_lines(path).values())
+
+
+def _append(path: Path, line: CaseLine) -> None:
+    """Add one line to the file and push it to disk before the next case starts."""
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(line.model_dump_json() + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def run_conversations(
+    *,
+    client: TargetClient,
+    cases: Sequence[ConversationCase],
+    run_id: str,
+    reports_dir: Path,
+    judge: Grader | None = None,
+) -> tuple[CaseLine, ...]:
+    """Play the cases not yet saved and answer every case's line, in file order.
+
+    A `TurnFailed` becomes an error line and the run goes on; a `TargetUnreachable` from
+    the reset, and any other exception, propagate. Nothing is sent or written before the
+    run id has been checked.
+    """
+    checked_identifier(run_id, "run_id")
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    path = reports_dir / f"{run_id}.jsonl"
+
+    saved = _saved_lines(path)
+    if not saved:
+        client.reset()
+
+    roles: set[str] = set()
+    for line in saved.values():
+        if line.answer is not None:
+            roles |= role_names_in(line.answer)
+
+    lines: list[CaseLine] = []
+    for case in cases:
+        existing = saved.get(case.id)
+        if existing is not None:
+            lines.append(existing)
+            continue
+        try:
+            answer = client.play(case)
+        except TurnFailed as exc:
+            line = CaseLine(
+                case_id=case.id,
+                category=case.category,
+                passed=False,
+                error=str(exc),
+                check=None,
+                judged=(),
+                answer=None,
+            )
+        else:
+            roles |= role_names_in(answer)
+            check = check_case(case, answer, run_roles=frozenset(roles))
+            line = CaseLine(
+                case_id=case.id,
+                category=case.category,
+                passed=check.passed,
+                error=None,
+                check=check,
+                judged=_judge_replies(case, answer, judge),
+                answer=answer,
+            )
+        _append(path, line)
+        lines.append(line)
+    return tuple(lines)

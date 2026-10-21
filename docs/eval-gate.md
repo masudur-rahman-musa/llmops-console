@@ -3,174 +3,135 @@
 A run says what happened. The gate says whether it may merge.
 
     ops-eval gate --report reports/report.json \
-                  --baseline backend/evals/baseline.json \
+                  --baseline backend/evals/conversation-baseline.json \
+                  [--calibration labels/calibration.json] \
                   [--comment comment.md]
 
-It reads two files and touches nothing else: no database, no gateway, no clock.
-The same report and the same baseline give the same answer on a laptop and in
+It reads the files you name and touches nothing else: no database, no gateway, no
+clock. The same report and the same baseline give the same answer on a laptop and in
 CI, which is what makes a red gate arguable rather than a mystery.
 
-## The five rules
+## The two rules
 
-| rule | breaches when | where the threshold comes from |
-|---|---|---|
-| `decision_accuracy` | below the reference less the allowed drop | `metrics.decision_accuracy` - `thresholds.max_drop_points` |
-| `refusal_recall` | below the floor | `thresholds.refusal_recall_min` |
-| `injection_resistance` | below the floor | `thresholds.injection_resistance_min` |
-| `cross_tenant_leaks` | above zero | fixed: any leak at all |
-| `residency_violations` | above zero | fixed: any violation at all |
+| rule | breaches when |
+|---|---|
+| `check_score` | below the baseline's `check_score`, or missing |
+| `judge_score` | below the baseline's `judge_score`, but only while the judge is trusted |
 
-Every rule is reported, every time, whether it passed or not. A reviewer who is
-shown only the failures cannot tell a rule that passed from a rule the run never
-measured.
+`check_score` is the percent of cases that passed all three checks. There is no
+drop allowance: one point under the baseline fails, and an equal score passes. A
+real model does not score the same twice, so a run near the baseline can fail by
+chance. The fix for a flaky gate is to fix the chat or to change the baseline the
+proper way, never a wider allowance.
 
-The boundary is inclusive in the run's favour: a run landing exactly on `95.0`,
-or dropping exactly `2.0` points, is green. The comparisons are `<` and `>`,
-which is how the spec writes them.
+A `check_score` that is missing breaches the rule. A run over no cases has no score,
+and reading that as "nothing against us" would merge anything. The reason line says
+`no evidence` rather than a number.
 
-**A metric that is `null` breaches its rule.** a design note makes a metric `null`
-when no case stated the expectation, so a golden set that gates refusal recall
-and states no refusal case reports `null` - and reading that as "nothing against
-us" merges the lost cases green forever. The reason line says `no evidence`
-rather than a number, because "this got worse" and "the cases that measured it
-are gone" have different fixes.
+`judge_score` is the percent of graded replies the judge passed. It counts toward the
+gate only when a calibration file is given and its kappa is 0.7 or better. Below that,
+or with no calibration at all, the run goes on, the score is reported, and the
+comment says the judge decided nothing. The judge's score is reported on every run.
 
 ## The numbers are points
 
-Every threshold and every metric is a percentage between `0.0` and `100.0`, at
-the two decimal places `ACCURACY_SCALE` publishes. The baseline is written in
-the same unit as the report, so no conversion lives in the comparison. See
-the project notes for why that changed.
+Every score is a percentage between `0.0` and `100.0`, at two decimal places. The
+baseline is written in the same unit as the report, so no conversion lives in the
+comparison. A baseline is validated whole before any comparison runs: an unknown key
+or a number outside `0.0` to `100.0` refuses the file.
 
-A baseline is validated whole before any comparison runs: an unknown key, a
-threshold outside `0.0`-`100.0`, or a `golden_set` over 128 characters refuses
-the file rather than reading past it. A file half of whose numbers nobody reads
-is worse than a file that will not load.
+The baseline holds `check_score`, and optionally `judge_score`, and nothing else.
 
 ## The exit code is the interface
 
 | code | meaning |
 |---|---|
 | `0` | every rule cleared |
-| `1` | at least one threshold rule breached |
-| `2` | a usage error: an input that could not be read, parsed or validated |
-| `3` | a residency violation or a cross-tenant leak |
+| `1` | at least one rule breached |
+| `2` | an input could not be read, parsed or validated |
 
-`3` outranks `1`. A boundary breach read as an accuracy dip is a breach somebody
-merges over. `2` is distinct from `1` so a workflow can tell "the gate never ran"
-from "the run got worse" without parsing text.
+`2` is distinct from `1` so a workflow can tell "the gate never ran" from "the run
+got worse" without reading text.
 
-Stdout carries exactly one line, the verdict. The breached rules go to stderr,
-one line each. The markdown `--comment` writes opens with that same verdict line,
-so the summary a workflow reads and the comment a person reads cannot disagree.
-
-## The judge decides nothing
-
-Neither `judge_mean` nor `judge_kappa_vs_human` is a gate rule. An LLM judge
-scores against a rubric and is itself calibrated against human labels, so it
-reports and never decides: a run whose judge agreed with humans and one whose
-kappa was `0.42` get the same verdict from the same metrics. The comment states
-the exclusion, and states the run's kappa where there is one, because the comment
-is where the merge decision is made.
+Stdout carries exactly one line, the verdict. The breached rules go to stderr, one
+line each. The markdown `--comment` writes opens with that same verdict line.
 
 ## Changing the baseline
 
-`backend/evals/baseline.json` is the record of what the system is known to do. It
-changes only in a commit whose subject begins `baseline:`, with an ADR saying
-what moved and why. It is never edited to make a run pass - a gate that can be
-edited green is a gate nobody has.
-
-That prefix is the one commit subject in this repository that carries a colon:
-the house style has no `type: subject` prefixes, and this rule predates it and
-names the literal string.
+`backend/evals/conversation-baseline.json` is the record of what the system is known
+to do. It changes only in a commit whose subject begins `baseline:`, with an ADR
+saying what moved and why. It is never edited to make a run pass.
 
 The rule is enforced in CI, not by review:
 
     ops-eval baseline-guard --base <ref> --head <ref>
 
-It reads `base..head` once with `git log --format=%H%x00%s --name-status -M100%`
-and answers a verdict over the commits in it. A commit that does not touch
-`backend/evals/baseline.json` is not examined. One that does is clean only when
-its subject starts `baseline:` **and** that same commit carries a file under
-the project notes.
-
-A commit that only moves a file named `baseline.json` onto
-`backend/evals/baseline.json`, byte for byte, is clean without either: the
-content did not change, so there is nothing to justify. Git reports such a move
-as `R100`; a move with any edit shows as a delete and an add, and is judged like
-any other change. Moving the baseline away from its path is a change too.
+It reads `base..head` once and answers a verdict over the commits in it. A commit
+that does not touch a baseline file is not examined. One that does is clean only when
+its subject starts `baseline:` and that same commit carries a file under the project notes.
+The guard watches the conversation baseline and also the old single-reply baseline
+file, so that file cannot come back quietly.
 
 Same commit, not same pull request. A merge and a revert can separate a baseline
-change from its justification across a pull request; they cannot separate them
-inside one commit.
-
-The path is matched exactly. `backend/evals/baseline.json.bak` is not the
-baseline and neither is a file of that name under another directory, so a rename
-beside the file does not block a pull request that never touched it.
+change from its justification across a pull request; they cannot separate them inside
+one commit.
 
 | code | meaning |
 |---|---|
-| `0` | the range is clean; stdout carries one line naming how many commits were read |
-| `1` | at least one commit breaks the rule; each offending sha is one line on stderr, naming which half it broke |
+| `0` | the range is clean; stdout names how many commits were read |
+| `1` | at least one commit breaks the rule; each offending sha is one line on stderr |
 | `2` | `--base` or `--head` was refused, or git could not read the range |
 
-`2` is what a shallow checkout gets. `git log base..head` resolves nothing at
-depth 1, and a guard that read no commits must never answer "clean" - so the
-workflow checks out with `fetch-depth: 0` and an unresolvable range is a usage
-error rather than an empty verdict. Both refs are checked against a pattern and a
-256-character cap before git is asked anything, since both reach a subprocess
-argument list.
+`2` is what a shallow checkout gets. `git log base..head` resolves nothing at depth 1,
+and a guard that read no commits must never answer "clean", so the workflow checks
+out with `fetch-depth: 0` and an unresolvable range is a usage error.
 
 ## The workflow
 
-`.github/workflows/eval-gate.yml` runs on every pull request into `main`, in two
-jobs that fail for different reasons.
+`.github/workflows/eval-gate.yml` runs on every pull request into `main`, in two jobs
+that fail for different reasons.
 
 `baseline-guard` is the rule above, unconditional.
 
-`eval` runs on every pull request, with no condition. It checks out the help
-desk repository beside this one (it is private, so the job reads it with the
-`HELPDESK_REPO_TOKEN` secret, a read-only token), writes the help desk's
-`.env.demo` from its `.env.example`, and runs `make eval`. Until that secret is
-set the checkout fails, and the job with it; it never skips.
+`eval` runs on every pull request, with no condition. It checks out the help desk
+repository beside this one (it is private, so the job reads it with the
+`HELPDESK_REPO_TOKEN` secret, a read-only token), writes the help desk's `.env.demo`
+from its `.env.example`, and runs `make eval` with `ANTHROPIC_API_KEY` from a GitHub
+secret. Until a secret is set the job fails; it never skips.
 
-`make eval` does the whole run, the same on a laptop
-(`HELPDESK_DIR` names the help desk checkout, `../ai-help-desk-governed-access`
-by default):
+`make eval` does the whole run, the same on a laptop (`HELPDESK_DIR` names the help
+desk checkout, `../ai-help-desk-governed-access` by default; the key can be in
+`backend/.env`):
 
-1. It makes two throwaway gateway keys, one per help desk tenant. The digests go
-   to the gateway and the keys to the help desk. Nothing is stored.
-2. It starts the gateway with `infra/evals/compose.yml`: every provider in
-   `infra/evals/routing.evals.yaml` is the mock in `infra/load/mock-provider/`,
-   run in golden-set mode. No model key is needed and nothing is spent.
+1. It makes two throwaway gateway keys, one per help desk tenant. The digests go to
+   the gateway and the keys to the help desk. Nothing is stored.
+2. It starts the gateway with `infra/evals/compose.yml`. The gateway keeps its shipped
+   routing, so the help desk's chat runs on the real cheap model (`agent-default`).
+   A run costs roughly $1 to $2.
 3. It resets and seeds the help desk's database and loads its policy text
-   (`infra/evals/prepare_helpdesk.sh`), then starts its agent API and tool
-   server with the eval routes switched on (`infra/evals/helpdesk.compose.yml`).
-4. It runs the help desk's golden set, `helpdesk-v1.jsonl`, once per tenant
-   (`nordlicht`, then `cuan`), and checks each report against the baseline.
-   Either check failing fails the target.
+   (`infra/evals/prepare_helpdesk.sh`), then starts its agent API and tool server with
+   the eval routes switched on (`infra/evals/helpdesk.compose.yml`).
+4. It plays the help desk's 33 conversation cases once with `ops-eval conversations`,
+   writes the reports to `backend/evals/reports/local/`, and runs `ops-eval gate`
+   against the conversation baseline (with the calibration file when one exists).
 
-In golden-set mode the mock answers each structured call from the golden case
-it is about: the case's expected intent, then its expected tool calls with ids
-filled from the help desk's own data, then an empty plan. So the run proves the
-help desk's own code (policy, refusal, risk class, tools, residency, citations),
-not its prompt wording; a prompt change is caught by the nightly run with a real
-model. the project notes has the
-reasoning. The judge stays off in CI: a mock judge scores nothing.
+A mock cannot play a conversation: a case has no fixed answer for each model call, and
+recordings drift with every prompt change. So the gate runs on a real model.
 
-The two tenants' comments are joined into one, and the report directory is
-uploaded as a build artifact whatever the verdict, because a failed gate is when
-somebody opens it. The comment is posted once per pull request and edited in
-place on a re-run; on a fork's pull request the token is read-only, so the
+`RUN_ID=<id> make eval` continues a stopped run: the cases already saved under that id
+are skipped, and the reports folder is kept.
+
+The report folder is uploaded as a build artifact whatever the verdict, because a
+failed gate is when somebody opens it. The comment is posted once per pull request and
+edited in place on a re-run; on a fork's pull request the token is read-only, so the
 comment is skipped and the artifact is still published.
 
 ## What the comment carries
 
-- the verdict line, and the run's identity (set, sha, run id)
-- one row per rule: actual, threshold, pass or breach
-- the run's per-category table, which is what turns "decision accuracy fell two
-  points" into "policy_qa fell over"
-- what the run's calibration said, and the judge exclusion above
+- the verdict line
+- the run's `check_score` and `judge_score` against the baseline
+- whether the judge counted, and the calibration's kappa where there is one
+- the failed cases and why
 
 The workflow posts that markdown on the pull request and attaches the report as a
 build artifact.

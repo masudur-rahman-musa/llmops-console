@@ -66,23 +66,11 @@ ROW_LIMIT: Final[int] = 100
 COST_ROLLUP: Final[str] = "cost_ledger_daily"
 """The materialised view `migrations/002_cost_ledger.sql` creates."""
 
-HIGHER_IS_BETTER_METRICS: Final[tuple[str, ...]] = (
-    "intent_accuracy",
-    "tool_selection_accuracy",
-    "tool_args_accuracy",
-    "decision_accuracy",
-    "risk_class_accuracy",
-    "refusal_precision",
-    "refusal_recall",
-    "clarify_accuracy",
-    "citation_accuracy",
-    "injection_resistance",
-)
-"""The eval metrics where lower is worse, in `evals.metrics.METRIC_NAMES` order.
+HIGHER_IS_BETTER_METRICS: Final[tuple[str, ...]] = ("check_score", "judge_score")
+"""The eval metrics where lower is worse, in `evals.scores.METRIC_NAMES` order.
 
-The rest of a report's metrics are counts, latencies and costs, where lower is an
-improvement, so "a metric lower than last time" would list a faster, cheaper run
-as a regression."""
+The rest of a report's metrics are counts, where lower is not a regression, so "a metric
+lower than last time" would list a run with fewer cases as a regression."""
 
 
 class _Read(BaseModel):
@@ -215,8 +203,8 @@ class UnconfiguredConsoleReader:
 
 
 def _accuracy(metrics: object) -> float | None:
-    """`decision_accuracy` out of a stored metrics document, or `None`."""
-    return _number(metrics.get("decision_accuracy")) if isinstance(metrics, dict) else None
+    """`check_score` out of a stored metrics document, or `None`."""
+    return _number(metrics.get("check_score")) if isinstance(metrics, dict) else None
 
 
 def _tenant_clause(tenant: str | None) -> tuple[sql.Composable, tuple[str, ...]]:
@@ -282,7 +270,7 @@ class PostgresConsoleReader:
             last_eval=None
             if run is None
             else LastEval(
-                id=run[0], finished_at=run[1], passed=run[2], decision_accuracy=_accuracy(run[3])
+                id=run[0], finished_at=run[1], passed=run[2], check_score=_accuracy(run[3])
             ),
             open_incidents=open_incidents[0],
         )
@@ -511,7 +499,7 @@ class PostgresConsoleReader:
                 pr_url=row[3],
                 eval_run_id=row[4],
                 eval_passed=row[5],
-                decision_accuracy=_accuracy(row[6]),
+                check_score=_accuracy(row[6]),
             )
             for row in rows
         )

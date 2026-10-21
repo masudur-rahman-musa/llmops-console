@@ -1,5 +1,5 @@
 {
-  "set_name": "helpdesk-decisions",
+  "set_name": "cases.jsonl",
   "accuracy_tolerance": "0.02",
   "options": {
     "local-8b": {
@@ -13,11 +13,8 @@
       "turns_per_hour": "1200.00",
       "usd_per_1000_turns": "0.67",
       "metrics": {
-        "decision_accuracy": 0.86,
-        "refusal_recall": null,
-        "p50_latency_ms": 640,
-        "p95_latency_ms": 1850,
-        "cost_usd": 0
+        "check_score": 0.86,
+        "judge_score": null
       }
     },
     "hosted-large": {
@@ -31,11 +28,8 @@
       "turns_per_hour": null,
       "usd_per_1000_turns": null,
       "metrics": {
-        "decision_accuracy": 0.94,
-        "refusal_recall": 0.97,
-        "citation_accuracy": 0.92,
-        "p50_latency_ms": 910,
-        "p95_latency_ms": 2400
+        "check_score": 0.94,
+        "judge_score": 0.97
       }
     },
     "hosted-small": {
@@ -49,15 +43,16 @@
       "turns_per_hour": null,
       "usd_per_1000_turns": "1.90",
       "metrics": {
-        "decision_accuracy": 0.93,
-        "refusal_recall": 0.95,
-        "citation_accuracy": 0.9,
-        "p50_latency_ms": 420,
-        "p95_latency_ms": 1100
+        "check_score": 0.93,
+        "judge_score": 0.95
       }
     }
   },
-  "order": ["hosted-small", "hosted-large", "local-8b"],
+  "order": [
+    "hosted-small",
+    "hosted-large",
+    "local-8b"
+  ],
   "winner": "hosted-small",
   "conclusion": "Hosted small model matches the large model within tolerance at a fraction of the cost."
 }

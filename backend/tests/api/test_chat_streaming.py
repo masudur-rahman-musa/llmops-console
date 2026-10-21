@@ -64,7 +64,7 @@ from .conftest import (
 # US `anthropic` provider, and the provider model id it resolves to. The body may
 # name only the first; the second is an operator's fact and travels in a header.
 ALIAS = "agent-default"
-PROVIDER_MODEL = "claude-haiku-4-5"
+PROVIDER_MODEL = "claude-haiku-5-5"
 
 NORDLICHT_KEY = TEST_KEYS["nordlicht"]
 

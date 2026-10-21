@@ -302,7 +302,7 @@ def test_the_adapter_is_handed_the_resolved_provider_model_not_the_alias(
 
     sent = last_request(chat_stub)
     assert sent.model != ALIAS
-    assert sent.model == "claude-haiku-4-5"
+    assert sent.model == "claude-haiku-5-5"
 
 
 def test_messages_reach_the_adapter_in_order(

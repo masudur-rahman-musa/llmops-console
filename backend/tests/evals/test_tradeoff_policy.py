@@ -69,7 +69,7 @@ def read(path: Path) -> str:
 #: Provider and model are required TOGETHER: a file naming the right
 #: provider with the wrong model is the drift this table exists to see.
 OPTIONS: tuple[tuple[str, dict[str, str]], ...] = (
-    ("cheap-api", {"provider": "anthropic", "model": "claude-haiku-4-5"}),
+    ("cheap-api", {"provider": "anthropic", "model": "claude-haiku-5-5"}),
     ("strong-api", {"provider": "anthropic", "model": "claude-sonnet-5-5"}),
     ("local-cpu", {"provider": "local", "model": "qwen2.5-3b-instruct"}),
     ("gpu-vllm", {"provider": "vllm", "model": "qwen2.5-7b-instruct"}),
@@ -423,7 +423,7 @@ def test_each_overlay_pins_its_one_candidate_and_turns_the_cache_off(
     """Criteria 21 and 26, read from the overlay rather than from the merged result. The merge
     could produce the right answer from a WRONG overlay if it appended defaults, so this is the
     independent half. Provider and model are required together: an overlay
-    naming `anthropic` with `claude-haiku-4-5` under `strong-api` measures the cheap tier twice
+    naming `anthropic` with `claude-haiku-5-5` under `strong-api` measures the cheap tier twice
     and the table's conclusion is then inverted."""
     entry = alias_of(overlay(option_id))
 

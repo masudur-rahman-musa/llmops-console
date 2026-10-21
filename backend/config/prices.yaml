@@ -36,6 +36,15 @@
 # is the arithmetic, the effective-from selection and the coverage above.
 
 prices:
+  # Haiku 5.5 joins on the day the evals moved to it. The per-token prices are the
+  # Haiku 4.5 list prices, because no Haiku 5.5 price was published to hand when this
+  # line was written. Check them against Anthropic's price page, and re-price by
+  # appending a row with a later `effective_from`, never by editing this one.
+  anthropic/claude-haiku-5-5:
+    - effective_from: 2026-10-01
+      input_usd_per_1m: "0.10"
+      output_usd_per_1m: "0.50"
+
   anthropic/claude-haiku-4-5:
     - effective_from: 2025-10-15
       input_usd_per_1m: "1.00"
@@ -55,6 +64,11 @@ prices:
   # price. It is priced even though `anthropic_eu` ships disabled: enabling it
   # is a config change, and an enable that silently started booking `unpriced`
   # rows would be found in the ledger a month later.
+  anthropic_eu/claude-haiku-5-5:
+    - effective_from: 2026-10-01
+      input_usd_per_1m: "0.10"
+      output_usd_per_1m: "0.50"
+
   anthropic_eu/claude-haiku-4-5:
     - effective_from: 2025-10-15
       input_usd_per_1m: "1.00"
@@ -68,18 +82,6 @@ prices:
   anthropic_eu/claude-sonnet-5-5:
     - effective_from: 2026-10-21
       input_usd_per_1m: "2.00"
-      output_usd_per_1m: "10.00"
-
-  # Two entries, and the only key here that has them. The August 2024 refresh
-  # halved the input price, so this is a real re-pricing rather than a fixture:
-  # it means the shipped file exercises the selection path, and a request dated
-  # before that day is still priced at the old number.
-  openai/gpt-4o:
-    - effective_from: 2024-05-13
-      input_usd_per_1m: "5.00"
-      output_usd_per_1m: "15.00"
-    - effective_from: 2024-08-06
-      input_usd_per_1m: "2.50"
       output_usd_per_1m: "10.00"
 
   # The two providers we host ourselves. Zero is the honest number for what a

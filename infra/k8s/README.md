@@ -28,7 +28,7 @@ to fit; they total exactly 6Gi and 3 CPU, leaving k3s itself a margin in both.
 |---|---|---|---|---|
 | `platform` | 2Gi | 800m | 3Gi | Postgres, Redis, Qdrant, cert-manager, the Traefik middlewares |
 | `apps` | 3Gi | 1500m | 7Gi | the gateway, the console, llama.cpp, the Helpdesk services |
-| `evals` | 512Mi | 300m | 1Gi | the nightly eval CronJob |
+| `evals` | 512Mi | 300m | 1Gi | the Pushgateway |
 | `monitoring` | 512Mi | 400m | 1Gi | Prometheus, Grafana, Alertmanager |
 | **total** | **6Gi** | **3** | 12Gi | |
 
@@ -349,8 +349,7 @@ Two things these policies do NOT do. They cannot see a URL path: what takes
 `/admin/*` and `/metrics` off the public side is the `gateway` Ingress routing
 `/v1` and nothing wider, a router rule rather than a policy. These policies
 decide only which pods may open a connection, and Traefik is one of them. And
-`evals` still has no policies at all, so the nightly CronJob's allows land with
-that row.
+`evals` still has no policies at all.
 
 Nothing here has ever been applied, so none of it has ever denied a packet. What
 the tests prove is shape, by equality in both directions, so an allow nobody
@@ -388,7 +387,7 @@ If the chart's real footprint is larger than that, the quota refuses the install
 with the namespace named, which is the intended direction: raising it means
 re-totalling the table above and the reserve constant in the test together.
 
-The ten Secrets nothing here writes, each supplied SOPS-encrypted before the
+The nine Secrets nothing here writes, each supplied SOPS-encrypted before the
 first apply. `../secrets/` holds one plaintext contract per Secret
 (`*.example.yaml`, every value `REPLACE_ME`), the workflow that encrypts a filled
 copy, and the key procedure; `../../.sops.yaml` is the policy that decides what
@@ -407,13 +406,12 @@ are asserted equal, and equal to the names the build references, by
 | `grafana-admin` | `monitoring` | `GF_SECURITY_ADMIN_USER`, `GF_SECURITY_ADMIN_PASSWORD` | the Grafana Deployment, by `envFrom` |
 | `alertmanager-secrets` | `monitoring` | `SMTP_SMARTHOST`, `SMTP_FROM`, `SMTP_AUTH_USERNAME`, `SMTP_AUTH_PASSWORD`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | the Alertmanager Deployment, by `envFrom` |
 | `backup-secrets` | `platform` | `RCLONE_CONFIG_HETZNER_ACCESS_KEY_ID`, `RCLONE_CONFIG_HETZNER_SECRET_ACCESS_KEY`, `RCLONE_CONFIG_HETZNER_ENDPOINT`, `BACKUP_BUCKET` | both backup CronJobs' `rclone-sync` container, by `envFrom` |
-| `evals-secrets` | `evals` | `OPSCONSOLE_DATABASE_URL` | the nightly-eval CronJob, by `envFrom` |
 
 `traefik-basic-auth` is supplied once per routing namespace, not once per
 cluster: a `Middleware` reads its Secret from its own namespace, and a design note is
 why each namespace carries its own copy of the middlewares it uses. The five TLS
 Secrets the five Ingresses name are not in this table - cert-manager writes
-those, and their names have to stay disjoint from the ten above, or an issued
+those, and their names have to stay disjoint from the nine above, or an issued
 certificate overwrites a set of credentials. `grafana-tls` and `grafana-admin`
 are the pair where that is easiest to get wrong, because they sit in one
 namespace and share a prefix; the disjointness is asserted.
@@ -599,7 +597,6 @@ The owner's one-time setup and every later deploy are in the project notes.
 
 ## Still to land
 
-- The nightly eval CronJob in `evals/`.
 - `monitoring/` carries Grafana with all six dashboards and
   Alertmanager with the rules in `../../infra/k8s/monitoring/alerts/` - the
   namespace's envelope is now spent exactly, to the byte. Postgres and Redis

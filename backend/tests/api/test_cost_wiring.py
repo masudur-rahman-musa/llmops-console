@@ -33,10 +33,10 @@ Three arrangements are worth reading before the assertions:
   implementation that booked the INTERNAL embedding as a second row is caught by
   the one-row cases, and it cannot be caught on an app where the semantic tier
   never runs (a project rule's fourth target).
-* THE PRICES ARE THE SHIPPED ONES. `anthropic/claude-haiku-4-5` is 1.00 in and
-  5.00 out per million, `local/*` is zero, so the chat rows carry a NON-ZERO
-  cost written out here as arithmetic (137 * 1 + 29 * 5 = 282 millionths) rather
-  than recomputed from the table the implementation reads. A zero-priced row is
+* THE PRICES ARE THE SHIPPED ONES. `anthropic/claude-haiku-5-5` is 0.10 in and
+  0.50 out per million, `local/*` is zero, so the chat rows carry a NON-ZERO
+  cost written out here as arithmetic (137 * 0.1 + 29 * 0.5 = 28.2 millionths, 28 at
+  six places) rather than recomputed from the table the implementation reads. A zero-priced row is
   never used to prove a cost was booked: what those rows prove is the
   `price_version`, which names the key that priced them and so cannot be
   satisfied by an `unpriced` fallthrough.
@@ -142,7 +142,7 @@ SESSION = "sess-cost-wiring"
 ALIAS = "agent-default"
 PROVIDER = "anthropic"
 REGION = "us"
-POLICY_MODEL = "claude-haiku-4-5"
+POLICY_MODEL = "claude-haiku-5-5"
 """What the shipped policy resolves `evals`/`agent-default`/`internal` to, best
 candidate first. The model is the POLICY's id, never the stub's own answer and
 never the alias."""
@@ -161,11 +161,11 @@ and the `embed` alias's candidate are two providers with two addresses."""
 
 FALLBACK_MODEL = "qwen2.5-3b-instruct"
 """The model of `agent-default`'s SECOND candidate, `local`. The fallback row
-must name this and not `claude-haiku-4-5`. Renamed with the shipped policy when
+must name this and not `claude-haiku-5-5`. Renamed with the shipped policy when
 an earlier change sized the self-hosted model to the 3 GiB ceiling its pod carries: this
 is a copy of what `routing.yaml` resolves to, so it moves when that file does."""
 
-CHAT_PRICE_VERSION = f"{PROVIDER}/{POLICY_MODEL}@2025-10-15"
+CHAT_PRICE_VERSION = f"{PROVIDER}/{POLICY_MODEL}@2026-10-01"
 EMBED_PRICE_VERSION = f"{EMBED_PROVIDER}/{EMBED_MODEL}@2025-01-01"
 FALLBACK_PRICE_VERSION = f"{LOCAL_PROVIDER}/{FALLBACK_MODEL}@2025-01-01"
 """The entries in force in the shipped `prices.yaml`, spelled as the literals the
@@ -174,18 +174,18 @@ carries a different string and fails - which is what makes the zero-priced
 self-hosted rows worth asserting at all. The embedding row and the fallback row are
 priced from DIFFERENT keys now that the two servers are two providers."""
 
-WHEN_PRICED = date(2026, 6, 1)
+WHEN_PRICED = date(2026, 10, 22)
 """The instant the two price-store cases price at: after every `effective_from`
 in the shipped file and after the fixture entry one of them writes, so neither
 case can pass because no entry was in force yet."""
 
-CHAT_COST = Decimal("0.000282")
-"""(137 * 1.00 + 29 * 5.00) / 1_000_000, from `STUB_USAGE` and the shipped
-`anthropic/claude-haiku-4-5` entry, written out so no case repeats the
+CHAT_COST = Decimal("0.000028")
+"""(137 * 0.10 + 29 * 0.50) / 1_000_000, rounded to six places, from `STUB_USAGE` and the shipped
+`anthropic/claude-haiku-5-5` entry, written out so no case repeats the
 implementation's arithmetic."""
 
-STREAM_COST = Decimal("0.000691")
-"""(431 * 1.00 + 52 * 5.00) / 1_000_000, from `STREAM_USAGE`. Different from
+STREAM_COST = Decimal("0.000069")
+"""(431 * 0.10 + 52 * 0.50) / 1_000_000, rounded to six places, from `STREAM_USAGE`. Different from
 `CHAT_COST` in both directions, so a streamed row priced from the non-streamed
 usage is a different number here."""
 
@@ -842,7 +842,7 @@ def test_the_cost_header_is_the_rows_decimal_at_six_places(
     small numbers a per-request cost is; catches a header rendered at two places, which is
     `0.00` for almost every real request; and catches a header built from a second
     pricing rather than from the row. The digits after the point are counted, so a value
-    that happens to be equal as a number but printed as `0.000282000` fails, and the
+    that happens to be equal as a number but printed as `0.000028000` fails, and the
     string is compared to the row's `Decimal` as well, so a correctly-shaped wrong number
     fails too."""
     writer = InMemoryCostLedgerWriter()
@@ -869,7 +869,7 @@ def test_the_cost_header_carries_the_literal_six_place_rendering(
     response = send_chat(cost_client, writer)
 
     assert response.status_code == 200, response.text
-    assert response.headers[COST_HEADER] == "0.000282"
+    assert response.headers[COST_HEADER] == "0.000028"
 
 
 def test_the_cost_header_is_absent_on_a_stream(cost_client: TestClient) -> None:
@@ -1175,7 +1175,7 @@ def test_the_shipped_price_store_prices_the_key_the_chat_path_books_against(
     settings: Settings,
 ) -> None:
     """Catches the arrangement this whole file rests on going stale: if
-    `anthropic/claude-haiku-4-5` ever leaves `prices.yaml`, every cost above becomes
+    `anthropic/claude-haiku-5-5` ever leaves `prices.yaml`, every cost above becomes
     `0.000000` with `unpriced` beside it, and the equality cases would fail with no
     indication that the price table, and not the route, is what changed."""
     app = create_app(settings, NO_PROVIDER_KEYS)
@@ -1183,8 +1183,8 @@ def test_the_shipped_price_store_prices_the_key_the_chat_path_books_against(
     try:
         entry = price_for(app.state.prices.table, f"{PROVIDER}/{POLICY_MODEL}", WHEN_PRICED)
         assert entry is not None
-        assert entry.input_usd_per_1m == Decimal("1.00")
-        assert entry.output_usd_per_1m == Decimal("5.00")
+        assert entry.input_usd_per_1m == Decimal("0.10")
+        assert entry.output_usd_per_1m == Decimal("0.50")
     finally:
         close_adapters(app.state.adapters)
 

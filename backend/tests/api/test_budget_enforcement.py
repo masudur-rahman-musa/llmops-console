@@ -129,13 +129,13 @@ Asserted against the loaded policy by the first case below, so an edit to
 WARN_AT = 8_000_000
 """Exactly 80% of `CAP`: the inclusive warn boundary, in micro-USD."""
 
-CHAT_MICRO = 282
-"""(137 * 1.00 + 29 * 5.00) / 1_000_000 in micro-USD, from `STUB_USAGE` and the
-shipped `anthropic/claude-haiku-4-5` price, written out as arithmetic rather than
-recomputed from the table the implementation reads."""
+CHAT_MICRO = 28
+"""(137 * 0.10 + 29 * 0.50) / 1_000_000 in micro-USD, rounded to six places, from
+`STUB_USAGE` and the shipped `anthropic/claude-haiku-5-5` price, written out as arithmetic
+rather than recomputed from the table the implementation reads."""
 
-STREAM_MICRO = 691
-"""(431 * 1.00 + 52 * 5.00) / 1_000_000, from `STREAM_USAGE`. Different from
+STREAM_MICRO = 69
+"""(431 * 0.10 + 52 * 0.50) / 1_000_000, rounded to six places, from `STREAM_USAGE`. Different from
 `CHAT_MICRO` in both directions, so a streamed request debited from the
 non-streamed usage is a different number here."""
 

@@ -11,16 +11,16 @@ function seconds(iso: string): number {
 }
 
 export default consolePage("quality", "Quality", (body) => {
-  // The chart drops a run whose accuracy is absent or null, and sorts by time itself.
-  const accuracy = body.runs.map((run): [number, number] => {
-    const value = run.metrics.decision_accuracy;
+  // The chart drops a run whose score is absent or null, and sorts by time itself.
+  const scores = body.runs.map((run): [number, number] => {
+    const value = run.metrics.check_score;
     return [seconds(run.started_at), typeof value === "number" ? value : Number.NaN];
   });
   return (
     <>
       <LineChart
-        title="Decision accuracy"
-        points={accuracy}
+        title="Check score"
+        points={scores}
         markers={body.release_markers.map((marker) => seconds(marker.deployed_at))}
       />
 

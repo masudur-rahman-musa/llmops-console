@@ -31,7 +31,7 @@ its residency rules, redacts personal data on the way out, caches what repeats,
 prices what it spends, refuses what exceeds the budget, and records the whole
 thing. The console reads that record back.
 
-The gateway is one half. The other is an evaluation harness: a golden set, a
+The gateway is one half. The other is an evaluation harness: conversation cases, a
 scored run, and a CI gate that fails the pull request when the numbers fall
 below the committed baseline. A guarantee nobody measures is a preference.
 
@@ -95,7 +95,7 @@ being true.
    alias, the model and the normalised body are all part of the key, so two
    tenants cannot collide: [tests/cache/test_key.py](tests/cache/test_key.py).
 6. **A release that makes the agent worse does not merge.** The gate scores the
-   golden set and compares it to the committed baseline:
+   conversation cases and compares it to the committed baseline:
    [tests/evals/test_gate.py](tests/evals/test_gate.py).
 7. **Every token is attributed and priced at the rate in force.** Ledger rows
    name the price entry that priced them, and history is never rewritten:
@@ -129,27 +129,27 @@ Every standing rule below is one the build paid for.
 
 ## How the evals work
 
-A golden set of cases lives in [project-evals/golden/](project-evals/golden/),
-each case carrying its input, what a correct answer must contain, and what it
-must refuse. The format is described in
+The engine plays multi-turn conversations. The companion help desk keeps 33 cases;
+each one holds what the person types, which tools should be called, and when the
+person says yes. The format is described in
 [docs/eval-format.md](docs/eval-format.md).
 
-A run resolves one alias against the real gateway, scores every case, and writes
-a report: decision accuracy, refusal recall, citation accuracy, latency per turn
-and USD per 1,000 turns. Scoring is deterministic where it can be, and
-model-judged where it cannot; the judge's own agreement with human labels is
-measured rather than assumed. The report shape is in
+A run plays each case through the help desk's conversation route and checks every
+turn three ways: the right tools were called in order, nothing was changed before the
+yes, and no request number, ticket number or role name appears that a tool did not
+return. A judge grades the marked replies pass or fail, and its own agreement with
+reference labels is measured rather than assumed. The report shape is in
 [docs/eval-report.md](docs/eval-report.md) and the target it runs against in
-[docs/eval-target.md](docs/eval-target.md).
+[docs/eval-target.md](docs/eval-target.md). Each finished case is saved at once, so a
+stopped run continues without paying for the cases it already played.
 
-`project-evals/baseline.json` holds the committed numbers. The CI gate compares
-a run against them and fails the pull request when a metric falls below its
-floor, described in [docs/eval-gate.md](docs/eval-gate.md). On every pull
-request it runs the help desk's own golden set against the real help desk agent,
-with a mock standing in for the model, so it needs no key. The baseline changes
-only through a commit that carries its own decision record, and never to make a
-failing run pass. Metrics are percentages with an explicit null for "no
-evidence", so an empty slice cannot read as a perfect score.
+`backend/evals/conversation-baseline.json` holds the committed numbers. The CI gate
+compares a run against them and fails the pull request when the percent of cases
+passed falls below the baseline, described in [docs/eval-gate.md](docs/eval-gate.md).
+On every pull request it plays the help desk's 33 cases against the real help desk
+agent on the real cheap model, so it needs a model key and costs roughly $1 to $2 a
+run. The baseline changes only through a commit that carries its own decision record,
+and never to make a failing run pass.
 
 ### Redaction accuracy
 
@@ -199,15 +199,14 @@ engine skips any number the input has already used.
 
 ## Self-hosted vs API tradeoff
 
-One alias, `agent-default`, resolved four ways over the same golden set: a cheap
+One alias, `agent-default`, resolved four ways over the same small conversation file: a cheap
 API tier, a strong API tier, the local CPU model on the box this project runs
 on, and vLLM on a GPU instance applied for the run and destroyed after it. Each
-option reports decision accuracy, refusal recall, citation accuracy, p50 and p95
-latency per turn, and USD per 1,000 turns. API cost comes from the ledger;
+option reports its check score and USD per 1,000 turns. API cost comes from the ledger;
 self-hosted cost comes from the instance's hourly price divided by the
 throughput it actually delivered.
 
-How the runs are made, and what ten cases on one sequential stream can and
+How the runs are made, and what three cases on one sequential stream can and
 cannot tell you: [docs/tradeoff-run/README.md](docs/tradeoff-run/README.md). The
 computed table and the winner it picks are written to `docs/tradeoff.md` by the
 same harness once all four runs have landed.

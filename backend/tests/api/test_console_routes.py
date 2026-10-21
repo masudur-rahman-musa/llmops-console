@@ -132,7 +132,7 @@ HOME_READ = HomeRead(
     requests_today=42,
     cost_usd_today=1.25,
     residency_violations_today=1,
-    last_eval=LastEval(id="run-a", finished_at=FINISHED, passed=True, decision_accuracy=0.91),
+    last_eval=LastEval(id="run-a", finished_at=FINISHED, passed=True, check_score=0.91),
     open_incidents=2,
 )
 
@@ -161,7 +161,7 @@ QUALITY_READ = QualityRead(
             run_kind="ci",
             git_sha="abc1234",
             passed=True,
-            metrics={"decision_accuracy": 0.91},
+            metrics={"check_score": 0.91},
         ),
     ),
     release_markers=(ReleaseMarker(git_sha="abc1234", deployed_at=DEPLOYED, status="deployed"),),
@@ -196,7 +196,7 @@ RELEASE_ROWS = (
         pr_url=None,
         eval_run_id="run-a",
         eval_passed=True,
-        decision_accuracy=0.91,
+        check_score=0.91,
     ),
 )
 
@@ -789,7 +789,7 @@ def test_the_home_body_reads_both_sources(wired: Wired) -> None:
             "id": "run-a",
             "finished_at": HOME_READ.model_dump(mode="json")["last_eval"]["finished_at"],
             "passed": True,
-            "decision_accuracy": 0.91,
+            "check_score": 0.91,
         },
         "open_incidents": 2,
     }
@@ -987,16 +987,8 @@ def test_the_higher_is_better_metrics_are_pinned() -> None:
     would report every speed-up as a regression, and a listed accuracy dropped from it, which
     would hide a real drop on a blocked release."""
     assert HIGHER_IS_BETTER_METRICS == (
-        "intent_accuracy",
-        "tool_selection_accuracy",
-        "tool_args_accuracy",
-        "decision_accuracy",
-        "risk_class_accuracy",
-        "refusal_precision",
-        "refusal_recall",
-        "clarify_accuracy",
-        "citation_accuracy",
-        "injection_resistance",
+        "check_score",
+        "judge_score",
     )
 
 
@@ -1005,34 +997,34 @@ REGRESSION_ROWS: list[
 ] = [
     (
         "a listed metric lower than before",
-        {"decision_accuracy": 0.8},
-        {"decision_accuracy": 0.85},
-        (Regression(metric="decision_accuracy", value=0.8, previous=0.85),),
+        {"check_score": 0.8},
+        {"check_score": 0.85},
+        (Regression(metric="check_score", value=0.8, previous=0.85),),
     ),
-    ("equal is not a regression", {"decision_accuracy": 0.85}, {"decision_accuracy": 0.85}, ()),
-    ("higher is not a regression", {"decision_accuracy": 0.9}, {"decision_accuracy": 0.85}, ()),
+    ("equal is not a regression", {"check_score": 0.85}, {"check_score": 0.85}, ()),
+    ("higher is not a regression", {"check_score": 0.9}, {"check_score": 0.85}, ()),
     ("an unlisted metric lower than before", {"cost_usd": 0.5}, {"cost_usd": 0.9}, ()),
-    ("a bool current value", {"clarify_accuracy": False}, {"clarify_accuracy": True}, ()),
-    ("a bool previous value", {"intent_accuracy": 0}, {"intent_accuracy": True}, ()),
-    ("a string current value", {"intent_accuracy": "0.5"}, {"intent_accuracy": 0.9}, ()),
-    ("a null previous value", {"intent_accuracy": 0.5}, {"intent_accuracy": None}, ()),
+    ("a bool current value", {"check_score": False}, {"check_score": True}, ()),
+    ("a bool previous value", {"judge_score": 0}, {"judge_score": True}, ()),
+    ("a string current value", {"judge_score": "0.5"}, {"judge_score": 0.9}, ()),
+    ("a null previous value", {"judge_score": 0.5}, {"judge_score": None}, ()),
     (
         "integers count as numbers",
-        {"refusal_recall": 0},
-        {"refusal_recall": 1},
-        (Regression(metric="refusal_recall", value=0.0, previous=1.0),),
+        {"judge_score": 0},
+        {"judge_score": 1},
+        (Regression(metric="judge_score", value=0.0, previous=1.0),),
     ),
-    ("absent from the current run", {}, {"decision_accuracy": 0.9}, ()),
-    ("absent from the previous run", {"decision_accuracy": 0.1}, {}, ()),
-    ("no current metrics", None, {"decision_accuracy": 0.9}, ()),
-    ("no previous metrics", {"decision_accuracy": 0.1}, None, ()),
+    ("absent from the current run", {}, {"check_score": 0.9}, ()),
+    ("absent from the previous run", {"check_score": 0.1}, {}, ()),
+    ("no current metrics", None, {"check_score": 0.9}, ()),
+    ("no previous metrics", {"check_score": 0.1}, None, ()),
     (
         "ordered by the list, not the mapping",
-        {"refusal_recall": 0.7, "decision_accuracy": 0.8},
-        {"refusal_recall": 0.9, "decision_accuracy": 0.85},
+        {"judge_score": 0.7, "check_score": 0.8},
+        {"judge_score": 0.9, "check_score": 0.85},
         (
-            Regression(metric="decision_accuracy", value=0.8, previous=0.85),
-            Regression(metric="refusal_recall", value=0.7, previous=0.9),
+            Regression(metric="check_score", value=0.8, previous=0.85),
+            Regression(metric="judge_score", value=0.7, previous=0.9),
         ),
     ),
 ]
@@ -1059,7 +1051,7 @@ def test_regressed_metrics_decision_table(
 def test_a_regressed_metric_is_one_lower_than_the_previous_passed_run(wired: Wired) -> None:
     """Catches a quality route that passes the blocked release through without computing
     `regressed`, computes it against the wrong side (current and previous swapped reads the
-    rise in `intent_accuracy` as the regression), leaks the raw `metrics` maps into the
+    rise in `check_score` as the regression), leaks the raw `metrics` maps into the
     body, or fails on a release with no linked run or no earlier passed run."""
     linked = BlockedRelease(
         git_sha="bad0001",
@@ -1067,15 +1059,13 @@ def test_a_regressed_metric_is_one_lower_than_the_previous_passed_run(wired: Wir
         pr_url="https://github.com/example/repo/pull/7",
         eval_run_id="run-blocked",
         metrics={
-            "refusal_recall": 0.7,
-            "decision_accuracy": 0.8,
-            "intent_accuracy": 0.99,
+            "judge_score": 0.7,
+            "check_score": 0.99,
             "p95_latency_ms": 400,
         },
         previous_metrics={
-            "refusal_recall": 0.9,
-            "decision_accuracy": 0.85,
-            "intent_accuracy": 0.9,
+            "judge_score": 0.9,
+            "check_score": 0.9,
             "p95_latency_ms": 900,
         },
     )
@@ -1084,7 +1074,7 @@ def test_a_regressed_metric_is_one_lower_than_the_previous_passed_run(wired: Wir
         deployed_at=DEPLOYED,
         pr_url=None,
         eval_run_id="run-first",
-        metrics={"decision_accuracy": 0.1},
+        metrics={"check_score": 0.1},
         previous_metrics=None,
     )
     unlinked = BlockedRelease(
@@ -1110,8 +1100,7 @@ def test_a_regressed_metric_is_one_lower_than_the_previous_passed_run(wired: Wir
             "pr_url": "https://github.com/example/repo/pull/7",
             "eval_run_id": "run-blocked",
             "regressed": [
-                {"metric": "decision_accuracy", "value": 0.8, "previous": 0.85},
-                {"metric": "refusal_recall", "value": 0.7, "previous": 0.9},
+                {"metric": "judge_score", "value": 0.7, "previous": 0.9},
             ],
         },
         {

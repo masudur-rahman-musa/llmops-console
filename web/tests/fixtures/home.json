@@ -9,7 +9,7 @@
     "id": "run-2026-09-16-nightly",
     "finished_at": "2026-09-16T07:05:00Z",
     "passed": true,
-    "decision_accuracy": 0.9312
+    "check_score": 0.9312
   },
   "open_incidents": 2
 }

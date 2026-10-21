@@ -29,7 +29,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "eval-gate.yml"
-CI_OVERLAY = REPO_ROOT / "project-evals" / "ci" / "routing.ci.yaml"
+CI_OVERLAY = REPO_ROOT / "backend" / "config" / "routing.ci.yaml"
 
 
 def load(path: Path) -> dict[str, Any]:
@@ -189,17 +189,22 @@ def test_the_gate_step_passes_the_report_the_baseline_and_the_comment(
     assert len(gate_steps) == 1
 
 
-def test_the_eval_job_uses_the_evals_overlay(jobs: dict[str, Any]) -> None:
-    """An earlier change: the run's policy is `infra/evals/routing.evals.yaml`, which points every
-    provider at the mock. Catches a job that runs `make eval` with the overlay unreferenced,
-    where a pull request could reach a real provider. The overlay is named by the job's own
-    steps or by the `make eval` recipe they call, and the recipe must name its compose file."""
+def test_the_eval_job_runs_make_eval_on_the_real_model_with_its_key(
+    jobs: dict[str, Any],
+) -> None:
+    """a design note: the PR gate plays the conversations on the real cheap model, so the mock
+    routing overlay is gone and the job carries `ANTHROPIC_API_KEY` as a secret. Catches a
+    job still pointing every provider at a mock (it would score a mock, not a chat), and one
+    with no key (the gate would fail on every pull request for a missing secret that the
+    workflow never names)."""
     makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
     scripts = "\n".join(run_of(step) for step in steps(jobs["eval"]))
 
     assert "make eval" in scripts
     assert "infra/evals/compose.yml" in makefile
-    assert (REPO_ROOT / "infra" / "evals" / "routing.evals.yaml").is_file()
+    assert "secrets.ANTHROPIC_API_KEY" in yaml.safe_dump(jobs["eval"])
+    overlay = REPO_ROOT / "infra" / "evals" / "routing.evals.yaml"
+    assert not overlay.exists() or "mock-provider" not in overlay.read_text(encoding="utf-8")
 
 
 def test_the_ci_overlay_caps_the_evals_tenant_at_two_dollars() -> None:

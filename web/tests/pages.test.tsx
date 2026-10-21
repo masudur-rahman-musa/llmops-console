@@ -168,11 +168,11 @@ describe("console pages", () => {
     expect(has(home, "p95 latency: 412 ms")).toBe(true);
     expect(has(home, "Error rate: 0.50%")).toBe(true);
     expect(has(home, "Open incidents: 2")).toBe(true);
-    expect(has(home, "Last eval: decision accuracy 93.12%, passed")).toBe(true);
+    expect(has(home, "Last eval: check score 93.12%, passed")).toBe(true);
     expect(has(home, "All EU data stayed in the EU: ✓")).toBe(true);
     const failedEval = fixture("home");
     failedEval.last_eval = { ...(failedEval.last_eval as Fixture), passed: false };
-    expect(has(await render("home", failedEval), "Last eval: decision accuracy 93.12%, failed")).toBe(true);
+    expect(has(await render("home", failedEval), "Last eval: check score 93.12%, failed")).toBe(true);
     const nullHome = fixture("home");
     nullHome.requests_today = null;
     expect(has(await render("home", nullHome), "Today the gateway handled n/a requests costing $1,234.50.")).toBe(true);
@@ -205,11 +205,8 @@ describe("console pages", () => {
     expect(columns).toEqual([
       "Option",
       "Kind",
-      "decision_accuracy",
-      "refusal_recall",
-      "citation_accuracy",
-      "p50_latency_ms",
-      "p95_latency_ms",
+      "check_score",
+      "judge_score",
       "usd_per_1000_turns",
     ]);
     expectInOrder(cost, [
@@ -221,7 +218,7 @@ describe("console pages", () => {
     expect(cost).not.toContain("Not measured yet.");
 
     const quality = await render("quality");
-    expect(has(quality, "Decision accuracy")).toBe(true);
+    expect(has(quality, "Check score")).toBe(true);
     const qualityCharts = svgs(quality).filter((svg) => count(svg, /<circle\b/g) > 0);
     expect(qualityCharts).toHaveLength(1);
     expect(count(qualityCharts[0], /<circle\b/g)).toBe(3);
@@ -232,8 +229,8 @@ describe("console pages", () => {
     expect(has(quality, "missed_refusal 2")).toBe(true);
     expect(has(quality, "3f9c2a7b1e4d")).toBe(true);
     expect(has(quality, "a1b2c3d4e5f6")).toBe(true);
-    expect(has(quality, "decision_accuracy: 0.88 (was 0.93)")).toBe(true);
-    expect(has(quality, "refusal_recall: 0.9 (was 0.95)")).toBe(true);
+    expect(has(quality, "check_score: 0.88 (was 0.93)")).toBe(true);
+    expect(has(quality, "judge_score: 0.9 (was 0.95)")).toBe(true);
     expect(has(quality, "javascript:alert(1)")).toBe(true);
     const prLinks = anchors(quality).filter((anchor) => anchor.label === "PR");
     expect(prLinks.map((anchor) => anchor.href)).toEqual(["https://github.com/example/helpdesk/pull/41"]);
@@ -282,6 +279,8 @@ describe("console pages", () => {
     for (const expected of ["2026-09-15 10:00 UTC", "2026-09-14 16:20 UTC", "2026-09-13 09:45 UTC", "deployed", "blocked", "javascript:alert(1)"]) {
       expect(has(releases, expected), expected).toBe(true);
     }
+    expect(has(releases, "check score 93.00%")).toBe(true);
+    expect(has(releases, "check score 88.00%")).toBe(true);
     expect(words(releases, "passed")).toBe(1);
     expect(words(releases, "failed")).toBe(1);
     expect(occurrences(text(releases), "no eval")).toBe(1);
@@ -354,6 +353,26 @@ describe("console pages", () => {
     expect(await render("home")).not.toContain("No eval yet.");
   });
 
+  it("pages show an empty state for a run without check_score", async () => {
+    // Catches a null check_score drawn as 0%, as NaN, or as a plotted point: home says n/a, the
+    // releases row says n/a beside its pass or fail, and the quality chart has no data.
+    const home = fixture("home");
+    home.last_eval = { ...(home.last_eval as Fixture), check_score: null };
+    expect(has(await render("home", home), "Last eval: check score n/a, passed")).toBe(true);
+
+    const releases = fixture("releases");
+    for (const release of list(releases, "releases")) release.check_score = null;
+    const releasesHtml = await render("releases", releases);
+    expect(has(releasesHtml, "check score n/a")).toBe(true);
+    expect(releasesHtml).not.toContain("0.00%");
+
+    const quality = fixture("quality");
+    for (const run of list(quality, "runs")) run.metrics = { judge_score: 0.9 };
+    const qualityHtml = await render("quality", quality);
+    expect(has(qualityHtml, "No data.")).toBe(true);
+    expect(svgs(qualityHtml).filter((svg) => count(svg, /<circle\b/g) > 0)).toHaveLength(0);
+  });
+
   it("cost renders rollup not populated", async () => {
     // Catches a false rollup_populated rendered as an empty table with no explanation.
     const body = fixture("cost");
@@ -394,8 +413,8 @@ describe("console pages", () => {
     list(body, "blocked")[0].regressed = [];
     const html = await render("quality", body);
     expect(occurrences(text(html), "No regression recorded.")).toBe(1);
-    expect(html).not.toContain("decision_accuracy: 0.88");
-    expect(has(html, "refusal_recall: 0.9 (was 0.95)")).toBe(true);
+    expect(html).not.toContain("check_score: 0.88");
+    expect(has(html, "judge_score: 0.9 (was 0.95)")).toBe(true);
   });
 
   it("reliability renders the slo table above the charts", async () => {

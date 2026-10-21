@@ -92,7 +92,7 @@ services:
       retries: 10
 
   pushgateway:
-    # Local target for `ops-eval run --pushgateway-url`, matching
+    # Local target for `ops-eval conversations --pushgateway-url`, matching
     # `infra/k8s/evals/pushgateway.yaml`'s pinned version. No healthcheck and no
     # `depends_on` anywhere: this image is a scratch binary with no shell, and
     # nothing in this compose file's own startup path needs it up first - it is

@@ -1,7 +1,7 @@
 # The CI budget overlay (the design's "$2 hard budget per run").
 #
 # A PARTIAL document, not a policy: merged over the shipped `routing.yaml`, with
-# both the compose gateway and `ops-eval run` pointed at the result. The prod number stays `10.00` in `routing.yaml`, which is what a
+# both the compose gateway and `ops-eval conversations` pointed at the result. The prod number stays `10.00` in `routing.yaml`, which is what a
 # tenant gets outside a gate run.
 #
 # The cap lives in config because it cannot live anywhere else: `limits/budget.py`

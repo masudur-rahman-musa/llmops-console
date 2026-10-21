@@ -101,7 +101,7 @@ def test_response_headers_on_success(chat_client: TestClient, policy: Policy) ->
     # satisfied by a resolver that returned something else entirely.
     assert resolved.provider == "anthropic"
     assert resolved.region == "us"
-    assert resolved.model == "claude-haiku-4-5"
+    assert resolved.model == "claude-haiku-5-5"
 
 
 def test_the_header_set_is_exactly_seven(chat_client: TestClient) -> None:
@@ -132,7 +132,7 @@ def test_the_cost_header_is_the_booked_cost(chat_client: TestClient) -> None:
     assert Decimal(value) == row.cost_usd
     assert len(value.partition(".")[2]) == 6, value
     # 137 input and 29 output tokens at the shipped 1.00 / 5.00 per million.
-    assert value == "0.000282"
+    assert value == "0.000028"
 
 
 def test_model_header_is_the_provider_model_not_the_alias(

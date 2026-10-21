@@ -11,8 +11,8 @@
 # there is exactly one ConfigMap in `monitoring` for Prometheus rather than two
 # - see `infra/tests/infra/test_k8s_alerting.py`'s module docstring), and `alerting`,
 # naming `Service/alertmanager`'s DNS as the one place firing alerts go. An earlier change
-# adds a seventh, `evals-pushgateway`, the Pushgateway the nightly-eval CronJob
-# pushes `gateway_eval_*` to.
+# adds a seventh, `evals-pushgateway`, the Pushgateway the nightly eval
+# workflow pushes `gateway_eval_*` to.
 #
 # Scraping is now SEVEN static targets by Service DNS, so this pod needs no
 # ServiceAccount and no RBAC at all: nothing here may read the API server.
@@ -189,11 +189,11 @@ data:
               runbook: dev/ops/runbook.md#budgetexceeded
 
           - alert: NightlyEvalRegression
-            expr: gateway_eval_decision_accuracy - quantile_over_time(0.5, gateway_eval_decision_accuracy[7d]) < -2
+            expr: gateway_eval_check_score - quantile_over_time(0.5, gateway_eval_check_score[7d]) < -2
             labels:
               severity: warning
             annotations:
-              summary: The nightly eval's decision accuracy dropped more than 2 points against its 7-day median.
+              summary: The nightly eval's check score dropped more than 2 points against its 7-day median.
               runbook: dev/ops/runbook.md#nightlyevalregression
 
           - alert: DiskSpaceLow

@@ -38,5 +38,8 @@ services:
     environment:
       GATEWAY_BASE_URL: http://gateway:8080
       GATEWAY_API_KEY: ${GATEWAY_API_KEY}
+      CASES_PATH: /cases/kind-cases.jsonl
+    volumes:
+      - ./backend/evals/kind-cases.jsonl:/cases/kind-cases.jsonl:ro
     depends_on:
       gateway: { condition: service_healthy }

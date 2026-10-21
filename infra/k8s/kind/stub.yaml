@@ -38,6 +38,20 @@ spec:
                 secretKeyRef:
                   name: eval-target-stub-secrets
                   key: GATEWAY_API_KEY
+            # The kind cluster has no model, so the stub answers from the case file
+            # alone and never calls the gateway for a reply.
+            - name: FORWARD_TO_GATEWAY
+              value: "false"
+            - name: CASES_PATH
+              value: /cases/kind-cases.jsonl
+          volumeMounts:
+            - name: cases
+              mountPath: /cases
+              readOnly: true
+      volumes:
+        - name: cases
+          configMap:
+            name: eval-target-stub-cases
 ---
 apiVersion: v1
 kind: Service

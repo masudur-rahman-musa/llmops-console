@@ -35,7 +35,7 @@ export default consolePage("home", "Home", (body) => (
     <p className="note">
       {body.last_eval === null
         ? "No eval yet."
-        : `Last eval: decision accuracy ${percent(body.last_eval.decision_accuracy)}, ${body.last_eval.passed ? "passed" : "failed"}`}
+        : `Last eval: check score ${percent(body.last_eval.check_score)}, ${body.last_eval.passed ? "passed" : "failed"}`}
     </p>
   </>
 ));

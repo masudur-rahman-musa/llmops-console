@@ -103,7 +103,7 @@ def test_the_job_runs_only_when_a_target_url_is_configured(
     assert "EVAL_TARGET_URL" in str(jobs["nightly-eval"]["if"])
 
 
-def test_the_job_invokes_ops_eval_run_with_the_nightly_run_kind(
+def test_the_job_invokes_ops_eval_conversations_with_the_nightly_run_kind(
     jobs: dict[str, Any],
 ) -> None:
     """Catches a copy-pasted `eval-gate.yml` step left at `--run-kind ci`, which would tag
@@ -112,9 +112,32 @@ def test_the_job_invokes_ops_eval_run_with_the_nightly_run_kind(
     and its `quantile_over_time` window are read against."""
     scripts = [run_of(step) for step in steps(jobs["nightly-eval"])]
     matches = [
-        script for script in scripts if "ops-eval run" in script and "--run-kind nightly" in script
+        script
+        for script in scripts
+        if "ops-eval conversations" in script and "--run-kind nightly" in script
     ]
-    assert len(matches) == 1, f"{len(matches)} steps run `ops-eval run --run-kind nightly`"
+    assert len(matches) == 1, (
+        f"{len(matches)} steps run `ops-eval conversations --run-kind nightly`"
+    )
+    assert "ops-eval run" not in " ".join(scripts)
+    assert "--cases helpdesk/backend/evals/conversations/cases.jsonl" in matches[0]
+
+
+def test_the_job_checks_out_the_help_desk_for_its_cases(jobs: dict[str, Any]) -> None:
+    """a design note: `nightly-eval.yml` is the one nightly path and reads the help desk's 33 cases
+    from a checkout of its repository (never a copy here). Catches a job with no second
+    checkout (the cases file is then missing at run time), one using the default token (which
+    cannot read a private repo), and one that puts the checkout somewhere other than the
+    `helpdesk/` folder the `--cases` path names."""
+    checkouts = [
+        step
+        for step in steps(jobs["nightly-eval"])
+        if "actions/checkout" in str(step.get("uses", "")) and "repository" in step.get("with", {})
+    ]
+
+    assert len(checkouts) == 1
+    assert checkouts[0]["with"]["token"] == "${{ secrets.HELPDESK_REPO_TOKEN }}"
+    assert checkouts[0]["with"]["path"] == "helpdesk"
 
 
 def test_the_job_passes_a_pushgateway_url(jobs: dict[str, Any]) -> None:

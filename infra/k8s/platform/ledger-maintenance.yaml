@@ -9,8 +9,8 @@
 # platform kustomization's `images:` transformer rewrites it to the full GHCR path at
 # the placeholder tag in the root build, and the server overlay's own `images:` block
 # does the same there - where `deploy.yml`'s `kustomize edit set image` sets the real
-# deployed SHA. Writing the full literal here (the shape `evals/nightly-eval-cronjob.yaml`
-# has to use, since no transformer reaches its sibling kustomization) would pin the
+# deployed SHA. Writing the full literal here (the shape a manifest outside the transformer's
+# reach has to use) would pin the
 # placeholder tag on the live node and the pods would never pull.
 #
 # No `imagePullSecrets`: `ghcr-pull` lives in `apps`, not `platform`, and a Secret is

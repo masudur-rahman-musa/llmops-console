@@ -8,7 +8,7 @@ The script is EXECUTED, against fake `terraform`, `aws`, `kubectl`, `ssh`, `dock
 `uv`, `ops-eval`, `ops-migrate`, `redis-cli` and `curl` binaries placed first on `PATH` in
 `tmp_path`, exactly the harness `test_aws_evidence.py` uses. Each fake appends
 `<tool> <argv joined by space>` to `$FAKE_LOG`, exits 1 when `FAKE_FAIL_<TOOL>` is set, and
-prints the canned output the script parses. Two fakes do more: `ops-eval run` writes
+prints the canned output the script parses. Two fakes do more: `ops-eval conversations` writes
 `report.json` and `report.md` into its `--out` directory even when it is made to fail, which is
 what criterion 46 is about, and `docker` records the two credential variables from its own
 environment into `$FAKE_ENV_DIR`, which is how the tenant key is seen reaching the harness
@@ -76,9 +76,10 @@ OPTION_IDS = ("cheap-api", "strong-api", "local-cpu", "gpu-vllm")
 OPTION = "cheap-api"
 TARGET_URL = "http://localhost:8090"
 
-#: The stand-in golden set (decision E) and the tenant every run is made as.
-SET_PATH = "project-evals/golden/e2e-kind.jsonl"
-SET_NAME = "e2e-kind.jsonl"
+#: The small conversation file this repo ships for the stand-in target and the
+#: tenant the gateway policy is built for.
+SET_PATH = "backend/evals/kind-cases.jsonl"
+SET_NAME = "kind-cases.jsonl"
 TENANT = "evals"
 
 #: The account ID every fake output carries, and what a capture must say instead.
@@ -217,7 +218,7 @@ JSON
     printf '%s\n' 'vllm:num_requests_running 0'
     ;;
   ops-eval)
-    if has run "$@"; then
+    if has conversations "$@"; then
       out=$(flag --out "$@") || out=""
       if [ -n "$out" ]; then
         mkdir -p "$out"
@@ -373,8 +374,10 @@ def policy_builds(run: Run) -> list[tuple[int, list[str]]]:
 
 
 def eval_runs(run: Run) -> list[tuple[int, list[str]]]:
-    """Every `ops-eval run ...` call, whether reached directly or through `uv run`."""
-    return [(index, tokens) for index, tokens in calls(run, "ops-eval") if "run" in tokens]
+    """Every `ops-eval conversations ...` call, direct or through `uv run`."""
+    return [
+        (index, tokens) for index, tokens in calls(run, "ops-eval") if "conversations" in tokens
+    ]
 
 
 def flushes(run: Run) -> list[int]:
@@ -579,7 +582,7 @@ def test_option_builds_flushes_migrates_runs_and_tears_down_in_that_order(
     assert ups, f"the harness is never brought up: {log}"
     assert flush, f"the response cache is never flushed: {log}"
     assert migrates, f"ops-migrate is never run: {log}"
-    assert len(evaluations) == 1, f"{len(evaluations)} ops-eval run calls: {log}"
+    assert len(evaluations) == 1, f"{len(evaluations)} ops-eval conversations calls: {log}"
     assert downs, f"the harness is never torn down: {log}"
 
     assert builds[0][0] < ups[0][0] < flush[0] < migrates[0][0] < evaluations[0][0]
@@ -602,13 +605,10 @@ def test_option_runs_the_named_set_as_the_evals_tenant_with_the_policy_it_built(
     arguments = evaluations[0][1]
     built_for = [token for token in builds[0][1] if not token.endswith("tradeoff_policy.py")]
 
-    assert flag(arguments, "--tenant") == TENANT
-    assert str(flag(arguments, "--set")).endswith(SET_PATH)
+    assert str(flag(arguments, "--cases")).endswith(SET_PATH)
     assert flag(arguments, "--target") == TARGET_URL
     assert built_for[0] == OPTION, f"the policy was built for {built_for[0]!r}"
-    assert flag(arguments, "--policy") == built_for[1], (
-        f"--policy {flag(arguments, '--policy')!r} is not the file built at {built_for[1]!r}"
-    )
+    assert "--set" not in arguments and "--tenant" not in arguments and "--policy" not in arguments
     out = str(flag(arguments, "--out"))
     assert Path(out).parts[-4:] == ("docs", "tradeoff-run", "reports", OPTION), out
 
@@ -690,7 +690,7 @@ def test_gpu_applies_connects_deploys_waits_measures_and_destroys_in_that_order(
     assert fetches, f"the kubeconfig is never fetched: {log}"
     assert len(deploys) == 1, f"{len(deploys)} `kubectl apply -k infra/k8s/gpu` calls: {log}"
     assert len(waits) >= 2, f"{len(waits)} waits, expected the fetch Job and the rollout: {log}"
-    assert len(evaluations) == 1, f"{len(evaluations)} ops-eval run calls: {log}"
+    assert len(evaluations) == 1, f"{len(evaluations)} ops-eval conversations calls: {log}"
     assert len(destroys) == 1, f"{len(destroys)} destroy -auto-approve calls: {log}"
 
     assert applies[0][0] < fetches[0][0] < deploys[0][0] < waits[0][0]
@@ -971,7 +971,7 @@ def test_no_workflow_names_the_measurement_tooling() -> None:
 
 
 def test_the_run_readme_states_the_methodology_the_numbers_have_to_be_read_with() -> None:
-    """Criterion 62 and risk 4. Ten cases move `decision_accuracy` in ten-point steps and one
+    """Criterion 62 and risk 4. Ten cases move `check_score` in ten-point steps and one
     sequential stream measures no concurrency, so a table published without those two sentences
     implies a precision it has not got. Catches a README that lists the commands and leaves the
     methodology out, and one whose cost table is missing entirely."""

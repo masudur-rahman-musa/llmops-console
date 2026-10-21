@@ -26,11 +26,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY app/ ./app/
 COPY config/ ./config/
 COPY migrations/ ./migrations/
-# The eval golden set, so the nightly-eval CronJob can read it from an in-image
-# path (`/app/evals/golden/example.jsonl`) rather than a repo-relative one the
-# container does not carry. Only `golden/` ships, not the
-# baseline, labels or target stub: the nightly run reads the set and nothing else.
-COPY evals/golden/ ./evals/golden/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev
 

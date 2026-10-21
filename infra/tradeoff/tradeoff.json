@@ -1,9 +1,9 @@
 {
-  "set_name": "e2e-kind.jsonl",
+  "set_name": "kind-cases.jsonl",
   "options": [
     {
       "id": "cheap-api",
-      "label": "API cheap (Claude Haiku 4.5)",
+      "label": "API cheap (Claude Haiku 5.5)",
       "kind": "api",
       "report": "../docs/tradeoff-run/reports/cheap-api/report.json",
       "notes": "Cost comes from the ledger's own per-turn number, so this option carries no hourly price."

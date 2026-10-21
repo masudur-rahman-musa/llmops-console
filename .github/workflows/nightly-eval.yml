@@ -1,16 +1,16 @@
 name: nightly-eval
-# SPEC line 344's documented backup path to the k3s CronJob (`infra/k8s/evals/
-# nightly-eval-cronjob.yaml`, REQUIREMENTS #43): if the cluster's own nightly job is
-# ever missed or the cluster is down, this workflow can run the same golden set on
-# the same schedule from a clean checkout.
+# The one nightly eval path. The in-cluster CronJob is gone: its cases
+# would have been a copy of the help desk's file baked into an image. This workflow
+# checks out the help desk repository and plays its 33 conversation cases against
+# the target below, with the real models, and pushes the scores to the Pushgateway.
 #
-# Gated exactly the way `eval-gate.yml`'s `eval` job is (decision A there): there is
-# no `EVAL_TARGET_URL` repository variable yet - no target exists to run this
-# against - so the job is wired but SKIPPED until that variable is set. See
-# the project notes.
+# Gated on the `EVAL_TARGET_URL` repository variable: there is no standing target to
+# run this against yet, so the job is wired but skipped until that variable is set.
+# See the project notes.
 on:
   # Manual only: evals run on demand, not on a timer. Run it from the Actions tab
-  # or `gh workflow run nightly-eval.yml`.
+  # or `gh workflow run nightly-eval.yml`. Switch on a `schedule:` here once the
+  # target exists and the cost is accepted.
   workflow_dispatch:
 
 concurrency:
@@ -22,21 +22,33 @@ jobs:
     if: vars.EVAL_TARGET_URL != ''
     runs-on: ubuntu-latest
     env:
+      # The judge's gateway key. With it unset, the run scores the three checks
+      # only and says so.
       OPSCONSOLE_EVAL_JUDGE_KEY: ${{ secrets.OPSCONSOLE_EVAL_JUDGE_KEY }}
     steps:
       - uses: actions/checkout@v4
+      # The help desk repo is private, so it is checked out with a read-only token
+      # beside this one, to read its cases.
+      - uses: actions/checkout@v4
+        with:
+          repository: masudur-rahman-musa/ai-help-desk-governed-access
+          token: ${{ secrets.HELPDESK_REPO_TOKEN }}
+          path: helpdesk
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
       - run: uv sync --locked --project backend
-      - name: Run the golden set against the nightly target
+      # The judge is on only when `NIGHTLY_JUDGE_URL` (a gateway address) is set.
+      - name: Play the help desk's conversations against the nightly target
+        env:
+          JUDGE_URL: ${{ vars.NIGHTLY_JUDGE_URL }}
         run: |
-          uv run --project backend ops-eval run \
+          uv run --project backend ops-eval conversations \
             --target "${{ vars.EVAL_TARGET_URL }}" \
-            --set backend/evals/golden/example.jsonl \
-            --tenant evals \
+            --cases helpdesk/backend/evals/conversations/cases.jsonl \
             --run-kind nightly \
             --out reports \
+            ${JUDGE_URL:+--judge-url "$JUDGE_URL"} \
             --pushgateway-url "${{ vars.NIGHTLY_PUSHGATEWAY_URL }}"
       - name: Publish the report
         if: always()

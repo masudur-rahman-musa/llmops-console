@@ -1,4 +1,0 @@
-# `dup-1` appears on lines 2 and 4. The second occurrence is the offending line.
-{"id": "dup-1", "category": "helpdesk", "tenant": "acme", "principal_user": "dana.okafor", "messages": [{"role": "user", "content": "Printer is offline."}], "expected": {}}
-{"id": "dup-2", "category": "helpdesk", "tenant": "acme", "principal_user": "dana.okafor", "messages": [{"role": "user", "content": "Monitor is dark."}], "expected": {}}
-{"id": "dup-1", "category": "policy_qa", "tenant": "acme", "principal_user": "dana.okafor", "messages": [{"role": "user", "content": "What is the retention window?"}], "expected": {}}

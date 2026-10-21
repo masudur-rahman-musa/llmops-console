@@ -30,6 +30,17 @@ resources:
   - postgres-credentials.yaml
   - stub.yaml
 
+# The stub plays the same small case file `ops-eval conversations` plays, so the file
+# is read from `backend/evals/` here rather than copied (the relaxed load restrictor
+# the workflow already uses allows it). The name has no hash suffix: `stub.yaml` names it.
+configMapGenerator:
+  - name: eval-target-stub-cases
+    namespace: apps
+    files:
+      - kind-cases.jsonl=../../../backend/evals/kind-cases.jsonl
+generatorOptions:
+  disableNameSuffixHash: true
+
 # `llama.yaml` and `llama-embed.yaml` are out while the local model is out of use
 # (2026-10-12): on a 2-CPU runner the chat weight never finished downloading and
 # the embedding weight was never fetched, so the run checks `smoke.sh`'s

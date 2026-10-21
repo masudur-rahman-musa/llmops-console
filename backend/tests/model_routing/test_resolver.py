@@ -307,11 +307,54 @@ def test_judge_stays_on_anthropic_when_the_openai_key_is_set() -> None:
         {ANTHROPIC_KEY_ENV: FAKE_ANTHROPIC_KEY, OPENAI_KEY_ENV: FAKE_OPENAI_KEY}
     )
 
-    assert candidates == [("anthropic", "claude-haiku-4-5", "us")]
+    assert candidates == [("anthropic", "claude-haiku-5-5", "us")]
 
 
 def test_judge_has_one_candidate_when_it_is_not() -> None:
     """Catches a judge pointed anywhere but the cheaper Anthropic model."""
     candidates = judge_candidates({ANTHROPIC_KEY_ENV: FAKE_ANTHROPIC_KEY})
 
-    assert candidates == [("anthropic", "claude-haiku-4-5", "us")]
+    assert candidates == [("anthropic", "claude-haiku-5-5", "us")]
+
+
+EVAL_FIRST_CHOICE = (
+    ("agent-default", "claude-haiku-5-5"),
+    ("judge", "claude-haiku-5-5"),
+    ("agent-strong", "claude-sonnet-5-5"),
+)
+
+
+@pytest.mark.parametrize(
+    ("alias", "model"), EVAL_FIRST_CHOICE, ids=[a for a, _ in EVAL_FIRST_CHOICE]
+)
+def test_eval_aliases_run_on_haiku_and_sonnet_5_5(alias: str, model: str) -> None:
+    """Catches a shipped policy that still sends the cheap alias or the judge to Haiku 4.5,
+    or the strong alias to anything but Sonnet 5.5: the eval baseline is set on these
+    exact models, so a different first choice makes every later run incomparable."""
+    policy = load_policy(SHIPPED_POLICY_PATH)
+
+    resolved = resolve(
+        policy,
+        JUDGE_TENANT,
+        alias,
+        JUDGE_DATA_CLASS,
+        is_healthy=lambda provider: provider.startswith("anthropic"),
+    )
+
+    assert resolved
+    assert (resolved[0].provider, resolved[0].model) == ("anthropic", model)
+
+
+def test_no_candidate_in_the_shipped_policy_names_openai() -> None:
+    """Catches a leftover `openai` or `gpt-4o` candidate on any alias or any tenant override:
+    OpenAI is not used for evals, and a relaxed-mode fallback to it would spend on a
+    provider the owner turned off. Checked on the policy file, not on what resolves, so a
+    candidate hidden behind a disabled provider is still found."""
+    policy = load_policy(SHIPPED_POLICY_PATH)
+    candidates = [c for alias in policy.aliases.values() for c in alias.candidates]
+    for tenant in policy.tenants.values():
+        for override in tenant.overrides.values():
+            candidates.extend(override)
+
+    assert candidates
+    assert [c for c in candidates if c.provider == "openai" or c.model.startswith("gpt")] == []

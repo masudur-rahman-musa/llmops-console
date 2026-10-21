@@ -1,7 +1,8 @@
 name: e2e-kind
-# #68 (part, kind e2e): a full local deploy of the gateway and the real local
-# llama.cpp server, exercised end to end through `ops-eval run` against ten
-# golden cases.
+# #68 (part, kind e2e): a full local deploy of the gateway and a stub eval target,
+# checked end to end. `infra/k8s/kind/smoke.sh` checks the gateway's model-free paths,
+# and `ops-eval conversations` plays the three small cases in
+# `backend/evals/kind-cases.jsonl` through the stub on the conversation route.
 #
 # No dependency on `build.yml` or GHCR (decision D): the gateway's and the
 # stub's images are BUILT and `kind load docker-image`d fresh in the runner, so
@@ -11,10 +12,9 @@ name: e2e-kind
 # that directory's own comments for why the four Helpdesk workloads, the
 # console, every Ingress and two of `platform`'s files are absent.
 #
-# While the local model is out of use (2026-10-12) the run deploys without the
-# two llama.cpp servers and checks the gateway's model-free paths with
-# `infra/k8s/kind/smoke.sh`, in place of the ten golden cases, which all
-# need that model.
+# The cluster has no model (the llama.cpp servers are out of use), so the stub
+# answers from the case file alone and the cases check the console's own
+# scoring path, not a model.
 on:
   pull_request:
     branches: [main]
@@ -32,7 +32,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build the gateway image
-        run: docker build -t gateway:e2e-kind backend
+        working-directory: backend
+        run: docker build -t gateway:e2e-kind .
 
       - name: Build the eval-target-stub image
         run: docker build -t eval-target-stub:e2e-kind backend/evals/target-stub
@@ -62,19 +63,33 @@ jobs:
           kubectl -n apps rollout status deployment/gateway --timeout=5m
           kubectl -n apps rollout status deployment/eval-target-stub --timeout=5m
 
-      # While the local model is out of use, the golden set (`ops-eval run`
-      # through the stub on 8090) cannot run: every case needs that model. The
-      # run checks the gateway's model-free paths instead, through a port-forward
-      # to the gateway itself - still never a NodePort or a public address.
-      # When the local model returns, restore the stub port-forward, `uv sync`
-      # and the `ops-eval run --set backend/evals/golden/e2e-kind.jsonl` step.
-      - name: Port-forward the gateway
+      # Reached through port-forwards to the gateway and the stub: still never a
+      # NodePort or a public address.
+      - name: Port-forward the gateway and the stub target
         run: |
           kubectl -n apps port-forward svc/gateway 18080:8080 &
+          kubectl -n apps port-forward svc/eval-target-stub 18090:8090 &
           sleep 3
 
       - name: Check the deployed gateway without a model
         run: infra/k8s/kind/smoke.sh http://127.0.0.1:18080
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --locked --project backend
+
+      - name: Play the small conversation file through the stub target
+        run: |
+          uv run --project backend ops-eval conversations \
+            --target http://127.0.0.1:18090 \
+            --cases backend/evals/kind-cases.jsonl \
+            --run-kind ci \
+            --out reports
+          # The run exits 0 when it finishes, whatever the cases scored. The stub
+          # answers each case as it expects, so every one must pass.
+          jq -e '.metrics.check_score == 100' reports/report.json
 
       # `always()`, the same reason `eval-gate.yml`'s upload is: a FAILED run -
       # a cluster-up failure, a rollout timeout, or a failed case - is exactly

@@ -1,47 +1,29 @@
-r"""The two files one run writes: `report.json` and `report.md` .
+r"""The two files one conversation run writes: `report.json` and `report.md`.
 
-Pure and clockless. `build_report` is handed the two timestamps rather than
-reading a clock, so `runner.run_set` stays a plain loop
-and every test case for this module is deterministic.
+Pure and clockless. `build_report` is handed the two timestamps, so the runner stays a
+plain loop and every test of this module is deterministic.
 
-Three things the module holds that no single field states:
+Things the module holds that no single field states:
 
-* every count is DERIVED from `RunResult`'s own properties and never accepted
-  from a caller, so the report and the one line `ops-eval` prints
-  cannot disagree about one run;
-* `assertions` is `None` exactly where `CaseRun.assertions` is - a turn that
-  never answered, which is not the same claim as an empty list of assertions;
-* `cost_usd` is serialised as a JSON STRING and never through a float, so a cost
-  round-trips to the number the ledger computed;
-* every failed case carries at least one tag from `evals/taxonomy.py`'s closed
-  vocabulary, counted in `metrics["tags"]` and rendered in both the
-  failures table and the taxonomy block.
-* `metrics` carries the SAME eighteen keys on every run, whatever the run held, so a gate reads a
-threshold against a key that is always there and two
-  reports diff; a metric
-  with no case behind it is `null` there and is left out of `report.md`
-  entirely.
-* a run handed a `calibration.json` publishes what it was told about its judge -
-  the `RunCalibration` record, the kappa as the eighteenth metric, and, when that
-  calibration is not trusted, one `UNTRUSTED_JUDGE_NOTE` and a suffix on the two
-  judge lines of `report.md`.
-  Nothing here applies the trust floor: the calibration step decided it and this module renders it.
+* every count and score is DERIVED from the saved `CaseLine` records and never accepted
+  from a caller, so the report and the one line `ops-eval` prints cannot disagree;
+* `check` is `None` exactly where the saved line's is: a case that never answered, which
+  is not the same claim as a case whose checks all passed;
+* the four fields a per-turn eval measured (`latency_ms`, `cost_usd`, `provider`,
+  `region`) are kept as `None` on every case. A conversation answer carries none of them,
+  and a zero there would read as a free, instant success. `tags` stays for the same reason
+  the columns do: the store and the console read it, and it is always empty;
+* `tenant` is `ALL_TENANTS` for a conversation run: the cases name their own tenants.
 
-The two file names are constants and nothing a caller supplies shapes a path
-: `make eval` names one directory, the eval gate reads a known path
-inside it, and a rerun overwrites
-.
-
-`storage/eval_store.py` reads this record: migration `003` and the `eval_runs` and
-`eval_cases` rows are built from the fields published here and in
-`docs/eval-report.md`, and from no other source.
+The two file names are constants and nothing a caller supplies shapes a path.
+`storage/eval_store.py` builds the `eval_runs` and `eval_cases` rows from this record.
 """
 
 from __future__ import annotations
 
 import re
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -49,200 +31,76 @@ from typing import Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
-from app.evals.assertions import AssertionResult, AssertionStatus, CaseAssertions
-from app.evals.calibration import JUDGE_TRUST_MIN
-from app.evals.judge import JUDGE_LOW_SCORE, JUDGE_MAX_SCORE, JudgeVerdict
-from app.evals.region_check import ResidencyVerdict
-from app.evals.runner import CaseRun, RunResult
-from app.evals.scores import METRIC_NAMES, compute_metrics
-from app.evals.taxonomy import TAG_ORDER, tags_for
+from app.evals.calibration import CalibrationReport
+from app.evals.checks import CaseCheck
+from app.evals.runner import CaseLine, JudgedReply
+from app.evals.scores import compute_metrics
 
 REPORT_JSON_NAME: Final[str] = "report.json"
 """The machine-readable report, the file the eval gate reads."""
 
 REPORT_MD_NAME: Final[str] = "report.md"
-"""The human-readable report, the file somebody opens after a red gate.
-
-Both names are fixed rather than timestamped."""
+"""The human-readable report, the file somebody opens after a red gate."""
 
 RUN_ID_LENGTH: Final[int] = 32
-"""Characters in a run id: a `uuid4` hex, which the database stores as the `eval_runs` key.
-
-Enforced on the field itself, so a shortened or dashed id is a validation error
-rather than a key two runs could share."""
+"""Characters in a run id: a `uuid4` hex, the `eval_runs` key."""
 
 SET_SHA_PATTERN: Final[re.Pattern[str]] = re.compile(r"[0-9a-f]{7,64}")
-r"""What `--set-sha` may be: 7 to 64 lowercase hex characters, inclusive.
-
-Used with `re.fullmatch` and never `^...$` with `.match`, because in Python `$`
-also matches before a trailing newline. The value is written
-into a report and into the `eval_runs` row, so it is checked before the seed
-is reset."""
+"""What a set sha may be: 7 to 64 lowercase hex, matched with `fullmatch`."""
 
 REPORT_INDENT: Final[int] = 2
-"""How `report.json` is indented. Fixed so the worked report in
-`docs/eval-report.md` stays byte-identical to `tests/evals/fixtures/report.json`."""
+
+ALL_TENANTS: Final[str] = "all"
+"""The tenant a conversation run records: each case names its own."""
 
 SetShaSource = Literal["commit", "content"]
-"""Where `set_sha` came from: the caller's commit, or the set file's own bytes.
-
-Recorded beside the SHA so no reader is ever told a content hash is
-a commit."""
+"""Where `set_sha` came from: the caller's commit, or the cases file's own bytes."""
 
 RunKind = Literal["ci", "nightly", "manual"]
-"""Why the run happened. A gate run and a nightly run are told apart by it."""
+"""Why the run happened."""
 
 FAILURES_HEADING: Final[str] = "## Failures"
-"""Where the per-case rows live in `report.md`, and the last section of it.
+"""Where the failed cases live in `report.md`, and the last section of it. A clean run
+has no such heading."""
 
-A clean run says so in ONE line under this heading rather than printing a table
-with no rows, which reads as "something failed and the rows are missing"."""
-
-CLEAN_RUN_LINE: Final[str] = "Every case passed and every turn stayed in region."
-"""The one line a clean run renders in place of the failures table."""
-
-TAXONOMY_HEADING: Final[str] = "## Taxonomy"
-"""Where the per-tag counts live in `report.md`, immediately before the failures.
-
-Rendered only when something failed, for the reason the failures table is: a
-heading with nothing under it reads as counts that went missing
-. It sits BEFORE the failures
-because everything after that heading is the failures."""
-
+JUDGE_HEADING: Final[str] = "## Replies the judge failed"
 METRICS_HEADING: Final[str] = "## Metrics"
-"""Where the fixed metric set lives in `report.md`, one line per metric.
+CATEGORIES_HEADING: Final[str] = "## Cases by category"
 
-`docs/eval-report.md` publishes this heading, so a reader sent to look under it
-after a red gate finds the numbers there."""
-
-CATEGORY_METRICS_HEADING: Final[str] = "## Metrics by category"
-"""Where the same set, per category, lives - the breakdown stored in
-`metrics["categories"]`. It is a prefix-sharing neighbour of `METRICS_HEADING`,
-so both are matched as whole lines and never by substring."""
-
-
-JUDGE_METRIC_NAMES: Final[tuple[str, ...]] = ("judge_mean", "judge_kappa_vs_human")
-"""The two metrics a judge produced, and the only two an untrusted calibration marks.
-
-Every other name in `METRIC_NAMES` is measured from the turn's own record and had
-no judge in it, so marking the whole block would train a reader to ignore all
-eighteen."""
-
-UNTRUSTED_JUDGE_NOTE: Final[str] = (
-    "judge metrics below are UNTRUSTED: kappa {kappa} against human labels is under "
-    "the {floor} floor"
-)
-"""The ONE line `## Metrics` carries when the run's calibration is not trusted.
-
-A format template rather than a finished sentence, so both numbers are rendered
-from the values that decided them: a note hard-coding `0.7` would read correctly
-today and lie the day `JUDGE_TRUST_MIN` moves, and a note naming no kappa leaves a
-reader unable to tell `0.699` from `0.1`
-. `{kappa}` is the
-word `null` when the artifact carried none - `report.md` sits beside a JSON
-document and Python's `None` is not what that document says."""
-
-UNTRUSTED_METRIC_SUFFIX: Final[str] = " (untrusted)"
-"""What each judge metric line ends with under an untrusted calibration.
-
-Beside the number a reader is about to quote, which is what "greyed out" means in
-a document with no colour."""
+RunCalibration = CalibrationReport
+"""What a run publishes about its judge: the six fields of a `calibration.json`."""
 
 
 def _new_run_id() -> str:
-    """A fresh `uuid4` hex, one per built report.
-
-    Nothing about the run derives it: two runs of the same set on the same
-    commit are two rows in the runs table and two directories a reader keeps.
-    """
+    """A fresh `uuid4` hex, one per built report."""
     return uuid.uuid4().hex
 
 
 class CaseReport(BaseModel):
-    """One case's row: what it was, what it cost, and what was wrong with it.
-
-    `latency_ms`, `cost_usd`, `provider` and `region` are measured once by the
-    turn and never again, so they are carried rather than recomputed; they are
-    `None`, never `0`, on a case whose turn failed.
-
-    `tags` is the failure taxonomy, computed by `taxonomy.tags_for` from
-    this case's own record and empty on a case that passed. It is derived
-    here rather than in the runner because the tags are a READING of the record
-    the runner measured, and the database stores it as the `eval_cases.tags` column.
-
-    `judge` is the judge verdict, carried whole rather than reduced to its median:
-    the three samples and the median sample's reason are the audit trail behind a
-    case an LLM failed, and a reader who cannot see them cannot tell a confident
-    judgement from three that disagreed. It is `null` and never `{}`
-    on a case nothing judged.
-    """
+    """One case's row: what it was, whether it passed, and why not."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     case_id: str
     category: str
     passed: bool
-    tags: tuple[str, ...]
-    latency_ms: int | None
-    cost_usd: Decimal | None
-    provider: str | None
-    region: str | None
-    assertions: CaseAssertions | None
-    residency: ResidencyVerdict | None
-    judge: JudgeVerdict | None
+    tags: tuple[str, ...] = ()
+    latency_ms: int | None = None
+    cost_usd: Decimal | None = None
+    provider: str | None = None
+    region: str | None = None
     error: str | None
-    step_prompt_versions: dict[str, str] = {}
-    """The prompt sha256 each agent step ran on for this case, from the target's
-    header. Defaulted so a report written before the field existed still loads."""
+    check: CaseCheck | None
+    judged: tuple[JudgedReply, ...]
 
     @field_serializer("cost_usd")
     def _serialise_cost(self, value: Decimal | None) -> str | None:
-        """Write the cost as its plain decimal text, never through a float.
-
-        `format(value, "f")` and not `str(value)`: Decimal's own text switches to
-        scientific notation below `1e-6`, so a real per-token cost would reach a
-        report as `1E-7` and stop matching the ledger's own column.
-        """
+        """Write a cost as plain decimal text, never through a float."""
         return None if value is None else format(value, "f")
 
 
-class RunCalibration(BaseModel):
-    """What a run was told about its judge: which labels, how well they agreed, trust.
-
-    The `CalibrationReport` narrowed to the six fields a RUN publishes. The rows,
-    the drop count and the clock stay in `calibration.json`, which is the audit
-    trail; what a report owes its reader is the number, the flag, and enough to
-    find the file the two came from - `labels_name` and `labels_sha` are how a
-    stored run is retraced six months later, and `pairs` is how a reader tells a
-    kappa over forty labels from one over four hundred.
-
-    `judge_prompt_version` is repeated here rather than read off `RunReport`: the
-    run's own field is the prompt this run SCORED with, and this one is the prompt
-    the calibration was COMPUTED under. `cli/evals.py` refuses a run where the two
-    differ, and the two fields are what makes that refusal
-    checkable in a stored document rather than only in the process that made it.
-
-    `kappa` is `None` exactly where the calibration's is - chance agreement was total - and
-    `trusted` is then `False` whatever a comparison would have done with it.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    judge_prompt_version: str
-    labels_name: str
-    labels_sha: str
-    pairs: int
-    kappa: float | None
-    trusted: bool
-
-
 class RunReport(BaseModel):
-    """One run: its identity, its counts, and one `CaseReport` per case.
-
-    The identity fields are the columns the `eval_runs` row needs, and their
-    names are the published contract rather than an implementation detail -
-    `docs/eval-report.md` publishes them.
-    """
+    """One run: its identity, its metrics, and one `CaseReport` per case."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -258,117 +116,27 @@ class RunReport(BaseModel):
     target: str
     passed: bool
     metrics: Mapping[str, Any]
-    judge_prompt_version: str | None
-    """The sha256 of the prompt file the judge scored this run with, or `null`
-    when nothing was judged. At the RUN level and not per case,
-    because one process reads one prompt file and a hash repeated on two hundred
-    rows is the same fact two hundred times."""
-    step_prompt_versions: dict[str, str] = {}
-    """The agent's step prompts, when every answered case named the same map,
-    and empty when they disagree or none named any. The markdown tells those two
-    apart (`mixed` against `none`). Defaulted like `calibration` below."""
+    judge_prompt_version: str | None = None
+    """The sha256 of the prompt file the judge graded this run with, or `null` when
+    nothing was judged."""
     calibration: RunCalibration | None = None
-    """The calibration this run was handed, or `null` when it was given none.
-
-    Defaulted rather than required, which is what keeps every report written
-    before this row - the worked fixture included - parseable under
-    `extra="forbid"`, and what stops an uncalibrated run manufacturing an empty
-    record that reads as "calibrated, against nothing".
-    `storage/eval_store.py` reads `kappa` off this field and never out of the `metrics`
-    mapping, so `mypy --strict` still sees the type going into a
-    `double precision` column."""
+    """What the run was told about its judge, or `null` when it was given nothing."""
     cases: tuple[CaseReport, ...]
 
 
-def _case_report(run: CaseRun) -> CaseReport:
-    """One per-case record turned into its report row.
-
-    The four measured fields come from the turn's own `CaseOutcome`, which is
-    `None` exactly where the assertions are, so a broken turn reports nothing
-    measured rather than reporting zeros.
-    """
-    outcome = run.outcome
+def _case_report(line: CaseLine) -> CaseReport:
     return CaseReport(
-        case_id=run.case_id,
-        category=str(run.category),
-        passed=run.passed,
-        tags=tags_for(run),
-        latency_ms=None if outcome is None else outcome.latency_ms,
-        cost_usd=None if outcome is None else outcome.cost_usd,
-        provider=None if outcome is None else outcome.provider,
-        region=None if outcome is None else outcome.region,
-        assertions=run.assertions,
-        residency=run.residency,
-        judge=run.judge,
-        error=run.error,
-        step_prompt_versions={} if outcome is None else outcome.step_prompt_versions,
+        case_id=line.case_id,
+        category=line.category,
+        passed=line.passed,
+        error=line.error,
+        check=line.check,
+        judged=line.judged,
     )
 
 
-def _agreed_step_versions(cases: list[CaseReport]) -> dict[str, str]:
-    """The map every answered case named, or empty when two disagree.
-
-    A turn that never answered named nothing and is left out, so one broken
-    case does not blank the run's map
-    (`test_the_run_carries_the_step_versions_every_case_agreed_on`).
-    """
-    answered = [case.step_prompt_versions for case in cases if case.error is None]
-    if not answered or any(versions != answered[0] for versions in answered):
-        return {}
-    return dict(answered[0])
-
-
-def _step_versions_text(report: RunReport) -> str:
-    """`compose=..., intent=...` sorted by step, `mixed` when cases disagreed,
-    `none` when no case named any."""
-    if report.step_prompt_versions:
-        return ", ".join(
-            f"{step}={digest}" for step, digest in sorted(report.step_prompt_versions.items())
-        )
-    if any(case.step_prompt_versions for case in report.cases):
-        return "mixed"
-    return "none"
-
-
-def _categories(result: RunResult) -> dict[str, dict[str, object]]:
-    """The two counts and the whole metric set per category this run actually used.
-
-    Built from the run rather than from `EvalCategory`'s twelve, so a report does
-    not carry ten empty buckets, and a category with no passes is still present.
-
-    The metrics are `compute_metrics` over that category's own records and never
-    the run-level values narrowed or copied, which is what stops
-    the breakdown drifting from the totals: one function, two subsets.
-    """
-    grouped: dict[str, list[CaseRun]] = {}
-    counts: dict[str, dict[str, int]] = {}
-    for run in result.runs:
-        name = str(run.category)
-        grouped.setdefault(name, []).append(run)
-        tally = counts.setdefault(name, {"passed": 0, "failed": 0})
-        tally["passed" if run.passed else "failed"] += 1
-    return {name: {**counts[name], **compute_metrics(runs)} for name, runs in grouped.items()}
-
-
-def _tag_counts(cases: list[CaseReport]) -> dict[str, int]:
-    """How many FAILED cases carried each tag, in `TAG_ORDER` and omitting zeros.
-
-    Failed cases only, because a passed case carries no tags at all and a count
-    over every case would say the same thing more slowly. Zeros are omitted so a
-    reader is not scanning fifteen unused words to find the three that fired,
-    and a clean run leaves the key present and empty rather than absent.
-    """
-    counts: dict[str, int] = {}
-    for case in cases:
-        if case.passed:
-            continue
-        for tag in case.tags:
-            counts[tag] = counts.get(tag, 0) + 1
-    return {tag.value: counts[tag.value] for tag in TAG_ORDER if tag.value in counts}
-
-
 def build_report(
-    result: RunResult,
+    lines: Sequence[CaseLine],
     *,
     started_at: datetime,
     finished_at: datetime,
@@ -382,32 +150,12 @@ def build_report(
     judge_prompt_version: str | None = None,
     calibration: RunCalibration | None = None,
 ) -> RunReport:
-    """Turn one run and its identity into the record both files render.
+    """Turn the saved case lines and the run's identity into the record both files render.
 
-    Every count is read off `RunResult`'s properties. `metrics` is a
-    mapping rather than a model, which is how the `tags` and the fixed
-    metric set were both added without changing this schema or the database column.
-
-    The metric set is `compute_metrics` over the run's own records, spread into
-    the mapping as eighteen flat keys, and computed a second time per category
-    inside `_categories` - the same function over a subset, so the breakdown and
-    the totals cannot drift.
-
-    The eighteenth of those keys is the exception, and the only one that comes
-    from a caller: `judge_kappa_vs_human` is the supplied calibration's own kappa
-    and is passed at the RUN level only, so every category reports `null` for it
-    by construction rather than through a second code path.
-
-    The per-case rows are built BEFORE `metrics`, because `metrics["tags"]` is
-    counted from the tags those rows carry: one reading of the taxonomy per case,
-    so the counts and the rows cannot disagree about the same failure.
-
-    `set_sha_source` and `run_kind` arrive as plain strings and are validated by
-    the model's own vocabularies here, which is why the report is built through
-    `model_validate`: a caller that has not been through the CLI's `choices` and
-    its `SET_SHA_PATTERN` still cannot put a fourth word into a stored row.
+    `set_sha_source` and `run_kind` arrive as plain strings and are checked by the
+    model's own vocabularies, so a caller that skipped the CLI's checks still cannot put
+    a fourth word into a stored row. The run passes when every case passed.
     """
-    cases = [_case_report(run) for run in result.runs]
     payload: dict[str, Any] = {
         "started_at": started_at,
         "finished_at": finished_at,
@@ -418,23 +166,11 @@ def build_report(
         "git_sha": git_sha,
         "tenant": tenant,
         "target": target,
-        "passed": result.failed_count == 0,
+        "passed": all(line.passed for line in lines),
         "judge_prompt_version": judge_prompt_version,
-        "step_prompt_versions": _agreed_step_versions(cases),
         "calibration": calibration,
-        "metrics": {
-            "cases": result.cases,
-            "passed": result.passed_count,
-            "failed": result.failed_count,
-            "residency_violations": result.residency_violations,
-            "leaked": result.leaked,
-            **compute_metrics(
-                result.runs, judge_kappa=None if calibration is None else calibration.kappa
-            ),
-            "categories": _categories(result),
-            "tags": _tag_counts(cases),
-        },
-        "cases": cases,
+        "metrics": compute_metrics(lines),
+        "cases": [_case_report(line) for line in lines],
     }
     return RunReport.model_validate(payload)
 
@@ -444,260 +180,109 @@ def report_json(report: RunReport) -> str:
     return report.model_dump_json(indent=REPORT_INDENT) + "\n"
 
 
-def _failed_results(assertions: CaseAssertions) -> list[AssertionResult]:
-    """The assertions that failed, in the fixed order `assert_case` reports them."""
-    return [result for result in assertions.results if result.status is AssertionStatus.FAILED]
+def _one_line(text: str) -> str:
+    return " ".join(text.split())
 
 
-def _cell(text: str) -> str:
-    """One table cell, with any pipe in it escaped so the row still renders."""
-    return text.replace("|", r"\|")
-
-
-def _reason(case: CaseReport) -> str:
-    """Why this case failed, in the words a reader needs before opening the JSON.
-
-    A broken turn reports its error; a case that answered reports every assertion
-    that failed and, when the turn left its region, the residency verdict too - a
-    violation with every assertion passing has no failed assertion to name.
-
-    A low judge median is named here too, with the median sample's own reason,
-    because a case an LLM failed has nothing else to explain it - a row reading
-    `judge_low` and no more leaves the reader with the tag alone. A verdict at
-    or above `JUDGE_LOW_SCORE` is not a reason and is not printed: it failed for
-    something else, and the score that did not fail it is in `report.json`.
-    """
-    if case.assertions is None:
-        return case.error or "the turn never answered"
-
-    reasons = []
-    for result in _failed_results(case.assertions):
-        if result.expected is None and result.actual is None:
-            reasons.append(result.name)
-        else:
-            reasons.append(f"{result.name} (expected {result.expected}, actual {result.actual})")
-    if case.residency is not None and case.residency.violation:
-        allowed = ", ".join(case.residency.allowed)
-        reasons.append(f"residency: served in {case.residency.observed}, allowed {allowed}")
-    if case.judge is not None and case.judge.median < JUDGE_LOW_SCORE:
-        reasons.append(
-            f"judge: median {case.judge.median} of {JUDGE_MAX_SCORE}, {case.judge.reason}"
-        )
-    return "; ".join(reasons) if reasons else "failed with no stated reason"
+def _why_it_failed(case: CaseReport) -> str:
+    """The reason a case failed, in a clause per broken check."""
+    if case.error is not None:
+        return _one_line(case.error)
+    if case.check is None:
+        return "no result"
+    reasons: list[str] = []
+    if not case.check.tools_in_order:
+        reasons.append("the right tools were not called in order")
+    for turn in case.check.turns:
+        if not turn.no_early_change:
+            reasons.append(f"turn {turn.turn} made a change before the yes")
+        if not turn.no_made_up_name:
+            reasons.append(f"turn {turn.turn} named a number or role no tool returned")
+    return "; ".join(reasons) or "failed"
 
 
 def _identity_lines(report: RunReport) -> list[str]:
-    """The header a reader needs before any count means anything: which run was this.
-
-    The judge prompt's sha256 is one of them a score nobody
-    can trace to the wording that produced it is not reproducible, and a run that
-    judged nothing says `none` rather than carrying a stale hash.
-    """
     return [
         f"# Eval run {report.id}",
         "",
         f"- set: {report.set_name}",
         f"- set sha: {report.set_sha} ({report.set_sha_source})",
         f"- run kind: {report.run_kind}",
-        f"- git sha: {report.git_sha if report.git_sha is not None else 'unknown'}",
-        f"- tenant: {report.tenant}",
         f"- target: {report.target}",
-        f"- judge prompt: {report.judge_prompt_version or 'none'}",
-        f"- step prompts: {_step_versions_text(report)}",
+        f"- git sha: {report.git_sha if report.git_sha is not None else 'unknown'}",
         f"- started: {report.started_at.isoformat()}",
         f"- finished: {report.finished_at.isoformat()}",
-        f"- result: {'passed' if report.passed else 'FAILED'}",
+        f"- result: {'passed' if report.passed else 'failed'}",
     ]
 
 
-def _count_lines(report: RunReport) -> list[str]:
-    """The counts, each beside its own word, so a reader is not counting rows."""
-    metrics = report.metrics
-    return [
-        "## Counts",
-        "",
-        f"- cases: {metrics['cases']}",
-        f"- passed: {metrics['passed']}",
-        f"- failed: {metrics['failed']}",
-        f"- residency: {metrics['residency_violations']} violations",
-        f"- leaked: {'yes' if metrics['leaked'] else 'no'}",
-    ]
+def _metric_lines(report: RunReport) -> list[str]:
+    lines = [METRICS_HEADING, ""]
+    for name, value in report.metrics.items():
+        lines.append(f"- {name}: {'null' if value is None else value}")
+    if report.calibration is not None:
+        kappa = report.calibration.kappa
+        trust = "trusted" if report.calibration.trusted else "NOT trusted"
+        lines.append(
+            f"- judge calibration: kappa {'null' if kappa is None else kappa} against "
+            f"{report.calibration.labels_name} over {report.calibration.pairs} pairs, {trust}"
+        )
+    return lines
 
 
 def _category_lines(report: RunReport) -> list[str]:
-    """The per-category breakdown, one row per category the run used."""
-    lines = ["## Categories", "", "| category | passed | failed |", "| --- | --- | --- |"]
-    categories: Mapping[str, Mapping[str, object]] = report.metrics["categories"]
+    counts: dict[str, list[int]] = {}
+    for case in report.cases:
+        passed_failed = counts.setdefault(case.category, [0, 0])
+        passed_failed[0 if case.passed else 1] += 1
+    lines = [CATEGORIES_HEADING, "", "| category | passed | failed |", "| --- | --- | --- |"]
+    lines += [f"| {name} | {p} | {f} |" for name, (p, f) in sorted(counts.items())]
+    return lines
+
+
+def _judge_lines(report: RunReport) -> list[str]:
+    failed = [
+        (case.case_id, reply)
+        for case in report.cases
+        for reply in case.judged
+        if reply.verdict == "fail"
+    ]
+    if not failed:
+        return []
+    lines = [JUDGE_HEADING, ""]
     lines += [
-        f"| {name} | {counts['passed']} | {counts['failed']} |"
-        for name, counts in categories.items()
+        f"- {case_id} turn {reply.turn}: {_one_line(reply.reason or 'no reason given')}"
+        for case_id, reply in failed
     ]
     return lines
 
 
-def _metric_value(value: object) -> str:
-    """One metric as `report.md` prints it: a cost through `format`, anything else plainly.
-
-    `format(value, "f")` and not `str(value)` for a `Decimal`, for the reason
-    `CaseReport._serialise_cost` does the same: Decimal's own text goes
-    scientific below six places, so a real per-turn cost would print as `1E-7`
-    beside a `report.json` that carries `0.000000`.
-    """
-    return format(value, "f") if isinstance(value, Decimal) else str(value)
-
-
-def _metric_lines(metrics: Mapping[str, object], *, untrusted: bool = False) -> list[str]:
-    """One line per metric that has a case behind it, in `METRIC_NAMES` order.
-
-    A metric whose value is `None` is OMITTED and never rendered as `- name: None`:
-    a document a human opens after a red gate should carry the
-    numbers the run measured, not fourteen words with nothing beside them. The
-    test is `is None` and not falsiness - `0.0` accuracy and `0` errored are
-    measurements and both render.
-
-    `untrusted` suffixes the two `JUDGE_METRIC_NAMES` lines and nothing else. It is passed only for
-    the RUN-level block: the per-category
-    blocks report the judge's mean over a subset and never the number a reader
-    quotes out of a gate, and their `judge_kappa_vs_human` is `None` and so has no
-    line at all.
-    """
-    return [
-        f"- {name}: {_metric_value(metrics[name])}"
-        + (UNTRUSTED_METRIC_SUFFIX if untrusted and name in JUDGE_METRIC_NAMES else "")
-        for name in METRIC_NAMES
-        if metrics.get(name) is not None
-    ]
-
-
-def _untrusted_note(calibration: RunCalibration | None) -> list[str]:
-    """The one note an untrusted calibration puts at the top of `## Metrics`, or nothing.
-
-    Rendered from the calibration's own `trusted` flag and never from a comparison
-    made here: the calibration step is where `JUDGE_TRUST_MIN` is applied, and a second `>=` in this
-    module is a second place the floor can be got wrong. A kappa of `None` still
-    notes, as the word `null`, because a run whose judge agreement could not be
-    measured at all is the one a reader most needs warned about.
-    """
-    if calibration is None or calibration.trusted:
-        return []
-    kappa = "null" if calibration.kappa is None else calibration.kappa
-    return [UNTRUSTED_JUDGE_NOTE.format(kappa=kappa, floor=JUDGE_TRUST_MIN)]
-
-
-def _metrics_lines(report: RunReport) -> list[str]:
-    """The run-level metric set, or nothing at all when nothing rendered.
-
-    Under an untrusted calibration the block opens with `UNTRUSTED_JUDGE_NOTE` and
-    the two judge lines carry `UNTRUSTED_METRIC_SUFFIX`; under a trusted one, and
-    under no calibration at all, neither appears anywhere.
-
-    The empty case cannot be reached by any run that HAS a case, because
-    `cross_tenant_leaks` and `errored` are counts and never `None`; the guard is
-    kept for symmetry with `_taxonomy_lines` and because an empty block is the
-    defect `_category_lines` was written to avoid. Untestable by design at this
-    level; a test of a run with no cases exercises the same guard on the block
-    below, which is the only one a run shape can empty.
-    """
-    untrusted = _untrusted_note(report.calibration)
-    lines = _metric_lines(report.metrics, untrusted=bool(untrusted))
-    return [METRICS_HEADING, "", *untrusted, *lines] if lines else []
-
-
-def _category_metric_lines(report: RunReport) -> list[str]:
-    """The same metric set per category, each under its own `###` sub-heading.
-
-    A `###` and not a `##`, so the whole breakdown is one section of the document
-    rather than twelve, and so `_taxonomy_lines` and the failures still read as
-    the top-level sections a reader scans for.
-
-    Rendered from `metrics["categories"]` rather than from the runs, which is what
-    makes the document and `report.json` the same numbers by construction.
-
-    The per-category `if rendered` is untestable by design, for the reason
-    `_metrics_lines`'s guard is: a category exists because a case is in it, and
-    `cross_tenant_leaks` and `errored` are counts that always have a value, so no
-    run shape produces a category with nothing to render. It is kept rather than
-    dropped because it is what stops a bare `### name` heading if a later metric
-    set is ever all-nullable. The BLOCK-level guard below is the reachable one.
-    """
-    categories: Mapping[str, Mapping[str, object]] = report.metrics["categories"]
-    lines: list[str] = []
-    for name, values in categories.items():
-        rendered = _metric_lines(values)
-        if rendered:
-            lines += [f"### {name}", *rendered]
-    return [CATEGORY_METRICS_HEADING, "", *lines] if lines else []
-
-
-def _taxonomy_lines(report: RunReport) -> list[str]:
-    """The failure taxonomy as counts, or nothing at all on a clean run.
-
-    Decision F: the tags are also a column of the failures table, but a reader
-    counting a column by eye over two hundred cases is not an aggregate. Nothing
-    is rendered when no case failed, heading included, for the reason the
-    failures table is not.
-    """
-    counts: Mapping[str, int] = report.metrics["tags"]
-    if not counts:
-        return []
-    return [TAXONOMY_HEADING, "", *(f"- {tag}: {count}" for tag, count in counts.items())]
-
-
 def _failure_lines(report: RunReport) -> list[str]:
-    """The failures section, and the last section of the document.
-
-    A clean run renders ONE line here and no table at all, which is the whole
-    reason this section is last: everything after the heading is the failures,
-    and a reader who sees a header row expects rows under it.
-    """
     failed = [case for case in report.cases if not case.passed]
     if not failed:
-        return [FAILURES_HEADING, "", CLEAN_RUN_LINE]
-    return [
-        FAILURES_HEADING,
-        "",
-        "| case | category | tags | why |",
-        "| --- | --- | --- | --- |",
-        *(
-            f"| {_cell(case.case_id)} | {_cell(case.category)} "
-            f"| {_cell(', '.join(case.tags))} | {_cell(_reason(case))} |"
-            for case in failed
-        ),
-    ]
+        return []
+    lines = [FAILURES_HEADING, ""]
+    lines += [f"- {case.case_id} ({case.category}): {_why_it_failed(case)}" for case in failed]
+    return lines
 
 
 def report_markdown(report: RunReport) -> str:
-    """`report.md`'s text: who ran what, the counts, the categories, the failures.
-
-    Rendered with f-strings and a joined list rather than a template engine: one document is not a
-    dependency ask.
-
-    A section that renders no lines contributes no blank paragraph either: the
-    taxonomy is empty on a clean run, and joining it in anyway would leave two
-    blank lines where a heading used to be.
-    """
+    """`report.md`'s text: identity, metrics, categories, judge fails, then the failures last."""
     sections = [
         _identity_lines(report),
-        _count_lines(report),
+        _metric_lines(report),
         _category_lines(report),
-        _metrics_lines(report),
-        _category_metric_lines(report),
-        _taxonomy_lines(report),
+        _judge_lines(report),
         _failure_lines(report),
     ]
     return "\n\n".join("\n".join(lines) for lines in sections if lines) + "\n"
 
 
 def write_reports(out: Path, report: RunReport) -> None:
-    """Write both files into `out`, overwriting whatever a previous run left.
+    """Write both files into `out`, overwriting what a previous run left.
 
-    Exactly two files, both named by the constants above and neither derived from
-    a case id, a tenant or a clock, so the eval gate reads a known
-    path and a rerun into the same directory leaves two documents that parse.
-
-    Nothing is caught here: a write that fails is the caller's to report, and the
-    CLI turns it into `EXIT_USAGE` naming the path rather than a traceback at the
-    end of a paid-for run.
+    Exactly two files, named by the constants above. Nothing is caught here: a write
+    that fails is the caller's to report as a usage error naming the path.
     """
     (out / REPORT_JSON_NAME).write_text(report_json(report), encoding="utf-8")
     (out / REPORT_MD_NAME).write_text(report_markdown(report), encoding="utf-8")

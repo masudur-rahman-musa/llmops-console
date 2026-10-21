@@ -1,37 +1,36 @@
-"""`evals/baseline_guard.py`: the pure half of #42's guard over `backend/evals/baseline.json`.
+"""`evals/baseline_guard.py` and `ops-eval baseline-guard`: both baseline files are guarded.
 
-No git, no I/O and no clock here - `check()` takes the commits it is told about and
-answers a verdict, so every bypass of the rule is a row rather than a pull request.
-The git read itself is pinned in `tests/evals/test_cli.py` against a real throwaway
-repository.
+The pure rule is a table of commits; the git read is driven against a throwaway repository.
 
-The contract these cases are written against, before it exists:
+Contract these tests are written against:
 
-* `BASELINE_PATH`, `BASELINE_PREFIX`, `ADR_PREFIX`, `MAX_REF_LENGTH` and
-  `REF_PATTERN`, the constants a project rule requires pinned by value.
-* frozen `Commit(sha, subject, files)`, `Offence(sha, reasons)` and
-  `GuardVerdict(offences)` with a `passed` property, all pydantic v2.
-* `check(commits) -> GuardVerdict`: a commit is EXAMINED only when `BASELINE_PATH`
-  is one of its files as an exact string, and is clean when its subject starts
-  with `BASELINE_PREFIX` AND at least one file starts with `ADR_PREFIX`. One
-  failing commit yields exactly one `Offence` carrying one or both reasons, in the
-  fixed order (prefix, then ADR).
-* `offence_line(offence)` and `GUARD_PASSED_LINE`, the two strings the CLI prints.
-
-Every table row below is arranged so that the control it names is the only thing
-that can decide it: the ADR rows all carry a well-formed `baseline:` subject, and
-the path rows all carry a subject and a file set that would be an offence if the
-commit were examined at all - so a substring path match turns the row red rather
-than a neighbouring guard.
+* `BASELINE_PATHS == ("backend/evals/baseline.json", "backend/evals/conversation-baseline.json")`
+  replaces `BASELINE_PATH`. `BASELINE_PREFIX`, `ADR_PREFIX`, `MAX_REF_LENGTH`, `REF_PATTERN`,
+  `MISSING_PREFIX_REASON`, `MISSING_ADR_REASON` and `GUARD_PASSED_LINE` keep their values.
+* A commit is examined only when one of its `files` is exactly one of `BASELINE_PATHS`
+  (a deletion counts: the old file's path is in `files`). It is clean when its subject starts
+  with `BASELINE_PREFIX` and some file starts with `ADR_PREFIX`. A byte-identical move
+  (`exact_moves`) onto a watched path from a file of the same name is not a change.
+* `Offence(sha, reasons, paths)`: `paths` are the watched paths the commit touched, in
+  `BASELINE_PATHS` order. `offence_line` reads
+  `f"{sha}: touches {' and '.join(paths)} but {' and '.join(reasons)}"`.
 """
 
 from __future__ import annotations
 
+import os
+import subprocess
+from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
+
 import pytest
 
+from app.cli import evals as cli
+from app.cli.evals import EXIT_FAILED, EXIT_OK
 from app.evals.baseline_guard import (
     ADR_PREFIX,
-    BASELINE_PATH,
+    BASELINE_PATHS,
     BASELINE_PREFIX,
     GUARD_PASSED_LINE,
     MAX_REF_LENGTH,
@@ -39,365 +38,273 @@ from app.evals.baseline_guard import (
     MISSING_PREFIX_REASON,
     REF_PATTERN,
     Commit,
-    GuardVerdict,
     Offence,
     check,
     offence_line,
 )
 
-SHAPE_SHA = "a87abf2"
-"""The sha of the commit this repo already made the right way.
-
-Its real shape is the happy-path row below: subject `baseline: write the thresholds
-in points`, files the project notes and
-`backend/evals/baseline.json`.
-"""
-
-SHAPE_SUBJECT = "baseline: write the thresholds in points"
-SHAPE_ADR = "dev/adr/0008-the-baseline-is-written-in-points.md"
-
-OTHER_SHA = "deadbee"
+OLD = "backend/evals/baseline.json"
+NEW = "backend/evals/conversation-baseline.json"
+ADR = "dev/adr/0040-conversation-baseline.md"
+GOOD_SUBJECT = "baseline: set the conversation baseline"
 
 
-def test_the_four_constants_are_exactly_the_published_values() -> None:
-    """Catches an implementation that restates any of the four as its own near-miss - a
-    guard watching `backend/evals/baseline.json ` or `docs/adrs/`, or a ref cap of 255 -
-    which would pass every case below while guarding a path that does not exist and
-    refusing a ref git resolves. Pinned by value because the workflow, the docs and the
-    CLI all quote these strings."""
-    assert BASELINE_PATH == "backend/evals/baseline.json"
+def test_the_published_values_are_pinned() -> None:
+    """Catches a guard watching only the new file (the old one could be re-added quietly) or
+    only the old one (the new baseline could move without an ADR), a changed prefix, or a
+    ref cap of 255."""
+    assert BASELINE_PATHS == (OLD, NEW)
     assert BASELINE_PREFIX == "baseline:"
     assert ADR_PREFIX == "dev/adr/"
     assert MAX_REF_LENGTH == 256
-
-
-def test_the_three_published_strings_are_exactly_what_the_cli_prints() -> None:
-    """The two reasons and the pass line are the whole operator-visible vocabulary of this
-    guard, and `tests/evals/test_cli.py` asserts the rendered output against them. Catches a
-    module that publishes the constants and prints something else, which would leave those
-    CLI cases passing over a stderr line no reviewer can act on, and catches a pass line
-    whose placeholder is renamed so `.format(checked=n)` raises at the happy path."""
     assert MISSING_PREFIX_REASON == 'the subject does not start "baseline:"'
     assert MISSING_ADR_REASON == "the commit adds no file under dev/adr/"
-    assert GUARD_PASSED_LINE == "baseline guard passed: {checked} commits checked"
     assert GUARD_PASSED_LINE.format(checked=2) == "baseline guard passed: 2 commits checked"
 
 
 def test_the_ref_pattern_matches_whole_values_only() -> None:
-    r"""a project rule at its source: catches a pattern written `^...$` and applied with
-    `.match`, which accepts `HEAD\n` because `$` also matches before a trailing newline -
-    and a ref carrying a newline is a second argument smuggled into the `git log` command
-    line. Catches a pattern that admits `..`, a leading `-` or an empty value too."""
-    assert REF_PATTERN.fullmatch("main") is not None
+    r"""Catches a pattern applied with `.match` that lets `HEAD\n` through (a second argument
+    smuggled into `git log`), one that admits `..`, a leading dash or an empty ref, and one
+    that refuses the longest allowed ref."""
     assert REF_PATTERN.fullmatch("a" * MAX_REF_LENGTH) is not None
-    assert REF_PATTERN.fullmatch("HEAD\n") is None
-    assert REF_PATTERN.fullmatch("HEAD\r\n") is None
-    assert REF_PATTERN.fullmatch("HEAD ") is None
-    assert REF_PATTERN.fullmatch("a..b") is None
-    assert REF_PATTERN.fullmatch("-upload-pack=evil") is None
-    assert REF_PATTERN.fullmatch("") is None
+    for bad in ("HEAD\n", "HEAD\r\n", "HEAD ", "a..b", "-upload-pack=evil", ""):
+        assert REF_PATTERN.fullmatch(bad) is None, repr(bad)
 
 
-def test_a_range_touching_no_baseline_file_is_clean() -> None:
-    """The PR that must never be blocked: catches a guard that examines every commit rather
-    than the ones touching the baseline, which would fail every pull request in the repo
-    whose subject is not `baseline:` - the guard a team disables in a week. Neither commit
-    here has the prefix or an ADR, so only the path test can keep the verdict clean."""
-    verdict = check(
-        [
-            Commit(sha=SHAPE_SHA, subject="add the routing overlay", files=("routing.yaml",)),
-            Commit(sha=OTHER_SHA, subject="fix a typo", files=("docs/eval-gate.md",)),
-        ]
-    )
+@pytest.mark.parametrize("path", BASELINE_PATHS)
+def test_a_baseline_change_needs_the_prefix_and_an_adr(path: str) -> None:
+    """Catches a guard that checks one half only, or only one of the two files. Each row is
+    arranged so exactly one half is missing: with the prefix and no ADR the ADR reason is the
+    only one; with an ADR and no prefix the prefix reason is the only one."""
+    no_adr = check([Commit(sha="a1", subject=GOOD_SUBJECT, files=(path,))])
+    no_prefix = check([Commit(sha="b2", subject="update numbers", files=(path, ADR))])
+    clean = check([Commit(sha="c3", subject=GOOD_SUBJECT, files=(path, ADR))])
 
-    assert verdict.passed is True
-    assert verdict.offences == ()
-
-
-def test_the_shape_commit_a87abf2_already_has_passes() -> None:
-    """Criterion 2 read off the commit this repo actually made (decision F). Catches a guard
-    that demands the ADR and the baseline in separate commits, or that compares the subject
-    with equality rather than a prefix - either would refuse the one commit in history that
-    is the published example of doing it right."""
-    verdict = check(
-        [Commit(sha=SHAPE_SHA, subject=SHAPE_SUBJECT, files=(SHAPE_ADR, BASELINE_PATH))]
-    )
-
-    assert verdict.passed is True
-    assert verdict.offences == ()
+    assert [o.reasons for o in no_adr.offences] == [(MISSING_ADR_REASON,)]
+    assert [o.reasons for o in no_prefix.offences] == [(MISSING_PREFIX_REASON,)]
+    assert no_adr.offences[0].paths == (path,)
+    assert clean.passed is True
 
 
-def test_a_prefixed_commit_with_no_adr_is_one_offence_naming_the_sha() -> None:
-    """Criterion 3's first half: catches a guard that checks the subject and stops, which is
-    the cheap half of the rule and the one that lets a threshold move with no justification
-    on record. The subject here is well formed, so the ADR test is the only control that
-    can produce the offence, and the sha must be in it or CI names no commit to fix."""
-    verdict = check([Commit(sha=SHAPE_SHA, subject=SHAPE_SUBJECT, files=(BASELINE_PATH,))])
+def test_a_commit_breaking_both_halves_is_one_offence_with_both_reasons() -> None:
+    """Catches two offences for one sha, or one that drops a reason. The order is fixed:
+    prefix first, then ADR."""
+    verdict = check([Commit(sha="a1", subject="tweak", files=(NEW,))])
 
-    assert verdict.passed is False
-    assert verdict.offences == (Offence(sha=SHAPE_SHA, reasons=(MISSING_ADR_REASON,)),)
-
-
-def test_an_adr_commit_with_no_prefix_is_one_offence() -> None:
-    """The mirror row: catches a guard that accepts any commit carrying an ADR file. The
-    subject is `a87abf2`'s with the prefix stripped, so the commit is otherwise the
-    published happy path and only the prefix test can redden it."""
-    verdict = check(
-        [
-            Commit(
-                sha=SHAPE_SHA,
-                subject="write the thresholds in points",
-                files=(SHAPE_ADR, BASELINE_PATH),
-            )
-        ]
-    )
-
-    assert verdict.passed is False
-    assert verdict.offences == (Offence(sha=SHAPE_SHA, reasons=(MISSING_PREFIX_REASON,)),)
-
-
-def test_only_the_second_of_two_baseline_commits_being_malformed_still_fails() -> None:
-    """Criterion 3's second half. Catches a guard that returns on the first clean commit it
-    finds - the shape a two-commit PR uses to slip a threshold change in behind a properly
-    documented one - and catches an offence reported against the wrong sha. The first
-    commit is the full happy path, so a guard reading only one commit answers clean."""
-    verdict = check(
-        [
-            Commit(sha=SHAPE_SHA, subject=SHAPE_SUBJECT, files=(SHAPE_ADR, BASELINE_PATH)),
-            Commit(sha=OTHER_SHA, subject="bump the floor", files=(BASELINE_PATH,)),
-        ]
-    )
-
-    assert verdict.passed is False
     assert verdict.offences == (
-        Offence(sha=OTHER_SHA, reasons=(MISSING_PREFIX_REASON, MISSING_ADR_REASON)),
+        Offence(sha="a1", reasons=(MISSING_PREFIX_REASON, MISSING_ADR_REASON), paths=(NEW,)),
     )
 
 
-def test_a_commit_breaking_both_halves_is_one_offence_carrying_both_reasons() -> None:
-    """Criterion 3 says each offending sha is ONE line. Catches a guard that appends an
-    offence per broken rule, which prints the same sha twice and makes a reviewer think two
-    commits are wrong; and catches one that reports only the first reason it finds, which
-    sends the author back for a second CI round over the half it did not mention."""
-    verdict = check([Commit(sha=OTHER_SHA, subject="bump the floor", files=(BASELINE_PATH,))])
+def test_the_commit_that_swaps_the_baselines_is_clean_with_prefix_and_adr() -> None:
+    """Catches a guard that fails the plan's own commit: it deletes `baseline.json` and adds
+    `conversation-baseline.json`, with the prefix and its ADR."""
+    swap = Commit(sha="a1", subject=GOOD_SUBJECT, files=(OLD, NEW, ADR))
 
-    assert len(verdict.offences) == 1
-    assert verdict.offences[0].sha == OTHER_SHA
-    assert verdict.offences[0].reasons == (MISSING_PREFIX_REASON, MISSING_ADR_REASON)
+    assert check([swap]).passed is True
 
 
-NON_BASELINE_PATHS: tuple[tuple[str, str], ...] = (
-    ("a backup beside it", f"{BASELINE_PATH}.bak"),
-    ("the same name under another root", f"other/{BASELINE_PATH}"),
-    ("the directory alone", "project-evals/"),
-    ("a sibling in the directory", "project-evals/README.md"),
-)
-r"""Criterion 8's path rows: every one of these would be caught by a substring or a
-prefix test (`BASELINE_PATH in path`, `path.startswith(BASELINE_PATH)`,
-`path.endswith("baseline.json")`) and none of them is the file.
+def test_deleting_the_old_baseline_alone_still_needs_the_prefix_and_an_adr() -> None:
+    """Catches a guard that watches only files that exist after the commit: a deletion of
+    `baseline.json` is a baseline change like any other."""
+    verdict = check([Commit(sha="a1", subject="tidy", files=(OLD,))])
 
-Each row's commit is malformed in BOTH halves, so a guard that examines it at all
-produces an offence: the exact-path test is the only thing that can keep it clean.
-"""
+    assert [o.paths for o in verdict.offences] == [(OLD,)]
+
+
+def test_a_commit_touching_both_files_names_both_paths_in_order() -> None:
+    """Catches an offence that names one of the two files: the author must see both."""
+    verdict = check([Commit(sha="a1", subject="tidy", files=(NEW, OLD))])
+
+    assert verdict.offences[0].paths == (OLD, NEW)
 
 
 @pytest.mark.parametrize(
-    ("label", "path"), NON_BASELINE_PATHS, ids=[row[0] for row in NON_BASELINE_PATHS]
+    "path",
+    [
+        NEW + ".bak",
+        "x/" + NEW,
+        "backend/evals/conversation-baseline.json/old",
+        "backend/evals/baseline.jsonl",
+        "backend/evals/conversation-baselines.json",
+        "conversation-baseline.json",
+        "backend/evals/Conversation-baseline.json",
+    ],
 )
-def test_a_path_that_is_not_exactly_the_baseline_is_not_examined(label: str, path: str) -> None:
-    """Catches the substring match in criterion 8: a guard comparing loosely blocks a PR that
-    renames a backup file and never touched the baseline, and - with `endswith` - one that
-    edits a baseline belonging to somebody else's directory. Nothing but the exact-string
-    comparison decides these rows, since the commit is otherwise a full offence."""
-    verdict = check([Commit(sha=OTHER_SHA, subject="tidy the eval directory", files=(path,))])
-
-    assert verdict.passed is True
-    assert verdict.offences == ()
+def test_a_path_that_is_not_exactly_a_baseline_is_not_examined(path: str) -> None:
+    """Catches a substring or suffix match, which would fail every pull request touching a
+    near-miss name. The subject and files would be an offence if the commit were examined."""
+    assert check([Commit(sha="a1", subject="tweak", files=(path,))]).passed is True
 
 
-ADR_CANDIDATES: tuple[tuple[str, str, bool], ...] = (
-    ("a real adr", "dev/adr/0009-x.md", True),
-    ("the plural directory", "docs/adrs/0009-x.md", False),
-    ("the bare directory name", "docs/adr", False),
-    ("adr somewhere else", "other/dev/adr/0009-x.md", False),
-)
-"""Criterion 8's ADR rows, against `ADR_PREFIX == "the project notes"`.
-
-`docs/adrs/0009-x.md` and the bare `docs/adr` both start with `docs/adr`, so a
-prefix test missing the trailing slash accepts both; the last row is the one an
-`in` test accepts. Every row carries a well-formed `baseline:` subject, so the
-prefix guard cannot be what decides it.
-"""
+def test_only_a_file_under_the_adr_directory_counts() -> None:
+    """Catches an ADR check that accepts `docs/adr/` or a file merely containing the project notes."""
+    for elsewhere in ("docs/adr/0040.md", "x/dev/adr/0040.md", "dev/adrs/0040.md"):
+        verdict = check([Commit(sha="a1", subject=GOOD_SUBJECT, files=(NEW, elsewhere))])
+        assert [o.reasons for o in verdict.offences] == [(MISSING_ADR_REASON,)], elsewhere
 
 
-@pytest.mark.parametrize(
-    ("label", "path", "counts"), ADR_CANDIDATES, ids=[row[0] for row in ADR_CANDIDATES]
-)
-def test_only_a_file_under_the_adr_directory_counts_as_the_justification(
-    label: str, path: str, counts: bool
-) -> None:
-    """Catches an ADR test written without the trailing slash, which would accept a file in
-    `docs/adrs/` that no ADR index lists, and catches one written as `in` rather than
-    `startswith`, which accepts an ADR vendored under any directory. The subject is the
-    published happy path's, so removing the ADR test is the only thing that flips a
-    rejecting row to clean."""
-    verdict = check([Commit(sha=SHAPE_SHA, subject=SHAPE_SUBJECT, files=(path, BASELINE_PATH))])
+def test_every_commit_is_examined_not_just_the_first_bad_one() -> None:
+    """Catches an early return: a documented commit must not hide an undocumented one after
+    it, and the offences keep commit order."""
+    verdict = check(
+        [
+            Commit(sha="a1", subject=GOOD_SUBJECT, files=(NEW, ADR)),
+            Commit(sha="b2", subject="tweak", files=(NEW,)),
+            Commit(sha="c3", subject="tweak again", files=(NEW,)),
+        ]
+    )
 
-    assert verdict.passed is counts
-    if not counts:
-        assert verdict.offences == (Offence(sha=SHAPE_SHA, reasons=(MISSING_ADR_REASON,)),)
+    assert [o.sha for o in verdict.offences] == ["b2", "c3"]
 
 
-def test_check_is_pure_over_the_same_commits() -> None:
-    """The purity claim in section 2: catches an implementation that accumulates offences in
-    module state or mutates the commits it was handed, where a second run inside one
-    process reports the first run's shas again - which in a CI job that checks two ranges
-    blocks a PR for a commit that is not in it."""
-    commits = [
-        Commit(sha=SHAPE_SHA, subject=SHAPE_SUBJECT, files=(SHAPE_ADR, BASELINE_PATH)),
-        Commit(sha=OTHER_SHA, subject="bump the floor", files=(BASELINE_PATH,)),
-    ]
+def test_an_exact_move_onto_a_baseline_is_not_a_change() -> None:
+    """Catches a guard that fails a pure `git mv`: nothing in the file changed, so there is
+    nothing for an ADR to justify."""
+    move = Commit(
+        sha="a1",
+        subject="move the files",
+        files=("old/conversation-baseline.json", NEW),
+        exact_moves=(("old/conversation-baseline.json", NEW),),
+    )
 
-    first = check(commits)
-    second = check(commits)
-
-    assert first == second
-    assert isinstance(first, GuardVerdict)
+    assert check([move]).passed is True
 
 
-def test_an_offence_line_names_the_sha_the_file_and_every_reason() -> None:
-    """The one line criterion 3 promises per offending sha. Catches a line that prints the
-    reasons without the sha (a reviewer cannot find the commit), that drops the second
-    reason when both are broken, and that renders the tuple's repr - `('the subject...',)`
-    in a CI log is how a guard gets ignored."""
-    line = offence_line(Offence(sha=OTHER_SHA, reasons=(MISSING_PREFIX_REASON, MISSING_ADR_REASON)))
+def test_a_different_file_moved_onto_a_baseline_is_still_judged() -> None:
+    """Catches an exemption that accepts any exact move: renaming `scratch.json` over the
+    baseline replaces its content unjudged. The old name is not the baseline's name."""
+    move = Commit(
+        sha="a1", subject="move", files=("scratch.json", NEW), exact_moves=(("scratch.json", NEW),)
+    )
+
+    assert [o.sha for o in check([move]).offences] == ["a1"]
+
+
+def test_moving_a_baseline_away_is_still_judged() -> None:
+    """Catches an exemption keyed on the old side: the file leaves the guarded path, so the
+    move must be judged."""
+    away = Commit(
+        sha="a1",
+        subject="move",
+        files=(NEW, "old/conversation-baseline.json"),
+        exact_moves=((NEW, "old/conversation-baseline.json"),),
+    )
+
+    assert [o.sha for o in check([away]).offences] == ["a1"]
+
+
+def test_an_offence_line_names_the_sha_the_files_and_every_reason() -> None:
+    """Catches a line the author cannot act on: the sha first, then the touched files, then
+    both reasons joined by 'and'."""
+    line = offence_line(
+        Offence(sha="a1", reasons=(MISSING_PREFIX_REASON, MISSING_ADR_REASON), paths=(OLD, NEW))
+    )
 
     assert line == (
-        f"{OTHER_SHA}: touches {BASELINE_PATH} but {MISSING_PREFIX_REASON} and {MISSING_ADR_REASON}"
+        f"a1: touches {OLD} and {NEW} but {MISSING_PREFIX_REASON} and {MISSING_ADR_REASON}"
     )
-    assert "\n" not in line
 
 
-def test_the_models_are_frozen() -> None:
-    """The three records travel from the git read into the verdict and out to stderr. Catches
-    a mutable `Commit`, where the check could rewrite the subject it is judging, and a
-    mutable `Offence`, where a caller holding the verdict can edit what CI reports."""
-    commit = Commit(sha=SHAPE_SHA, subject=SHAPE_SUBJECT, files=(BASELINE_PATH,))
-    offence = Offence(sha=SHAPE_SHA, reasons=(MISSING_ADR_REASON,))
-    verdict = GuardVerdict(offences=(offence,))
-
-    with pytest.raises(ValueError):
-        commit.subject = "rewritten"  # type: ignore[misc]
-    with pytest.raises(ValueError):
-        offence.sha = "rewritten"  # type: ignore[misc]
-    with pytest.raises(ValueError):
-        verdict.offences = ()  # type: ignore[misc]
+# --- the git read, through the command ---------------------------------------------
 
 
-# --------------------------------------------------------------------------
-# an earlier change: a byte-identical move onto the baseline is not a baseline change
-# --------------------------------------------------------------------------
-
-OLD_BASELINE_PATH = "project-evals/baseline.json"
-"""Where the baseline lived before an earlier change moved it, without changing a byte."""
-
-MOVE_SUBJECT = "move everything"
-"""A subject with no `baseline:` prefix, used by every move row below with no ADR file.
-
-So each row is a full offence in both halves if the commit is judged at all, and
-only the exact-move skip can turn it clean."""
+@dataclass(frozen=True)
+class GuardRepo:
+    path: Path
+    shas: dict[str, str]
 
 
-def test_an_exact_move_onto_the_baseline_with_no_prefix_or_adr_passes() -> None:
-    """Catches a `check` that ignores `exact_moves` and judges every commit whose files name
-    the baseline, which is what failed `eval-gate` on 4b9cfd9: a pure `git mv` carrying no
-    prefix and no ADR. Both halves are broken here, so the skip is the only thing that can
-    keep the verdict clean."""
-    verdict = check(
+def git(repo: Path, *arguments: str) -> str:
+    """One git command, with the developer's own config unable to reach it."""
+    completed = subprocess.run(
         [
-            Commit(
-                sha=OTHER_SHA,
-                subject=MOVE_SUBJECT,
-                files=(OLD_BASELINE_PATH, BASELINE_PATH),
-                exact_moves=((OLD_BASELINE_PATH, BASELINE_PATH),),
-            )
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            *arguments,
+        ],
+        cwd=repo,
+        env={
+            **os.environ,
+            "GIT_CONFIG_GLOBAL": "/dev/null",
+            "GIT_CONFIG_SYSTEM": "/dev/null",
+            "GIT_CONFIG_NOSYSTEM": "1",
+        },
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return completed.stdout
+
+
+def commit(repo: Path, subject: str, files: Sequence[str], *, remove: Sequence[str] = ()) -> str:
+    for name in files:
+        path = repo / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{subject}\n", encoding="utf-8")
+        git(repo, "add", "--", name)
+    for name in remove:
+        git(repo, "rm", "-q", "--", name)
+    git(repo, "commit", "--no-gpg-sign", "-m", subject)
+    return git(repo, "rev-parse", "HEAD").strip()
+
+
+@pytest.fixture(scope="module")
+def guard_repo(tmp_path_factory: pytest.TempPathFactory) -> GuardRepo:
+    """One small history: a root with the old baseline, the plan's swap commit done the right
+    way, a change to the new file with no prefix, and a deletion of the old file with none."""
+    repo = tmp_path_factory.mktemp("guard-repo")
+    git(repo, "init", "--initial-branch=main", ".")
+    root = commit(repo, "add the readme and the old baseline", ["README.md", OLD])
+    swap = commit(repo, GOOD_SUBJECT, [NEW, ADR], remove=[OLD])
+    no_prefix = commit(repo, "update the numbers", [NEW, "dev/adr/0041-x.md"])
+    readd = commit(repo, "bring the old one back", [OLD])
+    return GuardRepo(repo, {"root": root, "swap": swap, "no_prefix": no_prefix, "readd": readd})
+
+
+def run_guard(base: str, head: str) -> int:
+    return cli.main(["baseline-guard", f"--base={base}", f"--head={head}"])
+
+
+def test_the_swap_commit_passes_through_git(
+    guard_repo: GuardRepo, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Catches a git read that loses the deleted file's path or the new file's path: the swap
+    deletes `baseline.json` and adds `conversation-baseline.json`, well formed, and must pass
+    with the one commit counted."""
+    monkeypatch.chdir(guard_repo.path)
+
+    code = run_guard(guard_repo.shas["root"], guard_repo.shas["swap"])
+
+    printed = capsys.readouterr()
+    assert code == EXIT_OK
+    assert printed.out.strip() == GUARD_PASSED_LINE.format(checked=1)
+    assert printed.err == ""
+
+
+def test_the_guard_watches_both_baseline_files(
+    guard_repo: GuardRepo, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Catches a guard that still watches only `baseline.json`: a commit changing
+    `conversation-baseline.json` without the prefix is an offence (the ADR file is present,
+    so the prefix is the only half missing), and bringing `baseline.json` back without
+    either half is another. One stderr line per sha, nothing on stdout."""
+    monkeypatch.chdir(guard_repo.path)
+
+    code = run_guard(guard_repo.shas["swap"], guard_repo.shas["readd"])
+
+    printed = capsys.readouterr()
+    assert code == EXIT_FAILED
+    assert printed.out == ""
+    assert sorted(printed.err.strip().splitlines()) == sorted(
+        [
+            f"{guard_repo.shas['no_prefix']}: touches {NEW} but {MISSING_PREFIX_REASON}",
+            f"{guard_repo.shas['readd']}: touches {OLD} but "
+            f"{MISSING_PREFIX_REASON} and {MISSING_ADR_REASON}",
         ]
     )
-
-    assert verdict.passed is True
-    assert verdict.offences == ()
-
-
-def test_a_move_with_an_edit_is_judged_like_any_change() -> None:
-    """Catches a `check` that infers a move from the file list itself (another
-    `baseline.json` gone and `BASELINE_PATH` added in one commit) instead of trusting only
-    git's byte-identical report, which would wave through a threshold edited during a move.
-    `exact_moves` is empty, exactly what git hands over for a move with any edit."""
-    verdict = check(
-        [
-            Commit(
-                sha=OTHER_SHA,
-                subject=MOVE_SUBJECT,
-                files=(OLD_BASELINE_PATH, BASELINE_PATH),
-                exact_moves=(),
-            )
-        ]
-    )
-
-    assert verdict.passed is False
-    assert verdict.offences == (
-        Offence(sha=OTHER_SHA, reasons=(MISSING_PREFIX_REASON, MISSING_ADR_REASON)),
-    )
-
-
-def test_another_file_moved_exactly_onto_the_baseline_is_still_judged() -> None:
-    """Catches a skip that checks only the new side of the move, which would let any file at
-    all, `notes/other.json` here, be renamed onto the baseline with no prefix and no ADR,
-    replacing every threshold in one unreviewed commit. The move is exact and its new path is
-    exactly the baseline, so only the old path's `baseline.json` name test can refuse it."""
-    verdict = check(
-        [
-            Commit(
-                sha=OTHER_SHA,
-                subject=MOVE_SUBJECT,
-                files=("notes/other.json", BASELINE_PATH),
-                exact_moves=(("notes/other.json", BASELINE_PATH),),
-            )
-        ]
-    )
-
-    assert verdict.passed is False
-    assert verdict.offences == (
-        Offence(sha=OTHER_SHA, reasons=(MISSING_PREFIX_REASON, MISSING_ADR_REASON)),
-    )
-
-
-def test_moving_the_baseline_away_is_still_judged() -> None:
-    """Catches a skip that accepts any exact move with `baseline.json` on both sides, or with
-    the baseline on either side, which would let a commit move the watched file out of
-    `backend/evals/` and leave the gate reading nothing. Both names here end `baseline.json`,
-    so only the `new == BASELINE_PATH` test can keep this commit judged."""
-    verdict = check(
-        [
-            Commit(
-                sha=OTHER_SHA,
-                subject=MOVE_SUBJECT,
-                files=(BASELINE_PATH, "old/baseline.json"),
-                exact_moves=((BASELINE_PATH, "old/baseline.json"),),
-            )
-        ]
-    )
-
-    assert verdict.passed is False
-    assert verdict.offences == (
-        Offence(sha=OTHER_SHA, reasons=(MISSING_PREFIX_REASON, MISSING_ADR_REASON)),
-    )
-
-
-def test_commit_exact_moves_defaults_to_empty() -> None:
-    """Catches `exact_moves` added as a required field, which breaks every caller that builds
-    `Commit(sha, subject, files)` today, and catches a default that is anything but empty,
-    which would mark commits as moves nobody reported."""
-    commit = Commit(sha=SHAPE_SHA, subject=SHAPE_SUBJECT, files=(BASELINE_PATH,))
-
-    assert commit.exact_moves == ()

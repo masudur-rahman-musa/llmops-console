@@ -39,19 +39,14 @@ The contract these cases are written against, before it exists:
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from decimal import Decimal
 from pathlib import Path
 
 import psycopg
 import pytest
 from psycopg import sql
 
-from app.evals.assertions import AssertionResult, AssertionStatus, CaseAssertions
-from app.evals.cases import EvalCategory
-from app.evals.outcome import CaseOutcome
-from app.evals.region_check import ResidencyVerdict
 from app.evals.report import REPORT_JSON_NAME, RunReport, build_report
-from app.evals.runner import CaseRun, RunResult
+from app.evals.runner import CaseLine
 from app.storage.eval_store import EVAL_CASES, EVAL_RUNS, PostgresEvalStore, rows_from_report
 
 from .conftest import Pool, requires_postgres, table_names
@@ -62,17 +57,9 @@ FINISHED = datetime(2026, 3, 4, 9, 14, 2, 881044, tzinfo=UTC)
 SET_NAME = "helpdesk-golden-v1.jsonl"
 SET_SHA = "e4b2c0d9a71f3856cbb4d20e9f61a7c845d3e0b2"
 GIT_SHA = "b71f0c3a9d5e42188a6c0f37d21be9054c8a7f6d"
-TENANT = "nordlicht"
+TENANT = "all"
 TARGET = "https://helpdesk.example/gateway"
-PROVIDER = "anthropic_eu"
-REGION = "eu"
 REPORT_PATH = Path("/srv/evals/nightly") / REPORT_JSON_NAME
-
-COST = Decimal("1234.567891")
-"""Six decimal places with a digit in every one of them: a column declared
-`numeric(18, 2)` rounds this to 1234.57 and PostgreSQL says nothing about it."""
-
-LATENCY_MS = 137
 
 EVAL_RUNS_COLUMNS = (
     "id",
@@ -106,63 +93,30 @@ EVAL_CASES_COLUMNS = (
 )
 
 
-def make_run(case_id: str, *, verdict: str, category: EvalCategory) -> CaseRun:
-    """One per-case record, as `run_set` would have built it.
-
-    `broken` is the turn that never answered: no assertions, no verdict and no
-    measurements at all, which is the row whose four columns must reach the table
-    as NULL.
-    """
-    if verdict == "broken":
-        return CaseRun(
-            case_id=case_id,
-            category=category,
-            assertions=None,
-            residency=None,
-            outcome=None,
-            error=f"turn failed: HTTP 502 for {case_id}",
-            passed=False,
-        )
-    return CaseRun(
+def line(case_id: str, *, error: str | None) -> CaseLine:
+    """One saved case result. A case that never answered carries its error and no check."""
+    return CaseLine(
         case_id=case_id,
-        category=category,
-        assertions=CaseAssertions(
-            case_id=case_id,
-            results=(AssertionResult(name="intent", status=AssertionStatus.PASSED),),
-        ),
-        residency=ResidencyVerdict(
-            case_id=case_id,
-            tenant=TENANT,
-            data_class="internal",
-            observed=REGION,
-            allowed=("eu", "self"),
-            violation=False,
-        ),
-        outcome=CaseOutcome(
-            reply="Done.",
-            latency_ms=LATENCY_MS,
-            cost_usd=COST,
-            provider=PROVIDER,
-            region=REGION,
-        ),
-        error=None,
-        passed=True,
+        category="paraphrases",
+        passed=error is None,
+        error=error,
+        check=None,
+        judged=(),
+        answer=None,
     )
 
 
-RESULT = RunResult(
-    runs=(
-        make_run("alpha", verdict="pass", category=EvalCategory.HELPDESK),
-        make_run("delta", verdict="broken", category=EvalCategory.INJECTION),
-    )
+LINES = (
+    line("alpha", error=None),
+    line("delta", error="turn failed: HTTP 502 for delta"),
 )
-"""One case of each shape a stored run has to survive: measured, and never answered."""
+"""One case of each shape a stored run has to survive: answered, and never answered."""
 
 
 def a_report(*, run_kind: str = "ci") -> RunReport:
-    """One built report, with a fresh run id of its own (`16c` builds one per call)."""
+    """One built report, with a fresh run id of its own."""
     return build_report(
-        RESULT,
+        LINES,
         started_at=STARTED,
         finished_at=FINISHED,
         set_name=SET_NAME,
@@ -294,8 +248,7 @@ def test_a_report_round_trips_into_the_two_tables(pool: Pool, migrated_schema: s
     because it is what the eval gate reads back, and a `jsonb` column handed a Python dict with
     no adapter is the first thing that breaks here. The expected mapping is the report's
     own JSON form (`model_dump(mode="json")["metrics"]`), the exact bytes the store writes,
-    so the two `Decimal` costs come back as the decimal STRINGS jsonb holds; the precise
-    value lives in the `cost_usd` numeric column, pinned by the case below. Decision F's two
+    so `check_score` and `judge_score` come back as the numbers jsonb holds. Decision F's two
     columns are asserted NULL in the same row, so a store that filled them with zeros fails."""
     report = a_report()
 
@@ -320,96 +273,11 @@ def test_a_report_round_trips_into_the_two_tables(pool: Pool, migrated_schema: s
             None,
         )
     ]
-
-
-@requires_postgres
-def test_the_cost_reads_back_as_a_decimal_at_six_places(pool: Pool, migrated_schema: str) -> None:
-    """The criterion, and the plan's `numeric` risk. Catches a column narrower than six
-    decimal places, which rounds a cost the ledger computed exactly and makes a run's
-    spend stop reconciling with `cost_ledger`, and catches `double precision`, which
-    round-trips this value to something that merely prints the same. The exponent is
-    asserted because `Decimal("1234.5678910") == COST`, so equality alone cannot see a
-    scale that changed; the type is asserted because a float would compare equal to a
-    `Decimal` for kinder numbers than this one."""
-    store_report(pool, migrated_schema, a_report())
-
-    stored = case_column(case_rows(pool, migrated_schema)[0], "cost_usd")
-
-    assert isinstance(stored, Decimal)
-    assert stored == COST
-    assert stored.as_tuple().exponent == -6
-
-
-FAILING_RESULT = RunResult(
-    runs=(
-        CaseRun(
-            case_id="beta",
-            category=EvalCategory.ACCESS_AUTO,
-            assertions=CaseAssertions(
-                case_id="beta",
-                results=(
-                    AssertionResult(name="intent", status=AssertionStatus.PASSED),
-                    AssertionResult(
-                        name="decision",
-                        status=AssertionStatus.FAILED,
-                        expected="auto_approved",
-                        actual="escalated",
-                    ),
-                ),
-            ),
-            residency=ResidencyVerdict(
-                case_id="beta",
-                tenant=TENANT,
-                data_class="internal",
-                observed=REGION,
-                allowed=("eu", "self"),
-                violation=False,
-            ),
-            outcome=CaseOutcome(
-                reply="Done.",
-                latency_ms=LATENCY_MS,
-                cost_usd=COST,
-                provider=PROVIDER,
-                region=REGION,
-            ),
-            error=None,
-            passed=False,
-        ),
-    )
-)
-"""One failing case, built by hand rather than by `make_run`: `run_set` never
-builds a `CaseRun` with fewer than eleven assertion results, but `tags_for` only
-needs the one that failed, and this is the shortest record that produces exactly
-one tag to read back."""
-
-
-@requires_postgres
-def test_the_tags_column_reads_back_the_case_reports_tags_in_order(
-    pool: Pool, migrated_schema: str
-) -> None:
-    """Catches `tags` written as an unordered set, a comma-joined string, or the
-    category repeated into every row instead of the report's own computed tags.
-    PostgreSQL's `text[]` preserves the order it was given, so a store that built
-    the array from a Python `set` reads this back shuffled at least some of the
-    time, and a store that never called `taxonomy.tags_for` at all reads back an
-    empty array on a case that failed."""
-    report = build_report(
-        FAILING_RESULT,
-        started_at=STARTED,
-        finished_at=FINISHED,
-        set_name=SET_NAME,
-        set_sha=SET_SHA,
-        set_sha_source="commit",
-        run_kind="ci",
-        git_sha=GIT_SHA,
-        tenant=TENANT,
-        target=TARGET,
-    )
-
-    store_report(pool, migrated_schema, report)
-
-    stored = case_column(case_rows(pool, migrated_schema)[0], "tags")
-    assert stored == ["wrong_decision"]
+    stored_metrics = run_rows(pool, migrated_schema)[0][EVAL_RUNS_COLUMNS.index("metrics")]
+    assert isinstance(stored_metrics, dict)
+    assert stored_metrics["check_score"] == 50.0
+    assert stored_metrics["judge_score"] is None
+    assert "decision_accuracy" not in stored_metrics
 
 
 @requires_postgres
@@ -428,12 +296,11 @@ def test_every_case_row_lands_with_its_own_measurements_and_its_details(
     measured = next(row for row in rows if case_column(row, "case_id") == "alpha")
     broken = next(row for row in rows if case_column(row, "case_id") == "delta")
 
-    assert case_column(measured, "category") == EvalCategory.HELPDESK.value
+    assert case_column(measured, "category") == "paraphrases"
     assert case_column(measured, "passed") is True
-    assert case_column(measured, "latency_ms") == LATENCY_MS
-    assert case_column(measured, "provider") == PROVIDER
-    assert case_column(measured, "region") == REGION
     assert case_column(measured, "tags") == []
+    for column in ("latency_ms", "cost_usd", "provider", "region"):
+        assert case_column(measured, column) is None, column
 
     assert case_column(broken, "passed") is False
     assert case_column(broken, "latency_ms") is None

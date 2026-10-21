@@ -259,7 +259,7 @@ def test_nordlicht_confidential_resolves_to_anthropic_under_relaxed() -> None:
     assert result
     assert (result[0].provider, result[0].model, result[0].region) == (
         "anthropic",
-        "claude-haiku-4-5",
+        "claude-haiku-5-5",
         "us",
     )
 

@@ -1,38 +1,31 @@
-r"""The kind e2e's eval target: `app.evals.target`'s contract, over the gateway's
-own `/v1/chat/completions`.
+r"""The kind e2e's eval target: the help desk's conversation contract, played from a small
+case file instead of a real agent.
 
-Stdlib only (`http.server`, `urllib.request`) - no dependency this repo has not already
-approved, and none for the throwaway image `Dockerfile` in this directory to install. This module is a CLIENT of the published target contract
-(`app.evals.target.TargetClient`), never a change to it, so the two endpoints and
-the payload shapes are duplicated here rather than imported (plan decision, "Will NOT
-touch `target.py`") - the stub's own image carries none of `opsconsole`.
+Stdlib only (`http.server`, `urllib.request`), so the throwaway image installs nothing. The contract is duplicated here, never imported: the stub's image carries
+none of `opsconsole`.
 
-Two endpoints, both POST, exactly `target.py`'s:
+Two endpoints, both POST:
 
-    /admin/test/reset   answered 200 with an empty body - this stub holds no seed to reset
-    /v1/eval/turn       the case's payload in, one `EvalEnvelope`-shaped document out
+    /admin/test/reset         answered 204 with an empty body; this stub holds no seed
+    /v1/eval/conversation     {case_id, tenant, principal_user, turns} in, one record per
+                              user turn out: {case_id, turns: [{turn, reply, tool_calls}]}
 
-A turn forwards the case's last message to the deployed gateway's own
-`POST /v1/chat/completions`, alias `agent-default`, tenant `evals`, with NO
-`X-Data-Class` header. That default (`confidential`) is what keeps this tenant's
-resolved candidates down to the `self` region alone: `routing.yaml`'s `evals` tenant
-names `allow_regions: [eu, self]` for `confidential` regardless of `ANTHROPIC_API_KEY`
-being set, `anthropic_eu` ships disabled, and only `local` (region `self`) is left - so
-the kind cluster's one real provider is reached with no header, no key and no
-`routing.yaml` change (`test_the_alias_and_tenant_resolve_to_the_local_provider_only` in
-`infra/tests/infra/test_k8s_ci_kind_overlay.py` pins the routing-policy half of this claim).
+The stub reads the case file (`CASES_PATH`, default `/cases/kind-cases.jsonl`, the same
+file `ops-eval conversations --cases` plays) and answers each case from its `expected`
+block: the case's expected tool calls are reported as made, each one on the turn the
+person says yes (`confirm_turn`) or on turn 1 when nothing may change. That is what lets
+the kind run pass without a real agent.
 
-The tradeoff measurement run reuses this stub against a DIFFERENT policy:
-`dev/scripts/tradeoff_policy.py` merges one option's overlay over the shipped file, and the
-two API options widen `confidential` there precisely because this stub sends no header.
-That is a change to the policy the gateway loads and none to this module - which is why
-the turn publishes what the gateway measured (`GatewayReply`) rather than judging any of
-it here.
+The reply text of a turn is one of two things. With `FORWARD_TO_GATEWAY` true (the
+default), the turn's message goes to the deployed gateway's `POST /v1/chat/completions`,
+alias `agent-default`, tenant `evals`, with no `X-Data-Class` header, so the measurement
+run writes real ledger rows and the answer is the model's own text. With it `false`
+(the kind cluster, which has no model), the reply is a fixed sentence that carries any
+request number the stub's own tool result holds.
 """
 
 from __future__ import annotations
 
-import decimal
 import http.server
 import json
 import os
@@ -40,202 +33,71 @@ import sys
 import time
 import urllib.request
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Final, NamedTuple
 
 RESET_PATH: Final[str] = "/admin/test/reset"
-TURN_PATH: Final[str] = "/v1/eval/turn"
+CONVERSATION_PATH: Final[str] = "/v1/eval/conversation"
 
-TURN_REQUIRED_FIELDS: Final[frozenset[str]] = frozenset(
-    {"case_id", "tenant", "principal_user", "messages"}
-)
-"""Exactly the keys `TargetClient.run_case` sends, no more and no fewer - the same
-strictness `EvalEnvelope`'s `extra=\"forbid\"` gives the answer, given to the request
-(`test_a_turn_payload_with_an_extra_field_is_rejected`,
-`test_a_turn_payload_missing_a_field_is_rejected`)."""
+REQUEST_FIELDS: Final[frozenset[str]] = frozenset({"case_id", "tenant", "principal_user", "turns"})
+"""Exactly the keys the console sends, no more and no fewer."""
 
 ALIAS: Final[str] = "agent-default"
-"""The `routing.yaml` alias this stub asks the gateway to resolve, per the module
-docstring's routing argument."""
-
-COST_HEADER: Final[str] = "X-Gateway-Cost-USD"
-PROVIDER_HEADER: Final[str] = "X-Gateway-Provider"
-REGION_HEADER: Final[str] = "X-Gateway-Region"
-"""Three of the seven `X-Gateway-*` headers a served answer carries, named here so
-this stub reads what the gateway really writes rather than a header it invented
-(`test_call_gateway_measures_its_own_latency_in_whole_milliseconds`).
-
-There is no fourth: the gateway publishes no latency header, so `call_gateway`
-times itself."""
+"""The `routing.yaml` alias this stub asks the gateway to resolve."""
 
 NANOSECONDS_PER_MILLISECOND: Final[int] = 1_000_000
-"""`time.monotonic_ns` counts nanoseconds and `EvalEnvelope.latency_ms` is whole
-milliseconds. Both unit mistakes this divisor prevents - raw nanoseconds, and
-seconds floored to zero - would be published as a plausible-looking number rather
-than an error (`test_call_gateway_measures_its_own_latency_in_whole_milliseconds`)."""
 
 GATEWAY_TIMEOUT_SECONDS: Final[float] = 30.0
 """How long one forwarded chat completion may take. The 3B local model is the whole
 budget: a hang here is one case timing out rather than the stub itself."""
 
-REFUSAL_KEYWORDS: Final[tuple[str, ...]] = (
-    "i cannot",
-    "i can't",
-    "i won't",
-    "i will not",
-    "i'm not able",
-    "i am not able",
-    "unable to",
-    "not able to",
-    "cannot help",
-    "can't help",
-    "cannot provide",
-    "can't provide",
-    "cannot assist",
-    "can't assist",
-    "i'm sorry, but",
-    "sorry, but i",
-)
-"""The fixed refusal vocabulary `envelope_for_reply` checks a reply against, casefolded
-on both sides. Broad on purpose: this stub scores a REAL model's freeform text, and a
-narrow list would read a rephrased refusal as an answer."""
 
-CLARIFY_KEYWORDS: Final[tuple[str, ...]] = (
-    "could you clarify",
-    "can you clarify",
-    "what do you mean",
-    "which one do you mean",
-    "can you specify",
-    "could you specify",
-    "could you provide more detail",
-)
-"""The fixed clarify vocabulary, `REFUSAL_KEYWORDS`'s counterpart. No case in
-`project-evals/golden/e2e-kind.jsonl` asserts `should_clarify`, but the mapping still
-publishes the field the way `EvalEnvelope` defines it."""
+CHANGE_RESULTS: Final[dict[str, dict[str, Any]]] = {
+    "create_access_request": {"request_number": "REQ-0001", "status": "pending"},
+}
+"""What the stub says a tool returned. A tool not listed returns an empty result."""
 
 
-class MalformedTurn(Exception):
-    """The `/v1/eval/turn` body does not carry exactly `TURN_REQUIRED_FIELDS`, or its
-    `messages` carries no usable text. Answered as one line and a 400, never a
-    traceback (`test_a_turn_payload_with_an_extra_field_is_rejected`)."""
+class MalformedRequest(Exception):
+    """The body is not exactly the conversation request. Answered as one line and a 400."""
 
 
-def checked_turn_payload(payload: object) -> dict[str, Any]:
-    """Refuse a body that is not a JSON object or does not carry exactly the four
-    required fields - the request's own version of `EvalEnvelope`'s strictness."""
+class UnknownCase(Exception):
+    """The case id is not in the case file. Answered as one line and a 404."""
+
+
+def load_cases(path: Path) -> dict[str, dict[str, Any]]:
+    """Read the case file once: one JSON object per line, keyed by `id`."""
+    cases: dict[str, dict[str, Any]] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            case = json.loads(line)
+            cases[str(case["id"])] = case
+    return cases
+
+
+def checked_request(payload: object) -> dict[str, Any]:
+    """Refuse a body that is not a JSON object with exactly the four request fields."""
     if not isinstance(payload, dict):
-        raise MalformedTurn("the body is not a JSON object")
-    if set(payload) != TURN_REQUIRED_FIELDS:
-        raise MalformedTurn(
-            f"expected exactly {sorted(TURN_REQUIRED_FIELDS)}, got {sorted(payload)}"
-        )
+        raise MalformedRequest("the body is not a JSON object")
+    if set(payload) != REQUEST_FIELDS:
+        raise MalformedRequest(f"expected exactly {sorted(REQUEST_FIELDS)}, got {sorted(payload)}")
+    turns = payload["turns"]
+    if not isinstance(turns, list) or not turns or not all(isinstance(t, str) and t for t in turns):
+        raise MalformedRequest("turns is not a non-empty list of text")
     return payload
 
 
-def last_user_content(messages: object) -> str:
-    """The text this stub forwards: the last message's `content`, whatever its `role`.
-
-    The last message is the one being answered - a golden case's `messages` may carry
-    earlier turns for context, and this stub answers the newest one."""
-    if not isinstance(messages, list) or not messages:
-        raise MalformedTurn("messages is not a non-empty list")
-    last = messages[-1]
-    content = last.get("content") if isinstance(last, dict) else None
-    if not isinstance(content, str) or not content:
-        raise MalformedTurn("the last message carries no non-empty string content")
-    return content
-
-
 class GatewayReply(NamedTuple):
-    """One served answer: the text, and what the gateway said it cost to produce.
-
-    A tuple rather than four return values because `turn_response` hands the whole
-    thing to `envelope_for_reply`, and a positional quartet is exactly where
-    `provider` and `region` get swapped
-    (`test_the_turn_endpoint_publishes_the_measurements_from_the_gateway_reply`).
-
-    `cost_usd` is the header's RAW STRING, parsed once when the envelope is built.
-    Carrying it as text this far means an unpriced turn and an unparseable header
-    are the same case with the same answer, and neither becomes a `0`
-    (`test_an_unusable_cost_still_answers_two_hundred_and_publishes_null`).
-    """
+    """One served answer: the text, and the time the whole exchange took."""
 
     reply: str
-    latency_ms: int | None = None
-    cost_usd: str | None = None
-    provider: str | None = None
-    region: str | None = None
-
-
-def parsed_cost(value: str | None) -> str | None:
-    """The cost header as a published decimal STRING, or `None` when there is no
-    usable number.
-
-    `None` and never `0`. A turn the ledger did not price, and a header a proxy
-    mangled, are both "nothing measured": publishing `0` would make the option's
-    USD per 1,000 turns a real-looking number that no provider charged, and
-    `tradeoff.py` deliberately leaves a null metric out of the winner computation
-    instead of crowning it (criteria 39 and 40,
-    `test_an_unusable_cost_still_answers_two_hundred_and_publishes_null`).
-
-    A string out, not a `Decimal`: the envelope is `json.dumps`ed onto the wire, and
-    a float there loses the sixth place the ledger prices in."""
-    if value is None:
-        return None
-    try:
-        return str(decimal.Decimal(value))
-    except decimal.InvalidOperation:
-        return None
-
-
-def envelope_for_reply(
-    reply: str,
-    *,
-    latency_ms: int | None = None,
-    cost_usd: str | None = None,
-    provider: str | None = None,
-    region: str | None = None,
-) -> dict[str, Any]:
-    """Map one completion onto the published `EvalEnvelope` shape (an earlier change
-    acceptance criterion 6, an earlier change criteria 36 and 41).
-
-    `decision`, `risk_class`, `tool_calls` and `citations` are stub constants: this
-    target answers no tool calls and no citations, and the two judgements are fixed
-    rather than classified, because a bare gateway forwarding to one model has
-    nothing to classify intent or risk WITH - the module docstring on `target.py` is
-    explicit that an adopter's own target owns that judgement.
-
-    The four measurements are keyword-only and default to `None`, so every call site
-    written before the tradeoff run keeps its single positional argument (standing
-    rule 44), and an unmeasured turn publishes nothing rather than a zero
-    (`test_envelope_for_reply_publishes_no_measurements_when_none_are_given`).
-    `region` is published for the same reason as the other three: the residency
-    check reads it on every measured run."""
-    folded = reply.casefold()
-    return {
-        "decision": "answered",
-        "risk_class": "low",
-        "tool_calls": [],
-        "citations": [],
-        "reply": reply,
-        "refused": any(keyword in folded for keyword in REFUSAL_KEYWORDS),
-        "clarified": any(keyword in folded for keyword in CLARIFY_KEYWORDS),
-        "latency_ms": latency_ms,
-        "cost_usd": parsed_cost(cost_usd),
-        "provider": provider,
-        "region": region,
-    }
+    latency_ms: int
 
 
 def call_gateway(content: str, *, base_url: str, api_key: str) -> GatewayReply:
-    """POST one chat completion to the deployed gateway and return the assistant's
-    reply with what the answer cost. The one seam a test replaces to keep the
-    envelope-mapping cases off the network (module docstring, "no HTTP, no gateway").
-
-    The latency is measured HERE, around the whole exchange including reading the
-    body, because no response header carries it (criterion 38). `monotonic_ns` and
-    not `time.time`: a clock the host steps mid-run would otherwise publish a
-    negative turn (`test_call_gateway_measures_its_own_latency_in_whole_milliseconds`).
-    """
+    """POST one chat completion to the deployed gateway and return the assistant's reply.
+    The one seam a test replaces to keep the conversation cases off the network."""
     body = json.dumps({"model": ALIAS, "messages": [{"role": "user", "content": content}]}).encode(
         "utf-8"
     )
@@ -248,56 +110,76 @@ def call_gateway(content: str, *, base_url: str, api_key: str) -> GatewayReply:
     started = time.monotonic_ns()
     with urllib.request.urlopen(request, timeout=GATEWAY_TIMEOUT_SECONDS) as response:
         raw = response.read()
-        cost = response.headers.get(COST_HEADER)
-        provider = response.headers.get(PROVIDER_HEADER)
-        region = response.headers.get(REGION_HEADER)
     elapsed_ns = time.monotonic_ns() - started
     document = json.loads(raw)
     return GatewayReply(
         reply=str(document["choices"][0]["message"]["content"]),
         latency_ms=elapsed_ns // NANOSECONDS_PER_MILLISECOND,
-        cost_usd=cost,
-        provider=provider,
-        region=region,
     )
 
 
-def turn_response(
+def calls_for_turn(case: dict[str, Any], turn: int) -> list[dict[str, Any]]:
+    """The expected tool calls the stub reports as made on this turn."""
+    expected = case["expected"]
+    confirm = expected.get("confirm_turn")
+    call_turn = 1 if confirm is None else int(confirm)
+    if turn != call_turn:
+        return []
+    return [
+        {
+            "name": call["name"],
+            "args": dict(call.get("args_subset") or {}),
+            "ok": True,
+            "result": dict(CHANGE_RESULTS.get(call["name"], {})),
+            "error_code": None,
+        }
+        for call in expected["tool_calls"]
+    ]
+
+
+def canned_reply(calls: list[dict[str, Any]]) -> str:
+    """A fixed sentence that repeats only a request number a tool result holds."""
+    numbers = [str(c["result"]["request_number"]) for c in calls if "request_number" in c["result"]]
+    if numbers:
+        return f"Done. Your request number is {numbers[0]}."
+    return "Understood."
+
+
+def conversation_response(
     raw_body: bytes,
     *,
-    base_url: str,
+    cases: dict[str, dict[str, Any]],
+    base_url: str | None,
     api_key: str,
     caller: Callable[..., GatewayReply] = call_gateway,
 ) -> tuple[int, dict[str, Any]]:
-    """Answer one `/v1/eval/turn` request: the status code and the JSON body to write.
+    """Answer one `/v1/eval/conversation` request: the status code and the JSON body.
 
-    `caller` is `call_gateway` by default and replaced in a test that scores the
-    mapping without a socket; production code never passes it.
-
-    Every field of the reply reaches the envelope. Reading the measurements in
-    `call_gateway` and then publishing the text alone is the failure no case on
-    either function by itself can see, so it has one here
-    (`test_the_turn_endpoint_publishes_the_measurements_from_the_gateway_reply`)."""
+    `base_url` is `None` when the gateway is not forwarded to. `caller` is replaced in a
+    test that needs no socket; production code never passes it."""
     try:
-        payload = checked_turn_payload(json.loads(raw_body))
-        content = last_user_content(payload["messages"])
-    except (MalformedTurn, json.JSONDecodeError) as exc:
+        payload = checked_request(json.loads(raw_body))
+        case = cases.get(str(payload["case_id"]))
+        if case is None:
+            raise UnknownCase(f"no case {payload['case_id']} in the case file")
+    except (MalformedRequest, json.JSONDecodeError) as exc:
         return 400, {"error": str(exc)}
-    answer = caller(content, base_url=base_url, api_key=api_key)
-    return 200, envelope_for_reply(
-        answer.reply,
-        latency_ms=answer.latency_ms,
-        cost_usd=answer.cost_usd,
-        provider=answer.provider,
-        region=answer.region,
-    )
+    except UnknownCase as exc:
+        return 404, {"error": str(exc)}
+    turns: list[dict[str, Any]] = []
+    for number, text in enumerate(payload["turns"], start=1):
+        calls = calls_for_turn(case, number)
+        if base_url is None:
+            reply = canned_reply(calls)
+        else:
+            reply = caller(text, base_url=base_url, api_key=api_key).reply
+        turns.append({"turn": number, "reply": reply, "tool_calls": calls})
+    return 200, {"case_id": payload["case_id"], "turns": turns}
 
 
 def reset_response() -> tuple[int, bytes]:
-    """Answer one `/admin/test/reset` request: 200 and an empty body. This stub holds
-    no seed state, so there is nothing to reset - unlike a Helpdesk-shaped target,
-    which resets a real fixture (`target.py`'s own module docstring)."""
-    return 200, b""
+    """Answer one `/admin/test/reset` request: 204 and an empty body."""
+    return 204, b""
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
@@ -312,12 +194,16 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             status, reset_body = reset_response()
             self._respond(status, reset_body)
             return
-        if self.path == TURN_PATH:
-            status, document = turn_response(
-                body,
-                base_url=self.server.gateway_base_url,
-                api_key=self.server.gateway_api_key,
-            )
+        if self.path == CONVERSATION_PATH:
+            try:
+                status, document = conversation_response(
+                    body,
+                    cases=self.server.cases,
+                    base_url=self.server.gateway_base_url,
+                    api_key=self.server.gateway_api_key,
+                )
+            except Exception as exc:  # one failed case must not stop the server
+                status, document = 502, {"error": f"{type(exc).__name__}: {exc}"}
             self._respond(status, json.dumps(document).encode("utf-8"))
             return
         self._respond(404, b"")
@@ -335,30 +221,33 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
 
 class _Server(http.server.ThreadingHTTPServer):
-    """Carries the two settings the handler needs, read once at startup."""
+    """Carries the settings the handler needs, read once at startup."""
 
     def __init__(
         self,
         server_address: tuple[str, int],
         handler_class: type[http.server.BaseHTTPRequestHandler],
         *,
-        gateway_base_url: str,
+        cases: dict[str, dict[str, Any]],
+        gateway_base_url: str | None,
         gateway_api_key: str,
     ) -> None:
         super().__init__(server_address, handler_class)
+        self.cases = cases
         self.gateway_base_url = gateway_base_url
         self.gateway_api_key = gateway_api_key
 
 
 def main() -> None:
     port = int(os.environ.get("PORT", "8090"))
-    base_url = os.environ["GATEWAY_BASE_URL"]
-    api_key = os.environ["GATEWAY_API_KEY"]
+    cases = load_cases(Path(os.environ.get("CASES_PATH", "/cases/kind-cases.jsonl")))
+    forward = os.environ.get("FORWARD_TO_GATEWAY", "true").lower() == "true"
     server = _Server(
         ("0.0.0.0", port),
         _Handler,
-        gateway_base_url=base_url,
-        gateway_api_key=api_key,
+        cases=cases,
+        gateway_base_url=os.environ["GATEWAY_BASE_URL"] if forward else None,
+        gateway_api_key=os.environ.get("GATEWAY_API_KEY", ""),
     )
     server.serve_forever()
 

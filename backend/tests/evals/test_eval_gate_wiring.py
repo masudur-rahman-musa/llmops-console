@@ -1,13 +1,13 @@
-"""The eval gate's wiring: baseline, workflow, overlay, and the paths they name.
+"""The eval gate's wiring for the conversation run: baseline, workflow, overlay, ADRs.
 
-Only files are read; nothing runs. The workflow is read with `yaml.safe_load`, which
-loads the bare key `on` as `True`, so nothing here reads the trigger. The repository
-root comes from this file's own location, never the working directory.
+Only files are read; nothing runs. The workflow is read with `yaml.safe_load`, which loads
+the bare key `on` as `True`, so nothing here reads the trigger. The repository root comes
+from this file's own location, never the working directory.
 
-What each case pins is wiring, not behaviour: the eval half of the gate now always runs
-against the help desk, so a condition that skips it, a missing checkout token, a judge
-key that sneaks in, or an overlay that lets one provider reach a real model would each
-leave the gate green while it checks nothing.
+What each case pins is wiring, not behaviour: the gate now plays the help desk's 33 cases on
+the real cheap model, so a condition that skips it, a missing checkout token, a missing model
+key, the old baseline still sitting there, or a mock still answering from a golden set would
+each leave the gate green while it checks nothing real.
 """
 
 from __future__ import annotations
@@ -16,24 +16,17 @@ import json
 import re
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-BASELINE = REPO_ROOT / "backend" / "evals" / "baseline.json"
+EVALS = REPO_ROOT / "backend" / "evals"
+BASELINE = EVALS / "conversation-baseline.json"
+OLD_BASELINE = EVALS / "baseline.json"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "eval-gate.yml"
 MAKEFILE = REPO_ROOT / "Makefile"
 OVERLAY_COMPOSE = REPO_ROOT / "infra" / "evals" / "compose.yml"
-OVERLAY_ROUTING = REPO_ROOT / "infra" / "evals" / "routing.evals.yaml"
-ADR_0037 = REPO_ROOT / "dev" / "adr" / "0037-the-eval-gate-runs-the-help-desk-on-the-mock.md"
-DOCS = [
-    REPO_ROOT / "docs" / "eval-target.md",
-    REPO_ROOT / "docs" / "eval-report.md",
-    REPO_ROOT / "docs" / "eval-gate.md",
-]
-
-TENANTS = {"nordlicht", "cuan"}
+ADR_DIR = REPO_ROOT / "dev" / "adr"
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -43,8 +36,7 @@ def load_yaml(path: Path) -> dict[str, Any]:
 
 
 def eval_job() -> dict[str, Any]:
-    jobs = load_yaml(WORKFLOW)["jobs"]
-    job = jobs["eval"]
+    job = load_yaml(WORKFLOW)["jobs"]["eval"]
     assert isinstance(job, dict)
     return job
 
@@ -66,25 +58,31 @@ def make_recipe(target: str) -> list[str]:
     return recipe
 
 
-def test_the_baseline_names_helpdesk_v1() -> None:
-    """Catches a baseline still naming the old example set, which would compare a help desk
-    run against numbers measured on something else, and a threshold nudged to make the first
-    run pass. The three thresholds are pinned by exact value."""
-    baseline = json.loads(BASELINE.read_text(encoding="utf-8"))
+def test_the_conversation_baseline_replaces_the_old_one() -> None:
+    """Catches the old `baseline.json` still on disk (a gate could read it by mistake and the
+    guard would watch a file nobody uses) and a conversation baseline that is not two plain
+    percent numbers: `check_score` is required and between 0 and 100, `judge_score` is
+    optional, and nothing else is in the file (the old thresholds block would be dead
+    weight)."""
+    assert not OLD_BASELINE.exists()
+    document = json.loads(BASELINE.read_text(encoding="utf-8"))
 
-    assert baseline["golden_set"] == "helpdesk-v1.jsonl"
-    assert baseline["thresholds"] == {
-        "max_drop_points": 2.0,
-        "refusal_recall_min": 95.0,
-        "injection_resistance_min": 100.0,
-    }
+    assert set(document) <= {"check_score", "judge_score"}
+    assert 0.0 <= document["check_score"] <= 100.0
+    assert 0.0 <= document.get("judge_score", 0.0) <= 100.0
 
 
-def test_the_eval_job_has_no_target_url_condition_and_runs_make_eval() -> None:
-    """Catches the old `if: vars.EVAL_TARGET_URL != ''` still skipping the job (a gate that
-    is green because it never ran), and a job that no longer runs `make eval`, which is the
-    one place that brings up both stacks and runs both tenants. The old variable must not
-    appear anywhere in the job either."""
+def test_the_old_golden_set_and_its_label_readme_are_gone() -> None:
+    """Catches the single-reply golden example, the 1-to-5 label readme, or the whole golden
+    folder surviving: they would keep the old format alive and the old docs honest-looking."""
+    assert not (EVALS / "golden").exists()
+    assert not (EVALS / "labels" / "README.md").exists()
+
+
+def test_the_eval_job_has_no_condition_and_runs_make_eval() -> None:
+    """Catches a skip condition on the eval job (a gate that is green because it never ran)
+    and a job that no longer runs `make eval`. The old `EVAL_TARGET_URL` variable must not
+    appear in the job either."""
     job = eval_job()
 
     assert "if" not in job
@@ -92,10 +90,11 @@ def test_the_eval_job_has_no_target_url_condition_and_runs_make_eval() -> None:
     assert any(re.search(r"\bmake eval\b", str(step.get("run", ""))) for step in job_steps(job))
 
 
-def test_the_eval_job_checks_out_the_help_desk_with_its_token() -> None:
-    """Catches a job that never fetches the help desk repo (nothing to build), one that uses
-    the default token, which cannot read a private repo, and one that still carries the
-    judge key: the judge stays off in CI, since a mock judge scores nothing."""
+def test_the_eval_job_checks_out_the_help_desk_and_carries_the_model_key() -> None:
+    """Catches a job that never fetches the help desk (no cases, nothing to build), one using
+    the default token (cannot read a private repo), and one with no `ANTHROPIC_API_KEY`
+    secret: the gate plays the real cheap model, so without the key it fails, like the
+    checkout without its token."""
     job = eval_job()
     checkouts = [
         step
@@ -105,71 +104,40 @@ def test_the_eval_job_checks_out_the_help_desk_with_its_token() -> None:
 
     assert len(checkouts) == 1
     assert checkouts[0]["with"]["token"] == "${{ secrets.HELPDESK_REPO_TOKEN }}"
-    assert "OPSCONSOLE_EVAL_JUDGE_KEY" not in yaml.safe_dump(job)
-    assert "--judge-url" not in yaml.safe_dump(job)
+    assert "secrets.ANTHROPIC_API_KEY" in yaml.safe_dump(job)
 
 
-def test_the_eval_overlay_points_every_provider_at_the_mock_for_both_tenants() -> None:
-    """Catches one provider left on a real host (a pull request would spend money or need a
-    key), a tenant missing from the overlay (the run for that tenant gets a 404 alias), and
-    an alias whose candidate names a provider the file does not define."""
-    policy = load_yaml(OVERLAY_ROUTING)
-
-    assert policy["providers"], "the overlay defines no provider"
-    for name, provider in policy["providers"].items():
-        assert provider["kind"] == "openai_compatible", name
-        assert urlparse(provider["base_url"]).hostname == "mock-provider", name
-    assert set(policy["tenants"]) == TENANTS
-    for alias, body in policy["aliases"].items():
-        for candidate in body["candidates"]:
-            assert candidate["provider"] in policy["providers"], alias
-
-
-def test_the_eval_compose_overlay_gives_the_mock_its_golden_set_and_the_gateway_its_policy() -> (
-    None
-):
-    """Catches a mock started without `MOCK_GOLDEN_SET` (it would answer the fixed reply and
-    every case would fail for the wrong reason), and a gateway policy path that does not
-    match the file mounted beside it, which is a gateway that refuses to start."""
-    services = load_yaml(OVERLAY_COMPOSE)["services"]
-
-    mock_env = services["mock-provider"]["environment"]
-    if isinstance(mock_env, list):
-        mock_env = dict(item.split("=", 1) for item in mock_env)
-    assert mock_env["MOCK_GOLDEN_SET"]
-
-    gateway = services["gateway"]
-    gateway_env = gateway["environment"]
-    if isinstance(gateway_env, list):
-        gateway_env = dict(item.split("=", 1) for item in gateway_env)
-    policy_path = gateway_env["OPSCONSOLE_ROUTING_POLICY_PATH"]
-    mounts = [str(volume) for volume in gateway["volumes"]]
-    assert any(
-        volume.startswith("./infra/evals/routing.evals.yaml:") and f":{policy_path}" in volume
-        for volume in mounts
-    )
-
-
-def test_every_path_the_eval_wiring_names_exists() -> None:
-    """Catches a rename that leaves the Makefile, the workflow or a doc pointing at a file
-    that is gone. Checks the new files, then every repo path with a file
-    extension that the `eval` recipe or a workflow step names."""
-    for path in [OVERLAY_COMPOSE, OVERLAY_ROUTING, ADR_0037, *DOCS]:
-        assert path.is_file(), f"{path} does not exist"
-
+def test_the_eval_recipe_gates_against_the_conversation_baseline() -> None:
+    """Catches a recipe that plays conversations and gates against nothing, or against the
+    removed baseline: `ops-eval gate` is given `conversation-baseline.json`."""
     recipe = "\n".join(make_recipe("eval"))
-    assert "infra/evals/compose.yml" in recipe
-    workflow_text = "\n".join(str(step.get("run", "")) for step in job_steps(eval_job()))
-    named = re.findall(r"(?:backend|infra|dev|docs)/[\w./-]+\.\w+", recipe + "\n" + workflow_text)
-    assert named, "the eval recipe and the eval job name no file at all"
-    for relative in named:
-        assert (REPO_ROOT / relative).exists(), f"{relative} does not exist"
+
+    assert "ops-eval gate" in recipe
+    assert "backend/evals/conversation-baseline.json" in recipe
 
 
-def test_adr_0009_says_it_is_superseded_by_0037() -> None:
-    """Catches an a design note that still reads as the live decision ("the gate ships switched
-    off") after 0037 replaced it: it must say superseded and point at 0037."""
-    text = next((REPO_ROOT / "dev" / "adr").glob("0009-*.md")).read_text(encoding="utf-8")
+def test_the_eval_compose_overlay_has_no_golden_set_mode() -> None:
+    """Catches the mock still started in golden-set mode (a design note removes it): the real
+    cheap model answers, and a mock reading the help desk's old set would answer from the
+    wrong file. Checked on the whole file text so no spelling hides it."""
+    text = OVERLAY_COMPOSE.read_text(encoding="utf-8")
+
+    assert "MOCK_GOLDEN_SET" not in text
+    assert "/golden" not in text
+
+
+def test_adr_0037_says_it_is_superseded_by_0039() -> None:
+    """Catches an a design note that still reads as the live decision ("the gate runs on the mock")
+    after 0039 replaced it: it must say superseded and point at 0039."""
+    text = next(ADR_DIR.glob("0037-*.md")).read_text(encoding="utf-8")
+
+    assert "superseded" in text.lower()
+    assert "0039" in text
+
+
+def test_adr_0009_still_says_it_is_superseded() -> None:
+    """Catches the older chain being broken: 0009 stays superseded by 0037."""
+    text = next(ADR_DIR.glob("0009-*.md")).read_text(encoding="utf-8")
 
     assert "superseded" in text.lower()
     assert "0037" in text

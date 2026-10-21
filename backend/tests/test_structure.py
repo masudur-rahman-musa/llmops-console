@@ -91,13 +91,22 @@ def test_the_chat_pipeline_helpers_live_in_their_new_modules() -> None:
 
 
 def test_the_eval_cli_handlers_live_in_the_commands_module() -> None:
-    """Catches an implementation that left _run, _gate, _tradeoff or _calibrate
-    defined in cli.evals instead of moving them to cli.evals_commands, or one
-    that removed main from cli.evals."""
+    """Catches an implementation that left _conversations, _label, _gate, _tradeoff,
+    _calibrate or _baseline_guard defined in cli.evals instead of moving them to
+    cli.evals_commands, or one that removed main from cli.evals. `_run` is gone with the
+    single-reply command, and a leftover would keep the old command reachable."""
     from app.cli import evals, evals_commands
 
-    for handler in ("_run", "_gate", "_tradeoff", "_calibrate"):
+    for handler in (
+        "_conversations",
+        "_label",
+        "_gate",
+        "_tradeoff",
+        "_calibrate",
+        "_baseline_guard",
+    ):
         assert hasattr(evals_commands, handler), f"{handler} must be defined in cli.evals_commands"
+    assert not hasattr(evals_commands, "_run"), "the old `run` handler must be gone"
 
     assert hasattr(evals, "main"), "cli.evals must still expose main"
 

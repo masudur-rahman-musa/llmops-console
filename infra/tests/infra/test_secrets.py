@@ -58,11 +58,10 @@ SECRETS_DIR = REPO_ROOT / "infra" / "secrets"
 SOPS_CONFIG = REPO_ROOT / ".sops.yaml"
 GITIGNORE = REPO_ROOT / ".gitignore"
 
-#: The eight Secrets, by name. The plans pin these; the key SETS are deliberately absent (see
+#: The Secrets, by name. The plans pin these; the key SETS are deliberately absent (see
 #: the module docstring) because criterion 3 compares them file-against-README. `grafana-admin`
 #: is an earlier change's criterion 8, the fifth contract this repo publishes and does not supply.
 #: `alertmanager-secrets` is an earlier change's, the sixth. `backup-secrets` is an earlier change's, the seventh.
-#: `evals-secrets` is an earlier change's, the eighth: the nightly-eval CronJob's `OPSCONSOLE_DATABASE_URL`.
 POSTGRES_CREDENTIALS = "postgres-credentials"
 TRAEFIK_BASIC_AUTH = "traefik-basic-auth"
 GATEWAY_SECRETS = "gateway-secrets"
@@ -70,7 +69,6 @@ HELPDESK_SECRETS = "helpdesk-secrets"
 GRAFANA_ADMIN = "grafana-admin"
 ALERTMANAGER_SECRETS = "alertmanager-secrets"
 BACKUP_SECRETS = "backup-secrets"
-EVALS_SECRETS = "evals-secrets"
 CONSOLE_SECRETS = "console-secrets"
 
 #: An earlier change criterion 16: the pull secret the four Helpdesk pod specs name, the one contract here
@@ -92,7 +90,6 @@ EXPECTED_NAMESPACES: dict[str, frozenset[str]] = {
     GRAFANA_ADMIN: frozenset({MONITORING}),
     ALERTMANAGER_SECRETS: frozenset({MONITORING}),
     BACKUP_SECRETS: frozenset({PLATFORM}),
-    EVALS_SECRETS: frozenset({EVALS}),
     CONSOLE_SECRETS: frozenset({APPS}),
     # An earlier change: the Helpdesk's registry credential.
     GHCR_PULL: frozenset({APPS}),
@@ -109,7 +106,6 @@ EXAMPLE_FILENAMES: frozenset[str] = frozenset(
         f"{GRAFANA_ADMIN}.example.yaml",
         f"{ALERTMANAGER_SECRETS}.example.yaml",
         f"{BACKUP_SECRETS}.example.yaml",
-        f"{EVALS_SECRETS}.example.yaml",
         f"{CONSOLE_SECRETS}.example.yaml",
         f"{GHCR_PULL}.example.yaml",
     }

@@ -23,7 +23,7 @@ What the module refuses to do is the point of it:
   cannot quietly flatter the GPU.
 
 The winner rule, in full. A CANDIDATE is a row carrying both a
-`decision_accuracy` and a `usd_per_1000_turns`; `best` is the highest accuracy
+`check_score` and a `usd_per_1000_turns`; `best` is the highest accuracy
 among the candidates; a candidate QUALIFIES when its accuracy is at least
 `best - ACCURACY_TOLERANCE`, inclusively; the winner is the qualifying candidate
 with the lowest cost, ties going to the earlier manifest entry so two identical
@@ -35,9 +35,10 @@ POINTS (0-100). The two published documents carry the tolerance beside the table
 for that reason: a reader who sees a less accurate option win has the band in
 front of them.
 
-The five metric names a row reads are asserted against `metrics.METRIC_NAMES` at
+The two metric names a row reads are asserted against `scores.METRIC_NAMES` at
 import, so a rename there is an `ImportError`-loud failure here rather than a
-column that silently empties.
+column that silently empties. Reports are read through the conversation `RunReport`,
+so a report in the old single-reply shape is refused naming its path.
 """
 
 from __future__ import annotations
@@ -76,7 +77,7 @@ rather than the ledger's six because the figure is per 1,000 turns: six places
 there is a hundredth of a cent nobody can act on."""
 
 ACCURACY_TOLERANCE: Final[Decimal] = Decimal("0.02")
-"""The band inside which two `decision_accuracy` values count as equal, in the
+"""The band inside which two `check_score` values count as equal, in the
 points `scores.py` emits. Widening it lets a materially less accurate option win
 on price."""
 
@@ -93,21 +94,16 @@ KIND_API: Final[str] = "api"
 KIND_SELF_HOSTED: Final[str] = "self_hosted"
 """A box rented by the hour: cost comes from the price and the measured throughput."""
 
-ROW_METRIC_NAMES: Final[tuple[str, ...]] = (
-    "decision_accuracy",
-    "refusal_recall",
-    "citation_accuracy",
-    "p50_latency_ms",
-    "p95_latency_ms",
-)
-"""The five metrics a row publishes, in the order the table renders them."""
+ROW_METRIC_NAMES: Final[tuple[str, ...]] = ("check_score", "judge_score")
+"""The two metrics a row publishes, in the order the table renders them. The first is the
+accuracy the winner rule reads."""
 
 COST_METRIC_NAME: Final[str] = "cost_usd_per_turn"
 """The ledger's per-turn cost, which the `api` formula multiplies by 1,000."""
 
-for _name in (*ROW_METRIC_NAMES, COST_METRIC_NAME):
+for _name in ROW_METRIC_NAMES:
     if _name not in METRIC_NAMES:  # pragma: no cover - an import-time guard, not a branch
-        raise ImportError(f"{_name} is not a member of metrics.METRIC_NAMES")
+        raise ImportError(f"{_name} is not a member of scores.METRIC_NAMES")
 
 NA: Final[str] = "n/a"
 """What a null metric renders as in the markdown. A blank cell reads as a
@@ -122,18 +118,15 @@ CONCLUSION_HEADING: Final[str] = "## Conclusion"
 TABLE_HEADINGS: Final[tuple[str, ...]] = (
     "Option",
     "Kind",
-    "Decision accuracy",
-    "Refusal recall",
-    "Citation accuracy",
-    "p50 ms",
-    "p95 ms",
+    "check_score",
+    "judge_score",
     "USD per 1,000 turns",
 )
 """The markdown table's header cells. The first cell of every option row is the
 option's id, which is what the tests locate a row by."""
 
 NO_WINNER_LINE: Final[str] = (
-    "No option carries both a decision accuracy and a cost, so this table names no winner."
+    "No option carries both a check_score and a cost, so this table names no winner."
 )
 """The whole conclusion when nothing can be compared. Every row is still
 published; what is refused is the claim."""
@@ -151,7 +144,7 @@ LEDGER_NOTE: Final[str] = (
 
 WINNER_LINE: Final[str] = (
     "{label} ({option_id}) wins at {cost} USD per 1,000 turns, the cheapest option within "
-    "{tolerance} decision accuracy of the best row in the table."
+    "{tolerance} check_score of the best row in the table."
 )
 """The conclusion when a winner exists. It names the winner and no other option,
 so a reader quoting one sentence quotes the whole answer."""
@@ -239,7 +232,7 @@ class TradeoffOption(BaseModel):
 
 
 class TradeoffManifest(BaseModel):
-    """The one document `--manifest` names: the golden set, and the options over it."""
+    """The one document `--manifest` names: the cases file, and the options over it."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -274,7 +267,7 @@ class TradeoffRow(BaseModel):
     turns_per_hour: Decimal | None
     usd_per_1000_turns: Decimal | None
     metrics: Mapping[str, Any]
-    """The five `ROW_METRIC_NAMES` as the report carried them, nulls included."""
+    """The two `ROW_METRIC_NAMES` as the report carried them, nulls included."""
 
 
 class TradeoffTable(BaseModel):
@@ -316,8 +309,8 @@ def load_manifest(path: Path) -> TradeoffManifest:
 def _load_report(path: Path) -> RunReport:
     """One option's `report.json`, validated through `RunReport` itself.
 
-    Never by picking the five read metrics out of whatever the file holds: a
-    hand-written document carrying `decision_accuracy` and nothing else would
+    Never by picking the two read metrics out of whatever the file holds: a
+    hand-written document carrying an old metric and nothing else would
     otherwise be published as a measured run.
     """
     try:
@@ -408,7 +401,7 @@ def _row(option: TradeoffOption, report: RunReport, path: Path) -> TradeoffRow:
 
 
 def _accuracy(row: TradeoffRow) -> Decimal | None:
-    """One row's decision accuracy as a `Decimal`, or `None` where it is null."""
+    """One row's check_score as a `Decimal`, or `None` where it is null."""
     value = row.metrics.get(ROW_METRIC_NAMES[0])
     return None if value is None else Decimal(str(value))
 
@@ -435,7 +428,7 @@ def _winner(rows: Sequence[TradeoffRow]) -> TradeoffRow | None:
     ]
     if not candidates:
         return None
-    # `is not None` and never a truthiness test: a decision accuracy of 0.0 and a
+    # `is not None` and never a truthiness test: a check_score of 0.0 and a
     # cost of 0.0000 are both measurements, and dropping them would quietly remove
     # the worst row from the band and the cheapest row from the comparison.
     best = max(

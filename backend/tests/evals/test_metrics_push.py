@@ -1,38 +1,25 @@
-r"""`evals/metrics_push.py`: pushing one run's `gateway_eval_*` gauges to a Pushgateway (#43,
-an earlier change).
+r"""`evals/push.py`: pushing one run's `gateway_eval_*` gauges to a Pushgateway.
 
-This module does not exist yet. The contract these cases are written against, before it
-exists:
+The contract these cases are written against:
 
-* `PUSHGATEWAY_JOB: Final[str] = "eval_nightly"` - the fixed job label, a project rule's
-  bound pinned by value.
+* `PUSHGATEWAY_JOB: Final[str] = "eval_nightly"` - the fixed job label, pinned by value.
 * `push_metrics(metrics, pushgateway_url, *, client) -> str | None`, taking a
-  `Mapping[str, object]` shaped like `app.evals.scores.compute_metrics`'s output, an
-  injected `httpx.Client` (exactly the seam `judge.JudgeClient` and `target.TargetClient`
-  already use, per `tests/evals/test_judge.py`'s own docstring), and answering `None` on a
-  successful push or a short string on any way the push failed - never raising for a
-  transport failure, mirroring `cli.py`'s `_store_rows` "answer the problem, never raise"
-  convention.
-* One `Gauge` per `app.evals.scores.METRIC_NAMES` key whose VALUE in the caller's
-  dict is not `None`, named `f"gateway_eval_{name}"`. A key whose value IS `None` (an
-  accuracy nothing stated, or `judge_kappa_vs_human` with no calibration) contributes no
-  series at all - not a gauge left at its zero default, which would read as a real score of
-  zero to `NightlyEvalRegression`.
+  `Mapping[str, object]` shaped like `scores.compute_metrics`'s output and an injected
+  `httpx.Client`. It answers `None` on a successful push or a short string on any way the
+  push failed, and never raises for a transport failure.
+* Exactly two gauges can exist, one per `scores.METRIC_NAMES` key (`check_score`,
+  `judge_score`), named `gateway_eval_check_score` and `gateway_eval_judge_score`. A key
+  whose value is `None` contributes no series at all: a gauge left at its zero default
+  would read as a real score of zero to `NightlyEvalRegression`. Any other key, old or
+  new, is never pushed.
 * A single PUT to `f"{pushgateway_url.rstrip('/')}/metrics/job/{PUSHGATEWAY_JOB}"`.
 
-Two arrangements keep these cases from passing on a neighbour's guard: the metrics dict below
-carries FEWER than the full eighteen keys with one explicit `None`, so the exposition text is
-parsed and compared by NAME rather than checked with `in` - `cost_usd_total` and
-`cost_usd_per_turn` share a prefix, and a substring check on `cost_usd_total` would still be
-true if only `cost_usd_per_turn` had been emitted. And every transport-failure case answers a
-COMPLETE well-formed request on the client's side, so only the response/transport behaviour
-named in the row can flip the result - never a shape the request itself could not have
-produced.
+The exposition text is parsed and compared by NAME rather than checked with `in`, and every
+transport-failure case sends a complete, well-formed request, so only the response or
+transport behaviour named in the row can flip the result.
 """
 
 from __future__ import annotations
-
-from decimal import Decimal
 
 import httpx
 import prometheus_client
@@ -42,15 +29,14 @@ from app.evals.push import PUSHGATEWAY_JOB, push_metrics
 
 PUSHGATEWAY_URL = "http://pushgateway.example:9091"
 
-#: A small metrics dict, not the full eighteen keys `compute_metrics` always returns: this
-#: contract is written against ANY `Mapping[str, object]` of that shape, and a small one is
-#: the sharpest test of "the metric names are read by NAME, not by iterating a fixed dict of
-#: eighteen the caller happens to hand in".
+#: A small metrics dict: the two published scores (one of them null) plus a count and one
+#: key of the old format, which must never become a gauge. Names are read BY NAME, not by
+#: iterating a fixed dict, so the exposition text is parsed and compared per name.
 METRICS: dict[str, object] = {
-    "intent_accuracy": 92.5,
+    "check_score": 87.88,
+    "judge_score": None,
+    "cases": 33,
     "decision_accuracy": 88.0,
-    "judge_kappa_vs_human": None,
-    "cost_usd_total": Decimal("1.234500"),
 }
 
 
@@ -134,24 +120,21 @@ def test_a_pushgateway_url_with_a_trailing_slash_is_not_doubled() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_every_non_null_metric_reaches_the_body_and_the_null_one_is_absent() -> None:
+def test_push_sends_check_and_judge_scores() -> None:
     """Catches two wrong implementations at once, on the same small dict, by NAME rather than
-    by substring: one that emits a `gateway_eval_judge_kappa_vs_human 0.0` line for the `None`
+    by substring: one that emits a `gateway_eval_judge_score 0.0` line for the `None`
     key - a Gauge left at its unset default reads as a genuine score of zero to the alert
     this run feeds - and one that drops a present key entirely, e.g. by iterating
     `METRIC_NAMES` and calling `metrics[name]` in a way that only reads a subset. Values are
-    compared as floats, so a `Decimal` that reached the exposition text unconverted (and
-    therefore failed to parse as a bare number) would also fail here."""
+    compared as floats."""
     transport = Transport(httpx.Response(200))
 
     push_metrics(METRICS, PUSHGATEWAY_URL, client=transport.client())
 
     body = transport.requests[0].content
     values = parsed_exposition(body)
-    assert values.get("gateway_eval_intent_accuracy") == pytest.approx(92.5)
-    assert values.get("gateway_eval_decision_accuracy") == pytest.approx(88.0)
-    assert values.get("gateway_eval_cost_usd_total") == pytest.approx(1.2345)
-    assert "gateway_eval_judge_kappa_vs_human" not in values
+    assert values.get("gateway_eval_check_score") == pytest.approx(87.88)
+    assert "gateway_eval_judge_score" not in values
 
 
 def test_the_content_type_is_prometheus_clients_own_exposition_type() -> None:
@@ -206,3 +189,22 @@ def test_a_successful_push_answers_none() -> None:
     result = push_metrics(METRICS, PUSHGATEWAY_URL, client=transport.client())
 
     assert result is None
+
+
+def test_both_scores_are_pushed_when_both_exist_and_nothing_else_is() -> None:
+    """Catches a push of the old metric names (`gateway_eval_decision_accuracy` would keep the
+    nightly alert reading a series nobody writes) and one that skips `judge_score`. Only the
+    two published names appear, so a count or an old key never becomes a gauge."""
+    transport = Transport(httpx.Response(200))
+
+    push_metrics(
+        {"check_score": 90.0, "judge_score": 75.5, "cases": 33, "decision_accuracy": 88.0},
+        PUSHGATEWAY_URL,
+        client=transport.client(),
+    )
+
+    values = parsed_exposition(transport.requests[0].content)
+    assert values == {
+        "gateway_eval_check_score": pytest.approx(90.0),
+        "gateway_eval_judge_score": pytest.approx(75.5),
+    }

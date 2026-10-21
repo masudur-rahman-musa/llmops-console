@@ -1,7 +1,7 @@
 import { consolePage } from "@/components/layout/console-page";
 import { ExternalLink } from "@/components/ui/external-link";
 import { Table } from "@/components/ui/table";
-import { shortSha, utcTime } from "@/lib/format";
+import { percent, shortSha, utcTime } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +19,7 @@ export default consolePage("releases", "Releases", (body) => (
         <code key="sha">{shortSha(release.git_sha)}</code>,
         utcTime(release.deployed_at),
         release.status,
-        evalResult(release.eval_passed),
+        `${evalResult(release.eval_passed)}, check score ${percent(release.check_score)}`,
         <ExternalLink key="pr" url={release.pr_url} label="PR" />,
       ],
     }))}

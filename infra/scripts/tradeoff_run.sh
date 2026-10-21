@@ -3,7 +3,7 @@
 #
 #   infra/scripts/tradeoff_run.sh option <option id> --target <eval target url>
 #     build that option's effective routing policy, bring the measurement harness up
-#     against it, flush the response cache, migrate, run the golden set, tear the
+#     against it, flush the response cache, migrate, play the conversation cases, tear the
 #     harness down. The option's two report files land under
 #     docs/tradeoff-run/reports/<option id>/.
 #
@@ -14,7 +14,7 @@
 #     docs/tradeoff-run/<UTC date>/, then terraform destroy.
 #
 #   infra/scripts/tradeoff_run.sh cost <start YYYY-MM-DD> <end YYYY-MM-DD>
-#     write docs/tradeoff-run/cost.json from Cost Explorer, once the spend has landed
+#     write cost.json (in docs/tradeoff-run) from Cost Explorer, once the spend has landed
 #     (about a day after the run). End is exclusive, as Cost Explorer reads it.
 #
 # Once apply has started, the EXIT trap tears the harness down and destroys the stack
@@ -53,9 +53,9 @@ EVIDENCE_ROOT="${TRADEOFF_TEST_ROOT:-$REPO_ROOT}/docs/tradeoff-run"
 
 COMPOSE=(docker compose -f "$REPO_ROOT/docker-compose.yml" -f "$REPO_ROOT/infra/tradeoff/compose.yml" --profile tradeoff --profile local-model)
 
-# The stand-in golden set: the Helpdesk set lives in the companion
-# repository and does not exist yet, so waiting for it means no table at all.
-CASE_SET="project-evals/golden/e2e-kind.jsonl"
+# The small conversation file this repo ships, played against the stub target. The help
+# desk's own 33 cases live in the companion repository, so waiting for it means no table.
+CASE_SET="backend/evals/kind-cases.jsonl"
 TENANT="evals"
 
 # The option the `gpu` subcommand measures, and the one overlay that enables the vllm
@@ -172,11 +172,9 @@ run_option() {
   uv run ops-migrate
 
   local status=0
-  uv run ops-eval run \
+  uv run ops-eval conversations \
     --target "$target" \
-    --set "$CASE_SET" \
-    --tenant "$TENANT" \
-    --policy "$policy_file" \
+    --cases "$CASE_SET" \
     --out "$reports_dir" || status=$?
 
   printf 'tradeoff-run: %s measured into %s (ops-eval exited %s)\n' "$option_id" "$reports_dir" "$status" >&2

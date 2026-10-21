@@ -1,6 +1,6 @@
 # The self-hosted versus API measurement run
 
-Four options, one golden set, one table. This directory holds the evidence: each
+Four options, one set of conversation cases, one table. This directory holds the evidence: each
 option's two report files under `reports/<option id>/`, the GPU host's capture
 under a dated directory, and `cost.json` once the spend has landed.
 
@@ -9,8 +9,8 @@ by `make tradeoff`.
 
 ## What you need before you start
 
-- `ANTHROPIC_API_KEY` in `.env`. The two API options send ten real turns each and
-  bill a real account. Opus 5 on ten short turns is cents, not dollars, but it is
+- `ANTHROPIC_API_KEY` in `.env`. The two API options play three small conversations each and
+  bill a real account. Opus 5 on a few short turns is cents, not dollars, but it is
   not free.
 - The local stack's model on disk (`MODELS_DIR`), for the CPU option.
 - For the GPU option only: a Terraform Cloud workspace
@@ -57,11 +57,15 @@ Then build the table and fill in the row below:
 
 Read this before quoting anything from the table.
 
-**Ten cases.** The set is `project-evals/golden/e2e-kind.jsonl`, the ten-case
-stand-in the kind end-to-end run uses. The Helpdesk golden set lives in the
-companion repository and does not exist yet. Ten cases move `decision_accuracy` in
-ten-point steps, which is coarser than the table's two-point grouping band: expect
-the options to be told apart on cost and latency, rarely on accuracy.
+**Three cases.** The cases are `backend/evals/kind-cases.jsonl`, the small
+conversation file the kind end-to-end run also uses, played through the stub target
+(`backend/evals/target-stub/`). The stub sends each person's message to the gateway
+as a plain chat, under the `agent-default` alias, so every option answers the same
+messages and the ledger prices them. The stub reports the tool calls the cases expect,
+so `check_score` here reads 100 for every option and does not tell the options apart.
+The options are told apart on cost. The help
+desk's own 33 cases need the help desk running, not a stub, and are not part of this
+comparison.
 
 **One sequential single-stream pass.** Every turn is sent, answered and scored
 before the next one starts. That measures per-turn latency honestly and measures

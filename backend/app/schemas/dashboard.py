@@ -33,7 +33,7 @@ class LastEval(_Body):
     id: str
     finished_at: datetime
     passed: bool
-    decision_accuracy: float | None
+    check_score: float | None
 
 
 class CostDay(_Body):
@@ -113,7 +113,7 @@ class Release(_Body):
     pr_url: str | None
     eval_run_id: str | None
     eval_passed: bool | None
-    decision_accuracy: float | None
+    check_score: float | None
 
 
 # --- page bodies ---
