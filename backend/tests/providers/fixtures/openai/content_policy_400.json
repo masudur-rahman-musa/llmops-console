@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": "content_policy_violation",
+    "message": "upstream-detail-2f7c1a-do-not-leak: Your request was rejected as a result of our safety system.",
+    "type": "invalid_request_error",
+    "param": null
+  }
+}

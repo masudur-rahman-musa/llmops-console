@@ -1,0 +1,12 @@
+{
+  "error": {
+    "message": "upstream-detail-2f7c1a-do-not-leak: The request is malformed.",
+    "type": null,
+    "param": "messages",
+    "code": "BadRequest",
+    "status": 400,
+    "innererror": {
+      "code": "InvalidPayload"
+    }
+  }
+}

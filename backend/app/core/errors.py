@@ -125,6 +125,11 @@ class ProviderError(GatewayError):
     status records the verdict here. It is true for 429, any 5xx and a timeout, false for
     every other failure.
 
+    `refused` marks a provider refusing the request for content policy. A refused
+    error is never retryable: another provider saying yes would undo the refusal,
+    so it is not tried again, not passed to the next candidate, and not counted
+    against the breaker.
+
     `provider_message` is where the provider's own words go, and they go nowhere
     else: `message` is client-facing and carries the provider name and the status
     only, so an upstream body cannot put request ids or quota wording in front of a
@@ -140,10 +145,12 @@ class ProviderError(GatewayError):
         *,
         param: str | None = None,
         retryable: bool = False,
+        refused: bool = False,
         provider_message: str | None = None,
     ) -> None:
         super().__init__(message, param=param)
-        self.retryable = retryable
+        self.retryable = retryable and not refused
+        self.refused = refused
         self.provider_message = provider_message
 
 

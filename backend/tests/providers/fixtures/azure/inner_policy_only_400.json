@@ -1,0 +1,12 @@
+{
+  "error": {
+    "message": "upstream-detail-2f7c1a-do-not-leak: The request was refused.",
+    "type": null,
+    "param": "prompt",
+    "code": "BadRequest",
+    "status": 400,
+    "innererror": {
+      "code": "ResponsibleAIPolicyViolation"
+    }
+  }
+}

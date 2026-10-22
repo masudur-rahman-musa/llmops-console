@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": "invalid_request_error",
+    "message": "upstream-detail-2f7c1a-do-not-leak: 'tools' is not valid; this is not a content_policy_violation or a content_filter hit",
+    "type": "invalid_request_error",
+    "param": "tools"
+  }
+}

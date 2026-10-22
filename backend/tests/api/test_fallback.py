@@ -28,13 +28,18 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 from httpx import Response
 
+from app.core.errors import ProviderError
+from app.core.validation import IdentifierInvalid
 from app.model_routing.policy import DataClass, load_policy
-from app.model_routing.resolver import resolve
+from app.model_routing.resolver import Resolved, resolve
+from app.providers.base import ChatRequest, ChatResponse
 from app.providers.breaker import MAX_FAILURES as BREAKER_MAX_FAILURES
 from app.providers.breaker import CircuitBreaker, CircuitState
+from app.services.chat_pipeline import walk_candidates
 
 from .conftest import (
     EU_ALLOWED_REGIONS,
@@ -63,6 +68,7 @@ from .conftest import (
     post_chat,
     post_embeddings,
     retryable_error,
+    stub_response,
 )
 
 DONE_FRAME = "data: [DONE]"
@@ -420,3 +426,157 @@ def test_the_embeddings_route_skips_a_provider_whose_breaker_is_open(
     assert response.headers["x-gateway-provider"] == SECOND_PROVIDER
     assert first.embed_requests == [], "the open provider was still dialled"
     assert len(second.embed_requests) == 1
+
+
+# --------------------------------------------------------------------------
+# a refusal never falls back
+# --------------------------------------------------------------------------
+
+REFUSED_MESSAGE = "the provider refused the request for content policy"
+
+
+def refused_error(provider: str) -> ProviderError:
+    """What the transport raises for a content policy refusal: refused, never retryable."""
+    return ProviderError(
+        f"{provider}: {REFUSED_MESSAGE}",
+        retryable=False,
+        refused=True,
+        provider_message=PROVIDER_MESSAGE_SENTINEL,
+    )
+
+
+def test_a_provider_refusal_never_reaches_the_second_candidate(
+    fallback_client: TestClient,
+    fallback_adapters: dict[str, FallbackStubAdapter],
+    fallback_breaker: CircuitBreaker,
+) -> None:
+    """Catches a route that sends a refused request on to the next provider until one says
+    yes, which undoes the block. The answer is the 502 `PROVIDER_ERROR` with the closed
+    message, the second stub receives nothing, and `BREAKER_MAX_FAILURES` refusals leave the
+    first provider closed: a refusal is about the request and not the provider's health."""
+    first = fallback_adapters[FIRST_PROVIDER]
+    second = fallback_adapters[SECOND_PROVIDER]
+    first.chat_error = refused_error(FIRST_PROVIDER)
+
+    for _ in range(BREAKER_MAX_FAILURES):
+        response = send(fallback_client, body())
+        assert_error_body(response, status=502, code="PROVIDER_ERROR")
+
+    assert response.json()["error"]["message"] == f"{FIRST_PROVIDER}: {REFUSED_MESSAGE}"
+    assert PROVIDER_MESSAGE_SENTINEL not in response.text
+    assert second.call_count == 0
+    assert len(first.requests) == BREAKER_MAX_FAILURES
+    assert fallback_breaker.state(FIRST_PROVIDER) is CircuitState.CLOSED
+
+
+def test_a_streamed_refusal_never_reaches_the_second_candidate(
+    fallback_client: TestClient,
+    fallback_adapters: dict[str, FallbackStubAdapter],
+    fallback_breaker: CircuitBreaker,
+) -> None:
+    """Catches the streaming path walking on after a refusal while the non-streamed one
+    stops: the refusal arrives before the first event, the one window where a stream may
+    still fall back, so it is the window a missing refusal check would use."""
+    first = fallback_adapters[FIRST_PROVIDER]
+    second = fallback_adapters[SECOND_PROVIDER]
+    first.stream_error = refused_error(FIRST_PROVIDER)
+    first.stream_error_at = 0
+
+    for _ in range(BREAKER_MAX_FAILURES):
+        response = send(fallback_client, stream_body())
+        assert_error_body(response, status=502, code="PROVIDER_ERROR")
+
+    assert second.call_count == 0
+    assert len(first.requests) == BREAKER_MAX_FAILURES
+    assert fallback_breaker.state(FIRST_PROVIDER) is CircuitState.CLOSED
+
+
+def test_a_200_refusal_is_served_without_trying_another_candidate(
+    fallback_client: TestClient,
+    fallback_adapters: dict[str, FallbackStubAdapter],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches a route that treats an answer ending in `finish_reason` `content_filter` as
+    a failure and retries it elsewhere: that answer is the provider's reply and is served
+    as it is, from the first candidate, with the second never asked."""
+    first = fallback_adapters[FIRST_PROVIDER]
+    second = fallback_adapters[SECOND_PROVIDER]
+
+    def filtered(request: ChatRequest) -> ChatResponse:
+        first.requests.append(request)
+        return stub_response(content=answer_of(FIRST_PROVIDER), finish_reason="content_filter")
+
+    monkeypatch.setattr(first, "chat", filtered)
+
+    response = send(fallback_client, body())
+
+    assert response.status_code == 200, response.text
+    assert completion_text(response) == answer_of(FIRST_PROVIDER)
+    assert response.headers["x-gateway-provider"] == FIRST_PROVIDER
+    assert len(first.requests) == 1
+    assert second.call_count == 0
+
+
+def test_a_console_block_inside_the_walk_stops_at_the_first_candidate() -> None:
+    """Catches a walk that moves on after any exception and not only a retryable
+    `ProviderError`: the console's own blocks (a bad request, residency, budget) are
+    raised from a call and must reach the caller after ONE call, with no breaker count."""
+    candidates = tuple(
+        Resolved(provider=name, model="m", region=region)
+        for name, region in ((FIRST_PROVIDER, "us"), (SECOND_PROVIDER, "self"))
+    )
+    breaker = CircuitBreaker()
+    calls: list[str] = []
+
+    def call(chosen: Resolved) -> str:
+        calls.append(chosen.provider)
+        raise IdentifierInvalid("tenant: not an identifier")
+
+    with pytest.raises(IdentifierInvalid):
+        walk_candidates(candidates, breaker, call)
+
+    assert calls == [FIRST_PROVIDER]
+    assert breaker.state(FIRST_PROVIDER) is CircuitState.CLOSED
+
+
+FALLBACK_FAILURES: list[tuple[str, ProviderError]] = [
+    (
+        "429 rate limit",
+        ProviderError("anthropic: the provider answered 429", retryable=True),
+    ),
+    (
+        "503 server error",
+        ProviderError("anthropic: the provider answered 503", retryable=True),
+    ),
+    (
+        "timeout",
+        ProviderError("anthropic: the request did not complete (ReadTimeout)", retryable=True),
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "failure"),
+    FALLBACK_FAILURES,
+    ids=[case for case, _ in FALLBACK_FAILURES],
+)
+def test_rate_limit_5xx_and_timeout_still_fall_back(
+    case: str,
+    failure: ProviderError,
+    fallback_client: TestClient,
+    fallback_adapters: dict[str, FallbackStubAdapter],
+) -> None:
+    """Catches a refusal rule written too wide: stopping on every `ProviderError` would
+    strand a request on a provider that is merely busy or slow. Fallback is kept for the
+    three errors another provider can fix, and `refused` is false on each."""
+    first = fallback_adapters[FIRST_PROVIDER]
+    second = fallback_adapters[SECOND_PROVIDER]
+    first.chat_error = failure
+
+    response = send(fallback_client, body())
+
+    assert failure.refused is False
+    assert response.status_code == 200, response.text
+    assert completion_text(response) == answer_of(SECOND_PROVIDER)
+    assert len(first.requests) == 1
+    assert len(second.requests) == 1

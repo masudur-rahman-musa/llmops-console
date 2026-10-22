@@ -14,8 +14,9 @@ microseconds to test and produces exact delays rather than a range.
 
 This module knows no vendor. The path, the headers and the base URL are the
 adapter's to pass; nothing here reads a provider's body beyond truncating it for
-the log, and pulling `error.message` out of a 400 so the reason a request was
-refused is in the gateway log rather than behind a bare 502.
+the log, pulling `error.message` out of a 400 so the reason a request was
+refused is in the gateway log rather than behind a bare 502, and reading
+`error.code` to spot a content policy refusal, which is never retried.
 """
 
 from __future__ import annotations
@@ -55,6 +56,12 @@ Retries are restricted to 429, any 5xx and a timeout: those are the failures a
 second attempt can fix. Every other status is raised on the first attempt,
 because retrying a 400 bills the tenant three times for a request that cannot
 succeed."""
+
+REFUSAL_CODES = frozenset({"content_policy_violation", "content_filter"})
+REFUSAL_INNER_CODES = frozenset({"ResponsibleAIPolicyViolation"})
+"""The `error.code` values (OpenAI, Azure) and the Azure `error.innererror.code`
+value that mean the provider refused the request for content policy. Matched at
+any status, because a refusal is not something another attempt can fix."""
 
 PROVIDER_MESSAGE_LIMIT = 500
 """How much of a provider's error body is kept for the log, so a proxy answering
@@ -184,27 +191,29 @@ class ProviderTransport:
         Only the parsed message, never the raw body, which is free-form and may
         echo request text; a body with no readable message logs its length only. Other
         statuses log nothing, since a 401 body can quote part of the key.
+
+        A body whose `error.code` names a content policy refusal is `refused` at
+        any status, and so never retried (`tests/providers/test_refusals.py`).
         """
         status = response.status_code
+        payload = _parsed(response)
         if status == httpx.codes.BAD_REQUEST:
-            self._log_bad_request(response)
+            self._log_bad_request(payload, len(response.content))
+        if _is_refusal(payload):
+            return ProviderError(
+                f"{self.name}: the provider refused the request for content policy",
+                refused=True,
+                provider_message=response.text[:PROVIDER_MESSAGE_LIMIT],
+            )
         return ProviderError(
             f"{self.name}: the provider answered {status}",
             retryable=status == httpx.codes.TOO_MANY_REQUESTS or status >= 500,
             provider_message=response.text[:PROVIDER_MESSAGE_LIMIT],
         )
 
-    def _log_bad_request(self, response: httpx.Response) -> None:
+    def _log_bad_request(self, payload: object, size: int) -> None:
         """Log a 400's `error.message`, or only the body's length when there is none."""
-        message: object = None
-        try:
-            payload = json.loads(response.content)
-        except ValueError:
-            payload = None
-        if isinstance(payload, dict):
-            error = payload.get("error")
-            if isinstance(error, dict):
-                message = error.get("message")
+        message = _error_of(payload).get("message")
         if isinstance(message, str):
             logger.warning(
                 "%s: the provider answered 400: %s",
@@ -215,7 +224,7 @@ class ProviderTransport:
             logger.warning(
                 "%s: the provider answered 400 with no readable error message (%d bytes)",
                 self.name,
-                len(response.content),
+                size,
             )
 
     def transport_error(self, exc: httpx.RequestError) -> ProviderError:
@@ -242,3 +251,31 @@ class ProviderTransport:
         retries.
         """
         self._sleep(RETRY_BASE_DELAY * (2**attempt) * (0.5 + 0.5 * self._jitter()))
+
+
+def _parsed(response: httpx.Response) -> object:
+    """A failure body as JSON, or `None` when it is not JSON. Read once per failure."""
+    try:
+        return json.loads(response.content)
+    except ValueError:
+        return None
+
+
+def _error_of(payload: object) -> dict[str, Any]:
+    """The body's `error` object, or an empty one when there is none."""
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict):
+            return error
+    return {}
+
+
+def _is_refusal(payload: object) -> bool:
+    """Does a failure body say the provider refused the request for content policy."""
+    error = _error_of(payload)
+    inner = error.get("innererror")
+    code = error.get("code")
+    inner_code = inner.get("code") if isinstance(inner, dict) else None
+    return (isinstance(code, str) and code in REFUSAL_CODES) or (
+        isinstance(inner_code, str) and inner_code in REFUSAL_INNER_CODES
+    )

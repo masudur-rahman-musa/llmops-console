@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": "content_filter",
+    "message": "upstream-detail-2f7c1a-do-not-leak: The response was filtered.",
+    "type": "invalid_request_error",
+    "param": null
+  }
+}

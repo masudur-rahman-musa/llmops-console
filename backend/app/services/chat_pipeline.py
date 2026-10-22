@@ -338,6 +338,11 @@ def walk_candidates[T](
     This is the one fallback loop for every path: chat, streaming chat,
     embeddings, and the semantic probe all call it so the retry rule is written
     once.
+
+    A content policy refusal is a `ProviderError` that is never retryable, so it
+    stops at the candidate that refused. The console's own blocks (residency,
+    redaction, budget, rate limit, a bad request) are not `ProviderError`s and
+    pass straight through. Both are pinned in `tests/api/test_fallback.py`.
     """
     if not candidates:
         raise AllProvidersUnavailable("no candidates: the resolver answered an empty tuple")

@@ -716,6 +716,40 @@ def test_a_failing_write_is_swallowed() -> None:
     assert ledger.calls == 1
 
 
+class RefusingWriter:
+    """A writer whose pre-check refuses every row, as the real one does for a bad value."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def write(self, row: CostLedgerRow) -> None:
+        self.calls += 1
+        raise IdentifierInvalid("model: not a provider model id")
+
+
+def test_a_row_failing_its_pre_check_is_counted_dropped_invalid() -> None:
+    """An earlier change. Catches a `record_cost` that only logs a row its writer refused: the row
+    is lost and no metric, so no alert, says so. It still must not raise (the provider has
+    charged), so the call count and the counter are what show it was handed over and counted."""
+    from app.core.metrics import registry
+
+    def dropped_invalid() -> float:
+        for family in registry().collect():
+            if family.name == "gateway_ledger_writes":
+                for sample in family.samples:
+                    if sample.labels.get("result") == "dropped_invalid":
+                        return float(sample.value)
+        return 0.0
+
+    ledger = RefusingWriter()
+    before = dropped_invalid()
+
+    record(ledger)
+
+    assert ledger.calls == 1
+    assert dropped_invalid() - before == 1.0
+
+
 # --------------------------------------------------------------------------
 # a cached request costs zero, and the ledger is what says so (14c decision C)
 # --------------------------------------------------------------------------

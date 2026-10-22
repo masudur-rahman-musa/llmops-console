@@ -1,0 +1,15 @@
+{
+  "error": {
+    "message": "upstream-detail-2f7c1a-do-not-leak: The response was filtered due to the prompt triggering content management policy.",
+    "type": null,
+    "param": "prompt",
+    "code": "content_filter",
+    "status": 400,
+    "innererror": {
+      "code": "ResponsibleAIPolicyViolation",
+      "content_filter_result": {
+        "hate": {"filtered": true, "severity": "high"}
+      }
+    }
+  }
+}

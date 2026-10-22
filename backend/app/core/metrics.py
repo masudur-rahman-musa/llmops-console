@@ -204,10 +204,13 @@ LEDGER_WRITES = Counter(
     ("result",),
     registry=_registry,
 )
-"""Three `result` values: `ok` (inserted), `error` (insert failed), `dropped`
-(queue was full). The counter stays flat when the database is healthy, which
-is the easy case to miss; `ok` is what a dashboard uses to confirm the ledger
-is keeping up."""
+"""Six `result` values: `ok` (inserted), `retry` (a row entered the
+retry buffer, counted once), `dropped_full` (queue or buffer was full),
+`dropped_invalid` (the row fails a check or the database refused it),
+`dropped_unsure` (the commit failed, so the row may have landed) and
+`dropped_shutdown` (still buffered when the writer stopped). Any `dropped_*`
+value moving fires `LedgerWriteDropped`; `ok` is what a dashboard uses to
+confirm the ledger is keeping up."""
 
 
 def registry() -> CollectorRegistry:
@@ -514,10 +517,11 @@ def record_failure(scope: Scope, error: GatewayError) -> None:
 
 
 def record_ledger_write(*, result: str) -> None:
-    """Count one ledger write by its outcome: `ok`, `error` or `dropped`.
+    """Count one ledger write by its outcome, one of the values on `LEDGER_WRITES`.
 
     Called by the background worker in `storage/cost_ledger.py` after each
-    attempt, so the counter moves on the worker thread, not on the route.
+    attempt, so the counter moves on the worker thread, not on the route; and by
+    `services.ledger.record_cost` for a row that fails a pre-check.
     Guarded the same way every other emission is, so a labelling bug cannot
     fail a background thread.
     """

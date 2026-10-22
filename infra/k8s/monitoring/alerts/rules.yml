@@ -76,6 +76,15 @@ groups:
           summary: A provider's circuit breaker has stayed open for 5 minutes.
           runbook: dev/ops/runbook.md#providercircuitopen
 
+      - alert: LedgerWriteDropped
+        expr: sum(increase(gateway_ledger_writes_total{result=~"dropped_.*"}[5m])) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: A cost ledger row was dropped, so the ledger now counts less than was spent.
+          runbook: dev/ops/runbook.md#ledgerwritedropped
+
       - alert: BudgetWarning
         expr: gateway_budget_ratio >= 0.8
         labels:

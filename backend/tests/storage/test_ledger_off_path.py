@@ -188,13 +188,15 @@ def test_a_successful_insert_counts_ok_and_lands_the_row(pool: Pool, migrated_sc
 
 def test_a_failed_ledger_insert_is_counted_not_raised() -> None:
     """Catches an implementation that lets a write exception escape to the
-    caller — the chat reply would fail, and the provider already charged."""
-    before = _counter_value("error")
+    caller — the chat reply would fail, and the provider already charged. A down
+    database (the connection cannot be had) is counted `retry`: the row is kept to be
+    sent again, not counted as an error and lost."""
+    before = _counter_value("retry")
     writer = PostgresCostLedgerWriter(RaisingPool())  # type: ignore[arg-type]
     writer.write(a_row())
     writer.flush()
 
-    assert _counter_value("error") - before == 1.0
+    assert _counter_value("retry") - before == 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -204,8 +206,9 @@ def test_a_failed_ledger_insert_is_counted_not_raised() -> None:
 
 def test_a_full_ledger_queue_drops_and_counts() -> None:
     """Catches an implementation that blocks or raises on a full queue instead
-    of dropping, which lets a Postgres slowdown back-pressure chat replies."""
-    before = _counter_value("dropped")
+    of dropping, which lets a Postgres slowdown back-pressure chat replies. The
+    drop is counted `dropped_full`, the renamed value."""
+    before = _counter_value("dropped_full")
     pool = RecordingPool()
     writer = PostgresCostLedgerWriter(pool)  # type: ignore[arg-type]
 
@@ -213,7 +216,7 @@ def test_a_full_ledger_queue_drops_and_counts() -> None:
     with _patch.object(writer._queue, "put_nowait", side_effect=_Full()):
         writer.write(a_row())
 
-    assert _counter_value("dropped") - before == 1.0
+    assert _counter_value("dropped_full") - before == 1.0
     writer.close()
 
 

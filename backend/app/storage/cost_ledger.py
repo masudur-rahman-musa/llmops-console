@@ -14,14 +14,14 @@ its own belief rather than the price table's answer, and it would let the number
 in the row disagree with the `price_version` beside it.
 
 **A failed write changes nothing about the request** (the same rule
-as for the residency log). `record_cost` logs at ERROR and returns.
-The provider has already charged by the time this runs, so a Postgres blip
-turning a served request into a 500 would lose the answer as well as the row.
-What that costs is stated rather than hidden: a cost row can be lost, so the
-ledger is a LOWER BOUND on spend during a database incident, and the counter
-`gateway_cost_usd_total` is the number that keeps moving regardless - the route
-moves it from the row this function ANSWERS, which is why a
-lost write still shows up as spend on a dashboard.
+as for the residency log). The provider has already charged by the time this
+runs, so a Postgres blip turning a served request into a 500 would lose the
+answer as well as the row. A failed write is not quietly lost either:
+a row nothing landed for is buffered and sent again, and a row that is dropped is
+counted on `gateway_ledger_writes_total` under a `dropped_*` value, which fires
+the `LedgerWriteDropped` alert. The ledger can still be a LOWER BOUND on spend
+after such an alert, and the counter `gateway_cost_usd_total` is the number that
+keeps moving regardless - the route moves it from the row `record_cost` ANSWERS.
 
 **`model` has its own rule, not the resolver's**. The shipped
 `routing.yaml` names `qwen2.5-3b-instruct` and `bge-small-en-v1.5`, and both fail
@@ -33,14 +33,17 @@ rather than in production.
 
 from __future__ import annotations
 
+import enum
 import logging
 import queue
 import re
 import threading
+from collections import deque
 from datetime import datetime
 from decimal import Decimal
 from typing import Final, Protocol
 
+import psycopg
 from psycopg import Connection, sql
 from psycopg.rows import TupleRow
 from psycopg_pool import ConnectionPool
@@ -111,12 +114,39 @@ has.
 """
 
 LEDGER_QUEUE_SIZE: Final[int] = 10000
-"""How many rows the background queue may hold before new ones are dropped.
+"""How many rows the input queue, and separately the retry buffer, may hold.
 
-Decided without asking: 10 000 absorbs a burst of concurrent requests
-without growing without bound. A full queue means the database cannot keep up;
-the row is counted as `dropped` and the chat reply still succeeds.
+Decided without asking: 10 000 absorbs a burst of concurrent requests, or a
+database outage of a few minutes, without growing without bound. A row that fits
+in neither is counted as `dropped_full` and the chat reply still succeeds.
+Pinned by `test_the_buffer_holds_exactly_10000_rows`.
 """
+
+LEDGER_RETRY_WAIT_START: Final[float] = 1.0
+LEDGER_RETRY_WAIT_CAP: Final[float] = 30.0
+"""The worker's wait before it tries the retry buffer again: 1s, doubling to a
+30s cap, and back to 1s once a write lands."""
+
+
+def next_retry_wait(current: float | None) -> float:
+    """The wait after `current`: the start when there was none, else double, capped.
+
+    Pure, so the sequence is tested without a clock
+    (`test_the_retry_wait_doubles_from_one_second_to_a_thirty_second_cap`).
+    """
+    if current is None:
+        return LEDGER_RETRY_WAIT_START
+    return min(current * 2, LEDGER_RETRY_WAIT_CAP)
+
+
+class _Outcome(enum.Enum):
+    """What one INSERT attempt came to, sorted by where it failed."""
+
+    LANDED = "ok"
+    RETRY = "retry"
+    INVALID = "dropped_invalid"
+    UNSURE = "dropped_unsure"
+
 
 _SENTINEL: object = object()
 """Put on the queue to tell the worker thread to drain and stop."""
@@ -202,9 +232,20 @@ class PostgresCostLedgerWriter:
 
     `write` enqueues and returns at once so a slow or stuck database
     cannot hold a chat reply. A daemon thread drains the queue and does the
-    actual INSERT; a full queue drops the row and counts it as `dropped` rather
-    than blocking. Each outcome — ok, error, dropped — increments
-    `gateway_ledger_writes_total{result}`.
+    actual INSERT. Where a failed INSERT failed decides what happens to the row
+    (a design note, pinned in `tests/storage/test_ledger_retry.py`):
+
+    * getting a connection, or the INSERT lost with its connection: nothing was
+      committed, so the row goes to a retry buffer and is sent again;
+    * the database refusing the row: it will never pass, `dropped_invalid`;
+    * the commit failing: the row may be in the table, so it is `dropped_unsure`
+      and never sent again, or the money would be counted twice.
+
+    Rows land in the order written: while the buffer holds anything, a new row
+    joins its end instead of going ahead of it. The worker tries the buffer
+    after `next_retry_wait`, stopping at the first row that still cannot be
+    sent. A row that fits in neither the queue nor the buffer is `dropped_full`.
+    Every outcome increments `gateway_ledger_writes_total{result}`.
 
     Pre-checks still run BEFORE enqueuing. A row that fails
     a pre-check is still raised immediately, because a malformed row is a bug
@@ -222,6 +263,9 @@ class PostgresCostLedgerWriter:
         self._pool = pool
         self._schema = checked_schema(schema)
         self._queue: queue.Queue[CostLedgerRow | object] = queue.Queue(maxsize=LEDGER_QUEUE_SIZE)
+        self._buffer: deque[CostLedgerRow] = deque()
+        """Rows waiting to be sent again. Touched only by the worker thread."""
+        self._wait: float | None = None
         self._worker = threading.Thread(target=self._run, daemon=True, name="ledger-writer")
         self._worker.start()
 
@@ -250,26 +294,30 @@ class PostgresCostLedgerWriter:
         try:
             self._queue.put_nowait(row)
         except queue.Full:
-            record_ledger_write(result="dropped")
+            logger.error("ledger queue full; row for tenant=%s dropped", row.tenant)
+            record_ledger_write(result="dropped_full")
 
     def flush(self) -> None:
-        """Block until every row currently in the queue has been processed.
+        """Block until every queued row is handled and the buffer was tried once.
 
-        Sends a sentinel and waits for it to come back through the worker,
-        so every row ahead of it is either inserted or counted as an error
-        before this returns. Useful in tests and in shutdown sequences where
-        the caller needs a clean queue before reading back from the database.
+        Sends a barrier and waits for it to come back through the worker, so
+        every row ahead of it is inserted, buffered or counted before the worker
+        tries the buffer once, with no wait, and lets this return. Useful in
+        tests and in shutdown sequences where the caller needs a clean queue
+        before reading back from the database.
         """
         done = threading.Event()
         self._queue.put(done)
         done.wait()
 
     def close(self) -> None:
-        """Drain the queue then stop the worker thread.
+        """Drain the queue, try the buffer once, then stop the worker thread.
 
         Sends the module-level sentinel and joins the thread, which means this
-        call blocks until every pending row has been attempted. Safe to call
-        more than once; the second call joins a thread that is already done.
+        call blocks until every pending row has been attempted. A row still
+        buffered after that one try is counted `dropped_shutdown`; close never
+        waits out the retry wait. Safe to call more than once; the second call
+        joins a thread that is already done.
         """
         self._queue.put(_SENTINEL)
         self._worker.join()
@@ -279,22 +327,76 @@ class PostgresCostLedgerWriter:
     # ------------------------------------------------------------------
 
     def _run(self) -> None:
-        """Drain the queue until the sentinel arrives."""
+        """Drain the queue until the sentinel arrives, trying the buffer between rows."""
         while True:
-            item = self._queue.get()
+            try:
+                item = self._queue.get(timeout=self._wait if self._buffer else None)
+            except queue.Empty:
+                self._send_buffered()
+                continue
             if item is _SENTINEL:
+                self._send_buffered()
+                for row in self._buffer:
+                    logger.error("ledger writer stopped; row for tenant=%s dropped", row.tenant)
+                    record_ledger_write(result="dropped_shutdown")
+                self._buffer.clear()
                 break
             if isinstance(item, threading.Event):
-                # flush() barrier: signal the waiter and keep running.
+                # flush() barrier: try the buffer once, signal the waiter, keep running.
+                self._send_buffered()
                 item.set()
                 continue
             if isinstance(item, CostLedgerRow):
-                self._insert(item)
+                if self._buffer:
+                    self._to_buffer(item)
+                else:
+                    self._settle(item, self._insert(item))
 
-    def _insert(self, row: CostLedgerRow) -> None:
-        """Insert one row and count the outcome. Never raises."""
+    def _send_buffered(self) -> None:
+        """Send buffered rows in order, stopping at the first that still cannot go."""
+        while self._buffer:
+            row = self._buffer[0]
+            outcome = self._insert(row)
+            if outcome is _Outcome.RETRY:
+                self._wait = next_retry_wait(self._wait)
+                return
+            self._buffer.popleft()
+            self._settle(row, outcome)
+
+    def _settle(self, row: CostLedgerRow, outcome: _Outcome) -> None:
+        """Count one attempt's outcome, and buffer a row nothing landed for."""
+        if outcome is _Outcome.RETRY:
+            self._to_buffer(row)
+            return
+        if outcome is _Outcome.LANDED:
+            self._wait = None
+        record_ledger_write(result=outcome.value)
+
+    def _to_buffer(self, row: CostLedgerRow) -> None:
+        """Buffer a row to send again, counted `retry` once, or `dropped_full`."""
+        if len(self._buffer) >= LEDGER_QUEUE_SIZE:
+            logger.error("ledger retry buffer full; row for tenant=%s dropped", row.tenant)
+            record_ledger_write(result="dropped_full")
+            return
+        if not self._buffer:
+            logger.warning("ledger writes failing; buffering rows to send again")
+            self._wait = next_retry_wait(None)
+        self._buffer.append(row)
+        record_ledger_write(result="retry")
+
+    def _insert(self, row: CostLedgerRow) -> _Outcome:
+        """Insert one row and sort the outcome by where it failed. Never raises.
+
+        The stage is tracked by hand because the same exception class means
+        different things at different places: an `OperationalError` from the
+        INSERT is a lost connection with nothing committed, while one raised on
+        leaving the block is a failed commit that may have landed
+        (`test_a_failed_commit_is_dropped_unsure_and_never_sent_again`).
+        """
+        stage = "connect"
         try:
             with self._pool.connection() as conn:
+                stage = "insert"
                 conn.execute(
                     sql.SQL(
                         "INSERT INTO {} ("
@@ -320,10 +422,20 @@ class PostgresCostLedgerWriter:
                         row.trace_id,
                     ),
                 )
-            record_ledger_write(result="ok")
-        except Exception:
-            logger.exception("ledger write failed; row for tenant=%s dropped", row.tenant)
-            record_ledger_write(result="error")
+                stage = "commit"
+        except Exception as exc:
+            lost = isinstance(exc, psycopg.OperationalError | psycopg.InterfaceError)
+            if stage == "connect" or (stage == "insert" and lost):
+                return _Outcome.RETRY
+            outcome = _Outcome.INVALID if stage == "insert" else _Outcome.UNSURE
+            logger.error(
+                "ledger write %s; row for tenant=%s dropped: %s",
+                outcome.value,
+                row.tenant,
+                f"{type(exc).__name__}: {exc}",
+            )
+            return outcome
+        return _Outcome.LANDED
 
 
 def _checked_model(value: str) -> str:

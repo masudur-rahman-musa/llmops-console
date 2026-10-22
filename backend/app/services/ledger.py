@@ -14,6 +14,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, datetime
 
+from app.core.metrics import record_ledger_write
+from app.core.validation import IdentifierInvalid
 from app.limits.cost import cost_for, estimate_tokens
 from app.limits.prices import PriceTable
 from app.model_routing.policy import DataClass, Policy, Residency
@@ -122,6 +124,11 @@ def record_cost(
     )
     try:
         ledger.write(row)
+    except IdentifierInvalid:
+        # A row failing a pre-check never reaches the writer, so it is counted
+        # here (`test_a_row_failing_its_pre_check_is_counted_dropped_invalid`).
+        logger.exception("cost ledger row refused for tenant %s, model %s", tenant, model)
+        record_ledger_write(result="dropped_invalid")
     except Exception:
         logger.exception("cost ledger write failed for tenant %s, model %s", tenant, model)
     return row
