@@ -19,7 +19,7 @@ alone. Nothing here may change that file or its guarantee.
 from __future__ import annotations
 
 import pytest
-from hypothesis import HealthCheck, given, settings
+from hypothesis import HealthCheck, example, given, settings
 
 from app.model_routing.errors import ResidencyUnavailable
 from app.model_routing.policy import (
@@ -326,6 +326,24 @@ def relaxing_pii_would_change_the_outcome(case: Case) -> bool:
     )
 
 
+# One case the guard below always counts: an enabled US provider is the alias's only
+# candidate and the `pii` rule allows `self` alone, so a resolver that widened `pii`
+# would answer it and a correct one denies it in both modes. Random draws hit such a
+# case only about 13 times in 200, and in roughly 1 run in 250 not at all, which left
+# the guard failing by chance. The draws still run in full beside it.
+ALWAYS_RELAXABLE_PII_CASE = Case(
+    policy=make_policy(
+        providers={"p0": Provider(kind=ProviderKind.ANTHROPIC, region="us", enabled=True)},
+        aliases={"a0": Alias(candidates=(Candidate(provider="p0", model="m0"),))},
+        tenants={
+            TENANT_NAME: make_tenant(residency=Residency.EU, rules={DataClass.PII: ("self",)})
+        },
+    ),
+    alias="a0",
+    data_class=DataClass.PII,
+)
+
+
 def test_pii_resolves_identically_in_both_modes() -> None:
     """The `pii` exception over the property test's own generator, not one fixture.
 
@@ -342,6 +360,7 @@ def test_pii_resolves_identically_in_both_modes() -> None:
 
     @settings(max_examples=200, deadline=None, suppress_health_check=[HealthCheck.too_slow])
     @given(case=cases())
+    @example(case=ALWAYS_RELAXABLE_PII_CASE)
     def check(case: Case) -> None:
         nonlocal relaxable
         if relaxing_pii_would_change_the_outcome(case):
