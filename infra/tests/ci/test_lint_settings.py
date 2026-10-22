@@ -261,6 +261,13 @@ def test_long_line_outside_backend_fails() -> None:
     assert at_limit.returncode == 0, at_limit.stdout + at_limit.stderr
 
 
+def test_dev_scripts_are_skipped_from_root() -> None:
+    """Catches a `dev/**` exclude that no longer matches when ruff runs from the repo root,
+    so `make lint` and `make format` would start reading the private helper scripts."""
+    result = _check_stdin("dev/scripts/x.py", _string_line(LINE_LENGTH + 1) + "\n")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_claude_ignore_resolves_from_root() -> None:
     """Catches a `.claude/**` E501 ignore that no longer matches when ruff runs from the
     repo root (a glob resolved against `backend/`), so long hook lines would start failing."""
