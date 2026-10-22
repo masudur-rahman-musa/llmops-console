@@ -16,7 +16,7 @@ cd "$1/backend"
 uv run --env-file .env.demo python - <<'PY'
 import sys
 
-sys.path.insert(0, "../dev/scripts")
+sys.path.insert(0, "scripts")
 import e2e_reset
 
 run_step = e2e_reset._step
