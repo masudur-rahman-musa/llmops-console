@@ -1,78 +1,116 @@
 #!/usr/bin/env python
-"""Regenerate the README's redaction accuracy table from the test fixture.
+"""Regenerate the README's redaction table and the misses page from the held-out set.
 
-The numbers in the README are generated, never typed. A
-hand-written accuracy figure rots the first time a pattern changes and nothing
-goes red, so the table is produced here and
-`backend/tests/redaction/test_fixture_accuracy.py::test_readme_table_matches_the_computed_numbers`
-compares the committed block against what this module renders. Both sides round
-through `backend/tests/redaction/conftest.py::round_metric`, so the table and the
-asserted floors cannot disagree by a half-ulp.
+The numbers in the README are generated, never typed. They come from the 600-case
+held-out set (`backend/tests/redaction/heldout.py`, seed 82), whose templates no
+detector was tuned against; the 57-case fixture is the tuning set and keeps only its
+floors. The table gives precision, recall and F2 for each kind and pooled.
+`docs/redaction-misses.md` lists every miss and false find, so a reader sees what the
+numbers mean. `backend/tests/redaction/test_heldout_accuracy.py` checks both files
+against what this module renders, and every number goes through
+`backend/tests/redaction/conftest.py::round_metric`.
 
-Run it after any change to a detector or to the fixture:
+Run it after any change to a detector or to the templates:
 
     uv run --project backend python backend/scripts/redaction_report.py
 
-It rewrites only the text between the two markers in `README.md` and prints the
-counts to stderr. With `--check` it writes nothing and exits 1 on a difference,
-which is the same comparison the drift test makes.
+It rewrites only the text between the two markers in `README.md`, rewrites
+`docs/redaction-misses.md` whole, and prints the pooled numbers to stderr. With
+`--check` it writes nothing and exits 1 when either file differs, which is the same
+comparison the drift tests make.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TESTS_ROOT = REPO_ROOT / "backend" / "tests"
 README_PATH = REPO_ROOT / "README.md"
+MISSES_PATH = REPO_ROOT / "docs" / "redaction-misses.md"
 
 TABLE_START = "<!-- redaction-table:start -->"
 TABLE_END = "<!-- redaction-table:end -->"
 
 
-def render_table(precision: float, recall: float) -> str:
-    """The markdown block that sits between the two README markers.
+def _helpers() -> Any:  # noqa: ANN401 - the test helpers module, loaded by path
+    """The scoring helpers, imported from the tests rather than written twice: two
+    scorers would be two definitions of precision, and the README would report the other."""
+    if str(TESTS_ROOT) not in sys.path:
+        sys.path.insert(0, str(TESTS_ROOT))
+    from redaction import conftest
 
-    Both numbers arrive already rounded by `round_metric`; the format string only
-    fixes how many decimals are shown, so a value that rounded to 1.0 prints as
-    `1.000` rather than `1.0`.
-    """
-    return "\n".join(
-        (
-            "| Metric | Value |",
-            "| --- | --- |",
-            f"| Precision | {precision:.3f} |",
-            f"| Recall | {recall:.3f} |",
-        )
-    )
+    return conftest
 
 
-def compute() -> tuple[float, float, int, int, int]:
-    """Score the fixture with the shipped detectors.
+def _number(value: float | None) -> str:
+    return "n/a" if value is None else f"{_helpers().round_metric(value):.3f}"
 
-    Imports the test helpers rather than reimplementing the scorer: two scorers
-    would be two definitions of precision, and the README would eventually report
-    the other one.
-    """
-    sys.path.insert(0, str(TESTS_ROOT))
-    from redaction.conftest import (
-        emitted_detections,
-        load_cases,
-        round_metric,
-        score_cases,
-    )
 
-    cases = load_cases()
-    score = score_cases(cases, emitted_detections)
+def _row(label: str, score: Any) -> str:  # noqa: ANN401 - a conftest `KindScore`
     return (
-        round_metric(score.precision),
-        round_metric(score.recall),
-        len(cases),
-        score.true_positives + score.false_negatives,
-        sum(1 for case in cases if not case.spans),
+        f"| {label} | {_number(score.precision)} | {_number(score.recall)} | "
+        f"{_number(score.f2)} | {score.false_negatives} |"
     )
+
+
+def render_table(per_kind: Mapping[Any, Any], pooled: Any) -> str:  # noqa: ANN401
+    """The block between the README markers: one row per kind in `Kind` order, then `all`.
+
+    Precision reads `n/a` for a kind the engine never reported. `Misses` is the count of
+    values it should have found and did not.
+    """
+    lines = ["| Kind | Precision | Recall | F2 | Misses |", "| --- | --- | --- | --- | --- |"]
+    lines += [_row(kind.value, score) for kind, score in per_kind.items()]
+    lines.append(_row("all", pooled))
+    return "\n".join(lines)
+
+
+def _code(text: str) -> str:
+    return f"`{text}`"
+
+
+def render_misses(problems: Sequence[Any]) -> str:
+    """The whole of `docs/redaction-misses.md`: every miss, then every false find."""
+    lines = [
+        "# Redaction misses",
+        "",
+        "Generated by `backend/scripts/redaction_report.py`; do not edit by hand.",
+        "",
+        "Every value the redaction engine missed, and every value it reported that is not",
+        "there, on the 600-case held-out set the README table is scored on. The set is",
+        "built from `backend/evals/redaction/heldout-templates.json` with seed 82. No",
+        "detector was tuned against it.",
+    ]
+    for problem, heading in (("miss", "Misses"), ("false find", "False finds")):
+        found = [p for p in problems if p.problem == problem]
+        lines += ["", f"## {heading} ({len(found)})", ""]
+        if not found:
+            lines.append("None.")
+        lines += [
+            f"- {p.kind.value} {_code(p.value)} in {p.case_id}: {_code(p.text)}" for p in found
+        ]
+    return "\n".join(lines) + "\n"
+
+
+def compute() -> tuple[str, str, str]:
+    """Score the held-out set with the shipped detectors: the table, the page, a summary."""
+    helpers = _helpers()
+    from redaction.heldout import build_heldout_cases
+
+    cases = build_heldout_cases()
+    per_kind = helpers.score_by_kind(cases, helpers.emitted_detections)
+    pooled = helpers.pooled_score(per_kind)
+    problems = helpers.list_problems(cases, helpers.emitted_detections)
+    summary = (
+        f"{len(cases)} held-out cases: precision {_number(pooled.precision)}, "
+        f"recall {_number(pooled.recall)}, F2 {_number(pooled.f2)}"
+    )
+    return render_table(per_kind, pooled), render_misses(problems), summary
 
 
 def replace_block(readme: str, table: str) -> str:
@@ -87,26 +125,30 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--check",
         action="store_true",
-        help="exit 1 if README.md is out of date instead of rewriting it",
+        help="exit 1 if README.md or the misses page is out of date instead of rewriting",
     )
     args = parser.parse_args(argv)
 
-    precision, recall, case_count, span_count, negative_count = compute()
-    table = render_table(precision, recall)
+    table, misses, summary = compute()
     readme = README_PATH.read_text(encoding="utf-8")
     updated = replace_block(readme, table)
+    current_misses = MISSES_PATH.read_text(encoding="utf-8") if MISSES_PATH.exists() else ""
 
-    print(
-        f"{case_count} cases ({negative_count} negative), {span_count} expected spans: "
-        f"precision {precision:.3f}, recall {recall:.3f}",
-        file=sys.stderr,
-    )
+    print(summary, file=sys.stderr)
     if args.check:
-        if updated != readme:
-            print("README.md redaction table is out of date", file=sys.stderr)
-            return 1
-        return 0
+        stale = [
+            name
+            for name, same in (
+                ("README.md redaction table", updated == readme),
+                (MISSES_PATH.name, misses == current_misses),
+            )
+            if not same
+        ]
+        for name in stale:
+            print(f"{name} is out of date", file=sys.stderr)
+        return 1 if stale else 0
     README_PATH.write_text(updated, encoding="utf-8")
+    MISSES_PATH.write_text(misses, encoding="utf-8")
     return 0
 
 

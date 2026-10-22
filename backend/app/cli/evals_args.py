@@ -20,6 +20,7 @@ from app.evals.baseline_guard import (
     Commit,
 )
 from app.evals.report import SET_SHA_PATTERN
+from app.evals.runner import MAX_REPEATS, RepeatsInvalid, checked_repeats
 
 ALLOWED_TARGET_SCHEMES: frozenset[str] = frozenset({"http", "https"})
 
@@ -45,6 +46,14 @@ def _checked_target(value: str) -> str:
     if parsed.scheme not in ALLOWED_TARGET_SCHEMES or not parsed.netloc:
         raise UsageError(f"--target: {value!r} is not an absolute http(s) URL")
     return value
+
+
+def _checked_repeats(value: int) -> int:
+    """`--repeats`: 1 to `MAX_REPEATS`, checked by the runner's own rule before any reset."""
+    try:
+        return checked_repeats(value)
+    except RepeatsInvalid:
+        raise UsageError(f"--repeats: {value} is not between 1 and {MAX_REPEATS}") from None
 
 
 def _checked_judge_url_value(value: str) -> str:
@@ -283,6 +292,13 @@ def _parser() -> argparse.ArgumentParser:
         "--judge-url",
         dest="judge_url",
         help="base URL of the gateway that serves the judge alias; without it, no judging",
+    )
+    conversations.add_argument(
+        "--repeats",
+        type=int,
+        default=1,
+        help=f"play every case this many times, 1 to {MAX_REPEATS}; a case that both "
+        "passes and fails is unstable and left out of check_score (default: 1)",
     )
     conversations.add_argument(
         "--pushgateway-url",

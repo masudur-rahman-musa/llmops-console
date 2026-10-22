@@ -20,6 +20,13 @@ drop, a closed laptop), nothing already paid for is lost. Start it again with th
 the target did not answer is a saved result too: its line holds the error. A run that
 finds saved cases does not reset the target again.
 
+`--repeats N` (1 to 10, default 1) plays the whole case list N times. Each pass is a
+round: it starts with its own reset and plays the cases in file order, because the
+cases act on what earlier ones left behind. Each line carries its `round` number. A
+continued run picks up inside the round it stopped in, with no reset. A line saved
+before rounds existed has no `round` and is read as round 1, so an old file still
+continues.
+
 Each line holds the case id and category, whether it passed, the error if the target
 failed, the three checks, each graded reply with the judge's verdict and reason, and
 the target's own answer (kept so a continued run still knows which role names the run
@@ -41,7 +48,7 @@ has seen).
 | `git_sha` | string or `null` | this repository's `HEAD`, or `null` when git cannot answer |
 | `tenant` | string | `all`: each case names its own tenant |
 | `target` | string | the base URL evaluated |
-| `passed` | boolean | true when every case passed |
+| `passed` | boolean | true when no stable case failed |
 | `metrics` | object | the scores, below |
 | `judge_prompt_version` | string or `null` | the sha256 of the judge prompt used, `null` when nothing was judged |
 | `calibration` | object or `null` | what the run was told about its judge, below |
@@ -51,9 +58,13 @@ has seen).
 
 | field | what it is |
 |---|---|
-| `check_score` | percent of cases that passed all three checks, two decimals. A case whose target never answered counts as failed. `null` for a run of no cases. |
+| `check_score` | percent of stable cases that passed all three checks, two decimals. A case whose target never answered counts as failed. `null` when no case is stable. |
 | `judge_score` | percent of graded replies the judge passed, two decimals. `null` when nothing was judged. |
-| `cases`, `passed`, `failed` | the counts behind `check_score` |
+| `cases`, `passed`, `failed`, `unstable` | the counts behind `check_score`; `cases` is the other three added up |
+
+A case played several times passes when every run passed. A case that both passed
+and failed is unstable: it is counted in `unstable` and left out of `check_score`, so
+chance alone cannot move the score. With one run per case nothing is unstable.
 
 A score is `null` when nothing was measured, never `0`. A `0` would read as a judge
 that failed every reply.
@@ -75,10 +86,14 @@ When the run is given a `calibration.json`, the report carries:
 | field | what it is |
 |---|---|
 | `case_id`, `category` | from the case |
-| `passed` | whether the case passed all three checks |
-| `error` | why the target did not answer, else `null` |
+| `passed` | whether every run of the case passed all three checks |
+| `runs` | how many times the case was played |
+| `pass_rate` | percent of those runs that passed, two decimals |
+| `range_low`, `range_high` | the 95% Wilson range of `pass_rate`, in percent. Wilson stays usable at 3 runs, where the plain normal range does not |
+| `unstable` | true when the case both passed and failed |
+| `error` | why the target did not answer, else `null`; taken from the first failed run |
 | `check` | `tools_in_order`, and per turn `no_early_change` and `no_made_up_name`; `null` when the target failed |
-| `judged` | each graded reply: `turn`, `rubric`, `reply`, `verdict` (`pass`, `fail` or `null` when the judge was unusable) and `reason` |
+| `judged` | each graded reply, from every run: `turn`, `rubric`, `reply`, `verdict` (`pass`, `fail` or `null` when the judge was unusable) and `reason` |
 | `tags` | always empty |
 | `latency_ms`, `cost_usd`, `provider`, `region` | always `null`: a conversation answer carries none of them |
 
@@ -115,7 +130,8 @@ block a merge. Below kappa 0.7 the judge is reported and decides nothing.
 ## report.md
 
 The same run for a person: which run this was, the metrics, the cases by category, the
-replies the judge failed with its reasons, and the failures last. A failed case names
+replies the judge failed with its reasons, the unstable cases with their pass rate and
+range, and the failures last. An unstable case is never listed under the failures. A failed case names
 what was wrong: the right tools were not called in order, a change was made before the
 yes, a number or role was named that no tool returned, or the error when the target did
 not answer. A clean run has no failures section at all.

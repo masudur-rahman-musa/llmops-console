@@ -31,17 +31,20 @@ from app.redaction.detectors import (
 )
 
 from .conftest import (
+    MISSES_PATH,
     README_PATH,
     Case,
     ExpectedSpan,
     directory_for,
     emitted_detections,
-    load_render_table,
     load_report_module,
+    pooled_score,
     readme_table_block,
     round_metric,
+    score_by_kind,
     score_cases,
 )
+from .heldout import build_heldout_cases
 
 # Decision F, pinned exactly: without the eleven negatives precision is 1.0 by
 # construction, so the count is part of what makes the number mean anything.
@@ -275,25 +278,29 @@ def test_round_metric_rounds_to_three_decimals() -> None:
     assert round_metric(0.9) == 0.9
 
 
-def test_readme_table_matches_the_computed_numbers(cases: tuple[Case, ...]) -> None:
-    """Catches a hand-edited README number (decision D): the committed block must
-    equal what `render_table` produces from the fixture as it stands today."""
-    score = score_cases(cases, emitted_detections)
-    render_table = load_render_table()
+def test_readme_table_matches_the_computed_numbers() -> None:
+    """Catches a hand-edited README number (decision D): the committed block must equal
+    what `render_table` produces from the HELD-OUT set as it stands today, so
+    a README that went back to scoring the tuning fixture would differ."""
+    per_kind = score_by_kind(build_heldout_cases(), emitted_detections)
+    render_table = load_report_module().render_table
 
-    expected = render_table(round_metric(score.precision), round_metric(score.recall))
+    expected: str = render_table(per_kind, pooled_score(per_kind))
 
     assert readme_table_block(README_PATH.read_text(encoding="utf-8")) == expected.strip("\n")
 
 
 def test_readme_carries_both_metric_names_in_the_generated_block() -> None:
-    """Catches a table that reports one number: #21 asks for precision AND recall,
-    and a block with only recall would still match `render_table` if the script
-    were wrong in the same way."""
+    """Catches a table that reports one number or drops a kind: #99 asks for precision,
+    recall and F2 for each kind, and a block with only recall would still match
+    `render_table` if the script were wrong in the same way."""
     block = readme_table_block(README_PATH.read_text(encoding="utf-8"))
 
     assert "Precision" in block
     assert "Recall" in block
+    assert "F2" in block
+    for kind in Kind:
+        assert f"| {kind.value} |" in block
 
 
 # --------------------------------------------------------------------------
@@ -320,18 +327,32 @@ def test_the_report_script_agrees_that_the_committed_readme_is_current() -> None
     assert report.main(["--check"]) == 0
 
 
+def _all_row_edited(readme: str) -> str:
+    """The README with the pooled `all` row of the generated table replaced."""
+    lines = readme.splitlines()
+    for number, line in enumerate(lines):
+        if line.startswith("| all |"):
+            lines[number] = "| all | 0.500 | 0.500 | 0.500 | 0 |"
+            return "\n".join(lines) + "\n"
+    pytest.fail("README.md has no `| all |` row")
+
+
 def test_the_report_script_reports_an_out_of_date_readme(tmp_path: Path) -> None:
     """Catches a `--check` that returns 0 unconditionally, which would make the row
-    above pass no matter what the README said."""
+    above pass no matter what the README said. The misses page is a current copy, so the
+    README edit is the only thing that can turn the second answer into 1."""
     report = load_report_module()
-    stale = README_PATH.read_text(encoding="utf-8").replace(
-        "| Precision |", "| Precision | 0.500 |"
-    )
+    readme = README_PATH.read_text(encoding="utf-8")
     target = tmp_path / "README.md"
-    target.write_text(stale, encoding="utf-8")
+    target.write_text(readme, encoding="utf-8")
+    misses = tmp_path / "redaction-misses.md"
+    misses.write_text(MISSES_PATH.read_text(encoding="utf-8"), encoding="utf-8")
     monkeypatched = pytest.MonkeyPatch()
     monkeypatched.setattr(report, "README_PATH", target)
+    monkeypatched.setattr(report, "MISSES_PATH", misses)
     try:
+        assert report.main(["--check"]) == 0
+        target.write_text(_all_row_edited(readme), encoding="utf-8")
         assert report.main(["--check"]) == 1
     finally:
         monkeypatched.undo()
@@ -345,10 +366,15 @@ def test_the_report_script_rewrites_only_the_block_between_the_markers(tmp_path:
     """
     report = load_report_module()
     original = README_PATH.read_text(encoding="utf-8")
+    edited = _all_row_edited(original)
+    assert edited != original
     target = tmp_path / "README.md"
-    target.write_text(original.replace("| Precision | 1.000 |", "| Precision | 0.500 |"), "utf-8")
+    target.write_text(edited, "utf-8")
+    misses = tmp_path / "redaction-misses.md"
+    misses.write_text(MISSES_PATH.read_text(encoding="utf-8"), encoding="utf-8")
     monkeypatched = pytest.MonkeyPatch()
     monkeypatched.setattr(report, "README_PATH", target)
+    monkeypatched.setattr(report, "MISSES_PATH", misses)
     try:
         assert report.main([]) == 0
     finally:

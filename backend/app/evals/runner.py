@@ -4,9 +4,13 @@ The loop is the whole module. The result of a case is a `CaseLine`, written as o
 flushed JSON line to `<reports_dir>/<run-id>.jsonl` as soon as the case is done
 , so a run that dies keeps every paid
 result. Starting again with the same run id plays only the cases not yet in the file,
-and never resets the help desk, because the cases act on what earlier ones filed
-. A new run id, or an empty
-file, resets once before the first case.
+and never resets the help desk inside a round, because the cases act on what earlier
+ones filed. A new run id, or an empty file, resets once before the first case.
+
+With `repeats` above one the whole case list is played that many times. Each pass is a
+round: it starts with its own reset and plays the cases in file order. A round that already
+has a saved line is resumed with no reset. A line saved before rounds existed carries no
+round number and is read as round 1, so an old run file still resumes.
 
 Rules the record keeps that no single field states:
 
@@ -25,14 +29,30 @@ from __future__ import annotations
 import os
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Final
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from app.core.errors import LibraryInputInvalid
 from app.core.validation import checked_identifier
 from app.evals.checks import CaseCheck, check_case, role_names_in
 from app.evals.conversations import ConversationCase, ConversationSetInvalid
 from app.evals.judge import Grader, Verdict
 from app.evals.target import ConversationAnswer, TargetClient, TurnFailed
+
+MAX_REPEATS: Final[int] = 10
+"""The most rounds one run may play. Each round is a paid run of every case."""
+
+
+class RepeatsInvalid(LibraryInputInvalid):
+    """`repeats` was outside 1 to `MAX_REPEATS`."""
+
+
+def checked_repeats(value: int) -> int:
+    """Refuse a round count outside 1 to `MAX_REPEATS`, before anything is sent."""
+    if not 1 <= value <= MAX_REPEATS:
+        raise RepeatsInvalid(f"repeats: {value} is not between 1 and {MAX_REPEATS}")
+    return value
 
 
 class JudgedReply(BaseModel):
@@ -62,6 +82,8 @@ class CaseLine(BaseModel):
     check: CaseCheck | None
     judged: tuple[JudgedReply, ...]
     answer: ConversationAnswer | None
+    round: int = 1
+    """Which pass over the case list this line belongs to, from 1."""
 
 
 def _judge_replies(
@@ -97,8 +119,8 @@ def _judge_replies(
     return tuple(judged)
 
 
-def _saved_lines(path: Path) -> dict[str, CaseLine]:
-    """The lines already in the file, by case id.
+def _saved_lines(path: Path) -> dict[tuple[str, int], CaseLine]:
+    """The lines already in the file, by case id and round.
 
     A last line cut short by a killed process is dropped and the file is rewritten
     without it; a bad line anywhere else is refused, since it is not a crash's doing.
@@ -106,7 +128,7 @@ def _saved_lines(path: Path) -> dict[str, CaseLine]:
     if not path.exists():
         return {}
     raw = path.read_text(encoding="utf-8").splitlines()
-    kept: dict[str, CaseLine] = {}
+    kept: dict[tuple[str, int], CaseLine] = {}
     for number, text in enumerate(raw, start=1):
         if not text.strip():
             continue
@@ -119,7 +141,7 @@ def _saved_lines(path: Path) -> dict[str, CaseLine]:
             raise ConversationSetInvalid(
                 "holds a saved result that cannot be read", path=path, line=number
             ) from exc
-        kept[line.case_id] = line
+        kept[(line.case_id, line.round)] = line
     return kept
 
 
@@ -127,9 +149,10 @@ def load_run(path: Path) -> tuple[CaseLine, ...]:
     """The saved lines of one finished or stopped run, in file order.
 
     The label maker reads a run's replies and tool results from here, so the labels
-    come from the same run the baseline was set on and cost no second one.
+    come from the same run the baseline was set on and cost no second one. Only round 1
+    is answered: one line per case, as the label maker expects.
     """
-    return tuple(_saved_lines(path).values())
+    return tuple(line for line in _saved_lines(path).values() if line.round == 1)
 
 
 def _append(path: Path, line: CaseLine) -> None:
@@ -147,56 +170,71 @@ def run_conversations(
     run_id: str,
     reports_dir: Path,
     judge: Grader | None = None,
+    repeats: int = 1,
 ) -> tuple[CaseLine, ...]:
-    """Play the cases not yet saved and answer every case's line, in file order.
+    """Play the cases not yet saved, `repeats` rounds, and answer every line, round by round.
 
     A `TurnFailed` becomes an error line and the run goes on; a `TargetUnreachable` from
     the reset, and any other exception, propagate. Nothing is sent or written before the
-    run id has been checked.
+    run id and the round count have been checked. Role names are gathered per round,
+    because each round starts from a reset help desk.
     """
     checked_identifier(run_id, "run_id")
+    checked_repeats(repeats)
     reports_dir.mkdir(parents=True, exist_ok=True)
     path = reports_dir / f"{run_id}.jsonl"
 
     saved = _saved_lines(path)
-    if not saved:
-        client.reset()
-
-    roles: set[str] = set()
-    for line in saved.values():
-        if line.answer is not None:
-            roles |= role_names_in(line.answer)
-
     lines: list[CaseLine] = []
-    for case in cases:
-        existing = saved.get(case.id)
-        if existing is not None:
-            lines.append(existing)
-            continue
-        try:
-            answer = client.play(case)
-        except TurnFailed as exc:
-            line = CaseLine(
-                case_id=case.id,
-                category=case.category,
-                passed=False,
-                error=str(exc),
-                check=None,
-                judged=(),
-                answer=None,
-            )
-        else:
-            roles |= role_names_in(answer)
-            check = check_case(case, answer, run_roles=frozenset(roles))
-            line = CaseLine(
-                case_id=case.id,
-                category=case.category,
-                passed=check.passed,
-                error=None,
-                check=check,
-                judged=_judge_replies(case, answer, judge),
-                answer=answer,
-            )
-        _append(path, line)
-        lines.append(line)
+    for round_number in range(1, repeats + 1):
+        in_round = [line for (_, r), line in saved.items() if r == round_number]
+        if not in_round:
+            client.reset()
+        roles: set[str] = set()
+        for line in in_round:
+            if line.answer is not None:
+                roles |= role_names_in(line.answer)
+        for case in cases:
+            existing = saved.get((case.id, round_number))
+            if existing is not None:
+                lines.append(existing)
+                continue
+            line = _play(client, case, judge, roles, round_number)
+            _append(path, line)
+            lines.append(line)
     return tuple(lines)
+
+
+def _play(
+    client: TargetClient,
+    case: ConversationCase,
+    judge: Grader | None,
+    roles: set[str],
+    round_number: int,
+) -> CaseLine:
+    """Play one case and build its line. `roles` gains the names its answer showed."""
+    try:
+        answer = client.play(case)
+    except TurnFailed as exc:
+        return CaseLine(
+            case_id=case.id,
+            category=case.category,
+            passed=False,
+            error=str(exc),
+            check=None,
+            judged=(),
+            answer=None,
+            round=round_number,
+        )
+    roles |= role_names_in(answer)
+    check = check_case(case, answer, run_roles=frozenset(roles))
+    return CaseLine(
+        case_id=case.id,
+        category=case.category,
+        passed=check.passed,
+        error=None,
+        check=check,
+        judged=_judge_replies(case, answer, judge),
+        answer=answer,
+        round=round_number,
+    )

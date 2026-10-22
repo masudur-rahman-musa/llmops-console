@@ -16,6 +16,10 @@ Two helpers carry the load-bearing claims:
   simply regex-scanned the output for `<KIND_N>` would discard exactly the thing
   the ordering and preservation claims are about.
 
+`score_by_kind`, `pooled_score` and `list_problems` score the held-out set: per
+kind, because a pooled number hides a kind the engine barely finds, and with every miss
+and false find listed, because a number alone does not say what to fix.
+
 `round_metric` is the ONE rounding in this plan: `test_fixture_accuracy.py` and
 `backend/scripts/redaction_report.py` both take their numbers through it, so the README
 table and the asserted floors cannot disagree by a half-ulp.
@@ -25,12 +29,12 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from importlib import util as importlib_util
 from pathlib import Path
 from types import ModuleType
-from typing import cast
+from typing import Literal
 
 import pytest
 
@@ -40,6 +44,7 @@ FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "cases.json"
 REPO_ROOT = Path(__file__).resolve().parents[3]
 README_PATH = REPO_ROOT / "README.md"
 REPORT_SCRIPT_PATH = REPO_ROOT / "backend" / "scripts" / "redaction_report.py"
+MISSES_PATH = REPO_ROOT / "docs" / "redaction-misses.md"
 
 # The README block the drift test compares against (contract: "README drift").
 TABLE_START = "<!-- redaction-table:start -->"
@@ -100,6 +105,111 @@ class Score:
     def recall(self) -> float:
         expected = self.true_positives + self.false_negatives
         return self.true_positives / expected if expected else 0.0
+
+
+def f2_score(precision: float, recall: float) -> float:
+    """F2: 5PR / (4P + R), so recall counts four times as much as precision.
+
+    Recall weighs more because a missed value leaks to a model, while a false find only
+    hides a harmless string. 0.0 when both are 0.
+    """
+    denominator = 4 * precision + recall
+    return 5 * precision * recall / denominator if denominator else 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class KindScore:
+    """The counts for one kind, or for every kind pooled when `kind` is `None`.
+
+    `precision` is `None` when the engine reported nothing of this kind: neither 0 nor 1
+    is true of a kind with no finds, so the table shows `n/a`.
+    """
+
+    kind: Kind | None
+    true_positives: int
+    false_positives: int
+    false_negatives: int
+
+    @property
+    def precision(self) -> float | None:
+        predicted = self.true_positives + self.false_positives
+        return self.true_positives / predicted if predicted else None
+
+    @property
+    def recall(self) -> float:
+        expected = self.true_positives + self.false_negatives
+        return self.true_positives / expected if expected else 0.0
+
+    @property
+    def f2(self) -> float:
+        return f2_score(self.precision or 0.0, self.recall)
+
+
+@dataclass(frozen=True, slots=True)
+class Problem:
+    """One thing the engine got wrong on one case: a value it missed, or one it made up."""
+
+    case_id: str
+    text: str
+    problem: Literal["miss", "false find"]
+    kind: Kind
+    value: str
+
+
+def _expected_and_found(
+    case: Case, detect: Callable[[str, NameDirectory | None], Sequence[Detection]]
+) -> tuple[dict[tuple[Kind, int, int], str], dict[tuple[Kind, int, int], str]]:
+    expected = {(span.kind, span.start, span.end): span.value for span in case.spans}
+    found = {(d.kind, d.start, d.end): d.value for d in detect(case.text, directory_for(case))}
+    return expected, found
+
+
+def score_by_kind(
+    cases: Sequence[Case],
+    detect: Callable[[str, NameDirectory | None], Sequence[Detection]],
+) -> dict[Kind, KindScore]:
+    """`score_cases` split by kind. A false find counts against the kind it was reported as."""
+    counts = {kind: [0, 0, 0] for kind in Kind}
+    for case in cases:
+        expected, found = _expected_and_found(case, detect)
+        for key in expected.keys() & found.keys():
+            counts[key[0]][0] += 1
+        for key in found.keys() - expected.keys():
+            counts[key[0]][1] += 1
+        for key in expected.keys() - found.keys():
+            counts[key[0]][2] += 1
+    return {
+        kind: KindScore(kind=kind, true_positives=tp, false_positives=fp, false_negatives=fn)
+        for kind, (tp, fp, fn) in counts.items()
+    }
+
+
+def pooled_score(per_kind: Mapping[Kind, KindScore]) -> KindScore:
+    """Every kind's counts added up: the `all` row."""
+    return KindScore(
+        kind=None,
+        true_positives=sum(score.true_positives for score in per_kind.values()),
+        false_positives=sum(score.false_positives for score in per_kind.values()),
+        false_negatives=sum(score.false_negatives for score in per_kind.values()),
+    )
+
+
+def list_problems(
+    cases: Sequence[Case],
+    detect: Callable[[str, NameDirectory | None], Sequence[Detection]],
+) -> list[Problem]:
+    """Every miss and false find, case by case, each case's in offset order."""
+    problems: list[Problem] = []
+    for case in cases:
+        expected, found = _expected_and_found(case, detect)
+        wrong: list[tuple[tuple[Kind, int, int], Literal["miss", "false find"], str]]
+        wrong = [(key, "miss", value) for key, value in expected.items() if key not in found]
+        wrong += [(key, "false find", value) for key, value in found.items() if key not in expected]
+        for (kind, _, _), problem, value in sorted(wrong, key=lambda w: (w[0][1], w[0][2], w[1])):
+            problems.append(
+                Problem(case_id=case.id, text=case.text, problem=problem, kind=kind, value=value)
+            )
+    return problems
 
 
 def round_metric(value: float) -> float:
@@ -260,14 +370,6 @@ def load_report_module() -> ModuleType:
     module = importlib_util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-def load_render_table() -> Callable[[float, float], str]:
-    """The one function the drift test compares the committed README block against."""
-    render = getattr(load_report_module(), "render_table", None)
-    if render is None:
-        pytest.fail(f"{REPORT_SCRIPT_PATH} defines no render_table")
-    return cast(Callable[[float, float], str], render)
 
 
 def readme_table_block(readme: str) -> str:

@@ -18,11 +18,13 @@ CI, which is what makes a red gate arguable rather than a mystery.
 | `check_score` | below the baseline's `check_score`, or missing |
 | `judge_score` | below the baseline's `judge_score`, but only while the judge is trusted |
 
-`check_score` is the percent of cases that passed all three checks. There is no
-drop allowance: one point under the baseline fails, and an equal score passes. A
-real model does not score the same twice, so a run near the baseline can fail by
-chance. The fix for a flaky gate is to fix the chat or to change the baseline the
-proper way, never a wider allowance.
+`check_score` is the percent of stable cases that passed all three checks. There is
+no drop allowance: one point under the baseline fails, and an equal score passes. A
+real model does not score the same twice, so the gate plays each case three times. A
+case that both passes and fails is unstable: it is left out of `check_score` and named
+in a note on the verdict and the comment, so it stays in view without deciding
+anything. A run where every case is unstable has no score, and that breaches as `no
+evidence`. The fix for a flaky case is to fix the chat, never a wider allowance.
 
 A `check_score` that is missing breaches the rule. A run over no cases has no score,
 and reading that as "nothing against us" would merge anything. The reason line says
@@ -107,11 +109,12 @@ desk checkout, `../ai-help-desk-governed-access` by default; the key can be in
    the gateway and the keys to the help desk. Nothing is stored.
 2. It starts the gateway with `infra/evals/compose.yml`. The gateway keeps its shipped
    routing, so the help desk's chat runs on the real cheap model (`agent-default`).
-   A run costs roughly $1 to $2.
+   A run costs roughly $3 to $6.
 3. It resets and seeds the help desk's database and loads its policy text
    (`infra/evals/prepare_helpdesk.sh`), then starts its agent API and tool server with
    the eval routes switched on (`infra/evals/helpdesk.compose.yml`).
-4. It plays the help desk's 33 conversation cases once with `ops-eval conversations`,
+4. It plays the help desk's 33 conversation cases three times each
+   (`EVAL_REPEATS ?= 3`) with `ops-eval conversations --repeats`,
    writes the reports to `backend/evals/reports/local/`, and runs `ops-eval gate`
    against the conversation baseline (with the calibration file when one exists).
 

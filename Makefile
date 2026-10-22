@@ -142,6 +142,9 @@ EVAL_HELPDESK = $(abspath $(HELPDESK_DIR))
 EVAL_CASES = $(EVAL_HELPDESK)/backend/evals/conversations/cases.jsonl
 EVAL_REPORTS = backend/evals/reports/local
 EVAL_CALIBRATION = backend/evals/labels/calibration.json
+# Each case is played EVAL_REPEATS times; one that both passes and fails is
+# unstable and left out of check_score.
+EVAL_REPEATS ?= 3
 EVAL_HELPDESK_COMPOSE = docker compose --project-directory $(EVAL_HELPDESK) -f $(EVAL_HELPDESK)/docker-compose.yml -f infra/evals/helpdesk.compose.yml --profile app
 eval:       ## The eval gate: the help desk's 33 conversations on the real cheap model, then the gate
 	@nord=$$(openssl rand -hex 32); cuan=$$(openssl rand -hex 32); judge=$$(openssl rand -hex 32); \
@@ -162,8 +165,8 @@ eval:       ## The eval gate: the help desk's 33 conversations on the real cheap
 	$(EVAL_HELPDESK_COMPOSE) up -d --build --wait helpdesk-mcp-server helpdesk-agent-api || exit $$?; \
 	[ -n "$(RUN_ID)" ] || rm -rf $(EVAL_REPORTS); \
 	status=0; \
-	$(UV_ROOT) ops-eval conversations --target http://localhost:8000 --cases $(EVAL_CASES) \
-	  --run-kind ci --judge-url http://localhost:8080 --out $(EVAL_REPORTS) \
+	$(UV_ROOT) ops-eval conversations --repeats $(EVAL_REPEATS) --target http://localhost:8000 \
+	  --cases $(EVAL_CASES) --run-kind ci --judge-url http://localhost:8080 --out $(EVAL_REPORTS) \
 	  $(if $(RUN_ID),--run-id $(RUN_ID)) || status=1; \
 	$(UV_ROOT) ops-eval gate --report $(EVAL_REPORTS)/report.json \
 	  --baseline backend/evals/conversation-baseline.json \

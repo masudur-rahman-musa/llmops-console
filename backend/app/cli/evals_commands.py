@@ -90,6 +90,7 @@ def _summary(report: RunReport) -> str:
     return (
         f"cases {metrics['cases']} · passed {metrics['passed']} · failed {metrics['failed']} · "
         f"check_score {metrics['check_score']} · judge_score {metrics['judge_score']}"
+        + (f" · unstable {metrics['unstable']}" if metrics.get("unstable") else "")
     )
 
 
@@ -149,6 +150,7 @@ def _conversations(options: argparse.Namespace) -> int:
     try:
         target = _eargs._checked_target(options.target)
         run_id = checked_identifier(options.run_id or _eargs._new_run_id(), "run_id")
+        repeats = _eargs._checked_repeats(options.repeats)
         judge_url = _eargs._checked_judge_url(options.judge_url)
         supplied_sha = _eargs._checked_set_sha(options.set_sha)
         cases_path = Path(options.cases)
@@ -168,6 +170,7 @@ def _conversations(options: argparse.Namespace) -> int:
                 run_id=run_id,
                 reports_dir=out,
                 judge=_judge(judge_url, http),
+                repeats=repeats,
             )
         except (TargetUnreachable, ConversationSetInvalid) as exc:
             print(exc, file=sys.stderr)

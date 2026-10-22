@@ -1,0 +1,128 @@
+{
+  "about": "Held-out redaction templates (ADR 0043). No detector is tuned against these. Each template has one {v} slot. backend/tests/redaction/heldout.py fills them with seed 82: 50 positives per kind and 100 look-alikes.",
+  "positive": {
+    "EMAIL": [
+      "Forwarding this to {v} so the vendor gets a copy.",
+      "Kannst du die Rechnung an {v} schicken?",
+      "Set the reply address for this thread to {v}",
+      "(questions go to {v}, not to the shared inbox)",
+      "The login {v} was locked after five tries."
+    ],
+    "PHONE": [
+      "My mobile is {v} if the line drops.",
+      "Rückruf bitte unter {v} bis 17 Uhr.",
+      "Escalation hotline: {v} (ask for the night shift)",
+      "She left a voicemail from {v} this morning.",
+      "Text me on {v} when the courier arrives."
+    ],
+    "IBAN": [
+      "Refund the deposit to {v} please.",
+      "Bitte überweisen Sie den Betrag auf {v} bis Monatsende.",
+      "Payee account: {v}",
+      "The direct debit from {v} bounced again.",
+      "Old salary account {v} should be removed from payroll."
+    ],
+    "CARD": [
+      "The customer read out {v} over the phone.",
+      "Bitte belasten Sie die Karte {v} nur einmal.",
+      "Saved payment method: {v}",
+      "A chargeback was opened against {v} last week.",
+      "Never paste a number like {v} into a ticket."
+    ],
+    "STEUER_ID": [
+      "Meine steuerliche Identifikationsnummer lautet {v}.",
+      "Please add tax identification number {v} to the contract.",
+      "IdNr. {v} fehlt noch auf dem Lohnzettel.",
+      "Payroll needs the employee's {v} before the first run.",
+      "Steueridentifikationsnummer: {v}"
+    ],
+    "PPSN": [
+      "My personal public service number is {v}.",
+      "The welfare office asked for {v} again.",
+      "Personal Public Service no. {v} goes on the P60.",
+      "Revenue matched the payment to {v} yesterday.",
+      "Employee reference for Revenue: {v}"
+    ],
+    "IPV4": [
+      "Traffic spiked from {v} around midnight.",
+      "Der Drucker hat jetzt die Adresse {v} bekommen.",
+      "Whitelist {v} on the staging firewall.",
+      "ssh admin@{v} timed out for the on-call engineer.",
+      "Logins from {v} were flagged as unusual."
+    ],
+    "IPV6": [
+      "The VPN gateway answers on {v} now.",
+      "Bitte die Adresse {v} in der Firewall freigeben.",
+      "Last successful login came from {v} today.",
+      "Upstream resolver changed to {v} overnight.",
+      "Suspicious requests arrived from {v} repeatedly."
+    ],
+    "DOB": [
+      "The applicant was born on {v} in Galway.",
+      "DOB {v}, verified against the driving licence.",
+      "Geburtsdatum: {v} laut Personalausweis.",
+      "Her date of birth, {v}, is wrong in the HR system.",
+      "Child born {v}; eligible for the school year."
+    ],
+    "PERSON": [
+      "Can you ask {v} to approve the laptop order?",
+      "Das Meeting mit {v} wurde verschoben.",
+      "Assigned to {v} until the end of the sprint.",
+      "I spoke with {v} and they agreed to the plan.",
+      "Please add {v} to the finance distribution list."
+    ]
+  },
+  "negative": {
+    "luhn_fail": [
+      "Shipment barcode {v} could not be scanned.",
+      "Die Sendungsnummer {v} ist unbekannt."
+    ],
+    "version": [
+      "The firmware was updated to {v} on all routers.",
+      "Release {v} fixes the login timeout."
+    ],
+    "date_no_cue": [
+      "The licence renewal is due on {v} at the latest.",
+      "Die Wartung findet am {v} statt."
+    ],
+    "eleven_digits": [
+      "Tracking code {v} shows the parcel in transit.",
+      "Kundennummer {v} wurde zusammengeführt."
+    ],
+    "clock_time": [
+      "The batch job finished at {v} without errors.",
+      "Server uptime was {v} when it crashed."
+    ],
+    "mac_address": [
+      "The badge reader with MAC {v} went offline.",
+      "Device {v} keeps rejoining the guest network."
+    ],
+    "zero_reference": [
+      "Archive file {v} was moved to cold storage.",
+      "Aktenzeichen {v} bitte bei Rückfragen angeben."
+    ],
+    "ppsn_fail": [
+      "Locker {v} is assigned to the new starter.",
+      "Room booking {v} was cancelled by facilities."
+    ],
+    "amount": [
+      "The quarterly licence fee came to {v} in total.",
+      "Gesamtbetrag der Bestellung: {v} netto."
+    ],
+    "name_inside_word": [
+      "The {v} team moved to the third floor.",
+      "We need a {v} plan before the audit starts."
+    ]
+  },
+  "names": [
+    "Mareike Lindqvist", "Tobias Achterberg", "Siobhán Ní Bhriain", "Cormac O'Dwyer",
+    "Jörg Hämmerle", "Leonie Weiß-Brandt", "Eamon Fitzgerald", "Aoife Gallagher",
+    "Friederike von Lohe", "Pádraig Mac Cárthaigh", "Henrike Strobel", "Niamh Delaney",
+    "Benedikt Ruhland", "Clodagh Byrne", "Matthias Özdemir", "Gráinne Kavanagh"
+  ],
+  "words_with_names": [
+    ["Business", "Ines"], ["Leonidas", "Leon"], ["Paulownia", "Paul"], ["Contingency", "Tin"],
+    ["Marathon", "Mara"], ["Evaluation", "Eva"], ["Annual", "Ann"], ["Jansen", "Jan"],
+    ["Bennett", "Ben"], ["Timetable", "Tim"]
+  ]
+}

@@ -12,6 +12,8 @@ The rules, all in POINTS, 0 to 100:
   calibration shows a kappa of `JUDGE_TRUST_MIN` or better
 . Below that, or with no calibration at
   all, the judge is reported in a note and decides nothing.
+* a case that both passed and failed across repeat runs is already out of `check_score`;
+  the gate names every such case in one note so it stays visible.
 
 `BASELINE_MIN` and `BASELINE_MAX` refuse a baseline written as a fraction, which would
 pass a run scoring one point.
@@ -174,6 +176,13 @@ def evaluate(
         notes.append(
             f"judge_score: {'null' if judge is None else judge} against the baseline "
             f"{baseline.judge_score} is reported only; the judge is not trusted ({kappa})"
+        )
+
+    unstable = [case.case_id for case in report.cases if case.unstable]
+    if unstable:
+        notes.append(
+            f"unstable: {', '.join(unstable)} both passed and failed across runs, "
+            "so they are left out of check_score"
         )
 
     return GateVerdict(passed=not reasons, reasons=tuple(reasons), notes=tuple(notes))

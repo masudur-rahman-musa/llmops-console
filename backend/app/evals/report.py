@@ -13,7 +13,10 @@ Things the module holds that no single field states:
   `region`) are kept as `None` on every case. A conversation answer carries none of them,
   and a zero there would read as a free, instant success. `tags` stays for the same reason
   the columns do: the store and the console read it, and it is always empty;
-* `tenant` is `ALL_TENANTS` for a conversation run: the cases name their own tenants.
+* `tenant` is `ALL_TENANTS` for a conversation run: the cases name their own tenants;
+* a case played several times is ONE `CaseReport`: it passed when every run passed, it
+  carries its pass rate and 95% range, and an unstable one is listed in its own section
+  and never under the failures.
 
 The two file names are constants and nothing a caller supplies shapes a path.
 `storage/eval_store.py` builds the `eval_runs` and `eval_cases` rows from this record.
@@ -34,7 +37,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_serializer
 from app.evals.calibration import CalibrationReport
 from app.evals.checks import CaseCheck
 from app.evals.runner import CaseLine, JudgedReply
-from app.evals.scores import compute_metrics
+from app.evals.scores import compute_metrics, is_unstable, pass_rate, runs_by_case, wilson_range
 
 REPORT_JSON_NAME: Final[str] = "report.json"
 """The machine-readable report, the file the eval gate reads."""
@@ -66,6 +69,8 @@ has no such heading."""
 JUDGE_HEADING: Final[str] = "## Replies the judge failed"
 METRICS_HEADING: Final[str] = "## Metrics"
 CATEGORIES_HEADING: Final[str] = "## Cases by category"
+UNSTABLE_HEADING: Final[str] = "## Unstable cases"
+"""Cases that both passed and failed across their runs. Left out of `check_score`."""
 
 RunCalibration = CalibrationReport
 """What a run publishes about its judge: the six fields of a `calibration.json`."""
@@ -92,6 +97,13 @@ class CaseReport(BaseModel):
     error: str | None
     check: CaseCheck | None
     judged: tuple[JudgedReply, ...]
+    runs: int = 1
+    pass_rate: float | None = None
+    range_low: float | None = None
+    range_high: float | None = None
+    """The 95% Wilson range of `pass_rate`, in percent. `None` on a report from before
+    repeat runs, as are `pass_rate` and the low end."""
+    unstable: bool = False
 
     @field_serializer("cost_usd")
     def _serialise_cost(self, value: Decimal | None) -> str | None:
@@ -124,14 +136,23 @@ class RunReport(BaseModel):
     cases: tuple[CaseReport, ...]
 
 
-def _case_report(line: CaseLine) -> CaseReport:
+def _case_report(runs: Sequence[CaseLine]) -> CaseReport:
+    """One case's row from all its runs. The first failed run explains a failure."""
+    shown = next((line for line in runs if not line.passed), runs[0])
+    passes = sum(1 for line in runs if line.passed)
+    low, high = wilson_range(passes, len(runs))
     return CaseReport(
-        case_id=line.case_id,
-        category=line.category,
-        passed=line.passed,
-        error=line.error,
-        check=line.check,
-        judged=line.judged,
+        case_id=shown.case_id,
+        category=shown.category,
+        passed=passes == len(runs),
+        error=shown.error,
+        check=shown.check,
+        judged=tuple(reply for line in runs for reply in line.judged),
+        runs=len(runs),
+        pass_rate=pass_rate(passes, len(runs)),
+        range_low=low,
+        range_high=high,
+        unstable=is_unstable(runs),
     )
 
 
@@ -154,8 +175,9 @@ def build_report(
 
     `set_sha_source` and `run_kind` arrive as plain strings and are checked by the
     model's own vocabularies, so a caller that skipped the CLI's checks still cannot put
-    a fourth word into a stored row. The run passes when every case passed.
+    a fourth word into a stored row. The run passes when no stable case failed.
     """
+    cases = [_case_report(runs) for runs in runs_by_case(lines).values()]
     payload: dict[str, Any] = {
         "started_at": started_at,
         "finished_at": finished_at,
@@ -166,11 +188,11 @@ def build_report(
         "git_sha": git_sha,
         "tenant": tenant,
         "target": target,
-        "passed": all(line.passed for line in lines),
+        "passed": all(case.passed or case.unstable for case in cases),
         "judge_prompt_version": judge_prompt_version,
         "calibration": calibration,
         "metrics": compute_metrics(lines),
-        "cases": [_case_report(line) for line in lines],
+        "cases": cases,
     }
     return RunReport.model_validate(payload)
 
@@ -257,8 +279,21 @@ def _judge_lines(report: RunReport) -> list[str]:
     return lines
 
 
+def _unstable_lines(report: RunReport) -> list[str]:
+    unstable = [case for case in report.cases if case.unstable]
+    if not unstable:
+        return []
+    lines = [UNSTABLE_HEADING, ""]
+    lines += [
+        f"- {case.case_id} ({case.category}): passed {case.pass_rate}% of {case.runs} runs, "
+        f"95% range {case.range_low} to {case.range_high}"
+        for case in unstable
+    ]
+    return lines
+
+
 def _failure_lines(report: RunReport) -> list[str]:
-    failed = [case for case in report.cases if not case.passed]
+    failed = [case for case in report.cases if not case.passed and not case.unstable]
     if not failed:
         return []
     lines = [FAILURES_HEADING, ""]
@@ -267,12 +302,14 @@ def _failure_lines(report: RunReport) -> list[str]:
 
 
 def report_markdown(report: RunReport) -> str:
-    """`report.md`'s text: identity, metrics, categories, judge fails, then the failures last."""
+    """`report.md`'s text: identity, metrics, categories, judge fails, unstable cases, then
+    the failures last."""
     sections = [
         _identity_lines(report),
         _metric_lines(report),
         _category_lines(report),
         _judge_lines(report),
+        _unstable_lines(report),
         _failure_lines(report),
     ]
     return "\n\n".join("\n".join(lines) for lines in sections if lines) + "\n"
