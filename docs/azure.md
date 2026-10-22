@@ -5,7 +5,7 @@ code beyond the adapter, and there is no Azure account behind this repository.
 
 ## What is built
 
-`packages/opsconsole/opsconsole/providers/azure_openai.py` holds
+`backend/app/providers/azure_openai.py` holds
 `AzureOpenAIAdapter`. Azure serves the OpenAI wire shape and differs on three
 counts, all of them outside the request body: the key travels as an `api-key`
 header rather than a bearer token, the model names a deployment that lives in
@@ -21,23 +21,23 @@ The deployment name reaches a URL path segment, so it is checked before any
 outbound call is built: a name carrying a `/`, a `..` or a trailing CRLF
 addresses something other than the deployment the policy named.
 
-It is tested against recorded fixtures under `tests/providers/`, by
-`tests/providers/test_azure_openai.py` and `tests/providers/test_factory.py`.
+It is tested against recorded fixtures under `backend/tests/providers/`, by
+`backend/tests/providers/test_azure_openai.py` and `backend/tests/providers/test_factory.py`.
 CI never needs a live Azure key.
 
 ## It ships disabled
 
-The shipped provider row in `routing.yaml` is `azure_eu`, and it carries
+The shipped provider row in `backend/config/routing.yaml` is `azure_eu`, and it carries
 `enabled: false`. The factory builds no Azure adapter from it, which is pinned
 by `test_the_shipped_azure_provider_is_disabled_and_builds_nothing` in
-`tests/providers/test_factory.py`.
+`backend/tests/providers/test_factory.py`.
 
 ## Enabling it is a configuration change
 
 Turning that row on is the whole of enabling Azure. No code change is needed,
 and none lands here.
 
-An operator sets `enabled: true` on the `azure_eu` row in `routing.yaml` and
+An operator sets `enabled: true` on the `azure_eu` row in `backend/config/routing.yaml` and
 supplies two values in the environment the gateway is handed:
 
 | Variable | What it holds |

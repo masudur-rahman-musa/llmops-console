@@ -133,9 +133,10 @@ IGNORED_SCRATCH = "/backend/scratch/"
 #: any of them would leave the suite reading a file the build no longer uses.
 SECURITY_PATHS = (MAKEFILE, WORKFLOW, PRE_COMMIT, GITLEAKS_IGNORE, BACKEND)
 
-#: The count the full-history run produced at drafting time, exact. A count is an
-#: absolute, so it is asserted by equality and not as a ceiling.
-EXPECTED_FINGERPRINTS = 14
+#: The count the full-history run produced at drafting time, exact, plus the two
+#: `web/tests/screens.test.tsx` fingerprints reviewed after. A count is an absolute
+#:, so it is asserted by equality and not as a ceiling.
+EXPECTED_FINGERPRINTS = 16
 
 #: The fingerprint shape, run with `re.fullmatch` and therefore written WITHOUT the
 #: `^`/`$` the plan quotes it with: a project rule, since in Python `$` also matches before a
@@ -563,11 +564,11 @@ def test_neither_new_job_may_fail_without_failing_the_build(
         )
 
 
-def test_the_ignore_file_holds_exactly_the_fourteen_reviewed_fingerprints() -> None:
-    """Case 7, by COUNT equality. The count is the review: 14 findings
-    were read at drafting time and each judged a fake literal in a test. A 15th line is a
+def test_the_ignore_file_holds_exactly_the_sixteen_reviewed_fingerprints() -> None:
+    """Case 7, by COUNT equality. The count is the review: 16 findings
+    were read and each judged a fake literal in a test. A 17th line is a
     finding nobody read, added by whoever needed the job green that afternoon - which is exactly
-    how a fingerprint file stops being an audited exception list. A count below 14 catches the
+    how a fingerprint file stops being an audited exception list. A count below 16 catches the
     other direction, a fingerprint deleted so the job goes red on committed test data. Comment
     lines are dropped, so the file may explain itself as freely as it likes."""
     lines = fingerprints()

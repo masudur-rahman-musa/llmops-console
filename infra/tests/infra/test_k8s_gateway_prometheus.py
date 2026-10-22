@@ -21,8 +21,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from opsconsole.core.settings import Settings
 
+from app.core.config import Settings
 from infra.test_k8s_apps import sole_object
 from infra.test_k8s_netpol import (
     ANY_POD,

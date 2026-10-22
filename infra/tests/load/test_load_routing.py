@@ -11,7 +11,8 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from opsconsole.routing.policy import Policy, Residency, load_policy
+
+from app.model_routing.policy import Policy, Residency, load_policy
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 LOAD_POLICY = REPO_ROOT / "infra" / "load" / "routing.load.yaml"

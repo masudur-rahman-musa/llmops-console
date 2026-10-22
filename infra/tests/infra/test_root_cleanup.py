@@ -247,6 +247,10 @@ def test_named_compose_paths_exist() -> None:
     for source in COMPOSE_NAMING_FILES:
         text = source.read_text(encoding="utf-8")
         for match in COMPOSE_PATH.finditer(text):
+            # A path after a make variable (`$(EVAL_HELPDESK)/docker-compose.yml`) names the
+            # help desk repo's file, not one in this repo.
+            if text[: match.start()].endswith(")"):
+                continue
             named.append((source.relative_to(REPO_ROOT).as_posix(), normalise(match.group(0))))
     assert named, "no compose file path found in any of the files"
     missing = [(source, path) for source, path in named if not (REPO_ROOT / path).is_file()]

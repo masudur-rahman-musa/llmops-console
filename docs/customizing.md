@@ -4,11 +4,11 @@ This repository is a GitHub template. Clone it, point it at your own providers,
 and you have a gateway that routes, enforces residency, redacts, caches, prices
 and measures your own traffic.
 
-To make it yours there are only two files you must edit: `routing.yaml` and `prices.yaml`.
+To make it yours there are only two files you must edit: `backend/config/routing.yaml` and `backend/config/prices.yaml`.
 Everything else has a working default. The sections after those two describe the
 knobs you may reach for later rather than the ones you have to reach for now.
 
-## `routing.yaml` — who your providers are and who may reach them
+## `backend/config/routing.yaml` — who your providers are and who may reach them
 
 This file holds the whole policy: the providers that exist, the aliases your
 callers name, and which provider answers which alias, per tenant and per data
@@ -31,9 +31,9 @@ What you change:
 Residency is deny by default, and the resolver never widens a region set on
 failure — an empty result is a refusal, not a fallback. That behaviour is not
 configurable, and a property test over generated policies keeps it that way:
-[tests/routing/test_residency_property.py](tests/routing/test_residency_property.py).
+[backend/tests/model_routing/test_residency_property.py](backend/tests/model_routing/test_residency_property.py).
 
-## `prices.yaml` — what a token costs you
+## `backend/config/prices.yaml` — what a token costs you
 
 The cost ledger, the budgets, the savings figures and the tradeoff table all
 read their numbers from here. Until this file carries your contract's prices,
@@ -51,7 +51,7 @@ never rewritten.
 
 You do not have to touch any of these to run the gateway.
 
-- **Credentials.** [.env.example](.env.example) lists every variable the stack
+- **Credentials.** [backend/.env.example](backend/.env.example) lists every variable the stack
   reads, with placeholders. Copy it to your own env file and fill it in. For
   the cluster, the same values live SOPS-encrypted under
   [infra/secrets/](infra/secrets/).

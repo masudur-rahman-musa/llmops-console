@@ -32,7 +32,7 @@ from infra.test_hetzner_module import load_yaml, read
 REPO_ROOT = Path(__file__).resolve().parents[3]
 COMPOSE_FILE = REPO_ROOT / "docker-compose.yml"
 TRADEOFF_SCRIPT = REPO_ROOT / "infra" / "scripts" / "tradeoff_run.sh"
-ENV_EXAMPLE = REPO_ROOT / ".env.example"
+ENV_EXAMPLE = REPO_ROOT / "backend" / ".env.example"
 README = REPO_ROOT / "README.md"
 
 #: The profile both local models sit behind.

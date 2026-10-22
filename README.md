@@ -80,26 +80,26 @@ being true.
    provider outside its allowed regions, through no fallback, retry or failure
    path. A property test generates policies and sweeps every tenant, alias and
    data class triple:
-   [tests/routing/test_residency_property.py](tests/routing/test_residency_property.py).
+   [backend/tests/model_routing/test_residency_property.py](backend/tests/model_routing/test_residency_property.py).
 2. **Personal data is replaced before it leaves.** Ten kinds are detected,
    checksum-validated where a shape alone is not enough, and replaced with
    stable placeholders:
-   [tests/redaction/test_redactor.py](tests/redaction/test_redactor.py).
+   [backend/tests/redaction/test_redactor.py](backend/tests/redaction/test_redactor.py).
 3. **A budget refuses rather than warns.** A tenant over its cap is refused
    before a provider is called, and an override has to be signed:
-   [tests/limits/test_budget.py](tests/limits/test_budget.py).
+   [backend/tests/limits/test_budget.py](backend/tests/limits/test_budget.py).
 4. **A rate limit is enforced per tenant.** The window's other traffic is part
    of the test, and so is the reset landing mid-sequence:
-   [tests/limits/test_ratelimit.py](tests/limits/test_ratelimit.py).
+   [backend/tests/limits/test_ratelimit.py](backend/tests/limits/test_ratelimit.py).
 5. **A cache hit is the same answer, for the same tenant.** The tenant, the
    alias, the model and the normalised body are all part of the key, so two
-   tenants cannot collide: [tests/cache/test_key.py](tests/cache/test_key.py).
+   tenants cannot collide: [backend/tests/cache/test_key.py](backend/tests/cache/test_key.py).
 6. **A release that makes the agent worse does not merge.** The gate scores the
    conversation cases and compares it to the committed baseline:
-   [tests/evals/test_gate.py](tests/evals/test_gate.py).
+   [backend/tests/evals/test_gate.py](backend/tests/evals/test_gate.py).
 7. **Every token is attributed and priced at the rate in force.** Ledger rows
    name the price entry that priced them, and history is never rewritten:
-   [tests/ledger/test_cost_ledger.py](tests/ledger/test_cost_ledger.py).
+   [backend/tests/storage/test_cost_ledger.py](backend/tests/storage/test_cost_ledger.py).
 
 ## What broke
 

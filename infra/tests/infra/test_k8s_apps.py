@@ -62,16 +62,17 @@ from urllib.parse import SplitResult, urlsplit
 
 import pytest
 import yaml
-from opsconsole.gateway.app import create_app
-from opsconsole.gateway.routes.admin import ADMIN_ROUTING, ADMIN_ROUTING_RELOAD
-from opsconsole.gateway.routes.directory import ADMIN_DIRECTORY
-from opsconsole.gateway.routes.metrics import METRICS
+
+from app.api.routes.admin.directory import ADMIN_DIRECTORY
+from app.api.routes.admin.routing import ADMIN_ROUTING, ADMIN_ROUTING_RELOAD
+from app.api.routes.health import METRICS
+from app.main import create_app
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 K8S_ROOT = REPO_ROOT / "infra" / "k8s"
 APPS_DIR = K8S_ROOT / "apps"
 K8S_README = K8S_ROOT / "README.md"
-DOCKERFILE = REPO_ROOT / "Dockerfile"
+DOCKERFILE = REPO_ROOT / "backend" / "Dockerfile"
 
 #: The namespace every object this plan adds belongs to. Criterion 1 says nothing this plan
 #: writes is cluster-scoped and nothing it writes lands anywhere else.
@@ -148,10 +149,10 @@ CONSOLE_HOST = "console.example.com"
 #: about it.
 GRAFANA_INGRESS = "grafana"
 
-#: Row 20f criterion 1, as `(kind, name, namespace)`: the eight objects the Helpdesk adds.
-#: `Service/helpdesk-scheduler` is absent on purpose (criterion 2) and its absence is asserted
-#: by name in its own case rather than left to this set. Written as its own frozenset because
-#: two cases read it - `APPS_OBJECTS` unions it below, so the eight are named once.
+#: Row 20f criterion 1, as `(kind, name, namespace)`: the objects the Helpdesk adds.
+#: `Service/helpdesk-scheduler` came with an earlier change, for the Prometheus scrape of its stuck chat
+#: counters only; its one metrics port is asserted in its own case. Written as its own
+#: frozenset because two cases read it - `APPS_OBJECTS` unions it below, so they are named once.
 HELPDESK_OBJECTS: frozenset[tuple[str, str, str]] = frozenset(
     {
         ("ConfigMap", HELPDESK_CONFIG_MAP, APPS),
@@ -161,6 +162,7 @@ HELPDESK_OBJECTS: frozenset[tuple[str, str, str]] = frozenset(
         ("Deployment", HELPDESK_WEB, APPS),
         ("Service", HELPDESK_AGENT_API, APPS),
         ("Service", HELPDESK_MCP_SERVER, APPS),
+        ("Service", HELPDESK_SCHEDULER, APPS),
         ("Service", HELPDESK_WEB, APPS),
         ("PersistentVolumeClaim", HELPDESK_POLICIES_PVC, APPS),
     }
@@ -185,6 +187,8 @@ APPS_NETWORK_POLICIES = frozenset(
         # `test_k8s_console.py`.
         "console-ingress",
         "console-egress",
+        # An earlier change: Prometheus scrapes the help desk's metrics ports.
+        "helpdesk-metrics-from-prometheus",
     }
 )
 
@@ -381,10 +385,10 @@ LLAMA_RESOURCES: dict[str, str] = {
 
 #: The shipped files criterion 8 compares to one another. None of them is this file's own
 #: expectation: the id comes off the built `-m` argument and every file is read from the repo.
-ROUTING_POLICY = REPO_ROOT / "routing.yaml"
-PRICES = REPO_ROOT / "prices.yaml"
+ROUTING_POLICY = REPO_ROOT / "backend" / "config" / "routing.yaml"
+PRICES = REPO_ROOT / "backend" / "config" / "prices.yaml"
 COMPOSE = REPO_ROOT / "docker-compose.yml"
-ENV_EXAMPLE = REPO_ROOT / ".env.example"
+ENV_EXAMPLE = REPO_ROOT / "backend" / ".env.example"
 
 #: The provider name in `routing.yaml` this plan's pod answers for, and the path its `base_url`
 #: carries. Criterion 3 derives the Service's name and port from that URL and asserts the path
@@ -730,6 +734,9 @@ HELPDESK_RESOURCES: dict[str, dict[str, str]] = {
 HELPDESK_SCHEDULER_REPLICAS = 1
 HELPDESK_SCHEDULER_STRATEGY = "Recreate"
 
+#: An earlier change: the scheduler's one port, its stuck chat counters for Prometheus, and nothing else.
+HELPDESK_SCHEDULER_METRICS_PORTS = [{"name": "metrics", "containerPort": 8082}]
+
 #: Criterion 7's third and fourth halves: the three probe keys a container may declare, all of
 #: which the scheduler must declare none of (decision F). A liveness probe against a command
 #: nobody has written restarts the pod forever.
@@ -853,10 +860,13 @@ CONSOLE_REPO_IMAGES: dict[str, dict[str, str]] = {
 #: and never written whole: the ten-name scan covers this very file,
 #: so a literal of any of them would make the scan red against the case that defines it.
 #:
-#: The prefix row 20f invented for the Helpdesk's variables, banned outright under `infra/`.
+#: The prefix row 20f invented for the Helpdesk's variables, banned outright under `infra/k8s/`.
+#: Only there: since an earlier change `infra/` also holds these tests, and the server and eval scripts
+#: name the help desk's own copies of a value (`HELPDESK_GATEWAY_API_KEYS`) on purpose, so the
+#: rest of `infra/` bans only the ten old names below.
 OLD_ENV_PREFIX = "HELPDESK" + "_"
 
-#: The ten names that prefix produced, as their suffixes. Under `infra/tests/infra/` only these are
+#: The ten names that prefix produced, as their suffixes. Outside `infra/k8s/` only these are
 #: banned, and only as WHOLE names: this file's Python constants keep the same prefix (an earlier change
 #: decision E), and a substring ban would redden every one of them.
 OLD_ENV_SUFFIXES = (
@@ -975,17 +985,17 @@ MEMORY_SUFFIXES = {
 #: `prices.yaml`. `PriceStore.__init__` loads the file eagerly and `create_app` builds the
 #: store, so an image missing the second pair cannot reach its first request.
 DOCKERFILE_DATA_FILES: dict[str, str] = {
-    "routing.yaml": "OPSCONSOLE_ROUTING_POLICY_PATH",
-    "prices.yaml": "OPSCONSOLE_PRICES_PATH",
+    "config/routing.yaml": "OPSCONSOLE_ROUTING_POLICY_PATH",
+    "config/prices.yaml": "OPSCONSOLE_PRICES_PATH",
 }
 
 #: Where the image puts those files, and therefore what the environment variables must read.
 IMAGE_WORKDIR = "/app"
 
-#: A `COPY <file> ./` line of the build stage, and an `OPSCONSOLE_*` assignment anywhere in the
-#: runtime stage's `ENV` block - the block is written as backslash-continued lines, so the scan
-#: is per line rather than per instruction.
-DOCKERFILE_COPY = re.compile(r"^\s*COPY\s+(?P<files>[^\n]*?)\s+\./\s*$")
+#: A `COPY <files> ./` or `COPY <folder>/ ./<folder>/` line of the build stage, and an
+#: `OPSCONSOLE_*` assignment anywhere in the runtime stage's `ENV` block - the block is written
+#: as backslash-continued lines, so the scan is per line rather than per instruction.
+DOCKERFILE_COPY = re.compile(r"^\s*COPY\s+(?P<files>[^\n]*?)\s+\./(?P<dest>\S*)\s*$")
 DOCKERFILE_ENV_ASSIGNMENT = re.compile(r"(?P<name>OPSCONSOLE_[A-Z0-9_]+)=(?P<value>\S+)")
 
 
@@ -1359,11 +1369,14 @@ def middleware_names(ingress: dict[str, Any]) -> set[tuple[str, str]]:
 
 
 def dockerfile_copied_files(text: str) -> set[str]:
-    """Every file a `COPY <files> ./` line of the Dockerfile puts in the workdir."""
+    """Every file or folder (`config/`) a `COPY` line of the Dockerfile puts in the workdir."""
     copied: set[str] = set()
     for line in text.splitlines():
         match = DOCKERFILE_COPY.match(line)
         if match is None:
+            continue
+        if match.group("dest"):
+            copied.add(match.group("dest"))
             continue
         copied.update(part for part in match.group("files").split() if not part.startswith("--"))
     return copied
@@ -2185,7 +2198,10 @@ def test_the_image_carries_the_price_table_it_loads_at_startup() -> None:
     environment = dockerfile_environment(text)
 
     for data_file, variable in DOCKERFILE_DATA_FILES.items():
-        assert data_file in copied, f"the image copies {sorted(copied)}, not {data_file}"
+        assert any(
+            data_file == path or (path.endswith("/") and data_file.startswith(path))
+            for path in copied
+        ), f"the image copies {sorted(copied)}, not {data_file}"
         assert environment.get(variable) == f"{IMAGE_WORKDIR}/{data_file}", (
             f"{variable} reads {environment.get(variable)}"
         )
@@ -2775,21 +2791,21 @@ def test_the_build_emits_every_helpdesk_object_the_plan_names(
     )
 
 
-def test_the_scheduler_has_no_service(built: list[dict[str, Any]]) -> None:
-    """Criterion 2, by NAME absence across every Service in `apps`, with the three serving
-    Services asserted present first so the case cannot pass vacuously over a namespace that
-    holds no Helpdesk at all - the trap an absence assertion falls into on the day the
-    manifests do not exist yet. Catches the fourth Service a copy-paste of the three produces:
-    the scheduler holds a Redis leader lock and serves nothing, so a Service in front of it is
-    a cluster address with no listener behind it, published to every pod in the cluster and
-    silently failing whatever later dials it."""
+def test_the_scheduler_service_publishes_only_the_metrics_port(
+    built: list[dict[str, Any]],
+) -> None:
+    """Criterion 2 as an earlier change left it, with the three serving Services asserted present first.
+    The scheduler serves no traffic; since an earlier change its Service exists only so Prometheus can
+    scrape its stuck chat counters. Catches the Service a copy-paste of the three serving ones
+    produces, publishing an `http` port with no listener behind it, which would silently fail
+    whatever later dials it."""
     services = in_apps(built, "Service")
     absent = [name for name in HELPDESK_SERVING if name not in services]
     assert absent == [], f"the build emits no Service for {absent}: {sorted(services)}"
-    assert HELPDESK_SCHEDULER not in services, (
-        f"the build emits Service/{HELPDESK_SCHEDULER}, which fronts a process that listens on "
-        "nothing"
-    )
+    ports = services[HELPDESK_SCHEDULER]["spec"].get("ports", [])
+    assert [(port.get("name"), port.get("targetPort")) for port in ports] == [
+        ("metrics", "metrics")
+    ], f"Service/{HELPDESK_SCHEDULER} publishes {ports}"
 
 
 @pytest.mark.parametrize(("workload_name", "expected"), sorted(HELPDESK_RESOURCES.items()))
@@ -2883,7 +2899,7 @@ def test_each_serving_helpdesk_workload_probes_readyz_and_healthz(
             )
 
 
-def test_the_scheduler_runs_one_replica_recreate_with_no_ports_and_no_probes(
+def test_the_scheduler_runs_one_replica_recreate_with_only_a_metrics_port_and_no_probes(
     built: list[dict[str, Any]],
 ) -> None:
     """Criterion 7 and decision F, all four halves asserted positively so the omissions read as
@@ -2894,7 +2910,7 @@ def test_the_scheduler_runs_one_replica_recreate_with_no_ports_and_no_probes(
     from one of the three serving workloads: an HTTP probe against a process that binds no port
     fails every time, so a liveness probe here is a CrashLoopBackOff on a healthy scheduler and
     a readiness probe is a pod that never reports ready. Catches a `ports` block copied with
-    it, which is what a Service in front of it would then look justified by."""
+    it; since an earlier change the one port it may declare is its metrics port."""
     owner = helpdesk_pod_owner(built, HELPDESK_SCHEDULER)
     assert replicas_of(owner) == HELPDESK_SCHEDULER_REPLICAS, (
         f"{HELPDESK_SCHEDULER} runs {replicas_of(owner)} replicas"
@@ -2906,7 +2922,9 @@ def test_the_scheduler_runs_one_replica_recreate_with_no_ports_and_no_probes(
     )
 
     container = sole_container(owner)
-    assert container.get("ports", []) == [], f"{HELPDESK_SCHEDULER} declares {container['ports']}"
+    assert container.get("ports", []) == HELPDESK_SCHEDULER_METRICS_PORTS, (
+        f"{HELPDESK_SCHEDULER} declares {container.get('ports')}"
+    )
     probes = [key for key in PROBE_KEYS if key in container]
     assert probes == [], f"{HELPDESK_SCHEDULER} declares {probes} against a process with no port"
 
@@ -3178,8 +3196,8 @@ def test_the_helpdesk_urls_name_the_real_service_ports_and_the_public_host(
 @pytest.mark.parametrize(
     ("roots", "pattern"),
     [
-        pytest.param((INFRA_DIR,), re.compile(re.escape(OLD_ENV_PREFIX)), id="infra-old-prefix"),
-        pytest.param((TESTS_INFRA_DIR,), OLD_ENV_NAME, id="tests-infra-old-env-names"),
+        pytest.param((K8S_ROOT,), re.compile(re.escape(OLD_ENV_PREFIX)), id="infra-old-prefix"),
+        pytest.param((INFRA_DIR,), OLD_ENV_NAME, id="tests-infra-old-env-names"),
         pytest.param(
             (INFRA_DIR, TESTS_INFRA_DIR),
             re.compile(re.escape(OLD_HELPDESK_IMAGE_PATH)),

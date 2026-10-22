@@ -40,13 +40,13 @@ README_HEADINGS = [
 
 #: The seven guarantees and the test file that pins each, all committed today.
 GUARANTEE_TESTS = [
-    "tests/routing/test_residency_property.py",
-    "tests/redaction/test_redactor.py",
-    "tests/limits/test_budget.py",
-    "tests/limits/test_ratelimit.py",
-    "tests/cache/test_key.py",
-    "tests/evals/test_gate.py",
-    "tests/ledger/test_cost_ledger.py",
+    "backend/tests/model_routing/test_residency_property.py",
+    "backend/tests/redaction/test_redactor.py",
+    "backend/tests/limits/test_budget.py",
+    "backend/tests/limits/test_ratelimit.py",
+    "backend/tests/cache/test_key.py",
+    "backend/tests/evals/test_gate.py",
+    "backend/tests/storage/test_cost_ledger.py",
 ]
 
 #: A the project notes entry links the committed rules file or a committed postmortem.
@@ -61,7 +61,7 @@ AWS_LINK = "docs/aws-evidence/"
 
 #: The three claims §1 requires of `docs/azure.md`, by literal phrase.
 AZURE_CLAIMS = ("recorded fixtures", "ships disabled", "configuration change")
-AZURE_ADAPTER = "packages/opsconsole/opsconsole/providers/azure_openai.py"
+AZURE_ADAPTER = "backend/app/providers/azure_openai.py"
 AZURE_ROUTING_ROW = "azure_eu"
 
 THREAT_MODEL_HEADING = "# Threat model"
@@ -93,7 +93,7 @@ MITIGATION_COLUMN = 3
 STATUS_COLUMN = 4
 
 CUSTOMIZING_MUST_EDIT = re.compile(r"only two files", re.IGNORECASE)
-MUST_EDIT_FILES = {"routing.yaml", "prices.yaml"}
+MUST_EDIT_FILES = {"backend/config/routing.yaml", "backend/config/prices.yaml"}
 #: Any `.yaml` or `.py` path written on the must-edit line, backticked or bare.
 YAML_OR_PY_PATH = re.compile(r"[A-Za-z0-9_./-]+\.(?:yaml|py)")
 
@@ -202,7 +202,7 @@ def test_the_seven_guarantees_link_the_seven_tests() -> None:
     links six or eight tests, links the same test twice to reach seven, or links a test path
     that no longer exists after a rename."""
     body = section_body(read(README), "## The seven guarantees")
-    linked = [target for target in relative_targets(body) if target.startswith("tests/")]
+    linked = [target for target in relative_targets(body) if target.startswith("backend/tests/")]
 
     assert sorted(linked) == sorted(GUARANTEE_TESTS), linked
     assert missing_paths(linked) == []

@@ -1,4 +1,4 @@
-.PHONY: help setup run up down rebuild all gateway console test fast test-slowest lint typecheck format verify security eval infra-check k8s-check k8s-aws-check k8s-server-check server-secrets server-helpdesk-data k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate purge-residency refresh-rollup secrets-encrypt secrets-decrypt secrets-check load
+.PHONY: help setup run up down rebuild all gateway console test test-infra fast test-slowest lint typecheck format verify security eval infra-check k8s-check k8s-aws-check k8s-server-check server-secrets server-helpdesk-data k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate purge-residency refresh-rollup secrets-encrypt secrets-decrypt secrets-check load
 
 # The console's checks run through pnpm, and are skipped only in a checkout that
 # has no web, so the intended gate stays visible in this file. The
@@ -60,7 +60,14 @@ test:       ## Run tests with the coverage gate (backing services must be up)
 	OPSCONSOLE_TEST_QDRANT_URL=$${OPSCONSOLE_TEST_QDRANT_URL:-http://localhost:16333} \
 	$(UV_ROOT) pytest backend/tests -n auto --cov --cov-fail-under=80
 	$(UV_ROOT) coverage report --include='$(COVERED_100)' --fail-under=100
+	$(MAKE) test-infra
 	$(call console,test)
+# The infra, CI, load and public doc tests in `infra/tests/`. They run from the
+# root with the backend venv, and carry no coverage flags: coverage measures only
+# `backend/app`, and these tests read files rather than run app code. The tests
+# that need `kubectl` or `docker` skip where those tools are missing.
+test-infra: ## Run the infra, CI and doc tests in infra/tests
+	$(UV_ROOT) pytest infra/tests -n auto
 # The everyday run: every test not marked `slow`, across one
 # xdist worker per core (`-n auto`), with NO OPSCONSOLE_TEST_* URL set, so the
 # Postgres, Redis and Qdrant tests skip and nothing waits on a service. This is

@@ -14,12 +14,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from opsconsole.gateway.prometheus import (
+from app.services.prometheus_reads import (
     AVAILABILITY_BUDGET_QUERY,
     LATENCY_BUDGET_QUERY,
     RESIDENCY_VIOLATIONS_30D_QUERY,
 )
-
 from infra.test_k8s_grafana import dashboard_documents, panels_of
 
 DASHBOARD_KEY = "gateway-overview.json"

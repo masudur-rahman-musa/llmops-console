@@ -22,7 +22,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CI_KIND_ROOT = REPO_ROOT / "infra" / "k8s" / "kind"
-ROUTING_POLICY = REPO_ROOT / "routing.yaml"
+ROUTING_POLICY = REPO_ROOT / "backend" / "config" / "routing.yaml"
 
 #: Criterion 2: the object set this overlay must contain, by `(kind, name, namespace)`,
 #: read as a strict SUBSET check (not equality) - `base`'s four `Namespace`s, four
@@ -231,8 +231,8 @@ def test_the_alias_and_tenant_resolve_to_the_local_provider_only() -> None:
     narrows `agent-default` to the `self` region alone, because `anthropic_eu`
     ships disabled and `anthropic`'s region (`us`) is not in `[eu, self]` -
     independent of whether any provider key is configured."""
-    from opsconsole.routing.policy import DataClass, load_policy
-    from opsconsole.routing.resolver import resolve
+    from app.model_routing.policy import DataClass, load_policy
+    from app.model_routing.resolver import resolve
 
     policy = load_policy(ROUTING_POLICY)
     resolved = resolve(

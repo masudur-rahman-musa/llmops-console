@@ -43,7 +43,7 @@ GPU_DIR = K8S / "gpu"
 ROOT_KUSTOMIZATION = K8S / "kustomization.yaml"
 MONITORING_PROMETHEUS = K8S / "monitoring" / "prometheus.yaml"
 BASE_POLICIES = K8S / "base" / "networkpolicies.yaml"
-ROUTING = REPO_ROOT / "routing.yaml"
+ROUTING = REPO_ROOT / "backend" / "config" / "routing.yaml"
 MAKEFILE = REPO_ROOT / "Makefile"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 

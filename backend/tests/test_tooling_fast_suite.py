@@ -144,6 +144,30 @@ def test_make_test_runs_in_parallel() -> None:
     assert "-n auto" in recipe, recipe
 
 
+def test_make_test_runs_the_infra_tests() -> None:
+    """Catches a `test` recipe that never calls `test-infra`, or a `test-infra` recipe
+    that does not run `pytest infra/tests` in parallel, so the infra tests would stay
+    out of `make test` (the gap an earlier change closes).
+    """
+    test_recipe = _makefile_recipe("test")
+    assert re.search(r"(\$\(MAKE\)|\bmake)\s+test-infra\b", test_recipe), test_recipe
+    infra_recipe = _makefile_recipe("test-infra")
+    assert infra_recipe.strip(), "no `test-infra` target in the Makefile"
+    assert re.search(r"\bpytest\s+infra/tests\b", infra_recipe), infra_recipe
+    assert "-n auto" in infra_recipe, infra_recipe
+
+
+def test_infra_tests_carry_no_coverage_gate() -> None:
+    """Catches a `test-infra` recipe that copies the backend coverage flags, which
+    would fail the infra run on a coverage floor measured over backend code.
+    """
+    recipe = _makefile_recipe("test-infra")
+    assert recipe.strip(), "no `test-infra` target in the Makefile"
+    assert "pytest" in recipe, recipe
+    assert "--cov" not in recipe, recipe
+    assert "--cov-fail-under" not in recipe, recipe
+
+
 def _carries_slow_marker(source: str, test_name: str) -> bool:
     """True when the named function in `source` is decorated `@pytest.mark.slow`."""
     tree = ast.parse(source)

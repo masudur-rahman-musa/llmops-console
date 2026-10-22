@@ -58,7 +58,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from opsconsole.core.metrics import registry
+
+from app.core.metrics import registry
 
 #: This file's own location, never the working directory - `pytest` runs from anywhere. Every
 #: sibling module in this directory derives it the same way rather than importing it.

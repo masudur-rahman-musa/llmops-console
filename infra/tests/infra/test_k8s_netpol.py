@@ -1,5 +1,5 @@
-r"""`infra/k8s/base/networkpolicies.yaml`: the twenty-one NetworkPolicies an earlier change,
-23c, 31a and 31b agree, read off what kustomize actually emits rather than off the file, so a
+r"""`infra/k8s/base/networkpolicies.yaml`: the twenty-two NetworkPolicies an earlier change,
+23c, 31a, 31b and 77 agree, read off what kustomize actually emits rather than off the file, so a
 policy written and never listed in `base/kustomization.yaml`'s `resources` is the same failure
 as a policy never written.
 
@@ -98,8 +98,8 @@ HELPDESK_WORKLOADS = frozenset(
     {HELPDESK_AGENT_API, HELPDESK_MCP_SERVER, HELPDESK_SCHEDULER, HELPDESK_WEB}
 )
 
-#: Criterion 1, the `apps` half: ten policies, by name. An earlier change adds the console's pair;
-#: `test_k8s_console.py` owns their content.
+#: Criterion 1, the `apps` half: eleven policies, by name. An earlier change adds the console's pair;
+#: `test_k8s_console.py` owns their content. An earlier change adds the Prometheus scrape of the help desk.
 APPS_POLICIES = frozenset(
     {
         "default-deny",
@@ -112,6 +112,7 @@ APPS_POLICIES = frozenset(
         "llama-ingress",
         "console-ingress",
         "console-egress",
+        "helpdesk-metrics-from-prometheus",
     }
 )
 
@@ -537,7 +538,7 @@ def selector_scope(
 @pytest.mark.parametrize(
     ("namespace", "expected"),
     [
-        pytest.param(APPS, APPS_POLICIES, id="apps-ten"),
+        pytest.param(APPS, APPS_POLICIES, id="apps-eleven"),
         pytest.param(PLATFORM, PLATFORM_POLICIES, id="platform-three"),
         pytest.param(MONITORING, MONITORING_POLICIES, id="monitoring-eight"),
     ],
@@ -560,10 +561,10 @@ def test_each_namespace_emits_exactly_the_policies_the_plan_names(
     )
 
 
-def test_the_whole_build_emits_exactly_the_twenty_one_policies_and_nowhere_else(
+def test_the_whole_build_emits_exactly_the_twenty_two_policies_and_nowhere_else(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 1 over the WHOLE stream as `(namespace, name)`. Catches a twenty-second policy
+    """Criterion 1 over the WHOLE stream as `(namespace, name)`. Catches a twenty-third policy
     landing in a fourth namespace, which the three per-namespace rows above cannot see because each
     filters to its own namespace first; and catches a policy emitted with no
     `metadata.namespace` at all, which the API server would file into whatever namespace the
