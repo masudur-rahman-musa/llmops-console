@@ -64,6 +64,7 @@ import re
 from typing import Any
 
 import yaml
+
 from app.core.metrics import registry
 
 MONITORING = "monitoring"

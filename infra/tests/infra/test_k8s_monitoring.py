@@ -736,9 +736,9 @@ def test_the_scrape_config_carries_exactly_the_nine_static_targets(
 ) -> None:
     """Criterion 3 and decision C, over the PARSED `prometheus.yml` the ConfigMap holds as a
     string: nine jobs (an earlier change decision A adds `cert-manager`, an earlier change adds
-    `evals-pushgateway`, an earlier change adds the help desk agent API and scheduler), each with exactly one `static_configs` entry, the targets by set
-    equality, every `metrics_path` `/metrics`, and no key ending `_sd_configs` anywhere in the
-    document.
+    `evals-pushgateway`, an earlier change adds the help desk agent API and scheduler), each with
+    exactly one `static_configs` entry, the targets by set equality, every `metrics_path`
+    `/metrics`, and no key ending `_sd_configs` anywhere in the document.
 
     Catches a seventh job nobody agreed to and a sixth that never landed - a missing job is a
     dashboard panel that is empty forever with no error anywhere, since a scrape config

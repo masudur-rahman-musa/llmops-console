@@ -248,7 +248,9 @@ def test_precommit_and_ci_run_check_root() -> None:
     assert "check-root" in precommit, "pre-commit config defines no `check-root` hook"
 
     ci = CI_WORKFLOW.read_text(encoding="utf-8")
-    assert ".github/scripts/check_root.py" in ci, "CI workflow does not run .github/scripts/check_root.py"
+    assert ".github/scripts/check_root.py" in ci, (
+        "CI workflow does not run .github/scripts/check_root.py"
+    )
 
 
 def test_the_one_alert_rules_copy() -> None:

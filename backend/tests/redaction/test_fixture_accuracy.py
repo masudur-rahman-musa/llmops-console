@@ -302,8 +302,9 @@ def test_readme_carries_both_metric_names_in_the_generated_block() -> None:
 
 # Decision D's guarantee is "generated plus a drift test", and the drift test
 # above computes the numbers itself rather than through the script. So the half a
-# human actually runs - `uv run --project backend python backend/scripts/redaction_report.py` - had no test
-# reaching it at all: `compute`, `replace_block` and `main` were 25 uncovered
+# human actually runs -
+# `uv run --project backend python backend/scripts/redaction_report.py` - had no
+# test reaching it at all: `compute`, `replace_block` and `main` were 25 uncovered
 # statements in a module this diff created.
 
 

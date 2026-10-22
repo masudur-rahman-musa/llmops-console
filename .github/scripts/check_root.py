@@ -111,7 +111,8 @@ def hook() -> int:
     for name, is_dir in targets:
         if not ok(name, is_dir):
             print(
-                f"BLOCKED by .github/scripts/check_root.py: `{name}` is not allowed at the repo root. "
+                f"BLOCKED by .github/scripts/check_root.py: `{name}` is not allowed "
+                "at the repo root. "
                 f"{HELP}",
                 file=sys.stderr,
             )
