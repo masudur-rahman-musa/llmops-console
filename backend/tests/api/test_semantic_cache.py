@@ -34,10 +34,10 @@ exact tier is the control under test.
 
 a project rule: one app for the module, built once, plus four more for the
 arrangements a stub swap cannot express (a policy whose `embed` alias is refused
-by residency, a policy with no `embed` alias at all, an app with no
+by being turned off, a policy with no `embed` alias at all, an app with no
 embedding-capable adapter, and the `local`-only app a `pii` request reaches).
 Per-test isolation is the stubs' reset and fresh `response_cache`,
-`semantic_cache` and `residency_log` objects on `app.state` - never a new app,
+`semantic_cache` objects on `app.state` - never a new app,
 exactly as `fresh_breaker` in this directory's `conftest.py` replaces the one
 object that accumulates state.
 
@@ -85,7 +85,6 @@ from app.schemas.embeddings import MAX_EMBEDDING_INPUT_CHARS
 from app.services.chat_cache import EMBED_ALIAS
 from app.services.chat_headers import CACHE_STATUS_HIT, CACHE_STATUS_MISS, CACHE_STATUS_SEMANTIC
 from app.services.chat_pipeline import CACHE_SPAN, SEMANTIC_SPAN
-from app.storage import InMemoryResidencyLogWriter, ResidencyLogRow
 
 from .conftest import (
     API_KEYS,
@@ -112,7 +111,6 @@ OFF_ALIAS = "agent-strong"
 class, so the alias flag is the ONLY difference between it and `ALIAS`."""
 
 PROVIDER = "anthropic"
-REGION = "us"
 
 EMBED_PROVIDER = "local_embed"
 EMBED_MODEL = "bge-small-en-v1.5"
@@ -168,10 +166,9 @@ the chat route. The raw address is what must never reach the embedding adapter."
 
 PII_CLASS = "pii"
 LOCAL_PROVIDER = "local"
-"""`evals` under `pii` allows region `self` alone, so the chat candidate is `local`
-and the `embed` candidate is `local_embed` - both region `self`, and both needed
-on the app that row builds, because the probe resolves the alias separately from
-the request."""
+"""`evals` under `pii` reaches the chat candidate `local` and the `embed` candidate
+`local_embed` on the app this row builds, and both are needed there, because the
+probe resolves the alias separately from the request."""
 
 TOOLS: tuple[dict[str, Any], ...] = (
     {
@@ -313,8 +310,8 @@ class EmbedStub:
 class ChatAndEmbedStub(ChatStub):
     """One adapter that chats AND embeds, for the row where both resolve to `local`.
 
-    A `pii` request may only reach region `self`, so the chat candidate and the
-    `embed` candidate are the same provider and one object has to answer both.
+    On the `pii` app the chat candidate and the
+    `embed` candidate are both local providers and one object has to answer both.
     The embedding half is delegated rather than reimplemented, so the recorded
     requests this file reads are the same shape everywhere.
     """
@@ -355,7 +352,6 @@ class BrokenSemanticCache:
         system_hash: str,
         tools_hash: str,
         provider: str,
-        region: str,
         data_class: str,
     ) -> ChatResponse | None:
         self.searches += 1
@@ -373,7 +369,6 @@ class BrokenSemanticCache:
         system_hash: str,
         tools_hash: str,
         provider: str,
-        region: str,
         data_class: str,
     ) -> None:
         self.puts += 1
@@ -412,19 +407,18 @@ def semantic_client(
 def _fresh(
     semantic_client: TestClient, chat_stub: ChatStub, embed_stub: EmbedStub
 ) -> Iterator[None]:
-    """Empty caches, an empty log and reset stubs, never a new app."""
+    """Empty caches and reset stubs, never a new app."""
     chat_stub.reset()
     embed_stub.reset()
     state = app_of(semantic_client).state
     state.response_cache = InProcessResponseCache()
     state.semantic_cache = InProcessSemanticCache()
-    state.residency_log = InMemoryResidencyLogWriter()
     yield
 
 
 @pytest.fixture(scope="module")
 def pii_stub() -> ChatAndEmbedStub:
-    """The adapter a `pii` chat request reaches, registered under both self-region
+    """The adapter a `pii` chat request reaches, registered under both local
     providers: it both chats and embeds, so the same object answers the request and
     the probe."""
     return ChatAndEmbedStub(name=LOCAL_PROVIDER, embedder=EmbedStub(name=EMBED_PROVIDER))
@@ -432,7 +426,7 @@ def pii_stub() -> ChatAndEmbedStub:
 
 @pytest.fixture(scope="module")
 def pii_client(settings: Settings, pii_stub: ChatAndEmbedStub) -> Iterator[TestClient]:
-    """An app whose adapters are the two `self` providers a `pii` class allows - the chat
+    """An app whose adapters are the two local providers a `pii` request reaches - the chat
     server and the embedding server, which are one object here and two pods in the
     cluster."""
     adapters: dict[str, Adapter] = {LOCAL_PROVIDER: pii_stub, EMBED_PROVIDER: pii_stub}
@@ -452,45 +446,40 @@ def chat_only_client(settings: Settings) -> Iterator[TestClient]:
         yield client
 
 
-# A policy in which the CHAT alias is allowed and the `embed` alias is refused by
-# residency alone. `cuan` is an EU tenant, so the outer clamp drops `embed_us`
-# even though the data class rule names `us` and even though an embedding-capable
-# adapter is registered for it: nothing but residency can produce the refusal.
-CHAT_EU_PROVIDER = "chat_eu"
-EMBED_US_PROVIDER = "embed_us"
+# A policy in which the CHAT alias is served and the `embed` alias has only a
+# provider that is turned off. An embedding-capable adapter is registered for it
+# all the same: nothing but the `enabled: false` line can produce the refusal.
+CHAT_PROVIDER = "chat_a"
+EMBED_OFF_PROVIDER = "embed_off"
 REFUSAL_TENANT = "cuan"
 
 REFUSAL_POLICY = f"""
 providers:
-  {CHAT_EU_PROVIDER}:
+  {CHAT_PROVIDER}:
     kind: anthropic
-    region: eu
-    base_url: https://chat-eu.invalid
-  {EMBED_US_PROVIDER}:
+    base_url: https://chat-a.invalid
+  {EMBED_OFF_PROVIDER}:
     kind: openai
-    region: us
-    base_url: https://embed-us.invalid
-
-eu_regions: [eu, self]
+    enabled: false
+    base_url: https://embed-off.invalid
 
 aliases:
   {ALIAS}:
     semantic_cache: true
     candidates:
-      - {{ provider: {CHAT_EU_PROVIDER}, model: model-chat-eu }}
+      - {{ provider: {CHAT_PROVIDER}, model: model-chat-a }}
   {EMBED_ALIAS}:
     candidates:
-      - {{ provider: {EMBED_US_PROVIDER}, model: model-embed-us }}
+      - {{ provider: {EMBED_OFF_PROVIDER}, model: model-embed-off }}
 
 tenants:
   {REFUSAL_TENANT}:
-    residency: eu
     data_class_rules:
-      {DATA_CLASS}: {{ allow_regions: [us, eu, self] }}
+      {DATA_CLASS}: {{ redact: false }}
     budget_usd_month: "15.00"
     rate_limit: {{ rpm: 1000000, tpm: 1000000000 }}
 """
-"""The residency-refusal policy. The rate limit is a ceiling this module cannot
+"""The embed-is-off policy. The rate limit is a ceiling this module cannot
 reach, on purpose: it used to read `rpm: 60`, which was inert while nothing
 enforced it, and these cases exist to exercise the semantic tier and the
 embedding refusal rather than limits. The values a deployment runs are pinned
@@ -504,7 +493,7 @@ in tests/gateway/test_rate_limit_enforcement.py."""
 NO_EMBED_ALIAS_POLICY = REFUSAL_POLICY.replace(
     f"""  {EMBED_ALIAS}:
     candidates:
-      - {{ provider: {EMBED_US_PROVIDER}, model: model-embed-us }}
+      - {{ provider: {EMBED_OFF_PROVIDER}, model: model-embed-off }}
 """,
     "",
 )
@@ -517,8 +506,8 @@ POLICY_PRICES = "prices:\n" + "".join(
       output_usd_per_1m: "5.00"
 """
     for provider, model in (
-        (CHAT_EU_PROVIDER, "model-chat-eu"),
-        (EMBED_US_PROVIDER, "model-embed-us"),
+        (CHAT_PROVIDER, "model-chat-a"),
+        (EMBED_OFF_PROVIDER, "model-embed-off"),
     )
 )
 """A price for every pair either policy above can reach. The app refuses to start on
@@ -544,15 +533,15 @@ def policy_client(path: Path, adapters: Mapping[str, Adapter]) -> TestClient:
 
 @pytest.fixture(scope="module")
 def refusal_stubs() -> tuple[ChatStub, EmbedStub]:
-    """The chat stub and the embedding stub of the residency-refusal app."""
-    return ChatStub(name=CHAT_EU_PROVIDER), EmbedStub(name=EMBED_US_PROVIDER)
+    """The chat stub and the embedding stub of the embed-is-off app."""
+    return ChatStub(name=CHAT_PROVIDER), EmbedStub(name=EMBED_OFF_PROVIDER)
 
 
 @pytest.fixture(scope="module")
 def refusal_client(
     tmp_path_factory: pytest.TempPathFactory, refusal_stubs: tuple[ChatStub, EmbedStub]
 ) -> Iterator[TestClient]:
-    """An app whose `embed` alias is a 451 for this tenant, with the adapter registered."""
+    """An app whose `embed` alias has only a turned-off provider, with the adapter registered."""
     chat, embed = refusal_stubs
     path = written(tmp_path_factory, "refusal-policy", REFUSAL_POLICY)
     with policy_client(path, {chat.name: chat, embed.name: embed}) as client:
@@ -562,8 +551,8 @@ def refusal_client(
 @pytest.fixture(scope="module")
 def no_embed_alias_client(tmp_path_factory: pytest.TempPathFactory) -> Iterator[TestClient]:
     """An app on a policy that defines no `embed` alias at all."""
-    chat = ChatStub(name=CHAT_EU_PROVIDER)
-    embed = EmbedStub(name=EMBED_US_PROVIDER)
+    chat = ChatStub(name=CHAT_PROVIDER)
+    embed = EmbedStub(name=EMBED_OFF_PROVIDER)
     path = written(tmp_path_factory, "no-embed-alias-policy", NO_EMBED_ALIAS_POLICY)
     with policy_client(path, {chat.name: chat, embed.name: embed}) as client:
         yield client
@@ -609,13 +598,6 @@ def cache_header_of(response: Response) -> str:
     """The `X-Gateway-Cache` value the answer carried."""
     value: str = response.headers["x-gateway-cache"]
     return value
-
-
-def rows_of(client: TestClient) -> tuple[ResidencyLogRow, ...]:
-    """Every residency row this app's writer holds, with its type narrowed."""
-    writer = app_of(client).state.residency_log
-    assert isinstance(writer, InMemoryResidencyLogWriter)
-    return writer.rows
 
 
 def cosine(left: Sequence[float], right: Sequence[float]) -> float:
@@ -860,12 +842,11 @@ def test_the_probe_is_the_final_user_message_of_the_outbound_body(
 
 
 def request_labels(*, cache: str) -> dict[str, str]:
-    """The six labels `gateway_requests_total` carries for a served request here."""
+    """The five labels `gateway_requests_total` carries for a served request here."""
     return {
         "tenant": TENANT,
         "alias": ALIAS,
         "provider": PROVIDER,
-        "region": REGION,
         "status": "200",
         "cache": cache,
     }
@@ -975,29 +956,6 @@ def test_the_embedding_tokens_are_booked_under_the_embed_provider_and_model(
     )
 
 
-# --------------------------------------------------------------------------
-# the residency log (decision G)
-# --------------------------------------------------------------------------
-
-
-def test_the_embedding_writes_no_second_residency_row(
-    semantic_client: TestClient, embed_stub: EmbedStub
-) -> None:
-    """Decision G's other half, and the reason the tier does not call `record_served`.
-    Catches an embedding routed through the chat route's own serving path: the request
-    would write a `local`/`self` row beside its `anthropic`/`us` one, so "where did this
-    tenant's data go" - the question the design's log exists to answer - would be answered
-    twice for one client request and the counts would never match the requests. The stub's
-    call count is what stops this passing on a route that embedded nothing at all."""
-    response = send(semantic_client, QUESTION)
-
-    assert response.status_code == 200, response.text
-    assert embed_stub.call_count == 1
-    assert len(rows_of(semantic_client)) == 1
-    assert rows_of(semantic_client)[0].provider == PROVIDER
-    assert rows_of(semantic_client)[0].region == REGION
-
-
 def test_the_embedding_does_not_relabel_the_requests_candidate(
     semantic_client: TestClient, metrics: MetricDelta
 ) -> None:
@@ -1011,7 +969,6 @@ def test_the_embedding_does_not_relabel_the_requests_candidate(
 
     assert response.status_code == 200, response.text
     assert response.headers["x-gateway-provider"] == PROVIDER
-    assert response.headers["x-gateway-region"] == REGION
     assert metrics.delta(REQUESTS, **request_labels(cache=CACHE_STATUS_MISS)) == 1
     assert metrics.total(REQUESTS) == 1
 
@@ -1092,22 +1049,21 @@ def assert_served_by_the_provider(response: Response, *, marker: str | None = No
         assert marker not in response.text
 
 
-def test_an_embed_alias_refused_by_residency_is_a_miss(
+def test_an_embed_alias_with_every_provider_off_is_a_miss(
     refusal_client: TestClient, refusal_stubs: tuple[ChatStub, EmbedStub]
 ) -> None:
-    """The 451 row. Catches a seam that lets `ResidencyUnavailable` escape: the tier would
-    turn every chat request of an EU tenant into a 451 the moment an operator's `embed`
-    alias pointed anywhere outside the tenant's regions - a residency rule about
-    EMBEDDINGS refusing traffic that was itself perfectly legal. The adapter IS registered
-    for the refused provider, so residency alone excludes it, and its silent call count is
-    the proof no vector left the region."""
+    """The all-off row. Catches a seam that lets `AllProvidersUnavailable` escape: the tier
+    would turn every chat request into a 503 the moment an operator turned off the `embed`
+    alias's only provider - a rule about EMBEDDINGS refusing traffic that was itself
+    perfectly fine. The adapter IS registered for the turned-off provider, so the policy
+    alone excludes it, and its silent call count is the proof it was never called."""
     chat, embed = refusal_stubs
 
     response = send(refusal_client, QUESTION, tenant=REFUSAL_TENANT)
 
     assert_served_by_the_provider(response)
     assert chat.call_count == 1
-    assert embed.call_count == 0, "an embedding crossed the residency boundary"
+    assert embed.call_count == 0, "an embedding went to a provider that is turned off"
 
 
 def test_an_embed_alias_with_no_healthy_candidate_is_a_miss(chat_only_client: TestClient) -> None:
@@ -1124,11 +1080,10 @@ def test_an_embed_alias_with_no_healthy_candidate_is_a_miss(chat_only_client: Te
 def test_an_embed_alias_missing_from_the_policy_is_a_miss(
     no_embed_alias_client: TestClient,
 ) -> None:
-    """The row `AliasUnknown` hides in. Catches a seam that catches only the residency and
-    availability errors: a policy with no `embed` alias - a legal document, and what this
-    directory's own EU policy already is - would 404 every chat request, and the failure
-    would name an alias the caller never sent. Decision B is about every failure of the
-    resolution, not about the two that were easy to think of."""
+    """The row `AliasUnknown` hides in. Catches a seam that catches only the availability
+    errors: a policy with no `embed` alias - a legal document - would 404 every chat
+    request, and the failure would name an alias the caller never sent. Decision B is
+    about every failure of the resolution, not about the two that were easy to think of."""
     response = send(no_embed_alias_client, QUESTION, tenant=REFUSAL_TENANT)
 
     assert_served_by_the_provider(response)

@@ -21,11 +21,7 @@ import app.model_routing.errors  # noqa: F401
 from app.core.errors import ErrorCode, GatewayError
 from app.core.http_errors import GENERIC_FAILURE_MESSAGE, error_type
 from app.core.validation import IdentifierInvalid
-from app.model_routing.errors import (
-    AliasUnknown,
-    AllProvidersUnavailable,
-    ResidencyUnavailable,
-)
+from app.model_routing.errors import AliasUnknown, AllProvidersUnavailable
 
 from .conftest import TEST_KEYS, assert_error_body, auth_headers
 
@@ -36,7 +32,6 @@ ERROR_CONTRACT: dict[str, int] = {
     "UNAUTHORIZED": 401,
     "TENANT_MISMATCH": 403,
     "ALIAS_UNKNOWN": 404,
-    "RESIDENCY_UNAVAILABLE": 451,
     "BUDGET_EXCEEDED": 429,
     "RATE_LIMITED": 429,
     "PROVIDER_ERROR": 502,
@@ -68,7 +63,7 @@ def concrete_error_classes() -> list[type[GatewayError]]:
 
 
 def test_error_code_set_is_exhaustive() -> None:
-    """The whole set, exactly: nine codes, nine strings, nine statuses.
+    """The whole set, exactly: eight codes, eight strings, eight statuses.
 
     Both directions are asserted. A member added to `ErrorCode` fails the first
     assertion; a member renamed or dropped fails it too, because the comparison
@@ -92,11 +87,10 @@ def test_error_code_set_is_exhaustive() -> None:
     ("error_class", "code", "status"),
     [
         (AliasUnknown, "ALIAS_UNKNOWN", 404),
-        (ResidencyUnavailable, "RESIDENCY_UNAVAILABLE", 451),
         (AllProvidersUnavailable, "ALL_PROVIDERS_FAILED", 503),
         (IdentifierInvalid, "VALIDATION", 422),
     ],
-    ids=["alias-unknown", "residency", "all-providers", "validation"],
+    ids=["alias-unknown", "all-providers", "validation"],
 )
 def test_routing_errors_are_gateway_errors(
     error_class: type[GatewayError], code: str, status: int
@@ -115,7 +109,6 @@ ERROR_TYPE_CONTRACT: dict[int, str] = {
     404: "invalid_request_error",
     422: "invalid_request_error",
     429: "rate_limit_error",
-    451: "invalid_request_error",
     502: "api_error",
     503: "api_error",
 }
@@ -133,10 +126,10 @@ def test_error_type_matches_the_status_family() -> None:
     ("url", "status", "expected_type"),
     [
         ("/v1/models", 401, "authentication_error"),
-        ("/_harness/residency", 451, "invalid_request_error"),
+        ("/_harness/refused", 403, "permission_error"),
         ("/_harness/validated", 422, "invalid_request_error"),
     ],
-    ids=["unauthorized", "residency", "validation"],
+    ids=["unauthorized", "refused", "validation"],
 )
 def test_error_type_reaches_the_wire(
     url: str, status: int, expected_type: str, harness_client: TestClient
@@ -150,13 +143,13 @@ def test_error_type_reaches_the_wire(
     assert response.json()["error"]["type"] == expected_type
 
 
-def test_residency_unavailable_is_451_openai_shaped(harness_client: TestClient) -> None:
+def test_a_refusal_is_403_openai_shaped(harness_client: TestClient) -> None:
     """A `GatewayError` raised in a route becomes its status and its code on the wire."""
     response = harness_client.get(
-        "/_harness/residency", headers=auth_headers(key=NORDLICHT_KEY, tenant="nordlicht")
+        "/_harness/refused", headers=auth_headers(key=NORDLICHT_KEY, tenant="nordlicht")
     )
 
-    assert_error_body(response, status=451, code="RESIDENCY_UNAVAILABLE")
+    assert_error_body(response, status=403, code="TENANT_MISMATCH")
 
 
 # FastAPI's own validation failure must not escape as `{"detail": [...]}`.
@@ -219,7 +212,7 @@ def test_starlette_failures_use_the_error_contract(
 ) -> None:
     """Starlette raises these before any of our code runs, and they still keep the shape.
 
-    `code` is `null`, not one of the nine: an unrouted URL is not a failure the
+    `code` is `null`, not one of the eight: an unrouted URL is not a failure the
     gateway classifies, and bending `VALIDATION` onto a 404 would break the
     one-status-per-code table above.
     """
@@ -283,7 +276,7 @@ def test_unhandled_exception_uses_the_error_contract(
 def test_error_body_is_json_and_carries_no_traceback(harness_client: TestClient) -> None:
     """The message is a sentence for a client, not an internal detail."""
     response = harness_client.get(
-        "/_harness/residency", headers=auth_headers(key=NORDLICHT_KEY, tenant="nordlicht")
+        "/_harness/refused", headers=auth_headers(key=NORDLICHT_KEY, tenant="nordlicht")
     )
     body: dict[str, Any] = response.json()
 

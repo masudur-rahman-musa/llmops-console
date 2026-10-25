@@ -82,13 +82,6 @@ class TagCount(_Body):
     count: int
 
 
-class RegionCount(_Body):
-    tenant: str
-    region: str
-    provider: str
-    requests: int
-
-
 class Regression(_Body):
     metric: str
     value: float
@@ -130,7 +123,6 @@ class HomePage(_Body):
     cost_usd_today: float | None
     p95_seconds: float | None
     error_rate: float | None
-    residency_violations_today: int | None
     last_eval: LastEval | None
     open_incidents: int | None
 
@@ -168,19 +160,6 @@ class QualityPage(_Body):
     categories: tuple[CategoryCount, ...]
     taxonomy: tuple[TagCount, ...]
     blocked: tuple[BlockedItem, ...]
-
-
-class RedactionCount(_Body):
-    tenant: str
-    kind: str
-    count: float
-
-
-class ResidencyPage(_Body):
-    sources: Sources
-    by_region: tuple[RegionCount, ...]
-    violations: int | None
-    redactions: tuple[RedactionCount, ...]
 
 
 class Circuit(_Body):

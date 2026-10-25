@@ -77,12 +77,8 @@ OPTIONS: tuple[tuple[str, dict[str, str]], ...] = (
 
 OPTION_IDS = tuple(option_id for option_id, _candidate in OPTIONS)
 
-#: The two options whose cost comes from the ledger, so the gateway must be allowed to leave
-#: the `self` region for them (criterion 27).
+#: The two options whose cost comes from the ledger.
 API_OPTIONS = ("cheap-api", "strong-api")
-
-#: Criterion 27's list, written out literally rather than derived.
-API_ALLOW_REGIONS = ["us", "eu", "self"]
 
 #: Criterion 28's URL, written out literally; its port is compared to the manifest's nodePort.
 VLLM_BASE_URL = "http://host.docker.internal:30800/v1"
@@ -99,7 +95,7 @@ LONGEST_ID = "a" + "b" * 31
 ABSENT_ID = "no-such-option"
 
 #: Literals no overlay may carry (criterion 29). Each is checked against the overlays' own
-#: required content first: no candidate, region or URL above contains them.
+#: required content first: no candidate or URL above contains them.
 FORBIDDEN_LITERALS = ("key_env", "Bearer", "sk-")
 
 
@@ -283,22 +279,20 @@ def test_the_merge_is_recursive_over_mappings(builder: ModuleType) -> None:
             "evals": {
                 "budget_usd_month": "10.00",
                 "data_class_rules": {
-                    "confidential": {"allow_regions": ["eu", "self"], "redact": True},
-                    "pii": {"allow_regions": ["self"], "redact": True},
+                    "confidential": {"redact": True, "note": "a"},
+                    "pii": {"redact": True},
                 },
             },
         }
     }
-    patch = {
-        "tenants": {"evals": {"data_class_rules": {"confidential": {"allow_regions": ["us"]}}}}
-    }
+    patch = {"tenants": {"evals": {"data_class_rules": {"confidential": {"note": "b"}}}}}
 
     merged = builder.deep_merge(base, patch)
     evals = merged["tenants"]["evals"]
 
-    assert evals["data_class_rules"]["confidential"]["allow_regions"] == ["us"]
+    assert evals["data_class_rules"]["confidential"]["note"] == "b"
     assert evals["data_class_rules"]["confidential"]["redact"] is True
-    assert evals["data_class_rules"]["pii"] == {"allow_regions": ["self"], "redact": True}
+    assert evals["data_class_rules"]["pii"] == {"redact": True}
     assert evals["budget_usd_month"] == "10.00"
     assert merged["tenants"]["nordlicht"] == {"budget_usd_month": "50.00"}
 
@@ -365,19 +359,18 @@ def test_each_effective_policy_loads_and_carries_exactly_one_candidate(
 
 
 @pytest.mark.parametrize("option_id", API_OPTIONS)
-def test_each_api_option_widens_the_confidential_regions_to_three(
+def test_each_api_option_keeps_the_shipped_redaction_rules(
     effective: dict[str, Path], option_id: str
 ) -> None:
-    """Criterion 27. The stub sends no `X-Data-Class`, so every measured turn is `confidential`,
-    and the shipped `[eu, self]` would refuse `anthropic` with a 451 on every case - the option
-    would report an accuracy of zero and look like a model failure. Catches the widening put on
-    the wrong data class, and its siblings (`redact`) dropped by a non-recursive merge."""
+    """Catches an overlay that replaces the data class rules whole, which would drop
+    `redact: true` and send unredacted text to a provider. The overlay says nothing about
+    data classes, so the shipped rules must come through the merge unchanged."""
     document = yaml.safe_load(read(effective[option_id]))
     rules = document["tenants"][TENANT]["data_class_rules"]
 
-    assert rules["confidential"]["allow_regions"] == API_ALLOW_REGIONS
-    assert rules["confidential"]["redact"] is True
-    assert rules["pii"]["allow_regions"] == ["self"]
+    assert rules["confidential"] == {"redact": True}
+    assert rules["pii"] == {"redact": True}
+    assert rules["public"] == {"redact": False}
 
 
 def test_the_gpu_option_enables_vllm_at_the_published_node_port(

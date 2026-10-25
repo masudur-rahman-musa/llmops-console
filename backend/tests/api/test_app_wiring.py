@@ -2,7 +2,7 @@
 
 The key store and the policy snapshot are constructed by the factory, not on the
 first request that needs them, so bad configuration takes the process down at
-start rather than turning into a 401 nobody can explain or a 451 that is really
+start rather than turning into a 401 nobody can explain or a 403 that is really
 a typo. These are the tests that make that a property rather than an intention:
 deferring either construction, or wrapping it to make a boot failure go away,
 turns one of them red.
@@ -22,17 +22,14 @@ leaked `httpx` connection pool costs file descriptors, not a failing assertion.
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import ValidationError
 
 from app.core.config import Settings
 from app.main import close_adapters, create_app
 from app.model_routing.errors import PolicyInvalid
-from app.model_routing.policy import ResidencyMode
 from app.providers.base import Adapter
 from app.redaction import InProcessRedactionMapStore, RedisRedactionMapStore
 
@@ -192,83 +189,6 @@ def test_create_app_uses_the_redis_store_when_a_redis_url_is_configured() -> Non
         assert isinstance(app.state.redaction_map_store, RedisRedactionMapStore)
 
 
-# --- the residency mode --------------------------------------------
-#
-# A relaxed process is a process that may send a tenant's traffic to a US
-# provider, so the one thing it may never be is indistinguishable from a strict
-# one. The startup warning is half of that (the `/readyz` field is the other
-# half, pinned in `tests/test_health.py`), and the refusal below is what stops a
-# mistyped value starting at all.
-
-APP_LOGGER = "app.main"
-
-
-def residency_settings(mode: ResidencyMode) -> Settings:
-    """`wiring_settings()` with the mode stated rather than left to the environment.
-
-    Stated for the strict row too: the root conftest clears the variable for the
-    suite, and a case that relied on that would assert the developer's shell.
-    """
-    return Settings(api_keys=API_KEYS, routing_policy_path=SHIPPED_POLICY_PATH, residency_mode=mode)
-
-
-def residency_warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
-    """The factory's own WARNING records about residency, and nothing else's.
-
-    Filtered by logger and by subject, so an unrelated warning from the same
-    module (an unconfigured store, a future deprecation) neither satisfies the
-    relaxed case nor fails the strict one.
-    """
-    return [
-        record
-        for record in caplog.records
-        if record.name == APP_LOGGER
-        and record.levelno == logging.WARNING
-        and "residency" in record.getMessage().lower()
-    ]
-
-
-def test_create_app_warns_once_under_relaxed_residency(caplog: pytest.LogCaptureFixture) -> None:
-    """Catches a relaxed app that starts silently: the mode is the one setting that weakens a
-    locked guarantee, and a log nobody can grep for is how a relaxed gateway ends up serving
-    production traffic.
-
-    Once rather than at least once, because a warning logged per call site - there are five
-    `resolve()` callers - becomes per request and buries itself. The message must name the
-    mode, so the line answers which mode without a second lookup."""
-    with caplog.at_level(logging.WARNING, logger=APP_LOGGER):
-        app = create_app(residency_settings(ResidencyMode.RELAXED), NO_PROVIDER_KEYS)
-
-    warned = residency_warnings(caplog)
-    assert len(warned) == 1, [record.getMessage() for record in warned]
-    assert ResidencyMode.RELAXED.value in warned[0].getMessage()
-    close_adapters(app.state.adapters)
-
-
-def test_create_app_logs_no_residency_warning_under_strict(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Catches a warning logged unconditionally beside the field it is about: that is what
-    would make the case above pass whether or not the branch exists, and an alert that fires
-    on every strict start is an alert an operator mutes."""
-    with caplog.at_level(logging.WARNING, logger=APP_LOGGER):
-        app = create_app(residency_settings(ResidencyMode.STRICT), NO_PROVIDER_KEYS)
-
-    assert residency_warnings(caplog) == []
-    close_adapters(app.state.adapters)
-
-
-def test_create_app_refuses_an_unknown_residency_mode(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Catches a factory that builds its own `Settings` leniently - reading the variable with
-    `os.environ.get` and a default - so a mistyped mode serves requests under whichever
-    regime that default names. No settings argument is passed, because the environment is the
-    only way this value ever arrives in a deployment."""
-    monkeypatch.setenv("OPSCONSOLE_RESIDENCY_MODE", "loose")
-
-    with pytest.raises(ValidationError, match="residency_mode"):
-        create_app(environ={})
-
-
 # --- backing-service URLs on a non-local process -------------------
 #
 # Deny-by-default: `local` is the only env where the in-process stand-ins for
@@ -377,18 +297,15 @@ def test_boot_refuses_a_policy_that_routes_to_an_unpriced_model(tmp_path: Path) 
 providers:
   anthropic:
     kind: anthropic
-    region: us
     base_url: https://api.anthropic.com
-eu_regions: []
 aliases:
   my-alias:
     candidates:
       - {provider: anthropic, model: model-not-in-price-table}
 tenants:
   t1:
-    residency: any
     data_class_rules:
-      public: {allow_regions: [us]}
+      public: {}
     budget_usd_month: "10.00"
     rate_limit: {rpm: 60, tpm: 60000}
 """,

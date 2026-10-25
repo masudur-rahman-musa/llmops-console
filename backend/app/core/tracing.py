@@ -11,12 +11,12 @@ does not import from the app layer.
 rule someone has to keep, and a rule kept by review is kept until the review that
 misses it. `SpanAttributes` forbids unknown fields, so a `user`, an `email` or a
 `prompt` is a `ValidationError` at the call site rather than a value on a trace
-backend that sits outside this system's residency and redaction guarantees. The
+backend that sits outside this system's redaction guarantees. The
 field set is pinned whole by tests.
 
 **Why there is no exporter by default.** An unconfigured gateway builds spans and
 drops them. The alternative most SDKs reach for - a console
-exporter - would print every request's tenant, session and region to stdout in
+exporter - would print every request's tenant and session to stdout in
 production, which is a disclosure nobody asked for and a log bill nobody costed.
 `build_exporter` answers `None` unless an endpoint is configured.
 
@@ -142,7 +142,6 @@ class SpanAttributes(BaseModel):
     session: str | None = None
     alias: str | None = None
     provider: str | None = None
-    region: str | None = None
     data_class: str | None = None
     cache: str | None = None
     cost_usd: float | None = None
@@ -248,10 +247,9 @@ def stage_span(scope: Scope, name: str) -> Iterator[Span | None]:
     Both of OpenTelemetry's exception defaults are turned OFF, and that is the
     security decision in this function rather than a tuning choice. Left on, a
     stage span whose body raises records an exception EVENT carrying `str(exc)`
-    and sets a status description built from it - so a residency refusal would
-    write the alias and the regions a tenant may not reach onto the trace, and a
-    provider failure would write the provider's own message there, both of which
-    the wire contract already refuses to disclose. What a failure is
+    and sets a status description built from it - so a provider failure would
+    write the provider's own message there, which the wire contract already
+    refuses to disclose. What a failure is
     allowed to say is the typed code, and the root span says it once.
     """
     record = request_trace(scope)

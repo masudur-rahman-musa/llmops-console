@@ -13,7 +13,7 @@ from app.cache import (
 )
 from app.core.errors import ProviderError
 from app.core.metrics import record_circuit_state, record_tokens
-from app.model_routing.policy import DataClass, Policy, ResidencyMode
+from app.model_routing.policy import DataClass, Policy
 from app.model_routing.resolver import Resolved, resolve
 from app.providers.base import Adapter, ChatResponse, EmbeddingAdapter, EmbeddingRequest
 from app.providers.breaker import CircuitBreaker
@@ -26,7 +26,7 @@ and not a setting.
 
 Settable, it would be a way to point the tier at a model whose vectors no stored
 entry shares - every search silently returning nothing, with no failure anywhere
-to see. It is resolved per request like any other alias, so residency, health and
+to see. It is resolved per request like any other alias, so health and
 the tenant's data class apply to the embedding exactly as they apply to a
 completion."""
 
@@ -151,7 +151,6 @@ def requested_key(
         tenant=tenant,
         alias=body.model,
         provider=chosen.provider,
-        region=chosen.region,
         data_class=data_class,
         model=chosen.model,
         messages=dumped["messages"],
@@ -169,18 +168,16 @@ def embedded_probe(
     breaker: CircuitBreaker,
     tenant: str,
     data_class: DataClass,
-    mode: ResidencyMode,
 ) -> tuple[float, ...] | None:
     """The probe text as a vector, or `None` - for any reason at all (#23).
 
     The one place this route spends money on the semantic tier, and the one place
     it can fail. Every outcome that is not a vector is `None`, which the two
     helpers below turn into a miss and a write that does not happen: no probe
-    text, a probe over the cap, an `embed` alias that does not exist, one refused
-    by residency, one with no healthy embedding candidate, an adapter that raises
-    and an answer carrying no embedding are the same nothing here. A cache tier must never change
-    the status code of a request a
-    provider would have served, so an adapter raising a plain `RuntimeError`, which
+    text, a probe over the cap, an `embed` alias that does not exist, one with no healthy embedding
+    candidate, an adapter that raises and an answer carrying no embedding are the
+    same nothing here. A cache tier must never change the status code of a request
+    a provider would have served, so an adapter raising a plain `RuntimeError`, which
     no typed guard would catch, is a miss too.
 
     The cap is `MAX_EMBEDDING_INPUT_CHARS`, imported from `app.schemas.embeddings`
@@ -198,9 +195,8 @@ def embedded_probe(
     count them too, and the tokens are booked with `record_tokens` under the EMBED
     provider and model: they were really bought, and a tier that
     spends tokens invisibly is how a cache ends up costing more than it saves.
-    `record_served` is deliberately NOT called - that would write a second
-    residency-log row for one client request and relabel the scope with the
-    embedding provider.
+    `record_served` is deliberately NOT called - that would relabel the scope with
+    the embedding provider.
     """
 
     if text is None or len(text) > MAX_EMBEDDING_INPUT_CHARS:
@@ -215,7 +211,6 @@ def embedded_probe(
                 breaker,
                 lambda provider: isinstance(adapters.get(provider), EmbeddingAdapter),
             ),
-            mode=mode,
         )
     except Exception:
         return None
@@ -252,7 +247,6 @@ def semantic_answer(
     system_hash: str,
     tools_hash: str,
     provider: str,
-    region: str,
     data_class: str,
 ) -> ChatResponse | None:
     """The stored answer to a question near enough to this one, or `None`.
@@ -262,7 +256,7 @@ def semantic_answer(
     `cached_answer` has for a `None` key, and the reason the route needs no
     second eligibility test at the write.
 
-    `provider`, `region` and `data_class` are required keyword args: a
+    `provider` and `data_class` are required keyword args: a
     cached answer is only served where it could have been made, so the lookup
     must filter on where and how this request would be made.
 
@@ -281,7 +275,6 @@ def semantic_answer(
             system_hash=system_hash,
             tools_hash=tools_hash,
             provider=provider,
-            region=region,
             data_class=data_class,
         )
     except Exception:
@@ -298,7 +291,6 @@ def store_probe(
     system_hash: str,
     tools_hash: str,
     provider: str,
-    region: str,
     data_class: str,
 ) -> None:
     """File this answer under the vector the lookup already paid for, or do nothing.
@@ -307,7 +299,7 @@ def store_probe(
     13c decision H): two calls double the cost of every miss and can disagree if
     the model behind the `embed` alias changes between them.
 
-    `provider`, `region` and `data_class` are required keyword args: a
+    `provider` and `data_class` are required keyword args: a
     cached answer is only served where it could have been made, so the stored
     entry must carry where and how it was made.
 
@@ -326,7 +318,6 @@ def store_probe(
             system_hash=system_hash,
             tools_hash=tools_hash,
             provider=provider,
-            region=region,
             data_class=data_class,
         )
     except Exception:

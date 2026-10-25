@@ -7,9 +7,9 @@ Both behind the admin key space (`admin_key`), both cluster-internal: the
 
 The view is the resolver's own answer rather than a re-reading of `routing.yaml`.
 For every tenant, every alias and every data class it calls `resolve()` and
-records what came back, so what an operator debugging a 451 sees is the function
+records what came back, so what an operator debugging a 503 sees is the function
 the request path runs, not a second implementation of it that can drift. Only
-`ResidencyUnavailable` and `AliasUnknown` are swallowed - the two that mean "not
+`AllProvidersUnavailable` and `AliasUnknown` are swallowed - the two that mean "not
 available to this tenant" - and deliberately not the `RoutingError` base.
 
 `?tenant=` is the one client-supplied input on this surface and is pre-checked
@@ -32,17 +32,16 @@ from fastapi import APIRouter, Query
 from app.api.deps import (
     PolicyDep,
     ProviderEnvironDep,
-    ResidencyModeDep,
     RoutingStoreDep,
     checked_tenant,
 )
 from app.core.validation import IdentifierInvalid
 from app.model_routing.errors import (
     AliasUnknown,
+    AllProvidersUnavailable,
     PolicyInvalid,
-    ResidencyUnavailable,
 )
-from app.model_routing.policy import DataClass, Policy, ResidencyMode
+from app.model_routing.policy import DataClass, Policy
 from app.model_routing.resolver import resolve
 from app.schemas.admin import AliasView, ReloadResult, ResolvedEntry, RoutingView, TenantView
 
@@ -53,28 +52,21 @@ ADMIN_ROUTING_RELOAD = "/admin/routing/reload"
 """The policy reload."""
 
 
-def _tenant_view(policy: Policy, tenant: str, mode: ResidencyMode) -> TenantView:
-    """Resolve every alias and data class for one tenant, in policy and enum order.
-
-    `mode` is the process's own `residency_mode`, so this view shows what the
-    gateway WOULD answer rather than what strict would: an operator reading it on
-    a relaxed process has to see the relaxed resolution, or the one surface that
-    explains routing disagrees with every route.
-    """
+def _tenant_view(policy: Policy, tenant: str) -> TenantView:
+    """Resolve every alias and data class for one tenant, in policy and enum order."""
     entries: list[AliasView] = []
     for alias in policy.aliases:
         for data_class in DataClass:
             try:
-                resolved = resolve(policy, tenant, alias, data_class.value, mode=mode)
-            except (ResidencyUnavailable, AliasUnknown):
+                resolved = resolve(policy, tenant, alias, data_class.value)
+            except (AllProvidersUnavailable, AliasUnknown):
                 continue
             entries.append(
                 AliasView(
                     alias=alias,
                     data_class=data_class.value,
                     resolved=tuple(
-                        ResolvedEntry(provider=item.provider, model=item.model, region=item.region)
-                        for item in resolved
+                        ResolvedEntry(provider=item.provider, model=item.model) for item in resolved
                     ),
                 )
             )
@@ -85,9 +77,7 @@ router = APIRouter()
 
 
 @router.get(ADMIN_ROUTING)
-def routing_view(
-    store: PolicyDep, mode: ResidencyModeDep, tenant: Annotated[str | None, Query()] = None
-) -> RoutingView:
+def routing_view(store: PolicyDep, tenant: Annotated[str | None, Query()] = None) -> RoutingView:
     """Every tenant's resolved routing, or one tenant's when `?tenant=` names one.
 
     Declared `def` rather than `async def`: the matrix is tenants x aliases x data
@@ -102,7 +92,7 @@ def routing_view(
     policy = store.policy
     names = [tenant] if tenant is not None else list(policy.tenants)
     return RoutingView(
-        tenants=tuple(_tenant_view(policy, name, mode) for name in names if name in policy.tenants)
+        tenants=tuple(_tenant_view(policy, name) for name in names if name in policy.tenants)
     )
 
 

@@ -32,7 +32,6 @@ from infra.test_hetzner_module import load_yaml, read
 REPO_ROOT = Path(__file__).resolve().parents[3]
 COMPOSE_FILE = REPO_ROOT / "docker-compose.yml"
 TRADEOFF_SCRIPT = REPO_ROOT / "infra" / "scripts" / "tradeoff_run.sh"
-ENV_EXAMPLE = REPO_ROOT / "backend" / ".env.example"
 README = REPO_ROOT / "README.md"
 
 #: The profile both local models sit behind.
@@ -46,7 +45,6 @@ LLAMA_PORTS = {"llama": ["18082:8082"], "llama-embed": ["8083:8083"]}
 
 LLAMA_IMAGE = "ghcr.io/ggml-org/llama.cpp:server-b10902"
 MODELS_MOUNT = "${MODELS_DIR:-./.cache/models}:/models:ro"
-RELAXED_LINE = "# OPSCONSOLE_RESIDENCY_MODE=relaxed"
 
 
 def services() -> dict[str, dict[str, Any]]:
@@ -161,38 +159,6 @@ def test_the_tradeoff_run_brings_the_local_model_up() -> None:
     flags = re.findall(r"--profile\s+(\S+?)\)?(?=\s|$)", lines[0])
     assert "tradeoff" in flags, lines[0]
     assert PROFILE in flags, lines[0]
-
-
-def test_the_compose_default_stays_strict() -> None:
-    """The gateway's compose `environment` does not set the residency mode.
-
-    Catches a change that makes relaxed the compose default, which a design note keeps opt-in.
-    """
-    environment = services()["gateway"].get("environment")
-    assert isinstance(environment, dict), "gateway environment is not a mapping"
-    assert "OPSCONSOLE_RESIDENCY_MODE" not in environment
-
-
-def test_env_example_offers_relaxed_commented_out() -> None:
-    """`.env.example` holds the relaxed line once, commented, and no live mode line.
-
-    Catches a missing relaxed hint, and a live `OPSCONSOLE_RESIDENCY_MODE=` line that would
-    make a fresh `cp .env.example .env` leave strict.
-    """
-    lines = [line.rstrip() for line in read(ENV_EXAMPLE).splitlines()]
-    assert lines.count(RELAXED_LINE) == 1
-    live = [line for line in lines if line.startswith("OPSCONSOLE_RESIDENCY_MODE=")]
-    assert live == []
-
-
-def test_env_example_names_the_server_build() -> None:
-    """`.env.example` names `infra/k8s/server` and drops "nothing under infra/".
-
-    Catches the stale sentence left in place, now that the build does set the mode.
-    """
-    collapsed = " ".join(read(ENV_EXAMPLE).split())
-    assert "nothing under infra/" not in collapsed
-    assert "infra/k8s/server" in collapsed
 
 
 def test_the_readme_quickstart_names_the_profile() -> None:

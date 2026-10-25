@@ -65,7 +65,7 @@ def label_candidate(
     The FIRST call has to happen before redaction, not inside the loop, and that is
     the whole reason this is a function. Redaction can refuse a request - a message
     over `MAX_REDACTION_INPUT_CHARS` is a 422 - and labelling only inside the loop
-    would book every such refusal under an empty `alias`, `provider` and `region`,
+    would book every such refusal under an empty `alias` and `provider`,
     so the per-alias error panel would show nothing during a redaction-side
     incident.
 
@@ -81,7 +81,6 @@ def label_candidate(
         scope,
         alias=alias,
         provider=chosen.provider,
-        region=chosen.region,
         cache=cache,
     )
 
@@ -90,10 +89,9 @@ def resolution_attributes(alias: str, resolved: Resolved) -> SpanAttributes:
     """What the resolver decided, as span labels.
 
     Set only AFTER `resolve()` returns, which is what keeps a refused request's
-    alias off its trace: a 451 names the alias and the regions a tenant may not
-    reach, and a residency refusal is not the place to write either down.
+    alias off its trace.
     """
-    return SpanAttributes(alias=alias, provider=resolved.provider, region=resolved.region)
+    return SpanAttributes(alias=alias, provider=resolved.provider)
 
 
 def gateway_headers(
@@ -125,7 +123,6 @@ def gateway_headers(
     """
     return {
         "X-Gateway-Provider": resolved.provider,
-        "X-Gateway-Region": resolved.region,
         "X-Gateway-Model": resolved.model,
         "X-Gateway-Cache": cache,
         "X-Gateway-Redacted": REDACTED_TRUE if redacted else REDACTED_FALSE,

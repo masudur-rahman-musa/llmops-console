@@ -79,7 +79,6 @@ TENANT = "evals"
 DATA_CLASS = "internal"
 ALIAS = "agent-default"
 PROVIDER = "anthropic"
-REGION = "us"
 
 HIT = "hit"
 MISS = "miss"
@@ -276,13 +275,13 @@ def test_a_hit_carries_its_own_completion_id_and_the_same_answer(
     assert cache_stub.call_count == 1
 
 
-def test_a_hit_still_carries_the_seven_gateway_headers(cache_client: TestClient) -> None:
+def test_a_hit_still_carries_the_six_gateway_headers(cache_client: TestClient) -> None:
     """Catches a hit returned before the header set is built, which would leave an
-    operator unable to say which provider and region the cached answer came from - the
+    operator unable to say which provider the cached answer came from - the
     one question #9's headers exist to answer - and would change the published header
     contract depending on whether a request happened to hit.
 
-    The seventh is `X-Gateway-Cost-USD`, and on a hit it reads `0.000000`: a hit is a
+    The sixth is `X-Gateway-Cost-USD`, and on a hit it reads `0.000000`: a hit is a
     served request with a real ledger row, and zero is what it cost (an earlier change decisions
     B and F). An ABSENT cost header on a hit and a present one on a miss is the shape
     this asserts against - it would make a client special-case a value it can read."""
@@ -293,9 +292,8 @@ def test_a_hit_still_carries_the_seven_gateway_headers(cache_client: TestClient)
     gateway = {name.lower(): value for name, value in hit.headers.items()}
     named = {name for name in gateway if name.startswith("x-gateway-")}
 
-    assert len(named) == 7
+    assert len(named) == 6
     assert gateway["x-gateway-provider"] == PROVIDER
-    assert gateway["x-gateway-region"] == REGION
     assert gateway["x-gateway-cache"] == HIT
     assert gateway["x-gateway-cost-usd"] == "0.000000"
 
@@ -483,12 +481,11 @@ def test_a_cache_that_raises_still_serves_the_request(
 
 
 def request_labels(*, cache: str) -> dict[str, str]:
-    """The six labels `gateway_requests_total` carries for a served request here."""
+    """The five labels `gateway_requests_total` carries for a served request here."""
     return {
         "tenant": TENANT,
         "alias": ALIAS,
         "provider": PROVIDER,
-        "region": REGION,
         "status": "200",
         "cache": cache,
     }

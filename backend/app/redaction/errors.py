@@ -95,9 +95,9 @@ class DirectoryStoreUnavailable(LibraryDependencyUnavailable):
     operator's log line is built from.
 
     `get` raises this rather than answering an empty tuple, and that is a firm
-    choice rather than a stylistic choice. Redaction is deny-by-default like
-    residency: a request served with an empty directory carries the tenant's names
-    out to a provider while the response still reports `X-Gateway-Redacted: true`.
+    choice rather than a stylistic choice. Redaction is deny-by-default: a request served
+    with an empty directory carries the tenant's names out to a provider while the
+    response still reports `X-Gateway-Redacted: true`.
 
     It stops at the route. The chat and embeddings paths convert it into
     `ProviderError` - 502, code `PROVIDER_ERROR` - with words of their own, so the

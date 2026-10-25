@@ -14,7 +14,7 @@ case takes IS the claim it makes:
 The cases needing a real server live in tests/storage/test_cost_ledger_postgres.py
 and are skipped without `OPSCONSOLE_TEST_DATABASE_URL`.
 
-a project rule on the three patterns: `tenant`, `alias`, `provider`, `region`
+a project rule on the three patterns: `tenant`, `alias`, `provider`
 and `session` are checked against the resolver's identifier rule, `model` against
 this module's own wider one (decision D), and `trace_id` against 32 lowercase hex
 characters, so each rejection table carries a trailing newline, a trailing CRLF
@@ -25,12 +25,12 @@ case would then pass without the pattern being involved at all.
 
 The contract these cases are written against, before it exists:
 
-* `CostLedgerRow`, a frozen model with the design's fourteen columns, `session`
+* `CostLedgerRow`, a frozen model with the design's thirteen columns, `session`
   nullable and `cost_usd` a `Decimal`;
 * `PostgresCostLedgerWriter(pool, *, schema=...)`, whose `write` runs every
   pre-check, then borrows a connection with `pool.connection()` and issues one
   `conn.execute(query, params)`;
-* `record_cost(ledger, *, table, tenant, alias, provider, model, region, usage,
+* `record_cost(ledger, *, table, tenant, alias, provider, model, usage,
   prompt_chars=0, completion_chars=0, cached, session, trace_id, price_key,
   now=...)`, which PRICES the request itself through
   `app.limits.cost.cost_for` (decision C, so there is no `cost_usd`
@@ -88,7 +88,6 @@ TENANT = "nordlicht"
 ALIAS = "agent-default"
 PROVIDER = "local"
 MODEL = "qwen2.5-7b-instruct"
-REGION = "self"
 SESSION = "sess-01j9x8"
 TRACE_ID = "0af7651916cd43dd8448eb211c80319c"
 """32 lowercase hex characters, the W3C trace-context shape the gateway carries."""
@@ -128,7 +127,6 @@ def a_row(**overrides: Any) -> CostLedgerRow:  # noqa: ANN401
         "alias": ALIAS,
         "provider": PROVIDER,
         "model": MODEL,
-        "region": REGION,
         "input_tokens": USAGE.prompt_tokens,
         "output_tokens": USAGE.completion_tokens,
         "cached": False,
@@ -160,7 +158,6 @@ def record(ledger: CostLedgerWriter, **overrides: Any) -> CostLedgerRow:  # noqa
         "alias": ALIAS,
         "provider": PROVIDER,
         "model": MODEL,
-        "region": REGION,
         "usage": USAGE,
         "prompt_chars": 0,
         "completion_chars": 0,
@@ -348,7 +345,7 @@ REJECTED_IDENTIFIERS: list[tuple[str, str]] = [
     ("a dot", "nordlicht.eu"),
 ]
 
-IDENTIFIER_FIELDS = ("tenant", "alias", "provider", "region", "session")
+IDENTIFIER_FIELDS = ("tenant", "alias", "provider", "session")
 """The five slug-shaped strings on the row. `model` has its own wider rule
 (decision D) and `trace_id` its own narrower one, so both are checked separately."""
 
@@ -522,7 +519,6 @@ def test_a_row_with_every_field_at_its_cap_is_still_written() -> None:
             tenant=AT_IDENTIFIER_CAP,
             alias=AT_IDENTIFIER_CAP,
             provider=AT_IDENTIFIER_CAP,
-            region=AT_IDENTIFIER_CAP,
             session=AT_IDENTIFIER_CAP,
             model="m" * MAX_MODEL_LENGTH,
             price_version="v" * MAX_PRICE_VERSION_LENGTH,
@@ -662,7 +658,7 @@ def test_absent_usage_is_priced_from_the_characters_and_flagged_estimated() -> N
 
 def test_the_row_names_what_served_and_is_stamped_from_the_injected_clock() -> None:
     """Catches a row filled from the wrong argument - `model` taking the alias, `provider`
-    taking the tenant's home region - which is invisible in a green suite and turns the
+    taking the tenant - which is invisible in a green suite and turns the
     console's per-model spend into a chart of one row. Every field is asserted at once
     because they arrive from different sources, and `cached=True` is carried through here
     because the rollup counts cached requests separately. The timestamp is the clock's:
@@ -680,7 +676,6 @@ def test_the_row_names_what_served_and_is_stamped_from_the_injected_clock() -> N
     assert row.alias == ALIAS
     assert row.provider == PROVIDER
     assert row.model == MODEL
-    assert row.region == REGION
     assert row.input_tokens == USAGE.prompt_tokens
     assert row.output_tokens == USAGE.completion_tokens
     assert row.cached is True

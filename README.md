@@ -76,11 +76,10 @@ console API and never touches a database or Prometheus from the browser.
 Seven claims this system makes, each with the test that would fail if it stopped
 being true.
 
-1. **Residency holds under every policy.** A tenant's traffic never reaches a
-   provider outside its allowed regions, through no fallback, retry or failure
-   path. A property test generates policies and sweeps every tenant, alias and
-   data class triple:
-   [backend/tests/model_routing/test_residency_property.py](backend/tests/model_routing/test_residency_property.py).
+1. **Fallback stays inside the alias.** When a provider fails, the gateway
+   tries only the next provider the alias lists for that tenant, and never one
+   the policy did not name for it:
+   [backend/tests/api/test_fallback.py](backend/tests/api/test_fallback.py).
 2. **Personal data is replaced before it leaves.** Ten kinds are detected,
    checksum-validated where a shape alone is not enough, and replaced with
    stable placeholders:

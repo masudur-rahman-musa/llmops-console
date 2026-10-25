@@ -139,14 +139,13 @@ FORBIDDEN_API_GROUP = "monitoring.coreos.com"
 #: therefore also the prefix every hashed spelling of it would start with.
 DASHBOARDS_CONFIGMAP = "grafana-dashboards"
 
-#: Criterion 2 and 23e criterion 1: the six dashboards this plan ships (gateway shipped in 23b,
-#: the other five in 23e), and the case compares the ConfigMap's keys against the DIRECTORY as
+#: Criterion 2 and 23e criterion 1: the five dashboards this plan ships (gateway shipped in 23b,
+#: the other four in 23e), and the case compares the ConfigMap's keys against the DIRECTORY as
 #: well, both directions, by equality.
 DASHBOARD_FILENAMES: frozenset[str] = frozenset(
     {
         "gateway-overview.json",
         "cost.json",
-        "residency.json",
         "platform.json",
         "evals.json",
         "helpdesk-agent.json",
@@ -1422,7 +1421,7 @@ def test_the_only_way_into_grafana_is_the_secret_this_repo_does_not_supply(
     from `env` into the Secret template would leave a case that only read `env` green, and it is
     the Secret the cluster actually reads. Catches `GF_AUTH_ANONYMOUS_ENABLED=true` added to get
     a dashboard onto a screen without logging in, which publishes every panel - including the
-    residency and cost views - to anyone who resolves the public host. Catches
+    cost views - to anyone who resolves the public host. Catches
     `GF_AUTH_DISABLE_LOGIN_FORM`, which is decision B's rejected alternative and which leaves no
     way to mint the service-account token `deploy.yml`'s annotation step needs. Catches a real
     password committed into the template instead of the placeholder, which is the one thing that

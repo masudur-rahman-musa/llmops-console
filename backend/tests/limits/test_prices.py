@@ -539,16 +539,13 @@ def _minimal_policy_with_override() -> Policy:
             "providers": {
                 "prov-a": {
                     "kind": "openai_compatible",
-                    "region": "us",
                     "base_url": "http://x",
                 },
                 "prov-b": {
                     "kind": "openai_compatible",
-                    "region": "us",
                     "base_url": "http://x",
                 },
             },
-            "eu_regions": [],
             "aliases": {
                 "my-alias": {
                     "candidates": [
@@ -558,9 +555,8 @@ def _minimal_policy_with_override() -> Policy:
             },
             "tenants": {
                 "t1": {
-                    "residency": "any",
                     "data_class_rules": {
-                        "public": {"allow_regions": ["us"]},
+                        "public": {},
                     },
                     "budget_usd_month": "10.00",
                     "rate_limit": {"rpm": 60, "tpm": 60000},
@@ -607,16 +603,13 @@ def test_check_policy_models_priced_names_every_unpriced_model() -> None:
             "providers": {
                 "prov-a": {
                     "kind": "openai_compatible",
-                    "region": "us",
                     "base_url": "http://x",
                 },
                 "prov-b": {
                     "kind": "openai_compatible",
-                    "region": "us",
                     "base_url": "http://x",
                 },
             },
-            "eu_regions": [],
             "aliases": {
                 "my-alias": {
                     "candidates": [
@@ -627,9 +620,8 @@ def test_check_policy_models_priced_names_every_unpriced_model() -> None:
             },
             "tenants": {
                 "t1": {
-                    "residency": "any",
                     "data_class_rules": {
-                        "public": {"allow_regions": ["us"]},
+                        "public": {},
                     },
                     "budget_usd_month": "10.00",
                     "rate_limit": {"rpm": 60, "tpm": 60000},

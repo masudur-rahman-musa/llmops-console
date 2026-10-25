@@ -3,7 +3,7 @@
 `_postgres` and `_prometheus` each turn one source into a `(state, value)` pair,
 so a page body can render the other source's fields when one is down.
 `_budgets` reads neither source - the counter is the budget store the chat route
-debits - and `_slos` is the three gateway-measured error budgets over the fixed
+debits - and `_slos` is the two gateway-measured error budgets over the fixed
 `SLO_WINDOW`.
 """
 
@@ -26,7 +26,6 @@ from app.services.prometheus_reads import (
     LATENCY_ALLOWED_SLOW,
     LATENCY_BUDGET_QUERY,
     LATENCY_THRESHOLD_SECONDS,
-    RESIDENCY_VIOLATIONS_30D_QUERY,
     PrometheusClient,
     PrometheusError,
 )
@@ -105,7 +104,7 @@ def budgets(request: Request, tenant: str | None) -> tuple[Budget, ...]:
 
 
 def slos(client: PrometheusClient) -> tuple[Slo, ...]:
-    """The three gateway-measured SLO budgets over the fixed `SLO_WINDOW`.
+    """The two gateway-measured SLO budgets over the fixed `SLO_WINDOW`.
 
     No traffic makes both ratios `0 / 0`, which Prometheus answers `NaN` and the
     client drops, so an empty result is `null` rather than a full budget. An overspent budget stays
@@ -115,7 +114,6 @@ def slos(client: PrometheusClient) -> tuple[Slo, ...]:
     """
     bad = first(client.instant_query(AVAILABILITY_BUDGET_QUERY))
     under = first(client.instant_query(LATENCY_BUDGET_QUERY))
-    violations = first(client.instant_query(RESIDENCY_VIOLATIONS_30D_QUERY))
     return (
         Slo(
             name="availability",
@@ -130,12 +128,5 @@ def slos(client: PrometheusClient) -> tuple[Slo, ...]:
             window=SLO_WINDOW,
             observed=under,
             budget_remaining=None if under is None else 1 - (1 - under) / LATENCY_ALLOWED_SLOW,
-        ),
-        Slo(
-            name="residency",
-            objective=0.0,
-            window=SLO_WINDOW,
-            observed=violations,
-            budget_remaining=None,
         ),
     )

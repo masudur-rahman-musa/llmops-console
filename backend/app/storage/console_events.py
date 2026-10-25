@@ -211,7 +211,7 @@ class InMemoryConsoleEventWriter:
     """Both records in this process's memory, in the order written.
 
     What a gateway with no `OPSCONSOLE_DATABASE_URL` builds, the same
-    trade `InMemoryCostLedgerWriter` and `InMemoryResidencyLogWriter` make. It is
+    trade `InMemoryCostLedgerWriter` makes. It is
     not a store: a restart loses every incident recorded on a laptop, which is the
     accepted cost of keeping the admin routes answering without Postgres.
 

@@ -9,7 +9,7 @@ real handlers and none shares state with another:
 
 * `gateway_client` talks to the shipped app exactly as it is served.
 * `harness_client` talks to a second app plus the five routes `build_harness`
-  registers under `/_harness/`: `context`, `residency`, `validated`, `boom` and
+  registers under `/_harness/`: `context`, `refused`, `validated`, `boom` and
   `http-detail`. They exist because this plan adds no route that can be observed
   from the outside: nothing yet returns the `RequestContext` a header builds, and
   nothing yet raises a `GatewayError`, an `HTTPException` or a bug at request
@@ -55,12 +55,12 @@ from prometheus_client import CollectorRegistry
 from app.api.deps import MAX_KEY_LENGTH, request_context
 from app.core.config import Settings
 from app.core.context import RequestContext
-from app.core.errors import ProviderError
+from app.core.errors import ProviderError, TenantMismatch
 from app.core.metrics import registry
 from app.core.tracing import tracer_provider
 from app.core.validation import MAX_IDENTIFIER_LENGTH
 from app.main import create_app
-from app.model_routing.errors import ResidencyUnavailable, RoutingError
+from app.model_routing.errors import RoutingError
 from app.model_routing.policy import DataClass, Policy, load_policy
 from app.model_routing.resolver import resolve
 from app.providers.base import (
@@ -206,10 +206,10 @@ def build_harness(app: FastAPI) -> FastAPI:
         """Echo the context the header pre-checks built."""
         return context
 
-    @app.get("/_harness/residency")
-    def raise_residency() -> None:
+    @app.get("/_harness/refused")
+    def raise_refused() -> None:
         """Raise a `GatewayError` at request time, for the handler test."""
-        raise ResidencyUnavailable("harness: nothing may serve this request")
+        raise TenantMismatch("harness: nothing may serve this request")
 
     @app.get("/_harness/validated")
     def validated(count: int) -> dict[str, int]:
@@ -462,10 +462,9 @@ def post_chat(
 ) -> Response:
     """POST one chat completion as the `evals` tenant under `internal` by default.
 
-    That pair is the one the shipped policy lets reach the US `anthropic`
-    provider: `evals` has `residency: any`, and its `internal` rule allows `us`.
-    The default data class (`confidential`) allows only `eu` and `self`, so a
-    case that forgets the header would be a 451, not a success.
+    That pair reaches the `anthropic` provider, and `internal` is not redacted,
+    so the stubs see the text a case sends. The default data class
+    (`confidential`) redacts, so a case that forgets the header sees changed text.
     """
     response: Response = client.post(
         CHAT,
@@ -498,8 +497,8 @@ def chat_client(settings: Settings, chat_stub: StubAdapter) -> Iterator[TestClie
 # only candidate cannot embed" reachable as the resolver's 503 without editing
 # `routing.yaml` (`test_a_candidate_without_an_embedding_adapter_is_503`).
 #
-# The shipped policy sends `embed` to the provider `local_embed` alone, region
-# `self` - its own server on its own address, because one llama.cpp process
+# The shipped policy sends `embed` to the provider `local_embed` alone -
+# its own server on its own address, because one llama.cpp process
 # serves one model - so every case here registers its stub under `local_embed`.
 # The chat provider `local` is a DIFFERENT adapter in this suite for the same
 # reason it is a different pod in the cluster.
@@ -611,11 +610,9 @@ def post_embeddings(
 ) -> Response:
     """POST one embeddings request as the `evals` tenant under `internal` by default.
 
-    The same default pair `post_chat` uses, and it reaches `local` for this alias:
-    `evals` has `residency: any` and its `internal` rule allows `self`. The
-    default data class (`confidential`) also allows `self`, so unlike the chat
-    helper this one would not be saved by a residency refusal if the header were
-    dropped - the header is sent explicitly for that reason.
+    The same default pair `post_chat` uses, and it reaches `local_embed` for this
+    alias. The header is sent explicitly so a case never depends on the default
+    data class.
     """
     response: Response = client.post(
         EMBEDDINGS,
@@ -849,7 +846,7 @@ def no_admin_key_client() -> Iterator[TestClient]:
 #
 # The alias is `agent-default` and the tenant `evals` under `internal`, which the
 # shipped policy resolves to exactly two candidates in this order: `anthropic`
-# (us) then `local` (self). `anthropic_eu` sits between them in `routing.yaml`
+# then `local`. `anthropic_eu` sits between them in `routing.yaml`
 # and is disabled, so the pair is also proof the loop walks the RESOLVER's tuple
 # rather than the policy file's.
 
@@ -859,8 +856,6 @@ FALLBACK_CLASS = "internal"
 
 FIRST_PROVIDER = "anthropic"
 SECOND_PROVIDER = "local"
-FIRST_REGION = "us"
-SECOND_REGION = "self"
 
 FALLBACK_RESOLUTION = (FIRST_PROVIDER, SECOND_PROVIDER)
 """What `resolve()` answers for the triple above with no health seam, best first.
@@ -1037,7 +1032,7 @@ class SilentSemanticCache:
     probe resolves `embed` to `local_embed`, so the tier is live here whenever
     that adapter is registered too:
     a second identical chat request would be served from it, and the loop, the
-    breaker and the residency log would stop seeing the calls those families
+    breaker and the ledger would stop seeing the calls those families
     exist to count.
 
     So the tier is silenced where it is not the subject, exactly as
@@ -1055,7 +1050,6 @@ class SilentSemanticCache:
         system_hash: str,
         tools_hash: str,
         provider: str,
-        region: str,
         data_class: str,
     ) -> ChatResponse | None:
         return None
@@ -1070,7 +1064,6 @@ class SilentSemanticCache:
         system_hash: str,
         tools_hash: str,
         provider: str,
-        region: str,
         data_class: str,
     ) -> None:
         return None
@@ -1094,133 +1087,3 @@ def fallback_breaker(fallback_client: TestClient) -> CircuitBreaker:
     breaker = app_of(fallback_client).state.breaker
     assert isinstance(breaker, CircuitBreaker)
     return breaker
-
-
-# --- the residency case -------------------------------------------
-#
-# The shipped policy gives an EU tenant exactly ONE permitted candidate for every
-# alias, because `anthropic_eu` is disabled - so it cannot express a fallback
-# that has to stay inside `eu_regions`. This policy can: `EU_TENANT` is an EU
-# tenant whose data class rule allows `us` explicitly, and whose alias lists a US
-# provider BETWEEN two EU ones. The US provider is excluded by the residency
-# clamp alone, it has an adapter registered like the others, and a fallback that
-# re-resolved, widened or walked the adapter set instead of the resolver's tuple
-# would reach it.
-#
-# Written once into a session `tmp_path`, and the app built from it once: the
-# per-test reset is the same stub reset and fresh breaker as above.
-
-EU_TENANT = "cuan"
-EU_ALIAS = "agent-default"
-EU_CLASS = "internal"
-
-EU_FIRST_PROVIDER = "eu_first"
-EU_SECOND_PROVIDER = "eu_second"
-EU_EXCLUDED_PROVIDER = "us_only"
-
-EU_REGION = "eu"
-EU_ALLOWED_REGIONS = ("eu", "self")
-
-EU_POLICY = f"""
-providers:
-  {EU_FIRST_PROVIDER}:
-    kind: anthropic
-    region: {EU_REGION}
-    base_url: https://eu-first.invalid
-  {EU_SECOND_PROVIDER}:
-    kind: openai_compatible
-    region: {EU_REGION}
-    base_url: https://eu-second.invalid
-  {EU_EXCLUDED_PROVIDER}:
-    kind: openai
-    region: us
-    base_url: https://us-only.invalid
-
-eu_regions: [{", ".join(EU_ALLOWED_REGIONS)}]
-
-aliases:
-  {EU_ALIAS}:
-    candidates:
-      - {{ provider: {EU_FIRST_PROVIDER}, model: model-eu-first }}
-      - {{ provider: {EU_EXCLUDED_PROVIDER}, model: model-us-only }}
-      - {{ provider: {EU_SECOND_PROVIDER}, model: model-eu-second }}
-
-tenants:
-  {EU_TENANT}:
-    residency: eu
-    data_class_rules:
-      {EU_CLASS}: {{ allow_regions: [us, eu, self] }}
-    budget_usd_month: "15.00"
-    rate_limit: {{ rpm: 1000000, tpm: 1000000000 }}
-"""
-"""A policy an EU tenant can fall back INSIDE. The `us` in `allow_regions` is
-deliberate: it makes the residency clamp the only thing keeping
-`EU_EXCLUDED_PROVIDER` out of the candidate tuple.
-
-The rate limit is a ceiling no suite can reach, on purpose. It used to read
-`rpm: 60`, which was inert while nothing enforced it; per-tenant rate limits are
-now enforced on every request, and a parametrised module can cross sixty requests
-in well under a minute, so a realistic ceiling here would make unrelated
-fallback and residency cases fail on request count. What a DEPLOYMENT runs is
-pinned separately, against `routing.yaml` itself, by
-`test_the_shipped_rate_limit_for_this_tenant_is_the_one_these_cases_arrange_against`
-in tests/gateway/test_rate_limit_enforcement.py - so raising a fixture cannot
-quietly raise production, and this file is not where limits are tested."""
-
-
-EU_PRICES = "prices:\n" + "".join(
-    f"""  {provider}/{model}:
-    - effective_from: 2025-01-01
-      input_usd_per_1m: "1.00"
-      output_usd_per_1m: "5.00"
-"""
-    for provider, model in (
-        (EU_FIRST_PROVIDER, "model-eu-first"),
-        (EU_SECOND_PROVIDER, "model-eu-second"),
-        (EU_EXCLUDED_PROVIDER, "model-us-only"),
-    )
-)
-"""A price for every pair `EU_POLICY` can reach. The app refuses to start on a
-policy with an unpriced pair, and the amounts do not matter to any case here."""
-
-
-@pytest.fixture(scope="session")
-def eu_policy_path(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """`EU_POLICY` on disk, written once, with `EU_PRICES` beside it."""
-    folder = tmp_path_factory.mktemp("eu-policy")
-    (folder / "prices.yaml").write_text(EU_PRICES, encoding="utf-8")
-    path = folder / "routing.yaml"
-    path.write_text(EU_POLICY, encoding="utf-8")
-    return path
-
-
-@pytest.fixture(scope="session")
-def eu_adapters() -> dict[str, FallbackStubAdapter]:
-    """A stub for all three providers, the excluded one included."""
-    return {
-        name: FallbackStubAdapter(name=name)
-        for name in (EU_FIRST_PROVIDER, EU_SECOND_PROVIDER, EU_EXCLUDED_PROVIDER)
-    }
-
-
-@pytest.fixture(scope="session")
-def eu_app(
-    eu_policy_path: Path, eu_adapters: dict[str, FallbackStubAdapter]
-) -> Iterator[TestClient]:
-    """An app on the EU policy with all three adapters, built once."""
-    settings = Settings(
-        api_keys=API_KEYS,
-        routing_policy_path=eu_policy_path,
-        prices_path=eu_policy_path.parent / "prices.yaml",
-    )
-    with build_chat_client(settings, eu_adapters) as client:
-        yield client
-
-
-@pytest.fixture
-def eu_client(eu_app: TestClient, eu_adapters: dict[str, FallbackStubAdapter]) -> TestClient:
-    """The EU app with its stubs reset and a fresh breaker on `app.state`."""
-    for adapter in eu_adapters.values():
-        adapter.reset()
-    fresh_breaker(eu_app)
-    return eu_app

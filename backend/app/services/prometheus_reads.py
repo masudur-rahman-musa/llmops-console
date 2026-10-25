@@ -6,7 +6,7 @@ the tests, so a changed metric name or window shows up
 as a failing test rather than as an empty panel.
 
 The only client-supplied text that reaches a query is `tenant`, inside
-`redactions_query`'s label matcher. It arrives here already pre-checked by
+a query's label matcher. It arrives here already pre-checked by
 `app.api.deps._checked_tenant`, a lowercase slug under `re.fullmatch`, which is
 what keeps a `"` or a `}` from closing the matcher. This module does not re-check it; the route
 is the one boundary a client string crosses.
@@ -73,7 +73,7 @@ AVAILABILITY_BUDGET_QUERY: Final[str] = (
 """The 5xx share over a fixed 30 days: the BAD ratio, which the route turns into
 `observed = 1 - bad` and `budget_remaining = 1 - bad / 0.005`.
 
-The three budget queries are literals rather than builders because Grafana's
+The two budget queries are literals rather than builders because Grafana's
 `gateway-overview.json` carries each one byte for byte, and
 a test fails on drift. The window
 never follows a page's `days`."""
@@ -87,17 +87,6 @@ LATENCY_BUDGET_QUERY: Final[str] = (
 """The API tier's share of requests under 6 s over 30 days. Prometheus renders the
 bucket label `6.0`, never `6`. Streamed requests are counted too: the histogram has
 no streaming label, a gap the ops docs record."""
-
-RESIDENCY_VIOLATIONS_30D_QUERY: Final[str] = (
-    "sum(increase(gateway_residency_violations_total[30d]))"
-)
-"""Violations over 30 days. The target is zero, so there is no budget to spend."""
-
-
-def redactions_query(days: int, tenant: str | None) -> str:
-    """Placeholders minted per tenant and kind over the window, optionally for one tenant."""
-    matcher = "" if tenant is None else f'{{tenant="{tenant}"}}'
-    return f"sum by (tenant, kind) (increase(gateway_redactions_total{matcher}[{days}d]))"
 
 
 def fallbacks_query(days: int) -> str:

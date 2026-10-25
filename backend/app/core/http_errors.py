@@ -161,7 +161,7 @@ async def handle_gateway_error(request: Request, exc: Exception) -> JSONResponse
 
     This is also where the root span learns WHY a request failed. The tracing
     middleware sees only a status, and a status is not a reason: 502 is every
-    provider outage and 451 is every residency refusal, so the typed code is
+    provider outage, so the typed code is
     recorded here, where it exists, and read there. Only the code travels - never
     the message, which for a `ProviderError` carries the provider's own words.
 
@@ -169,10 +169,7 @@ async def handle_gateway_error(request: Request, exc: Exception) -> JSONResponse
     same reason: this is where a raised `GatewayError` arrives with its typed code
     still attached. It moves the ONE failure family that has an operator response
     of its own and nothing else - which family, and on what, is
-    `core/metrics.py`'s decision rather than this file's. A 451 used
-    to move a second one and no longer does: `gateway_residency_violations_total`
-    now counts only a request actually SERVED from a forbidden region, which no
-    handler ever sees.
+    `core/metrics.py`'s decision rather than this file's.
     """
     error = cast(GatewayError, exc)
     record_error_code(request.scope, error.code.value if error.code is not None else None)
@@ -239,7 +236,7 @@ async def handle_unhandled_exception(request: Request, exc: Exception) -> JSONRe
     raised by a MIDDLEWARE - which is anything installed above the router,
     `TracingMiddleware` included - never reaches `handle_gateway_error` at all.
     Without the branch it would answer 500 with `code: null`, and a client's retry
-    logic would read a gateway bug where the gateway meant 451. The tracing
+    logic would read a gateway bug where the gateway meant 403. The tracing
     middleware is the first one installed, so this branch is needed.
 
     Two boundaries worth knowing before this is read as a total guarantee.

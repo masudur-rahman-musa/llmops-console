@@ -11,21 +11,10 @@ really runs.
 
 | File | What it pins |
 | --- | --- |
-| `cheap-api.yaml` | `anthropic` / `claude-haiku-5-5`, and `confidential` widened to `[us, eu, self]` |
-| `strong-api.yaml` | `anthropic` / `claude-sonnet-5-5`, and the same widening |
+| `cheap-api.yaml` | `anthropic` / `claude-haiku-5-5` |
+| `strong-api.yaml` | `anthropic` / `claude-sonnet-5-5` |
 | `local-cpu.yaml` | `local` / `qwen2.5-3b-instruct` |
 | `gpu-vllm.yaml` | `vllm` / `qwen2.5-7b-instruct`, the provider enabled, and its NodePort address |
-
-## Why the two API options widen a residency rule
-
-The eval target stub sends no `X-Data-Class` header, so every measured turn is
-`confidential` — the gateway's default. The shipped `evals` rule allows `[eu,
-self]`, and `anthropic` is a `us` provider, so both API options would answer 451
-on every case and report an accuracy of zero that reads like a model failure.
-
-The two self-hosted options need no such change: their provider's region is
-`self`, which the shipped rule already allows, and leaving them narrow is what
-proves the residency path was honoured on those runs.
 
 ## Why every option turns the semantic cache off
 

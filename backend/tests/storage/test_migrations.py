@@ -1,7 +1,7 @@
 r"""The migration runner: what it applies, what it refuses, and what the table becomes.
 
 Most of this file needs a real PostgreSQL, because the claims are PostgreSQL's
-own: a partitioned parent, an attached DEFAULT partition, and a second run that
+own: a dropped table, a rebuilt rollup, and a second run that
 changes nothing. Those cases carry `requires_postgres` from
 tests/storage/conftest.py, which skips with `OPSCONSOLE_TEST_DATABASE_URL` named
 in the reason. Per-test isolation is a throwaway
@@ -38,13 +38,14 @@ from app.storage.db import (
     migrations,
 )
 
-from .conftest import Pool, new_schema_name, partitions, requires_postgres, table_names
+from .conftest import Pool, new_schema_name, requires_postgres, table_names
 
 FIRST_VERSION = "001_residency_log"
 SECOND_VERSION = "002_cost_ledger"
 THIRD_VERSION = "003_eval_runs"
 FOURTH_VERSION = "004_console_events"
-ALL_VERSIONS = (FIRST_VERSION, SECOND_VERSION, THIRD_VERSION, FOURTH_VERSION)
+FIFTH_VERSION = "005_drop_residency"
+ALL_VERSIONS = (FIRST_VERSION, SECOND_VERSION, THIRD_VERSION, FOURTH_VERSION, FIFTH_VERSION)
 """Every migration that ships, in the order the runner applies them. A stem is
 the version string, so a file renamed after it has been applied somewhere would
 re-run as a new version."""
@@ -85,7 +86,7 @@ def test_the_default_schema_is_the_published_one() -> None:
     assert DEFAULT_SCHEMA == "opsconsole"
 
 
-def test_the_runner_applies_all_four_sql_files_from_backend_migrations() -> None:
+def test_the_runner_applies_all_five_sql_files_from_backend_migrations() -> None:
     """The runner reads `backend/migrations/` (outside the package, shipped by the
     image's COPY), found from the module position rather than the working directory,
     so `make migrate` works both at the repo root and inside the container. Reading
@@ -99,6 +100,7 @@ def test_the_runner_applies_all_four_sql_files_from_backend_migrations() -> None
         "002_cost_ledger.sql",
         "003_eval_runs.sql",
         "004_console_events.sql",
+        "005_drop_residency.sql",
     ]
     assert (MIGRATIONS / f"{FIRST_VERSION}.sql").read_text(encoding="utf-8").strip() != ""
 
@@ -207,7 +209,7 @@ def test_the_runner_answers_the_versions_it_applied(pool: Pool, schema: str) -> 
         applied = apply_migrations(conn, schema=schema)
 
     assert applied == ALL_VERSIONS
-    assert {"residency_log", SCHEMA_MIGRATIONS} <= table_names(pool, schema)
+    assert {"cost_ledger", SCHEMA_MIGRATIONS} <= table_names(pool, schema)
 
 
 @requires_postgres
@@ -229,19 +231,21 @@ def test_a_second_run_applies_nothing(pool: Pool, schema: str) -> None:
 def test_a_second_run_leaves_the_data_alone(pool: Pool, migrated_schema: str) -> None:
     """Catches a runner made idempotent the cheap way - dropping and recreating the table,
     or `TRUNCATE` before create - which passes the case above perfectly and destroys the
-    residency evidence of everything logged since the last deploy."""
+    cost rows of everything booked since the last deploy."""
     with pool.connection() as conn:
         conn.execute(
-            f'insert into "{migrated_schema}".residency_log '
-            "(ts, tenant, data_class, alias, provider, region, allowed) "
-            "values (now(), 'evals', 'internal', 'agent-default', 'local', 'self', true)"
+            f'insert into "{migrated_schema}".cost_ledger '
+            "(ts, tenant, alias, provider, model, input_tokens, output_tokens, cached, "
+            "cost_usd, price_version, estimated, trace_id) "
+            "values (now(), 'evals', 'agent-default', 'local', 'm', 1, 1, false, "
+            "0, 'v1', false, 't')"
         )
 
     with pool.connection() as conn:
         apply_migrations(conn, schema=migrated_schema)
 
     with pool.connection() as conn:
-        count = conn.execute(f'select count(*) from "{migrated_schema}".residency_log').fetchone()
+        count = conn.execute(f'select count(*) from "{migrated_schema}".cost_ledger').fetchone()
     assert count is not None
     assert count[0] == 1
 
@@ -272,48 +276,69 @@ def test_the_migration_lands_only_in_the_named_schema(pool: Pool, schema: str) -
         with pool.connection() as conn:
             apply_migrations(conn, schema=schema)
 
-        assert "residency_log" in table_names(pool, schema)
+        assert "cost_ledger" in table_names(pool, schema)
         assert table_names(pool, neighbour) == set()
-        assert "residency_log" not in table_names(pool, "public")
+        assert "cost_ledger" not in table_names(pool, "public")
     finally:
         with pool.connection() as conn:
             conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(neighbour)))
 
 
 # --------------------------------------------------------------------------
-# the shape the table has to have (decision B)
+# the fifth migration removes residency
 # --------------------------------------------------------------------------
 
 
-@requires_postgres
-def test_the_parent_is_range_partitioned_by_the_timestamp(pool: Pool, migrated_schema: str) -> None:
-    """Catches an ordinary table: every later criterion - a partition per day, a purge
-    that drops rather than deletes - is unreachable without this, and an unpartitioned
-    table would pass a round-trip test happily. `pg_get_partkeydef` is compared whole, so
-    a LIST strategy or a key on `tenant` (which would partition by the wrong thing and
-    make the retention purge delete another tenant's rows) fails here."""
+def relation_columns(pool: Pool, schema: str, relation: str) -> set[str]:
+    """Every column of a table or materialised view, from the catalogue.
+
+    `pg_attribute` rather than `information_schema.columns`, which does not list a
+    materialised view's columns at all.
+    """
     with pool.connection() as conn:
-        row = conn.execute(
+        rows = conn.execute(
             """
-            select pg_get_partkeydef(c.oid)
-            from pg_class c
+            select a.attname
+            from pg_attribute a
+            join pg_class c on c.oid = a.attrelid
             join pg_namespace n on n.oid = c.relnamespace
-            where n.nspname = %s and c.relname = 'residency_log'
+            where n.nspname = %s and c.relname = %s and a.attnum > 0 and not a.attisdropped
             """,
-            (migrated_schema,),
-        ).fetchone()
-
-    assert row is not None
-    assert str(row[0]) == "RANGE (ts)"
+            (schema, relation),
+        ).fetchall()
+    return {str(row[0]) for row in rows}
 
 
 @requires_postgres
-def test_the_default_partition_exists_and_is_attached(pool: Pool, migrated_schema: str) -> None:
-    """Decision B's backstop, at rest. Catches a migration that creates the parent alone:
-    a row whose day partition could not be created would then fail its INSERT with `no
-    partition of relation found`, and decision B's "a refused DDL costs a badly-placed row
-    rather than a lost one" would be false. The bound is asserted, not just the name, so a
-    plain table sitting under the right name is not what passes."""
-    found = partitions(pool, migrated_schema)
+def test_the_fifth_migration_drops_the_residency_log(pool: Pool, schema: str) -> None:
+    """Catches a migration that leaves the log or one of its day partitions behind, or that
+    never runs: after all five, no `residency_log*` relation is left. The fifth version is
+    asserted as applied, so a runner that stopped at four cannot pass."""
+    assert [m.version for m in migrations()] == list(ALL_VERSIONS)
+    with pool.connection() as conn:
+        apply_migrations(conn, schema=schema)
 
-    assert found == {"residency_log_default": "DEFAULT"}
+    assert FIFTH_VERSION in applied_versions(pool, schema)
+    assert [name for name in table_names(pool, schema) if name.startswith("residency_log")] == []
+
+
+@requires_postgres
+def test_the_ledger_and_eval_cases_have_no_region(pool: Pool, migrated_schema: str) -> None:
+    """Catches a migration that drops `region` from the ledger but not from the rollup or
+    `eval_cases`, or that rebuilds the rollup without its unique key: `REFRESH ... CONCURRENTLY`
+    is refused by PostgreSQL without one, so the refresh at the end is what proves the key
+    came back over the new group. A real column (`tenant`) is asserted on each relation, so
+    an empty column read cannot pass."""
+    for relation in ("cost_ledger", "eval_cases", "cost_ledger_daily"):
+        columns = relation_columns(pool, migrated_schema, relation)
+        assert "tenant" in columns or relation == "eval_cases", relation
+        assert columns, relation
+        assert "region" not in columns, relation
+
+    with pool.connection() as conn:
+        # A view built WITH NO DATA takes a plain refresh first; only then is
+        # CONCURRENTLY legal, and that needs the rebuilt unique key.
+        conn.execute(f'refresh materialized view "{migrated_schema}".cost_ledger_daily')
+        conn.execute(
+            f'refresh materialized view concurrently "{migrated_schema}".cost_ledger_daily'
+        )

@@ -12,7 +12,6 @@ from starlette.types import Scope
 from app.core.context import RequestContext
 from app.core.metrics import record_redactions, record_tokens
 from app.core.tracing import SpanAttributes, annotate, stage_span
-from app.model_routing.policy import ResidencyMode
 from app.model_routing.resolver import Resolved, resolve
 from app.providers.base import (
     EmbeddingAdapter,
@@ -83,8 +82,6 @@ def embed_texts(
     check_rate_limit(clients, context)
     check_budget(clients, context, override=budget_override)
 
-    mode: ResidencyMode = clients.settings.residency_mode
-
     with stage_span(scope, ROUTE_SPAN):
         candidates = resolve(
             clients.policy,
@@ -95,7 +92,6 @@ def embed_texts(
                 clients.breaker,
                 lambda provider: isinstance(clients.adapters.get(provider), EmbeddingAdapter),
             ),
-            mode=mode,
         )
     label_candidate(scope, body.model, candidates[0])
 
@@ -131,9 +127,6 @@ def embed_texts(
         alias=body.model,
         chosen=chosen,
         failed=failed,
-        policy=clients.policy,
-        data_class=context.data_class,
-        log=clients.residency_log,
     )
     record_tokens(
         tenant=context.tenant,

@@ -50,7 +50,7 @@ from app.core.validation import (
     checked_identifier,
 )
 from app.limits.prices import PriceStore
-from app.model_routing.policy import DataClass, PolicyStore, ResidencyMode
+from app.model_routing.policy import DataClass, PolicyStore
 from app.redaction import DirectoryStore, RedactionMapStore
 from app.services.chat_accounting import Clients
 from app.services.routing_reload import RUNTIME_SCOPE_KEY, RoutingRuntime, RoutingRuntimeStore
@@ -151,9 +151,8 @@ def bearer_key(authorization: str | None) -> str | None:
 
 
 DEFAULT_DATA_CLASS = DataClass.CONFIDENTIAL
-"""What a request with no `X-Data-Class` is treated as. Defaulting to `public` would route a
-tenant's unlabelled traffic to the widest region set it has, which is the one
-mistake residency cannot recover from."""
+"""What a request with no `X-Data-Class` is treated as. Defaulting to `public` would skip
+redaction for a tenant's unlabelled traffic, which is the mistake this default avoids."""
 
 TRACEPARENT_PATTERN = re.compile(r"00-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}")
 """W3C `traceparent`, version `00` only, matched with `re.fullmatch`. The
@@ -365,7 +364,6 @@ def get_clients(request: Request) -> Clients:
         semantic_cache=state.semantic_cache,
         redaction_map_store=state.redaction_map_store,
         directory_store=state.directory_store,
-        residency_log=state.residency_log,
     )
 
 
@@ -373,12 +371,6 @@ def get_policy(request: Request) -> PolicyStore:
     """The routing policy snapshot store, built in `create_app`."""
     policy: PolicyStore = request.app.state.policy
     return policy
-
-
-def get_residency_mode(request: Request) -> ResidencyMode:
-    """This process's residency mode, read off the settings `create_app` built."""
-    settings: Settings = request.app.state.settings
-    return settings.residency_mode
 
 
 def get_prices(request: Request) -> PriceStore:
@@ -431,7 +423,6 @@ def get_provider_environ(request: Request) -> Mapping[str, str]:
 
 ClientsDep = Annotated[Clients, Depends(get_clients)]
 PolicyDep = Annotated[PolicyStore, Depends(get_policy)]
-ResidencyModeDep = Annotated[ResidencyMode, Depends(get_residency_mode)]
 PricesDep = Annotated[PriceStore, Depends(get_prices)]
 RedactionMapStoreDep = Annotated[RedactionMapStore, Depends(get_redaction_map_store)]
 DirectoryStoreDep = Annotated[DirectoryStore, Depends(get_directory_store)]

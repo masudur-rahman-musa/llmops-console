@@ -38,7 +38,6 @@ from app.services.ledger import record_cost
 from app.storage import (
     CostLedgerRow,
     CostLedgerWriter,
-    ResidencyLogWriter,
 )
 
 
@@ -63,7 +62,6 @@ class Clients:
     semantic_cache: SemanticCache
     redaction_map_store: RedactionMapStore
     directory_store: DirectoryStore
-    residency_log: ResidencyLogWriter
 
 
 @dataclass
@@ -107,9 +105,9 @@ def check_rate_limit(clients: Clients, context: RequestContext) -> None:
 
     A tenant the POLICY does not carry has no ceiling and is not this function's
     to refuse. Its limit is read with `.get` and not `policy.tenants[tenant]`,
-    which would raise `KeyError` and turn the resolver's typed 451 into an
+    which would raise `KeyError` and turn the resolver's typed 403 into an
     untyped 500; inventing a ceiling of zero for it would be worse, because the
-    429 would then hide the residency refusal that is the correct answer.
+    429 would then hide the tenant refusal that is the correct answer.
 
     A store that cannot answer serves the request (see
     `limits/ratelimit.py`): a `None` from either take refuses nobody, and the
@@ -204,9 +202,9 @@ def check_budget(clients: Clients, context: RequestContext, *, override: str | N
 
     A tenant the POLICY does not carry has no cap and is not this function's to
     refuse. Its cap is read with `.get` and not `policy.tenants[tenant]`, which
-    would raise `KeyError` and turn the resolver's typed 451 into an untyped 500;
+    would raise `KeyError` and turn the resolver's typed 403 into an untyped 500;
     inventing a cap of zero for it would be worse still, because the 429 would
-    then hide the residency refusal that is the correct answer.
+    then hide the tenant refusal that is the correct answer.
 
     A counter that cannot answer serves the request (see
     `limits/budget.py`): `spend` answering `None` returns here having warned
@@ -341,7 +339,6 @@ def book_cost(
         alias=alias,
         provider=chosen.provider,
         model=chosen.model,
-        region=chosen.region,
         usage=usage,
         prompt_chars=prompt_chars,
         completion_chars=completion_chars,

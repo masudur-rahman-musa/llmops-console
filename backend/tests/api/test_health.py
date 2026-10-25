@@ -18,13 +18,10 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.routes.health import ProbeRegistry
-from app.core.config import Settings
 from app.main import create_app
-from app.model_routing.policy import ResidencyMode
 
 
 def passing() -> bool:
@@ -149,47 +146,3 @@ def test_registering_the_same_name_replaces_the_probe(
     # Registered once, under its first position: a second registration that
     # appended would put "redis" after "postgres" here.
     assert list(checks) == [*baseline, "redis", "postgres"]
-
-
-# The residency mode on `/readyz`. A top-level key beside `checks`
-# rather than inside it (decision H): `checks` means "a probe ran and this is its
-# verdict", and the mode is a setting, not a probe. Both cases build their own app
-# with the mode stated, because the root conftest clears the variable for the
-# suite and a relaxed run must not be inferred from a developer's shell.
-
-RESIDENCY_MODE_KEY = "residency_mode"
-
-
-def mode_app(mode: ResidencyMode) -> FastAPI:
-    return create_app(Settings(residency_mode=mode), environ={})
-
-
-def test_readyz_reports_the_residency_mode() -> None:
-    """Catches a readiness body that reports no mode at all, and one that files it inside
-    `checks`, where `all(checks.values())` would read the string as a passing probe and a
-    probe-name sweep would report a probe nothing ran.
-
-    The strict row is the one every deployment serves, so a field present only on the
-    relaxed path would leave an operator unable to tell a strict gateway from an old
-    build."""
-    with TestClient(mode_app(ResidencyMode.STRICT)) as mode_client:
-        response = mode_client.get("/readyz")
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body[RESIDENCY_MODE_KEY] == "strict"
-    assert RESIDENCY_MODE_KEY not in body["checks"]
-
-
-def test_readyz_reports_a_relaxed_residency_mode() -> None:
-    """Catches a hard-coded `"strict"` in the body - which is what the case above alone would
-    accept - and a field rendered from the enum member rather than its value, which would
-    answer `ResidencyMode.RELAXED` to a scraper that can only read a string.
-
-    Read from `app.state.settings`, so an app built relaxed reports relaxed however the
-    process environment reads at request time."""
-    with TestClient(mode_app(ResidencyMode.RELAXED)) as mode_client:
-        response = mode_client.get("/readyz")
-
-    assert response.status_code == 200
-    assert response.json()[RESIDENCY_MODE_KEY] == "relaxed"

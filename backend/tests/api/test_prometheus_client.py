@@ -22,7 +22,7 @@ The contract these cases are written against, before it exists:
 * `build_prometheus_http(base_url) -> httpx.Client`, `PrometheusError`;
 * `PrometheusClient(http)` with `instant_query(query)`,
   `range_query(query, *, start, end)` and `close()`;
-* `P95_QUERY`, `ERROR_RATE_QUERY`, `CIRCUITS_QUERY`, `redactions_query(days, tenant)`
+* `P95_QUERY`, `ERROR_RATE_QUERY`, `CIRCUITS_QUERY`
   and `fallbacks_query(days)`.
 """
 
@@ -46,7 +46,6 @@ from app.services.prometheus_reads import (
     PrometheusError,
     build_prometheus_http,
     fallbacks_query,
-    redactions_query,
 )
 
 BASE_URL = "http://prometheus.test"
@@ -333,9 +332,8 @@ def test_an_unexpected_result_type_or_malformed_body_is_error(
 
 def test_the_named_queries_are_pinned() -> None:
     """Catches any drift in the PromQL the console's numbers come from - a `[5m]` rate where
-    the page says a day, a `by` clause missing a label the page groups on - and, for the two
-    builders, a tenant matcher dropped or placed outside the selector, and a `days` window
-    that ignores its argument."""
+    the page says a day, a `by` clause missing a label the page groups on - and, for the
+    builder, a `days` window that ignores its argument."""
     assert P95_QUERY == (
         "histogram_quantile(0.95, sum by (le) (rate(gateway_request_latency_seconds_bucket[1d])))"
     )
@@ -344,16 +342,6 @@ def test_the_named_queries_are_pinned() -> None:
         " / sum(rate(gateway_requests_total[1d]))"
     )
     assert CIRCUITS_QUERY == "max by (provider) (gateway_circuit_state)"
-
-    assert redactions_query(30, None) == (
-        "sum by (tenant, kind) (increase(gateway_redactions_total[30d]))"
-    )
-    assert redactions_query(30, "acme") == (
-        'sum by (tenant, kind) (increase(gateway_redactions_total{tenant="acme"}[30d]))'
-    )
-    assert redactions_query(7, "nordlicht") == (
-        'sum by (tenant, kind) (increase(gateway_redactions_total{tenant="nordlicht"}[7d]))'
-    )
 
     assert fallbacks_query(7) == (
         "sum by (tenant, alias, provider) (increase(gateway_fallbacks_total[7d]))"

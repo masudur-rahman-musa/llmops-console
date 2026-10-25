@@ -176,8 +176,8 @@ def test_the_chat_url_is_the_deployment_path_with_the_api_version() -> None:
 
 def test_the_embeddings_url_is_the_deployment_path_with_the_api_version() -> None:
     """Catches a `_path` override applied to the chat leaf only: `embed()` would then
-    POST an embedding body to the resource root's `/embeddings`, and the residency-only
-    embedding route would 404 while every chat case stayed green. Catches too an override
+    POST an embedding body to the resource root's `/embeddings`, and the embedding
+    route would 404 while every chat case stayed green. Catches too an override
     that hardcodes `/chat/completions` into the deployment path for both leaves."""
     adapter, scripted = make_azure_adapter([local_ok("embeddings_single")])
 
@@ -340,9 +340,9 @@ def test_a_bad_deployment_name_raises_before_any_outbound_call(case: str, deploy
 
 def test_price_key_is_the_policy_provider_name_slash_model() -> None:
     """Catches an adapter priced by the vendor or by the kind (`azure_openai/gpt-4o-eu`
-    for every resource): the ledger prices against this string, so two Azure resources -
-    an EU one and a US one - would be billed into one row and one metric label, which is
-    exactly the distinction residency reporting exists to make."""
+    for every resource): the ledger prices against this string, so two Azure resources
+    would be billed into one row and one metric label, which is
+    exactly the distinction the ledger exists to make."""
     adapter, _ = make_azure_adapter([local_ok("plain")])
 
     assert adapter.name == AZURE_PROVIDER_NAME

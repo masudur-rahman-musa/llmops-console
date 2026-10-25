@@ -1,6 +1,6 @@
 """The typed error contract every client-facing failure is drawn from.
 
-`ErrorCode` is closed on purpose: a caller writes code against these nine
+`ErrorCode` is closed on purpose: a caller writes code against these eight
 strings, so adding, renaming or dropping one is a change to the published API
 rather than an implementation detail. A test holds the whole table - each code's
 string, its HTTP status, and the requirement that exactly one concrete
@@ -22,7 +22,6 @@ class ErrorCode(StrEnum):
     UNAUTHORIZED = "UNAUTHORIZED"
     TENANT_MISMATCH = "TENANT_MISMATCH"
     ALIAS_UNKNOWN = "ALIAS_UNKNOWN"
-    RESIDENCY_UNAVAILABLE = "RESIDENCY_UNAVAILABLE"
     BUDGET_EXCEEDED = "BUDGET_EXCEEDED"
     RATE_LIMITED = "RATE_LIMITED"
     PROVIDER_ERROR = "PROVIDER_ERROR"
@@ -157,7 +156,7 @@ class ProviderError(GatewayError):
 class LibraryError(Exception):
     """Base for a failure raised by a pure library - redaction, pricing, evals.
 
-    A SECOND hierarchy on purpose, deliberately NOT a `GatewayError`. The nine
+    A SECOND hierarchy on purpose, deliberately NOT a `GatewayError`. The eight
     codes above are a closed set and the exhaustive-code test allows
     exactly one concrete `GatewayError` per code; `VALIDATION` and
     `PROVIDER_ERROR` already have theirs (`app.core.validation.IdentifierInvalid`

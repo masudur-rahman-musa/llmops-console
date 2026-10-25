@@ -8,12 +8,7 @@ takes the pod out of the load balancer.
 
 The body names every probe that RAN, which is the half of the contract an empty
 registry makes visible: `{"checks": {}}` is a readiness that checked nothing, and
-an operator can see that rather than having to infer it from a green 200. Beside `checks` it
-carries `residency_mode`, so a process running the opt-in relaxed mode cannot be
-mistaken for a strict one by anything that reads the endpoint.
-A top-level key rather than another entry in `checks`, because `checks` means "a
-probe ran and this is its verdict" and readiness is `all(checks.values())` - a
-string filed in there would read as a passing probe.
+an operator can see that rather than having to infer it from a green 200.
 
 Four probes live here and every one of them obeys the same three rules.
 
@@ -69,7 +64,6 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from app.core.clients import SupportsExecute, SupportsPing
 from app.core.metrics import registry
-from app.model_routing.policy import ResidencyMode
 from app.providers.base import Adapter
 
 logger = logging.getLogger(__name__)
@@ -261,19 +255,14 @@ def healthz() -> dict[str, str]:
 def readyz(request: Request) -> Response:
     """Readiness: 200 when every registered probe passes, 503 naming the failures.
 
-    An empty registry is ready. The body also states this process's
-    `residency_mode`, which is settings and not a probe, so it never affects the
-    status.
+    An empty registry is ready.
     """
     probes: ProbeRegistry = request.app.state.probes
-    mode: ResidencyMode = request.app.state.settings.residency_mode
     checks = {name: _run(probe) for name, probe in probes}
     ready = all(checks.values())
     return JSONResponse(
         status_code=READY_STATUS if ready else NOT_READY_STATUS,
-        # The mode is reported at both statuses: a relaxed process that is also
-        # unready is exactly the one nobody should mistake for strict.
-        content={"checks": checks, "residency_mode": mode.value},
+        content={"checks": checks},
     )
 
 

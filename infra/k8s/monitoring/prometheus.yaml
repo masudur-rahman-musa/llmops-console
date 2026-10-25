@@ -154,15 +154,6 @@ data:
               summary: The gateway's p95 request latency has stayed above 6 seconds for 15 minutes.
               runbook: dev/ops/runbook.md#latencyoverslo
 
-          - alert: ResidencyViolation
-            expr: increase(gateway_residency_violations_total[5m]) > 0
-            for: 0m
-            labels:
-              severity: critical
-            annotations:
-              summary: A request was served from a region the tenant's residency policy does not allow.
-              runbook: dev/ops/runbook.md#residencyviolation
-
           - alert: ProviderCircuitOpen
             expr: gateway_circuit_state == 2
             for: 5m

@@ -92,7 +92,6 @@ GATEWAY_HEADER_PREFIX = "x-gateway-"
 # The whole set, and only this set, exactly as the chat route's is.
 EXPECTED_HEADER_NAMES = {
     "x-gateway-provider",
-    "x-gateway-region",
     "x-gateway-model",
     "x-gateway-cache",
     "x-gateway-redacted",
@@ -503,25 +502,6 @@ def test_a_malformed_alias_is_422_not_404(embeddings_client: TestClient) -> None
     assert_error_body(response, status=422, code="VALIDATION")
 
 
-def test_an_eu_tenant_on_a_us_only_alias_is_451_with_no_call(settings: Settings) -> None:
-    """Catches a route that calls the provider and then checks residency, or that widens the
-    region set when nothing is allowed: `agent-strong` is US-only while `anthropic_eu` is
-    disabled, so an EU tenant's request must not leave the process at all. Residency is
-    decided before the embedding-capability seam, so this is a 451 and not the 503 below."""
-    stub = EmbeddingStubAdapter(name=EMBED_PROVIDER)
-
-    with build_chat_client(settings, {EMBED_PROVIDER: stub}) as client:
-        response = post_embeddings(
-            client,
-            embeddings_body(model="agent-strong"),
-            key=NORDLICHT_KEY,
-            tenant="nordlicht",
-        )
-
-    assert_error_body(response, status=451, code="RESIDENCY_UNAVAILABLE")
-    assert stub.requests == [], "the provider was called for a denied request"
-
-
 def test_a_candidate_without_an_embedding_adapter_is_503(settings: Settings) -> None:
     """Catches a route whose health seam is `provider in adapters` rather than "this adapter
     can embed": `local` IS registered here, with the chat-only `StubAdapter`, so the
@@ -581,8 +561,8 @@ def test_an_adapter_raising_provider_error_is_502(settings: Settings) -> None:
 
 def test_embeddings_requires_auth(embeddings_client: TestClient) -> None:
     """Catches a route declared without the shared request context dependency: it would
-    serve an unauthenticated caller, and with no tenant there is no residency rule to
-    apply - which for this endpoint is the whole promise."""
+    serve an unauthenticated caller, and with no tenant there is no policy to
+    apply."""
     response = embeddings_client.post(EMBEDDINGS, json=embeddings_body())
 
     assert_error_body(response, status=401, code="UNAUTHORIZED")
@@ -590,8 +570,8 @@ def test_embeddings_requires_auth(embeddings_client: TestClient) -> None:
 
 def test_embeddings_rejects_a_tenant_that_is_not_the_keys(embeddings_client: TestClient) -> None:
     """Catches a route that resolves on the `X-Tenant` header without the key/tenant match:
-    one tenant could then embed under another's residency rules, which is the residency
-    guarantee bypassed by a header. A second auth path would pass every other case here."""
+    one tenant could then embed under another's policy, which is a tenant
+    boundary bypassed by a header. A second auth path would pass every other case here."""
     response = embeddings_client.post(
         EMBEDDINGS,
         json=embeddings_body(),
@@ -611,11 +591,10 @@ def test_an_unknown_data_class_is_422(embeddings_client: TestClient) -> None:
     assert_error_body(response, status=422, code="VALIDATION")
 
 
-def test_an_eu_pii_request_is_served_by_the_self_region_provider(settings: Settings) -> None:
+def test_a_pii_request_is_served_by_the_local_embed_provider(settings: Settings) -> None:
     """Catches an embeddings route that resolves without the request's data class, or with a
-    hardcoded one: `nordlicht`'s `pii` rule allows the region `self` alone, so this request
-    has no alternative anywhere - it either reaches the box we run or it is refused. The
-    header assertions are what prove the vector was computed in `self` and not merely that
+    hardcoded one: the `pii` class redacts, and the request must still reach the box we run. The
+    header assertions are what prove the vector was computed there and not merely that
     a 200 came back."""
     adapter, scripted = make_local_adapter([local_ok("embeddings_single")], name=EMBED_PROVIDER)
 
@@ -631,7 +610,6 @@ def test_an_eu_pii_request_is_served_by_the_self_region_provider(settings: Setti
     body = ok_body(served)
     assert scripted.request_count == 1, "the local provider was not actually called"
     assert served.headers["x-gateway-provider"] == EMBED_PROVIDER
-    assert served.headers["x-gateway-region"] == "self"
     assert served.headers["x-gateway-model"] == PROVIDER_MODEL
     assert body["data"][0]["embedding"] == list(SINGLE_VECTOR)
     assert scripted.body()["model"] == PROVIDER_MODEL, (
@@ -639,12 +617,12 @@ def test_an_eu_pii_request_is_served_by_the_self_region_provider(settings: Setti
     )
 
 
-# --- the seven headers ----------------------------------------------------------
+# --- the six headers ----------------------------------------------------------
 
 
 def test_response_headers_on_success(embeddings_client: TestClient, policy: Policy) -> None:
     """Catches every wrong value in the set at once - a provider label taken from the vendor
-    rather than the policy name, a region hardcoded, a cache status of `hit` on a route with
+    rather than the policy name, a hardcoded value, a cache status of `hit` on a route with
     no cache, or a redaction flag of `true` on a route that redacts nothing - each of which
     is an unverifiable claim about where a tenant's text went to be embedded."""
     resolved = first_candidate(policy)
@@ -652,25 +630,23 @@ def test_response_headers_on_success(embeddings_client: TestClient, policy: Poli
     headers = gateway_headers(post_embeddings(embeddings_client, embeddings_body()))
 
     assert headers["x-gateway-provider"] == resolved.provider
-    assert headers["x-gateway-region"] == resolved.region
     assert headers["x-gateway-model"] == resolved.model
     assert headers["x-gateway-cache"] == "miss"
     assert headers["x-gateway-redacted"] == "false"
     # The literal anchors, so the three resolver-derived rows above cannot be
     # satisfied by a resolver that returned something else entirely.
     assert resolved.provider == EMBED_PROVIDER
-    assert resolved.region == "self"
     assert resolved.model == PROVIDER_MODEL
 
 
-def test_the_header_set_is_exactly_seven(embeddings_client: TestClient) -> None:
+def test_the_header_set_is_exactly_six(embeddings_client: TestClient) -> None:
     """Catches a second header set built for this route rather than the shared
     `gateway_headers`: a copy would drift from the chat route's the first time either
     changed, and the criterion is that both come from the one function."""
     headers = gateway_headers(post_embeddings(embeddings_client, embeddings_body()))
 
     assert set(headers) == EXPECTED_HEADER_NAMES
-    assert len(headers) == 7
+    assert len(headers) == 6
 
 
 def test_the_cost_header_is_the_booked_cost(embeddings_client: TestClient) -> None:

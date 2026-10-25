@@ -23,22 +23,11 @@ from typing import TYPE_CHECKING, Self
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-# `ResidencyMode` now lives in `core/config.py` (the cycle break); re-exported
-# here with the explicit `as` form so the call sites that import it from the
-# policy keep resolving and `routing.yaml` stays the home of the policy types.
-from app.core.config import ResidencyMode as ResidencyMode
 from app.core.context import DataClass as DataClass
 from app.model_routing.errors import PolicyInvalid
 
 if TYPE_CHECKING:
     from app.limits.prices import PriceTable
-
-
-class Residency(StrEnum):
-    """A tenant's residency regime. `EU` is the clamp; `ANY` applies none."""
-
-    EU = "eu"
-    ANY = "any"
 
 
 class ProviderKind(StrEnum):
@@ -60,10 +49,9 @@ class _Frozen(BaseModel):
 
 
 class Provider(_Frozen):
-    """One reachable endpoint. `region` is required: residency depends on it."""
+    """One reachable endpoint."""
 
     kind: ProviderKind
-    region: str
     base_url: str | None = None
     endpoint_env: str | None = None
     key_env: str | None = None
@@ -92,9 +80,8 @@ class Alias(_Frozen):
 
 
 class DataClassRule(_Frozen):
-    """What a data class permits. `redact` is read by the redaction plan, not here."""
+    """What a data class does to a request: it redacts, or it does not."""
 
-    allow_regions: tuple[str, ...]
     redact: bool = False
 
 
@@ -117,36 +104,19 @@ class RateLimit(_Frozen):
 class Tenant(_Frozen):
     """One tenant's routing regime.
 
-    A data class with no rule is not a permissive default: the resolver treats a
-    missing rule as an empty allow list, so an unlisted class denies.
+    A data class with no rule is not redacted.
     """
 
-    residency: Residency
     data_class_rules: Mapping[DataClass, DataClassRule]
     budget_usd_month: Decimal
     rate_limit: RateLimit
     overrides: Mapping[str, tuple[Candidate, ...]] = {}
-
-    def allowed_regions(self, data_class: DataClass) -> tuple[str, ...]:
-        """The raw allow list for one data class, or `()` when no rule exists.
-
-        Deny by default: a missing rule returns an empty tuple, never a widened
-        set. Both the resolver and the eval residency check call this instead of
-        reading `data_class_rules` directly, so the reading lives once.
-
-        The resolver applies its EU clamp and relaxed-mode union on top of this
-        value; the eval check uses it raw. Neither caller changes the return value
-        itself.
-        """
-        rule = self.data_class_rules.get(data_class)
-        return rule.allow_regions if rule is not None else ()
 
 
 class Policy(_Frozen):
     """A whole routing policy, validated as one document."""
 
     providers: Mapping[str, Provider]
-    eu_regions: tuple[str, ...]
     aliases: Mapping[str, Alias]
     tenants: Mapping[str, Tenant]
 

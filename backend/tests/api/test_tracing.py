@@ -59,7 +59,7 @@ from app.core.tracing import (
     tracer_provider,
 )
 from app.main import create_app
-from app.model_routing.errors import ResidencyUnavailable
+from app.model_routing.errors import AllProvidersUnavailable
 from app.providers.base import (
     ChatRequest,
     ChatResponse,
@@ -171,7 +171,6 @@ ALLOWED_ATTRIBUTE_KEYS = frozenset(
         "session",
         "alias",
         "provider",
-        "region",
         "data_class",
         "cache",
         "cost_usd",
@@ -802,8 +801,8 @@ def test_no_message_content_reaches_a_span(
     chat_client: TestClient, chat_stub: StubAdapter, spans: InMemorySpanExporter
 ) -> None:
     """Catches an implementation that puts the prompt, the answer or a header value on a
-    span "to make debugging easier": the trace backend is outside this system's residency
-    and redaction guarantees, so a message body on a span is the exact leak an earlier change exists
+    span "to make debugging easier": the trace backend is outside this system's
+    redaction guarantees, so a message body on a span is the exact leak an earlier change exists
     to prevent. The bearer key row catches a middleware that records request headers
     wholesale."""
     response = chat_client.post(
@@ -851,25 +850,25 @@ def test_a_streamed_requests_root_span_covers_the_frames(
 # --------------------------------------------------------------------------
 
 
-def test_a_residency_refusal_records_the_code_on_the_span(
+def test_a_refusal_records_the_code_on_the_span(
     chat_client: TestClient, spans: InMemorySpanExporter
 ) -> None:
-    """Catches a middleware that ends the root span OK whatever the answer was: a 451 is
+    """Catches a middleware that ends the root span OK whatever the answer was: a refusal is
     the most important request in the trace store and an unset status makes it
     indistinguishable from a served one when filtering for failures. Also catches the
-    refusal's own message being written onto the span, which would name the alias and the
-    regions a tenant may not reach."""
+    refusal's own message being written onto the span, which would name the alias the caller
+    asked for."""
     response = post_chat(
-        chat_client, chat_body(model="agent-strong"), key=NORDLICHT_KEY, tenant="nordlicht"
+        chat_client, chat_body(model="no-such-alias"), key=NORDLICHT_KEY, tenant="nordlicht"
     )
-    assert_error_body(response, status=451, code="RESIDENCY_UNAVAILABLE")
+    assert_error_body(response, status=404, code="ALIAS_UNKNOWN")
 
     recorded = finished(spans)
     root = root_of(recorded)
 
     assert root.status.status_code is StatusCode.ERROR
-    assert root.status.description == "RESIDENCY_UNAVAILABLE"
-    assert "agent-strong" not in trace_text(recorded)
+    assert root.status.description == "ALIAS_UNKNOWN"
+    assert "no-such-alias" not in trace_text(recorded)
     assert attribute_keys(recorded) <= ALLOWED_ATTRIBUTE_KEYS
 
 
@@ -916,7 +915,7 @@ def test_no_exporter_is_installed_without_an_endpoint(
     gateway_client: TestClient, spans: InMemorySpanExporter
 ) -> None:
     """Catches decision D being implemented as a console exporter by default, which would
-    print every request's tenant, session and region to stdout in production, and catches
+    print every request's tenant and session to stdout in production, and catches
     a default endpoint compiled in - a gateway posting spans to an address nobody
     configured. The served request is the other half: with no exporter the seam is still
     there and spans are still created."""
@@ -970,7 +969,7 @@ class RaisingMiddleware:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http":
-            raise ResidencyUnavailable("middleware: nothing may serve this request")
+            raise AllProvidersUnavailable("middleware: nothing may serve this request")
         await self.app(scope, receive, send)
 
 
@@ -980,7 +979,7 @@ def test_a_gateway_error_raised_in_middleware_keeps_its_status_and_code(
     """Catches the registration Starlette gives us today: the `Exception` handler is
     lifted into `ServerErrorMiddleware`, so a `GatewayError` raised in middleware answers
     500 with `code: null` and a client's retry logic sees a gateway bug instead of the
-    451 it can act on. This plan installs the first middleware, so it is the plan that
+    503 it can act on. This plan installs the first middleware, so it is the plan that
     owes the fix."""
     app = create_app(settings, NO_PROVIDER_KEYS)
     app.add_middleware(RaisingMiddleware)
@@ -988,7 +987,7 @@ def test_a_gateway_error_raised_in_middleware_keeps_its_status_and_code(
     with TestClient(app, raise_server_exceptions=False) as client:
         response = client.get("/healthz")
 
-    assert_error_body(response, status=451, code="RESIDENCY_UNAVAILABLE")
+    assert_error_body(response, status=503, code="ALL_PROVIDERS_FAILED")
 
 
 # --------------------------------------------------------------------------

@@ -5,13 +5,6 @@
 # here; everything else stays whatever the shipped file says, so this overlay
 # cannot drift from the policy the gateway really runs.
 #
-# `confidential` is widened to three regions because the eval target stub sends
-# no `X-Data-Class` header, which makes every measured turn `confidential`. The
-# shipped `[eu, self]` would refuse `anthropic` with a 451 on every case, and the
-# option would report an accuracy of zero that looks like a model failure.
-# `redact: true` is deliberately not repeated: the merge is recursive, so the
-# shipped value survives, and a test asserts it did.
-#
 # The semantic cache is off for every option. `cache_key`
 # includes the resolved model, so the exact tier is safe across options, but the
 # semantic tier is not keyed by model: the second option measured would read the
@@ -21,9 +14,3 @@ aliases:
     semantic_cache: false
     candidates:
       - { provider: anthropic, model: claude-haiku-5-5 }
-
-tenants:
-  evals:
-    data_class_rules:
-      confidential:
-        allow_regions: [us, eu, self]

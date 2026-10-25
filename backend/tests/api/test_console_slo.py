@@ -5,16 +5,15 @@ from `create_app`, the stub reader, and a real `PrometheusClient` over an
 `httpx.MockTransport`. `SloPromStub` below is that module's `PromStub` with two per-query
 knobs added on top, so a case can answer one budget query with a chosen value or fail it
 alone, while every other query keeps the shared answers. The shared stub already answers the
-three budget queries with a 5xx share of `0.001`, a share under 6 seconds of `0.98` and no
-residency violation.
+two budget queries with a 5xx share of `0.001` and a share under 6 seconds of `0.98`.
 
 The contract these cases are written against, before it exists:
 
 * `app.services.prometheus_reads`: `AVAILABILITY_BUDGET_QUERY`, `LATENCY_BUDGET_QUERY`,
-  `RESIDENCY_VIOLATIONS_30D_QUERY`, `AVAILABILITY_OBJECTIVE`, `AVAILABILITY_ALLOWED_BAD`,
+  `AVAILABILITY_OBJECTIVE`, `AVAILABILITY_ALLOWED_BAD`,
   `LATENCY_THRESHOLD_SECONDS`, `LATENCY_ALLOWED_SLOW`;
 * `ReliabilityPage.slos`: rows `{name, objective, window, observed, budget_remaining}`,
-  in the order availability, latency, residency.
+  in the order availability, latency.
 
 Float budgets are compared with `pytest.approx`: `1 - (1 - 0.98) / 0.05` is
 `0.5999999999999996` in binary floating point.
@@ -50,16 +49,14 @@ from app.services.prometheus_reads import (
     AVAILABILITY_BUDGET_QUERY,
     LATENCY_BUDGET_QUERY,
     QUERY_PATH,
-    RESIDENCY_VIOLATIONS_30D_QUERY,
 )
 
 from .conftest import NO_PROVIDER_KEYS
 
-BUDGET_QUERIES = [AVAILABILITY_BUDGET_QUERY, LATENCY_BUDGET_QUERY, RESIDENCY_VIOLATIONS_30D_QUERY]
+BUDGET_QUERIES = [AVAILABILITY_BUDGET_QUERY, LATENCY_BUDGET_QUERY]
 
 AVAILABILITY = "availability"
 LATENCY = "latency"
-RESIDENCY = "residency"
 
 
 class SloPromStub(PromStub):
@@ -140,26 +137,22 @@ def test_the_budget_queries_are_the_pinned_literals() -> None:
         " / sum(increase(gateway_request_latency_seconds_count"
         '{provider!~"local|local_embed|vllm"}[30d]))'
     )
-    assert RESIDENCY_VIOLATIONS_30D_QUERY == (
-        "sum(increase(gateway_residency_violations_total[30d]))"
-    )
     assert prometheus.AVAILABILITY_OBJECTIVE == 0.995
     assert prometheus.AVAILABILITY_ALLOWED_BAD == 0.005
     assert prometheus.LATENCY_THRESHOLD_SECONDS == 6.0
     assert prometheus.LATENCY_ALLOWED_SLOW == 0.05
 
 
-def test_slos_rows_are_availability_latency_residency_in_order(slo_wired: SloWired) -> None:
+def test_slos_rows_are_availability_latency_in_order(slo_wired: SloWired) -> None:
     """Catches a missing or extra row, rows in another order, a row renamed (`latency_p95`),
     an objective served as a percentage (`99.5`) or as the allowed share (`0.005`), a latency
     objective that is not the 6-second threshold, and a window other than `30d`."""
     slos = slos_of(slo_wired)
 
-    assert [entry["name"] for entry in slos] == [AVAILABILITY, LATENCY, RESIDENCY]
+    assert [entry["name"] for entry in slos] == [AVAILABILITY, LATENCY]
     assert [(entry["objective"], entry["window"]) for entry in slos] == [
         (0.995, "30d"),
         (6.0, "30d"),
-        (0.0, "30d"),
     ]
     for entry in slos:
         assert set(entry) == {"name", "objective", "window", "observed", "budget_remaining"}
@@ -189,19 +182,6 @@ def test_latency_budget_is_one_minus_slow_share_over_0_05(slo_wired: SloWired) -
     assert latency["budget_remaining"] == pytest.approx(0.6)
 
 
-def test_residency_budget_is_always_null(slo_wired: SloWired) -> None:
-    """Catches a residency budget computed like the others (`1 - count`, or a ratio over an
-    allowance), which would show a deny-by-default control as having budget to spend, and a
-    violation count dropped or served as a ratio: two violations must read as `2.0` beside a
-    null budget."""
-    slo_wired.slo_prom.answers[RESIDENCY_VIOLATIONS_30D_QUERY] = ["2"]
-
-    residency = row(slos_of(slo_wired), RESIDENCY)
-
-    assert residency["observed"] == 2.0
-    assert residency["budget_remaining"] is None
-
-
 def test_an_overspent_budget_is_negative_and_unclamped(slo_wired: SloWired) -> None:
     """Catches a budget clamped at zero (`max(0, ...)`), which shows an SLO spent twice over
     exactly like one spent to the last request: a bad share of 0.01 against an allowance of
@@ -218,11 +198,10 @@ def test_nan_gives_null_observed_and_budget(slo_wired: SloWired) -> None:
     """Catches "no traffic" turned into a number: a missing sample defaulted to 0 reads as a
     perfect availability with its whole budget left (observed 1.0, budget 1.0), and a latency
     share defaulted to 0 reads as every request slow. Availability answers `NaN` (0/0, which the
-    client drops) and latency answers no series at all; residency still answers, so a route
-    that nulls every row, or reports Prometheus as `error`, on one empty result fails too."""
+    client drops) and latency answers no series at all. A route that reports
+    Prometheus as `error` on one empty result fails too."""
     slo_wired.slo_prom.answers[AVAILABILITY_BUDGET_QUERY] = ["NaN"]
     slo_wired.slo_prom.answers[LATENCY_BUDGET_QUERY] = []
-    slo_wired.slo_prom.answers[RESIDENCY_VIOLATIONS_30D_QUERY] = ["1"]
 
     slos = slos_of(slo_wired)
 
@@ -230,10 +209,9 @@ def test_nan_gives_null_observed_and_budget(slo_wired: SloWired) -> None:
         entry = row(slos, name)
         assert entry["observed"] is None, entry
         assert entry["budget_remaining"] is None, entry
-    assert row(slos, RESIDENCY)["observed"] == 1.0
 
 
-@pytest.mark.parametrize("failing", BUDGET_QUERIES, ids=[AVAILABILITY, LATENCY, RESIDENCY])
+@pytest.mark.parametrize("failing", BUDGET_QUERIES, ids=[AVAILABILITY, LATENCY])
 def test_a_failing_budget_query_is_200_with_empty_slos_prometheus_error_and_an_error_log(
     failing: str, slo_wired: SloWired, caplog: pytest.LogCaptureFixture
 ) -> None:

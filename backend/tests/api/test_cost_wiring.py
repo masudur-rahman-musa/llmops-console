@@ -9,8 +9,7 @@ one number".
 
 No backing service. The app is built with no database URL, so
 `app.state.cost_ledger` is the `InMemoryCostLedgerWriter` and the assertions read
-its `rows`, exactly as tests/gateway/test_residency_log.py reads the residency
-writer's. The ledger is reached by NAME, `app.state.cost_ledger`, never by shape:
+its `rows`. The ledger is reached by NAME, `app.state.cost_ledger`, never by shape:
 this app has several collaborators with a `write`, and selecting one of them by
 its methods is what a project rule exists for.
 
@@ -19,7 +18,7 @@ stubs' reset and fresh `response_cache`, `semantic_cache` and `cost_ledger`
 objects on `app.state` - never a new app. The one case that needs a second app is
 the fallback one, and it borrows the session-scoped `fallback_client` and puts
 the writer it replaced back afterwards, because that app is shared with
-tests/gateway/test_fallback.py and tests/gateway/test_residency_log.py.
+tests/gateway/test_fallback.py.
 
 Three arrangements are worth reading before the assertions:
 
@@ -141,7 +140,6 @@ DATA_CLASS = "internal"
 SESSION = "sess-cost-wiring"
 ALIAS = "agent-default"
 PROVIDER = "anthropic"
-REGION = "us"
 POLICY_MODEL = "claude-haiku-5-5"
 """What the shipped policy resolves `evals`/`agent-default`/`internal` to, best
 candidate first. The model is the POLICY's id, never the stub's own answer and
@@ -149,14 +147,13 @@ never the alias."""
 
 EMBED_ALIAS = "embed"
 EMBED_PROVIDER = "local_embed"
-EMBED_REGION = "self"
 EMBED_MODEL = "bge-small-en-v1.5"
 """The shipped `embed` alias's only candidate, which `/v1/embeddings` serves from
 and which the semantic tier embeds through."""
 
 LOCAL_PROVIDER = "local"
 """The CHAT server on the box we run, which is not the embedding server beside it:
-one llama.cpp process serves one model, so `agent-default`'s self-region candidate
+one llama.cpp process serves one model, so `agent-default`'s local candidate
 and the `embed` alias's candidate are two providers with two addresses."""
 
 FALLBACK_MODEL = "qwen2.5-3b-instruct"
@@ -237,7 +234,6 @@ mid-stream failure."""
 
 GATEWAY_HEADERS = (
     "x-gateway-provider",
-    "x-gateway-region",
     "x-gateway-model",
     "x-gateway-cache",
     "x-gateway-redacted",
@@ -571,7 +567,6 @@ class Booked(NamedTuple):
     alias: str
     provider: str
     model: str
-    region: str
     input_tokens: int
     output_tokens: int
     cached: bool
@@ -584,7 +579,6 @@ CHAT_ROW = Booked(
     alias=ALIAS,
     provider=PROVIDER,
     model=POLICY_MODEL,
-    region=REGION,
     input_tokens=STUB_USAGE.prompt_tokens,
     output_tokens=STUB_USAGE.completion_tokens,
     cached=False,
@@ -618,7 +612,6 @@ PATHS: list[tuple[str, Send, Booked]] = [
             alias=EMBED_ALIAS,
             provider=EMBED_PROVIDER,
             model=EMBED_MODEL,
-            region=EMBED_REGION,
             input_tokens=STUB_EMBEDDING_USAGE.prompt_tokens,
             output_tokens=0,
             cached=False,
@@ -718,13 +711,13 @@ def test_the_booked_row_names_what_served(
 ) -> None:
     """The second criterion, field by field, on all five paths. Catches a row filled from
     the request body rather than from the resolver's answer - `model` reading
-    `agent-default`, `provider` reading the tenant's home region - which turns the
+    `agent-default`, `provider` reading the tenant's name - which turns the
     console's per-model spend into a chart of one row; catches an embedding booked with
     the chat path's token counts; and catches the `price_key` mistake the criterion names
     twice, because `price_version` is a literal built from the SERVING provider and model
-    and neither the alias nor an `unpriced` fallthrough can spell it. `provider` and
-    `region` are compared against the headers the SAME response carried, so the row and
-    the wire contract cannot drift apart."""
+    and neither the alias nor an `unpriced` fallthrough can spell it.
+    `provider` is compared against the header the SAME response carried, so the row
+    and the wire contract cannot drift apart."""
     writer = InMemoryCostLedgerWriter()
 
     response = send(cost_client, writer)
@@ -737,7 +730,6 @@ def test_the_booked_row_names_what_served(
     assert row.alias == expected.alias
     assert row.provider == expected.provider
     assert row.model == expected.model
-    assert row.region == expected.region
     assert row.input_tokens == expected.input_tokens
     assert row.output_tokens == expected.output_tokens
     assert row.cached is expected.cached
@@ -746,7 +738,6 @@ def test_the_booked_row_names_what_served(
     assert row.estimated is expected.estimated
     assert row.ts.tzinfo is not None
     assert row.provider == response.headers["x-gateway-provider"]
-    assert row.region == response.headers["x-gateway-region"]
 
 
 def test_a_request_that_fell_back_books_one_row_against_the_serving_provider(
@@ -791,7 +782,7 @@ def test_the_counter_moves_by_exactly_the_rows_cost(
     rather than the one on the row - the whole reason `book_cost` is one function - and
     catches a wrong label set: the delta is read off an exactly-labelled series built from
     the ROW's own tenant, provider and model, so a counter labelled with the alias or with
-    the tenant's home region moves a different series and this reads zero. The total is
+    the tenant's name moves a different series and this reads zero. The total is
     asserted as well, so a counter moved under two label sets at once fails rather than
     passing on the series that happened to be right. The cost is non-zero by
     construction, which a zero-priced path could not tell from a counter nobody fed."""
@@ -1102,7 +1093,7 @@ def test_the_app_builds_the_in_memory_cost_ledger_without_a_database_url(
         assert app.state.db_pool is None
 
 
-def test_both_postgres_writers_share_one_pool() -> None:
+def test_every_postgres_writer_shares_one_pool() -> None:
     """Decision D. Catches a pool per writer, which is twice the server-side connections
     for one dependency and is invisible until connection limits bite in production - no
     behaviour changes, no test fails, and the readiness probe stays green. Identity is
@@ -1116,13 +1107,13 @@ def test_both_postgres_writers_share_one_pool() -> None:
 
     app = create_app(settings, NO_PROVIDER_KEYS)
 
-    # The pool and both writers are built on lifespan startup now, and
+    # The pool and the writers are built on lifespan startup now, and
     # the lifespan closes the pool and adapters on exit.
     with TestClient(app):
         pool = app.state.db_pool
         assert pool is not None
-        assert app.state.residency_log._pool is pool
         assert app.state.cost_ledger._pool is pool
+        assert app.state.console_events._pool is pool
 
 
 def test_create_app_refuses_a_malformed_prices_file(tmp_path: Path) -> None:

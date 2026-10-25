@@ -28,7 +28,6 @@ def test_policy_loads_shipped_file() -> None:
     assert len(policy.providers) >= 1
     assert len(policy.aliases) >= 1
     assert len(policy.tenants) >= 1
-    assert len(policy.eu_regions) >= 1
     # Every alias candidate names a provider that exists: the cross-field rule
     # holds on the real file, not only on the crafted bad ones below.
     for alias in policy.aliases.values():
@@ -38,12 +37,11 @@ def test_policy_loads_shipped_file() -> None:
 
 ALIAS_WITHOUT_THE_SWITCH = """
 providers:
-  eu-a: {kind: anthropic, region: eu}
-eu_regions: [eu]
+  a: {kind: anthropic}
 aliases:
   chat:
     candidates:
-      - {provider: eu-a, model: m1}
+      - {provider: a, model: m1}
 tenants: {}
 """
 """One alias written the way every alias in the repository was written before #23:
@@ -79,49 +77,44 @@ def test_an_alias_that_omits_the_semantic_switch_is_off(policy_file: PolicyWrite
 
 UNKNOWN_PROVIDER_IN_ALIAS = """
 providers:
-  eu-a: {kind: anthropic, region: eu}
-eu_regions: [eu]
+  a: {kind: anthropic}
 aliases:
   chat:
     candidates:
-      - {provider: eu-a, model: m1}
+      - {provider: a, model: m1}
       - {provider: ghost, model: m2}
 tenants: {}
 """
 
 UNKNOWN_ALIAS_IN_OVERRIDE = """
 providers:
-  eu-a: {kind: anthropic, region: eu}
-eu_regions: [eu]
+  a: {kind: anthropic}
 aliases:
   chat:
     candidates:
-      - {provider: eu-a, model: m1}
+      - {provider: a, model: m1}
 tenants:
   acme:
-    residency: eu
     data_class_rules:
-      public: {allow_regions: [eu]}
+      public: {}
     budget_usd_month: "10.00"
     rate_limit: {rpm: 60, tpm: 1000}
     overrides:
       nope:
-        - {provider: eu-a, model: m1}
+        - {provider: a, model: m1}
 """
 
 UNKNOWN_PROVIDER_IN_OVERRIDE = """
 providers:
-  eu-a: {kind: anthropic, region: eu}
-eu_regions: [eu]
+  a: {kind: anthropic}
 aliases:
   chat:
     candidates:
-      - {provider: eu-a, model: m1}
+      - {provider: a, model: m1}
 tenants:
   acme:
-    residency: eu
     data_class_rules:
-      public: {allow_regions: [eu]}
+      public: {}
     budget_usd_month: "10.00"
     rate_limit: {rpm: 60, tpm: 1000}
     overrides:
@@ -129,25 +122,23 @@ tenants:
         - {provider: ghost, model: m1}
 """
 
-PROVIDER_WITHOUT_REGION = """
+PROVIDER_WITHOUT_KIND = """
 providers:
-  eu-a: {kind: anthropic}
-eu_regions: [eu]
+  a: {key_env: SOME_KEY}
 aliases:
   chat:
     candidates:
-      - {provider: eu-a, model: m1}
+      - {provider: a, model: m1}
 tenants: {}
 """
 
 MISSING_TOP_LEVEL_KEY = """
 providers:
-  eu-a: {kind: anthropic, region: eu}
+  a: {kind: anthropic}
 aliases:
   chat:
     candidates:
-      - {provider: eu-a, model: m1}
-tenants: {}
+      - {provider: a, model: m1}
 """
 
 # (case id, document, the field path the message must name)
@@ -167,8 +158,8 @@ INVALID_CASES: list[tuple[str, str, str]] = [
         UNKNOWN_PROVIDER_IN_OVERRIDE,
         "tenants.acme.overrides.chat[0].provider",
     ),
-    ("provider has no region", PROVIDER_WITHOUT_REGION, "providers.eu-a.region"),
-    ("top level key missing", MISSING_TOP_LEVEL_KEY, "eu_regions"),
+    ("provider has no kind", PROVIDER_WITHOUT_KIND, "providers.a.kind"),
+    ("top level key missing", MISSING_TOP_LEVEL_KEY, "tenants"),
 ]
 
 
@@ -213,7 +204,6 @@ def test_safe_load_only(policy_file: PolicyWriter, tmp_path: Path) -> None:
     marker = tmp_path / "pwned.txt"
     document = f"""
 providers: !!python/object/apply:os.system ["touch {marker}"]
-eu_regions: [eu]
 aliases: {{}}
 tenants: {{}}
 """
@@ -231,7 +221,7 @@ def test_missing_file_is_policy_invalid(tmp_path: Path) -> None:
 
 
 def test_store_rejects_a_bad_file_at_construction(policy_file: PolicyWriter) -> None:
-    path = policy_file(PROVIDER_WITHOUT_REGION)
+    path = policy_file(PROVIDER_WITHOUT_KIND)
 
     with pytest.raises(PolicyInvalid):
         PolicyStore(path)
@@ -283,17 +273,15 @@ def rate_limited_policy(*, rpm: str, tpm: str) -> str:
     """One well-formed policy document whose only variable is the tenant's rate limit."""
     return f"""
 providers:
-  eu-a: {{kind: anthropic, region: eu}}
-eu_regions: [eu]
+  a: {{kind: anthropic}}
 aliases:
   chat:
     candidates:
-      - {{provider: eu-a, model: m1}}
+      - {{provider: a, model: m1}}
 tenants:
   acme:
-    residency: eu
     data_class_rules:
-      public: {{allow_regions: [eu]}}
+      public: {{}}
     budget_usd_month: "10.00"
     rate_limit: {{rpm: {rpm}, tpm: {tpm}}}
 """

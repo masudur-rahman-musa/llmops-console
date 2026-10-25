@@ -11,9 +11,10 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.validation import IdentifierInvalid
 from app.model_routing.errors import AllProvidersUnavailable
 from app.model_routing.policy import DataClass, Policy
-from app.model_routing.resolver import Resolved
+from app.model_routing.resolver import Resolved, resolve
 
 from .conftest import TEST_KEYS, assert_error_body, auth_headers, resolvable_aliases
 
@@ -78,58 +79,39 @@ def test_models_lists_only_resolvable_aliases(
     assert set(ids) <= set(policy.aliases)
 
 
-def test_models_omits_an_alias_that_would_be_451(gateway_client: TestClient) -> None:
-    """`agent-strong` is US-only while `anthropic_eu` is disabled.
+def test_models_omits_an_alias_with_every_provider_turned_off(
+    gateway_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An alias that answers 503 on first use is not advertised.
 
-    An EU tenant gets 451 for it, so listing it would advertise an alias that
-    fails on first use. It is absent for both EU tenants and present for `evals`,
-    whose residency is `any`.
+    `judge` is made to resolve to nothing usable for the call; every other alias
+    resolves as before, so the list is the shipped one without `judge`.
     """
-    nordlicht = listed_ids(
-        gateway_client, key=NORDLICHT_KEY, tenant="nordlicht", data_class="internal"
-    )
-    cuan = listed_ids(gateway_client, key=CUAN_KEY, tenant="cuan", data_class="internal")
-    evals = listed_ids(gateway_client, key=EVALS_KEY, tenant="evals", data_class="internal")
+    real = resolve
 
-    assert "agent-strong" not in nordlicht
-    assert "agent-strong" not in cuan
-    assert "agent-strong" in evals
+    def judge_is_off(
+        policy: Policy, tenant: str, alias: str, data_class: str
+    ) -> tuple[Resolved, ...]:
+        if alias == "judge":
+            raise AllProvidersUnavailable("every provider is turned off")
+        return real(policy, tenant, alias, data_class)
 
+    monkeypatch.setattr("app.api.routes.model_list.resolve", judge_is_off)
 
-def test_models_differs_per_tenant(gateway_client: TestClient, policy: Policy) -> None:
-    """Two tenants with different rules get different lists.
+    ids = listed_ids(gateway_client, key=EVALS_KEY, tenant="evals", data_class="internal")
 
-    Literal anchor, so the test is not a tautology over `resolve()`: under
-    `internal`, `judge` resolves for `evals` (US providers are allowed) and does
-    not for `nordlicht` (an EU tenant, and both judge candidates sit in `us`).
-    """
-    nordlicht = listed_ids(
-        gateway_client, key=NORDLICHT_KEY, tenant="nordlicht", data_class="internal"
-    )
-    evals = listed_ids(gateway_client, key=EVALS_KEY, tenant="evals", data_class="internal")
-
-    assert "judge" in evals
-    assert "judge" not in nordlicht
-    assert nordlicht != evals
-    assert set(nordlicht) < set(evals)
-    assert nordlicht == resolvable_aliases(policy, "nordlicht", DataClass.INTERNAL)
-    assert evals == resolvable_aliases(policy, "evals", DataClass.INTERNAL)
+    assert "judge" not in ids
+    assert "embed" in ids
 
 
-def test_models_reflects_the_requested_data_class(gateway_client: TestClient) -> None:
-    """The list narrows as the class gets more sensitive, for the same tenant.
-
-    `evals` may reach US providers for `internal` but not for `confidential`,
-    where its rule allows only `eu` and `self`.
-    """
-    internal = listed_ids(gateway_client, key=EVALS_KEY, tenant="evals", data_class="internal")
-    confidential = listed_ids(
-        gateway_client, key=EVALS_KEY, tenant="evals", data_class="confidential"
-    )
-
-    assert "judge" in internal
-    assert "judge" not in confidential
-    assert set(confidential) < set(internal)
+def test_every_tenant_and_data_class_lists_the_same_aliases(
+    gateway_client: TestClient, policy: Policy
+) -> None:
+    """The data class decides redaction and not providers, so no tenant or class
+    narrows the list: all of them see every alias the policy defines."""
+    for case, key, tenant, data_class in LISTING_CASES:
+        ids = listed_ids(gateway_client, key=key, tenant=tenant, data_class=data_class.value)
+        assert ids == list(policy.aliases), case
 
 
 def test_models_ignores_another_tenants_rules(gateway_client: TestClient) -> None:
@@ -143,27 +125,24 @@ def test_models_ignores_another_tenants_rules(gateway_client: TestClient) -> Non
     assert_error_body(response, status=403, code="TENANT_MISMATCH")
 
 
-def test_models_propagates_a_health_failure(
+def test_models_propagates_any_other_failure(
     gateway_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An outage is a 503, not an alias quietly missing from the catalogue.
+    """Only the errors that mean "this alias is not for you" are swallowed.
 
-    The route swallows only the two errors that mean "this alias is not for you".
-    `AllProvidersUnavailable` now means a provider incident - every candidate's
-    adapter missing, or every candidate's breaker open - and a catalogue that
-    shrank during one would read to an operator as an alias that had been
-    deleted. Widening the catch back to `RoutingError`
-    fails here.
+    Anything else is a failure the operator has to see, not an alias quietly
+    missing from the catalogue. Widening the catch to `RoutingError` or to
+    `Exception` fails here.
     """
 
-    def unavailable(*args: object, **kwargs: object) -> tuple[Resolved, ...]:
-        raise AllProvidersUnavailable("every provider is unhealthy")
+    def broken(*args: object, **kwargs: object) -> tuple[Resolved, ...]:
+        raise IdentifierInvalid("tenant: not a valid identifier")
 
-    monkeypatch.setattr("app.api.routes.model_list.resolve", unavailable)
+    monkeypatch.setattr("app.api.routes.model_list.resolve", broken)
 
     response = gateway_client.get(MODELS, headers=auth_headers(key=EVALS_KEY, tenant="evals"))
 
-    assert_error_body(response, status=503, code="ALL_PROVIDERS_FAILED")
+    assert_error_body(response, status=422, code="VALIDATION")
 
 
 def test_models_requires_auth(gateway_client: TestClient) -> None:
@@ -180,7 +159,7 @@ def test_models_for_a_tenant_the_policy_does_not_define_is_empty(
     """Deny by default: an authenticated tenant with no policy rules lists nothing.
 
     `cap-key` holds a key but no entry in `routing.yaml`, so every alias raises
-    `ResidencyUnavailable` and the list is empty rather than the alias defaults.
+    `TenantMismatch` and the list is empty rather than the alias defaults.
     """
     ids = listed_ids(gateway_client, key=TEST_KEYS["cap-key"], tenant="cap-key", data_class=None)
 

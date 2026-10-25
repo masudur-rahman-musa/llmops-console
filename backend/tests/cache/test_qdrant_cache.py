@@ -61,7 +61,6 @@ from .test_vectors import (
     FILTER_ROWS,
     PROBE,
     PROVIDER,
-    REGION,
     SYSTEM_HASH,
     TOOLS_HASH,
 )
@@ -122,7 +121,6 @@ def test_a_search_against_an_unreachable_qdrant_is_a_miss(case: str, error: Exce
             system_hash=SYSTEM_HASH,
             tools_hash=TOOLS_HASH,
             provider=PROVIDER,
-            region=REGION,
             data_class=DATA_CLASS,
         )
         is None
@@ -144,7 +142,6 @@ def test_a_put_against_an_unreachable_qdrant_is_swallowed(case: str, error: Exce
         system_hash=SYSTEM_HASH,
         tools_hash=TOOLS_HASH,
         provider=PROVIDER,
-        region=REGION,
         data_class=DATA_CLASS,
     )
 
@@ -161,7 +158,6 @@ def readable_payload() -> dict[str, object]:
         "system_hash": SYSTEM_HASH,
         "tools_hash": TOOLS_HASH,
         "provider": PROVIDER,
-        "region": REGION,
         "data_class": DATA_CLASS,
         "answer": cached_answer().model_dump_json(),
     }
@@ -194,7 +190,6 @@ def test_a_non_2xx_answer_to_a_search_is_a_miss(case: str, status: int) -> None:
             system_hash=SYSTEM_HASH,
             tools_hash=TOOLS_HASH,
             provider=PROVIDER,
-            region=REGION,
             data_class=DATA_CLASS,
         )
         is None
@@ -215,7 +210,6 @@ def test_a_non_2xx_answer_to_a_put_is_swallowed(case: str, status: int) -> None:
         system_hash=SYSTEM_HASH,
         tools_hash=TOOLS_HASH,
         provider=PROVIDER,
-        region=REGION,
         data_class=DATA_CLASS,
     )
 
@@ -264,7 +258,6 @@ def test_a_stored_payload_this_build_cannot_read_is_a_miss(case: str, payload: o
             system_hash=SYSTEM_HASH,
             tools_hash=TOOLS_HASH,
             provider=PROVIDER,
-            region=REGION,
             data_class=DATA_CLASS,
         )
         is None
@@ -308,7 +301,6 @@ def put(
     system_hash: str = SYSTEM_HASH,
     tools_hash: str = TOOLS_HASH,
     provider: str = PROVIDER,
-    region: str = REGION,
     data_class: str = DATA_CLASS,
 ) -> ChatResponse:
     """Store one entry with the base arrangement and hand back what was stored."""
@@ -321,7 +313,6 @@ def put(
         system_hash=system_hash,
         tools_hash=tools_hash,
         provider=provider,
-        region=region,
         data_class=data_class,
     )
     return stored
@@ -336,7 +327,6 @@ def find(
     system_hash: str = SYSTEM_HASH,
     tools_hash: str = TOOLS_HASH,
     provider: str = PROVIDER,
-    region: str = REGION,
     data_class: str = DATA_CLASS,
 ) -> ChatResponse | None:
     """One search with the base arrangement, so a case changes exactly what it names."""
@@ -347,7 +337,6 @@ def find(
         system_hash=system_hash,
         tools_hash=tools_hash,
         provider=provider,
-        region=region,
         data_class=data_class,
     )
 
@@ -449,7 +438,7 @@ def test_a_neighbour_below_the_threshold_is_a_miss(cache: QdrantSemanticCache) -
 
 
 @pytest.mark.parametrize(
-    ("case", "alias", "system_hash", "tools_hash", "provider", "region", "data_class"),
+    ("case", "alias", "system_hash", "tools_hash", "provider", "data_class"),
     FILTER_ROWS,
     ids=[row[0] for row in FILTER_ROWS],
 )
@@ -460,7 +449,6 @@ def test_a_query_differing_in_one_filter_field_misses_at_cosine_one(
     system_hash: str,
     tools_hash: str,
     provider: str,
-    region: str,
     data_class: str,
 ) -> None:
     """Catches a Qdrant filter built over fewer than all six payload fields, one row per
@@ -477,7 +465,6 @@ def test_a_query_differing_in_one_filter_field_misses_at_cosine_one(
             system_hash=system_hash,
             tools_hash=tools_hash,
             provider=provider,
-            region=region,
             data_class=data_class,
         )
         is None
@@ -525,15 +512,15 @@ def test_a_tenant_with_nothing_stored_cannot_read_a_live_entry(
 
 
 # --------------------------------------------------------------------------
-# new filter fields: provider, region, data_class
+# filter fields: provider, data_class
 # --------------------------------------------------------------------------
 
 
-def test_the_search_filters_on_provider_region_and_data_class() -> None:
-    """Catches a search request that omits one of the three new `must` clauses: a filter
+def test_the_search_filters_on_provider_and_data_class() -> None:
+    """Catches a search request that omits one of the `must` clauses: a filter
     without provider allows an answer made via a different provider to be served; without
-    region it crosses a data-residency boundary; without data_class it hands a PII answer
-    to a public caller. All three must appear in the Qdrant `filter.must` list."""
+    data_class it hands a PII answer to a public caller. Both must appear in the Qdrant
+    `filter.must` list, and no `region` clause is sent any more."""
     from .test_vectors import RecordingTransport
 
     transport = RecordingTransport()
@@ -551,7 +538,6 @@ def test_the_search_filters_on_provider_region_and_data_class() -> None:
         system_hash=SYSTEM_HASH,
         tools_hash=TOOLS_HASH,
         provider=PROVIDER,
-        region=REGION,
         data_class=DATA_CLASS,
     )
 
@@ -559,12 +545,12 @@ def test_the_search_filters_on_provider_region_and_data_class() -> None:
     sent = json.loads(transport.requests[0].content)
     must_keys = {clause["key"] for clause in sent["filter"]["must"]}
     assert "provider" in must_keys
-    assert "region" in must_keys
+    assert "region" not in must_keys
     assert "data_class" in must_keys
 
 
-def test_a_put_payload_carries_provider_region_and_data_class() -> None:
-    """Catches a write that omits provider, region or data_class from the Qdrant payload:
+def test_a_put_payload_carries_provider_and_data_class() -> None:
+    """Catches a write that omits provider or data_class from the Qdrant payload:
     if the payload is missing one of them, the search filter for that field can never match
     and the tier stores answers it can never serve -- filling Qdrant with unreachable entries
     while every request misses."""
@@ -586,7 +572,6 @@ def test_a_put_payload_carries_provider_region_and_data_class() -> None:
         system_hash=SYSTEM_HASH,
         tools_hash=TOOLS_HASH,
         provider=PROVIDER,
-        region=REGION,
         data_class=DATA_CLASS,
     )
 
@@ -597,7 +582,7 @@ def test_a_put_payload_carries_provider_region_and_data_class() -> None:
     body = json.loads(upsert_request.content)
     payload = body["points"][0]["payload"]
     assert payload.get("provider") == PROVIDER
-    assert payload.get("region") == REGION
+    assert "region" not in payload
     assert payload.get("data_class") == DATA_CLASS
 
 

@@ -280,7 +280,6 @@ def test_one_redis_one_qdrant_one_pool_are_shared() -> None:
         assert app.state.semantic_cache._client is app.state.qdrant_client
 
         pool = app.state.db_pool
-        assert app.state.residency_log._pool is pool
         assert app.state.cost_ledger._pool is pool
         assert app.state.console_events._pool is pool
         assert app.state.console_reader._pool is pool

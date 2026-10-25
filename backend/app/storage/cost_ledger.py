@@ -1,20 +1,18 @@
 r"""The cost ledger: one row per request, attributing spend to a tenant, a model and a day.
 
 What this answers is "what did this cost, and who spent it", per request, for as
-long as the table is kept - which is forever, deliberately. `residency_log` is
-partitioned because it has a ninety-day retention and dropping a partition beats
-deleting a quarter of a table; this one has no retention at all, so it is a plain
-table and there is no purge command to go with it.
+long as the table is kept - which is forever, deliberately. It has no retention
+at all, so it is a plain table and there is no purge command to go with it.
 
-**The cost is computed HERE, never passed in**, exactly as
-`record_residency` computes `allowed` rather than accepting it. `record_cost`
+**The cost is computed HERE, never passed in**, like
+the price version. `record_cost`
 takes the `PriceTable` and the usage and prices the request through
 `app.limits.cost.cost_for`. A caller filling `cost_usd` would be recording
 its own belief rather than the price table's answer, and it would let the number
 in the row disagree with the `price_version` beside it.
 
 **A failed write changes nothing about the request** (the same rule
-as for the residency log). The provider has already charged by the time this
+as for every write). The provider has already charged by the time this
 runs, so a Postgres blip turning a served request into a 500 would lose the
 answer as well as the row. A failed write is not quietly lost either:
 a row nothing landed for is buffered and sent again, and a row that is dropped is
@@ -175,7 +173,6 @@ class CostLedgerRow(BaseModel):
     alias: str
     provider: str
     model: str
-    region: str
     input_tokens: int
     output_tokens: int
     cached: bool
@@ -205,7 +202,7 @@ class InMemoryCostLedgerWriter:
     """Every row in this process's memory, in the order written.
 
     What a gateway with no `OPSCONSOLE_DATABASE_URL` builds, the same trade made
-    for the redaction map store and for the residency log. It is not a store: nothing reads it
+    for the redaction map store. It is not a store: nothing reads it
     back, nothing expires, and
     a restart loses everything. Rows are kept in a LIST and never keyed, because
     spend is a sum over them and a writer that deduplicated by tenant or by trace
@@ -284,7 +281,6 @@ class PostgresCostLedgerWriter:
         checked_identifier(row.tenant, "tenant")
         checked_identifier(row.alias, "alias")
         checked_identifier(row.provider, "provider")
-        checked_identifier(row.region, "region")
         if row.session is not None:
             checked_identifier(row.session, "session")
         _checked_model(row.model)
@@ -400,10 +396,10 @@ class PostgresCostLedgerWriter:
                 conn.execute(
                     sql.SQL(
                         "INSERT INTO {} ("
-                        "ts, tenant, alias, provider, model, region, input_tokens, "
+                        "ts, tenant, alias, provider, model, input_tokens, "
                         "output_tokens, cached, cost_usd, price_version, estimated, "
                         "session, trace_id) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
                     ).format(sql.Identifier(self._schema, COST_LEDGER)),
                     (
                         row.ts,
@@ -411,7 +407,6 @@ class PostgresCostLedgerWriter:
                         row.alias,
                         row.provider,
                         row.model,
-                        row.region,
                         row.input_tokens,
                         row.output_tokens,
                         row.cached,
@@ -479,7 +474,7 @@ def refresh_daily_rollup(
     someone has to set. Both are idempotent - the second answers the same rows as
     the first.
 
-    Takes the POOL rather than a connection, unlike `purge_partitions`:
+    Takes the POOL rather than a connection:
     `REFRESH MATERIALIZED VIEW CONCURRENTLY` cannot run inside a transaction
     block and psycopg opens one on the first statement, so the code that borrows
     the connection has to be the code that sets autocommit.

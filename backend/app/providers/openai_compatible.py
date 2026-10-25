@@ -2,11 +2,10 @@
 
 One class serves every provider whose `kind` is `openai_compatible`, because
 `local` and `vllm` differ only in the endpoint the policy gives them. What makes
-this adapter worth having is not a second vendor: it is the `self` region. A
-tenant whose data class allows the box we run ourselves and nothing else has no
-other route, so this module is the residency-only path and its failures are
-final: the routes' fallback loop walks the resolver's own tuple, and for such a
-tenant that tuple has one entry.
+this adapter worth having is not a second vendor: it is the box we run
+ourselves. A tenant whose only candidate is that box has no other route, so its
+failures are final: the routes' fallback loop walks the resolver's own tuple,
+and for such a tenant that tuple has one entry.
 
 The mapping and the transport are kept apart, as in the adapter next door. Every
 module-level mapping function here is pure. `grep -nE "^def [a-z]"` on this file
@@ -20,8 +19,7 @@ the provider-message truncation are `providers.transport`, shared with every
 other HTTP adapter. No provider SDK is imported.
 
 Two endpoints are served: `/chat/completions` and `/embeddings`.
-The second is what makes this the residency-only path for embeddings as well as
-for completions.
+The second serves embeddings as well as completions from the local box.
 
 This wire shape is the one the gateway itself publishes, so the mapping is close
 to an identity - and that is the trap. The adapter next door lifts the system

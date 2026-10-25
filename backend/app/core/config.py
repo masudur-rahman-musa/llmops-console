@@ -2,31 +2,9 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-
-class ResidencyMode(StrEnum):
-    """How strictly the PROCESS enforces residency, as opposed to a tenant's regime.
-
-    `STRICT` is the shipped behaviour and the default everywhere: the resolver only
-    ever narrows, which is what makes the residency property a proof. `RELAXED` is
-    an opt-in local-demo mode that widens `resolve()`'s allowed region set by
-    `resolver.RELAXED_REGIONS` for a data class that has a rule and is not `PII`. It lives here in
-    `core/config.py` because
-    `Settings.residency_mode` reads it and `core` must import nothing from `model_routing`; the
-    resolver and
-    `model_routing/policy.py` import it back from here.
-
-    Read from `OPSCONSOLE_RESIDENCY_MODE` by `Settings.residency_mode`, where an
-    unknown value refuses construction.
-    """
-
-    STRICT = "strict"
-    RELAXED = "relaxed"
-
 
 DEFAULT_ROUTING_POLICY_PATH = Path(__file__).resolve().parents[2] / "config" / "routing.yaml"
 """The shipped `routing.yaml`, found from this file rather than from the working
@@ -60,21 +38,6 @@ class Settings(BaseSettings):
     running gateway that authorises nobody."""
 
     routing_policy_path: Path = DEFAULT_ROUTING_POLICY_PATH
-
-    residency_mode: ResidencyMode = ResidencyMode.STRICT
-    """How strictly this process enforces residency: `strict` or `relaxed`.
-
-    `strict` is the default, so a deployment that sets nothing enforces residency
-    exactly as the product always has. `relaxed` is an opt-in local
-    demo mode that lets `resolve()` reach `resolver.RELAXED_REGIONS` for a data
-    class that has a rule and is not `pii`.
-
-    A closed enum rather than a string, so an unknown value is refused by
-    `Settings()` itself and the process never serves one request under a mode
-    nobody meant. `create_app` logs one
-    WARNING when it is relaxed and `/readyz` reports it, because a relaxed
-    process that looks strict from outside is the real hazard here. Nothing under `infra/` sets
-    it, so the cluster is strict by omission."""
 
     prices_path: Path = DEFAULT_PRICES_PATH
     """Where the price table is read from.
@@ -155,9 +118,8 @@ class Settings(BaseSettings):
     """Where PostgreSQL lives, or `None` for no `postgres` readiness probe.
 
     Read by two things beside the probe: `create_app` builds ONE pool from it when
-    it is set and hands that pool to both Postgres writers - the residency log and the cost ledger
-    - and `make migrate`,
-    `make purge-residency` and `make refresh-rollup` read it through this same
+    it is set and hands that pool to the Postgres writer, the cost ledger,
+    and `make migrate` and `make refresh-rollup` read it through this same
     field. A probe for a store nothing writes to would still be worth having,
     because #5 names Postgres and a readiness endpoint that silently omits a
     configured dependency is a readiness endpoint that lies."""

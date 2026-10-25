@@ -45,7 +45,7 @@ from app.api.routes.admin import routing as admin
 from app.core.config import Settings
 from app.core.validation import MAX_IDENTIFIER_LENGTH
 from app.main import create_app
-from app.model_routing.errors import AliasUnknown, ResidencyUnavailable
+from app.model_routing.errors import AliasUnknown, AllProvidersUnavailable
 from app.model_routing.policy import DataClass, Policy
 from app.model_routing.resolver import resolve
 from app.providers.base import Adapter
@@ -95,29 +95,19 @@ def expected_view(policy: Policy) -> list[dict[str, Any]]:
             for data_class in DataClass:
                 try:
                     resolved = resolve(policy, tenant, alias, data_class.value)
-                except (ResidencyUnavailable, AliasUnknown):
+                except (AllProvidersUnavailable, AliasUnknown):
                     continue
                 entries.append(
                     {
                         "alias": alias,
                         "data_class": data_class.value,
                         "resolved": [
-                            {"provider": item.provider, "model": item.model, "region": item.region}
-                            for item in resolved
+                            {"provider": item.provider, "model": item.model} for item in resolved
                         ],
                     }
                 )
         tenants.append({"tenant": tenant, "entries": entries})
     return tenants
-
-
-def regions_in(tenant_view: dict[str, Any]) -> set[str]:
-    """Every region named anywhere under one tenant's entries."""
-    return {
-        entry_region["region"]
-        for entry in tenant_view["entries"]
-        for entry_region in entry["resolved"]
-    }
 
 
 def tenant_slice(body: dict[str, Any], name: str) -> dict[str, Any]:
@@ -307,12 +297,10 @@ def test_the_view_resolves_every_tenant_alias_and_data_class(
 ) -> None:
     """Catches an implementation that drops a dimension of the matrix - one entry
     per alias with no data class, or the tenant's default candidates instead of
-    its override - and one that reports a US provider for an EU tenant.
+    its override.
 
     The expectation is computed by calling `resolve()`, so it cannot drift from
-    the policy file; the literal membership below means an empty view fails, and
-    the `evals` row means the "no `us`" assertion is not passing merely because
-    the body carries no regions at all.
+    the policy file; the literal membership below means an empty view fails.
     """
     response = admin_get(admin_client)
     assert response.status_code == 200, response.text
@@ -321,12 +309,11 @@ def test_the_view_resolves_every_tenant_alias_and_data_class(
     assert set(body) == {"tenants"}
     assert body["tenants"] == expected_view(policy)
 
-    # Residency, read off the wire: neither EU tenant names a US region anywhere.
-    assert "us" not in regions_in(tenant_slice(body, "nordlicht"))
-    assert "us" not in regions_in(tenant_slice(body, "cuan"))
-    # And the view does carry US regions where the policy allows them, so the two
-    # assertions above are about residency and not about an empty body.
-    assert "us" in regions_in(tenant_slice(body, "evals"))
+    # No entry names a region any more.
+    for view in body["tenants"]:
+        for item in view["entries"]:
+            for place in item["resolved"]:
+                assert set(place) == {"provider", "model"}
 
     # One triple asserted literally: nordlicht's override, not the alias default.
     nordlicht = tenant_slice(body, "nordlicht")
@@ -339,7 +326,10 @@ def test_the_view_resolves_every_tenant_alias_and_data_class(
         {
             "alias": "agent-default",
             "data_class": "internal",
-            "resolved": [{"provider": "local", "model": "qwen2.5-3b-instruct", "region": "self"}],
+            "resolved": [
+                {"provider": "anthropic", "model": "claude-haiku-5-5"},
+                {"provider": "local", "model": "qwen2.5-3b-instruct"},
+            ],
         }
     ]
 

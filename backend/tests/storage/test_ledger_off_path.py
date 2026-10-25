@@ -45,7 +45,6 @@ def a_row(**overrides: Any) -> CostLedgerRow:  # noqa: ANN401
         "alias": "agent-default",
         "provider": "local",
         "model": "qwen2.5-7b-instruct",
-        "region": "self",
         "input_tokens": 100,
         "output_tokens": 50,
         "cached": False,

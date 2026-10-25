@@ -93,8 +93,7 @@ PLATFORM_OBJECTS: frozenset[tuple[str, str, str | None]] = frozenset(
         ("PersistentVolumeClaim", "backups-data", PLATFORM),
         ("CronJob", "postgres-backup", PLATFORM),
         ("CronJob", "qdrant-backup", PLATFORM),
-        # An earlier change: the two ledger-maintenance CronJobs.
-        ("CronJob", "residency-purge", PLATFORM),
+        # An earlier change: the ledger-maintenance CronJob.
         ("CronJob", "rollup-refresh", PLATFORM),
     }
 )
@@ -159,12 +158,11 @@ BACKUP_CONTAINERS: dict[str, dict[str, tuple[str, dict[str, str]]]] = {
 #: Criterion re decision B: the account-specific Secret both `rclone-sync` containers read.
 BACKUP_SECRET_NAME = "backup-secrets"
 
-#: An earlier change's two ledger-maintenance CronJobs, by NAME, kept separate from WORKLOAD_RESOURCES
+#: An earlier change's ledger-maintenance CronJob, by NAME, kept separate from WORKLOAD_RESOURCES
 #: (the probe/Service parametrization would otherwise look for a readinessProbe on a CronJob).
-MAINTENANCE_CRONJOB_NAMES = ("residency-purge", "rollup-refresh")
+MAINTENANCE_CRONJOB_NAMES = ("rollup-refresh",)
 #: Each maintenance CronJob's ledger entrypoint (pyproject [project.scripts]).
 MAINTENANCE_ENTRYPOINTS = {
-    "residency-purge": "ops-purge-residency",
     "rollup-refresh": "ops-refresh-rollup",
 }
 #: The gateway image both maintenance jobs run, as the built stream reads it after the
@@ -944,9 +942,9 @@ def test_each_rclone_sync_container_reads_backup_secrets_and_guards_backup_bucke
     )
 
 
-def test_the_two_maintenance_cronjobs_exist(built: list[dict[str, Any]]) -> None:
-    """An earlier change criterion: both ledger-maintenance CronJobs are in the `platform` stream, exactly
-    one of each name. Catches `ledger-maintenance.yaml` written but left out of
+def test_the_maintenance_cronjob_exists(built: list[dict[str, Any]]) -> None:
+    """An earlier change criterion: the ledger-maintenance CronJob is in the `platform` stream, exactly
+    one of that name. Catches `ledger-maintenance.yaml` written but left out of
     `platform/kustomization.yaml`'s `resources` (the file is valid and the object is simply not
     built, the state decision D's "build and parse" exists to see), and catches either job
     dropped or duplicated. Scoped by name and namespace, so an unrelated CronJob added elsewhere
@@ -964,8 +962,7 @@ def test_the_maintenance_jobs_run_the_ledger_entrypoints(
     built: list[dict[str, Any]],
 ) -> None:
     """An earlier change criterion: each maintenance CronJob runs its own ops-* entrypoint as `command[0]`
-    on the gateway image. Catches the two jobs' commands swapped (residency-purge running the
-    rollup refresh, which drops nothing past retention), a command with extra args appended
+    on the gateway image. Catches a command with extra args appended
     (`command` must be exactly the one entrypoint), and the image left bare or pointed at the
     wrong package - the value read is what the platform images transformer rewrites `gateway` to,
     so a job that forgot to name `image: gateway` reddens here."""
@@ -1004,7 +1001,7 @@ def test_the_maintenance_jobs_carry_no_literal_database_url(
             assert part in value, f"{cronjob_name} OPSCONSOLE_DATABASE_URL lacks {part}: {value!r}"
 
 
-def test_the_four_platform_cronjobs_run_at_distinct_hours(
+def test_the_platform_cronjobs_run_at_distinct_hours(
     built: list[dict[str, Any]],
 ) -> None:
     """An earlier change's unhappy path: the ResourceQuota prices only the single most expensive hour-group

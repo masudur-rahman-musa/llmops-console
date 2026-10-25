@@ -1,17 +1,16 @@
 """The console's read surface: one route per page, every number a page shows.
 
-Seven routes, all behind `app.api.deps.admin_key`:
+Six routes, all behind `app.api.deps.admin_key`:
 
     GET /console/home          today's traffic, spend, latency and the last eval
     GET /console/cost          the daily rollup, estimated cache savings, budgets
     GET /console/quality       eval runs, categories, taxonomy, blocked releases
-    GET /console/residency     where each tenant's data went, and redactions
     GET /console/reliability   latency and error-rate series, breakers, fallbacks
     GET /console/incidents     the timeline
     GET /console/releases      deploys, each with its eval result
 
 The console reads through here and never touches Postgres or Prometheus itself.
-A working tenant key is 401 on all seven, as on `/admin/*`. The sums and source
+A working tenant key is 401 on all six, as on `/admin/*`. The sums and source
 helpers are `app.services.dashboard`; the page shapes are `app.schemas.dashboard`.
 
 **Inputs.** `days` is an integer from `MIN_DAYS` to `MAX_DAYS`, refused as 422
@@ -39,10 +38,8 @@ from app.schemas.dashboard import (
     HomePage,
     IncidentsPage,
     QualityPage,
-    RedactionCount,
     ReleasesPage,
     ReliabilityPage,
-    ResidencyPage,
     Sources,
 )
 from app.schemas.dashboard import SourceState as SourceState
@@ -53,14 +50,12 @@ from app.services.prometheus_reads import (
     P95_QUERY,
     PrometheusClient,
     fallbacks_query,
-    redactions_query,
 )
 from app.storage.dashboard_reads import regressed_metrics
 
 CONSOLE_HOME: Final[str] = "/console/home"
 CONSOLE_COST: Final[str] = "/console/cost"
 CONSOLE_QUALITY: Final[str] = "/console/quality"
-CONSOLE_RESIDENCY: Final[str] = "/console/residency"
 CONSOLE_RELIABILITY: Final[str] = "/console/reliability"
 CONSOLE_INCIDENTS: Final[str] = "/console/incidents"
 CONSOLE_RELEASES: Final[str] = "/console/releases"
@@ -69,7 +64,6 @@ CONSOLE_PATHS: Final[tuple[str, ...]] = (
     CONSOLE_HOME,
     CONSOLE_COST,
     CONSOLE_QUALITY,
-    CONSOLE_RESIDENCY,
     CONSOLE_RELIABILITY,
     CONSOLE_INCIDENTS,
     CONSOLE_RELEASES,
@@ -113,7 +107,6 @@ def home(request: Request) -> HomePage:
         cost_usd_today=None if read is None else read.cost_usd_today,
         p95_seconds=p95,
         error_rate=error_rate,
-        residency_violations_today=None if read is None else read.residency_violations_today,
         last_eval=None if read is None else read.last_eval,
         open_incidents=None if read is None else read.open_incidents,
     )
@@ -174,35 +167,6 @@ def quality(request: Request, days: Days = DEFAULT_DAYS) -> QualityPage:
             )
             for item in read.blocked
         ),
-    )
-
-
-@router.get(CONSOLE_RESIDENCY)
-def residency(
-    request: Request, days: Days = DEFAULT_DAYS, tenant: str | None = None
-) -> ResidencyPage:
-    """Requests per tenant, region and provider, violations, and redactions by kind."""
-    if tenant is not None:
-        checked_tenant(tenant)
-    now = datetime.now(UTC)
-    pg, read = postgres(
-        request, "residency", lambda reader: reader.residency(days=days, tenant=tenant, now=now)
-    )
-    prom, redactions = prometheus(
-        request,
-        "residency",
-        lambda client: tuple(
-            RedactionCount(
-                tenant=labels.get("tenant", ""), kind=labels.get("kind", ""), count=value
-            )
-            for labels, value in client.instant_query(redactions_query(days, tenant))
-        ),
-    )
-    return ResidencyPage(
-        sources=Sources(postgres=pg, prometheus=prom),
-        by_region=() if read is None else read.by_region,
-        violations=None if read is None else read.violations,
-        redactions=redactions or (),
     )
 
 

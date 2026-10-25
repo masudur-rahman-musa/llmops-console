@@ -10,14 +10,10 @@
 providers:
   local:
     kind: openai_compatible
-    region: self
     base_url: http://mock-provider:8090/v1
   local_embed:
     kind: openai_compatible
-    region: self
     base_url: http://mock-provider:8090/v1
-
-eu_regions: [eu, self]
 
 aliases:
   agent-default:
@@ -32,11 +28,10 @@ tenants:
   # Ceilings far above what 50 RPS for ten minutes spends, so the run measures
   # the gateway serving traffic, never a limiter refusing it.
   load:
-    residency: eu
     data_class_rules:
-      public: { allow_regions: [eu, self] }
-      internal: { allow_regions: [eu, self] }
-      confidential: { allow_regions: [eu, self], redact: true }
-      pii: { allow_regions: [self], redact: true }
+      public: { redact: false }
+      internal: { redact: false }
+      confidential: { redact: true }
+      pii: { redact: true }
     budget_usd_month: "100000.00"
     rate_limit: { rpm: 6000, tpm: 6000000 }

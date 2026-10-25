@@ -4,11 +4,11 @@ Two pure functions and four constants. Nothing here talks to a store, reads a
 policy or knows an adapter exists, which is what lets it
 run with no app and no backing service.
 
-**The key is a digest of ten fields** the tenant, the alias the
-caller named, the provider that served it, the region that provider is in, the
+**The key is a digest of nine fields** the tenant, the alias the
+caller named, the provider that served it, the
 data class of the request, the model the resolver picked, the messages, the
-tools, the response format and the temperature. A key over nine of them serves a
-WRONG answer to a request that differs by the tenth, so each field is checked
+tools, the response format and the temperature. A key over eight of them serves a
+WRONG answer to a request that differs by the ninth, so each field is checked
 on its own rather than by a sample, and the variants are checked against each
 other to catch two of them sharing a slot.
 
@@ -92,7 +92,6 @@ def cache_key(
     tenant: str,
     alias: str,
     provider: str,
-    region: str,
     data_class: str,
     model: str,
     messages: Sequence[Mapping[str, object]],
@@ -100,16 +99,16 @@ def cache_key(
     response_format: Mapping[str, object] | None,
     temperature: float | None,
 ) -> str:
-    """The sha256 of the ten keyed fields, as 64 lowercase hex characters.
+    """The sha256 of the nine keyed fields, as 64 lowercase hex characters.
 
-    Keyword-only, and every argument required. A default on any of the ten
+    Keyword-only, and every argument required. A default on any of the nine
     would let a call site key a request without one of its fields simply by
     forgetting it.
 
-    `provider`, `region` and `data_class` are part of the key because
+    `provider` and `data_class` are part of the key because
     a cached answer is served only where it could have been made, so the key must
-    include where it was made (provider and region) and under which data-handling
-    rule (data_class).
+    include where it was made (provider) and under which data-handling
+    rule (data_class). A redacted answer is never served to an unredacted request.
 
     `messages`, `tools` and `response_format` arrive as the JSON-able structures
     the route holds after `body.model_dump(mode="json", exclude_none=True)`,
@@ -126,7 +125,6 @@ def cache_key(
             "tenant": tenant,
             "alias": alias,
             "provider": provider,
-            "region": region,
             "data_class": data_class,
             "model": model,
             "messages": list(messages),

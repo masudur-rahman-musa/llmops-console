@@ -37,19 +37,16 @@ OPENAI_EMPTY_ENV = "OPENAI_API_KEY_EMPTY"
 
 POLICY = Policy(
     providers={
-        "anthropic-eu": Provider(kind=ProviderKind.ANTHROPIC, region="eu", key_env=KEY_ENV),
-        "anthropic-unset": Provider(kind=ProviderKind.ANTHROPIC, region="eu", key_env=UNSET_ENV),
-        "anthropic-empty": Provider(kind=ProviderKind.ANTHROPIC, region="eu", key_env=EMPTY_ENV),
-        "anthropic-nokeyenv": Provider(kind=ProviderKind.ANTHROPIC, region="eu"),
+        "anthropic-eu": Provider(kind=ProviderKind.ANTHROPIC, key_env=KEY_ENV),
+        "anthropic-unset": Provider(kind=ProviderKind.ANTHROPIC, key_env=UNSET_ENV),
+        "anthropic-empty": Provider(kind=ProviderKind.ANTHROPIC, key_env=EMPTY_ENV),
+        "anthropic-nokeyenv": Provider(kind=ProviderKind.ANTHROPIC),
         # Enabled=False is the ONLY difference from `anthropic-eu`: its key is
         # set in ENVIRON, so nothing else can explain its absence.
-        "anthropic-off": Provider(
-            kind=ProviderKind.ANTHROPIC, region="eu", key_env=KEY_ENV, enabled=False
-        ),
+        "anthropic-off": Provider(kind=ProviderKind.ANTHROPIC, key_env=KEY_ENV, enabled=False),
         # Kind is the only difference: enabled, and its key is set too.
-        "openai-eu": Provider(kind=ProviderKind.OPENAI, region="eu", key_env=OPENAI_ENV),
+        "openai-eu": Provider(kind=ProviderKind.OPENAI, key_env=OPENAI_ENV),
     },
-    eu_regions=("eu", "self"),
     aliases={},
     tenants={},
 )
@@ -144,7 +141,7 @@ def test_an_openai_provider_is_not_built_as_anthropic() -> None:
 def test_an_empty_policy_builds_nothing_and_says_nothing(caplog: pytest.LogCaptureFixture) -> None:
     """Catches a factory with a hardcoded default provider: an empty policy must produce an
     empty mapping, not a real Anthropic adapter nobody configured."""
-    empty = Policy(providers={}, eu_regions=("eu",), aliases={}, tenants={})
+    empty = Policy(providers={}, aliases={}, tenants={})
 
     with caplog.at_level(logging.WARNING):
         adapters = build_adapters(empty, ENVIRON)
@@ -167,33 +164,26 @@ LOCAL_KEY_ENV = "VLLM_API_KEY_NOWHERE"
 LOCAL_POLICY = Policy(
     providers={
         # The shipped `local`: enabled, a base url, and no `key_env` at all.
-        "local": Provider(
-            kind=ProviderKind.OPENAI_COMPATIBLE, region="self", base_url="http://llama:8082/v1"
-        ),
+        "local": Provider(kind=ProviderKind.OPENAI_COMPATIBLE, base_url="http://llama:8082/v1"),
         # The shipped `vllm`, enabled here: the same kind on a second endpoint.
-        "vllm": Provider(
-            kind=ProviderKind.OPENAI_COMPATIBLE, region="self", base_url="http://vllm:8000/v1"
-        ),
+        "vllm": Provider(kind=ProviderKind.OPENAI_COMPATIBLE, base_url="http://vllm:8000/v1"),
         # `enabled=False` is the ONLY difference from `local`.
         "local-off": Provider(
             kind=ProviderKind.OPENAI_COMPATIBLE,
-            region="self",
             base_url="http://llama:8082/v1",
             enabled=False,
         ),
         # A declared key that is not in the environment is the only difference.
         "local-keyed": Provider(
             kind=ProviderKind.OPENAI_COMPATIBLE,
-            region="self",
             base_url="http://llama:8082/v1",
             key_env=LOCAL_KEY_ENV,
         ),
         # No base url is the only difference: there is no endpoint to call.
-        "local-nourl": Provider(kind=ProviderKind.OPENAI_COMPATIBLE, region="self"),
+        "local-nourl": Provider(kind=ProviderKind.OPENAI_COMPATIBLE),
         # A different kind on the same policy, with its key set.
-        "anthropic-eu": Provider(kind=ProviderKind.ANTHROPIC, region="eu", key_env=KEY_ENV),
+        "anthropic-eu": Provider(kind=ProviderKind.ANTHROPIC, key_env=KEY_ENV),
     },
-    eu_regions=("eu", "self"),
     aliases={},
     tenants={},
 )
@@ -202,7 +192,7 @@ LOCAL_POLICY = Policy(
 def test_an_openai_compatible_provider_with_no_key_env_is_built() -> None:
     """Catches a factory that demands a key of every provider (decision B): `local` and
     `vllm` sit on a private network and declare none, so a key check applied to them drops
-    the residency-only route and every EU `pii` request stays a 503."""
+    the local route and every `pii` request stays a 503."""
     adapters = build_adapters(LOCAL_POLICY, ENVIRON)
 
     assert "local" in adapters
@@ -280,7 +270,7 @@ def test_an_openai_compatible_provider_without_a_base_url_is_dropped_with_a_warn
     """Catches a factory that falls back to a default endpoint (the Anthropic one, or
     `localhost`) when the policy names none: an adapter with a guessed base url sends a
     tenant's `pii` traffic wherever that url happens to point, and the whole point of this
-    provider is that its region is the box we run. A silent drop is caught too - it looks
+    provider is that it is the box we run. A silent drop is caught too - it looks
     to an operator like a routing bug."""
     with caplog.at_level(logging.WARNING):
         adapters = build_adapters(LOCAL_POLICY, ENVIRON)
@@ -322,33 +312,27 @@ OPENAI_POLICY = Policy(
         # Enabled, a key in ENVIRON, and a base url of its own.
         OPENAI_PROVIDER: Provider(
             kind=ProviderKind.OPENAI,
-            region="us",
             base_url=OPENAI_PROVIDER_BASE_URL,
             key_env=OPENAI_ENV,
         ),
         # No base url is the ONLY difference: the vendor default is what it gets.
-        "openai-default-url": Provider(kind=ProviderKind.OPENAI, region="us", key_env=OPENAI_ENV),
+        "openai-default-url": Provider(kind=ProviderKind.OPENAI, key_env=OPENAI_ENV),
         # A declared key that is not in the environment is the only difference.
         "openai-unset": Provider(
             kind=ProviderKind.OPENAI,
-            region="us",
             base_url=OPENAI_PROVIDER_BASE_URL,
             key_env=OPENAI_UNSET_ENV,
         ),
         # A declared key set to the empty string is the only difference.
         "openai-empty": Provider(
             kind=ProviderKind.OPENAI,
-            region="us",
             base_url=OPENAI_PROVIDER_BASE_URL,
             key_env=OPENAI_EMPTY_ENV,
         ),
         # No `key_env` at all is the only difference: legal for the
         # `openai_compatible` kind, a drop for this one.
-        "openai-nokeyenv": Provider(
-            kind=ProviderKind.OPENAI, region="us", base_url=OPENAI_PROVIDER_BASE_URL
-        ),
+        "openai-nokeyenv": Provider(kind=ProviderKind.OPENAI, base_url=OPENAI_PROVIDER_BASE_URL),
     },
-    eu_regions=("eu", "self"),
     aliases={},
     tenants={},
 )
@@ -495,60 +479,49 @@ AZURE_POLICY = Policy(
         # Enabled, an endpoint variable and a key variable, both set in AZURE_ENVIRON.
         AZURE_PROVIDER: Provider(
             kind=ProviderKind.AZURE_OPENAI,
-            region="eu",
             endpoint_env=AZURE_ENDPOINT_ENV,
             key_env=AZURE_KEY_ENV,
         ),
         # A declared key variable that is not in the environment is the only difference.
         "azure-key-unset": Provider(
             kind=ProviderKind.AZURE_OPENAI,
-            region="eu",
             endpoint_env=AZURE_ENDPOINT_ENV,
             key_env=AZURE_KEY_UNSET_ENV,
         ),
         # A declared key variable set to the empty string is the only difference.
         "azure-key-empty": Provider(
             kind=ProviderKind.AZURE_OPENAI,
-            region="eu",
             endpoint_env=AZURE_ENDPOINT_ENV,
             key_env=AZURE_KEY_EMPTY_ENV,
         ),
         # No `key_env` at all is the only difference: legal for the
         # `openai_compatible` kind on a private network, a drop for this one.
-        "azure-nokeyenv": Provider(
-            kind=ProviderKind.AZURE_OPENAI, region="eu", endpoint_env=AZURE_ENDPOINT_ENV
-        ),
+        "azure-nokeyenv": Provider(kind=ProviderKind.AZURE_OPENAI, endpoint_env=AZURE_ENDPOINT_ENV),
         # A declared endpoint variable that is not in the environment is the only
         # difference.
         "azure-endpoint-unset": Provider(
             kind=ProviderKind.AZURE_OPENAI,
-            region="eu",
             endpoint_env=AZURE_ENDPOINT_UNSET_ENV,
             key_env=AZURE_KEY_ENV,
         ),
         # A declared endpoint variable set to the empty string is the only difference.
         "azure-endpoint-empty": Provider(
             kind=ProviderKind.AZURE_OPENAI,
-            region="eu",
             endpoint_env=AZURE_ENDPOINT_EMPTY_ENV,
             key_env=AZURE_KEY_ENV,
         ),
         # No `endpoint_env` at all is the only difference: there is no vendor
         # default for a per-resource host.
-        "azure-noendpointenv": Provider(
-            kind=ProviderKind.AZURE_OPENAI, region="eu", key_env=AZURE_KEY_ENV
-        ),
+        "azure-noendpointenv": Provider(kind=ProviderKind.AZURE_OPENAI, key_env=AZURE_KEY_ENV),
         # A second endpoint source is the only difference: everything else is the
         # built row, and both `endpoint_env` and `base_url` name a usable host.
         "azure-two-sources": Provider(
             kind=ProviderKind.AZURE_OPENAI,
-            region="eu",
             endpoint_env=AZURE_ENDPOINT_ENV,
             base_url="https://ops-console-us.openai.azure.test",
             key_env=AZURE_KEY_ENV,
         ),
     },
-    eu_regions=("eu", "self"),
     aliases={},
     tenants={},
 )
@@ -688,11 +661,10 @@ def test_an_azure_provider_naming_both_an_endpoint_env_and_a_base_url_is_dropped
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Catches decision C not implemented: with both sources present one of them quietly
-    wins, and which one is undocumented - that is how a vendor key reaches the wrong host,
-    and the two hosts in this row are in different regions, which is a residency incident
-    rather than a misconfiguration. Both of this row's sources are USABLE (the variable is
-    set and the base url is a real string), so neither the key control nor the endpoint
-    control can explain the drop: only the both-sources branch can."""
+    wins, and which one is undocumented - that is how a vendor key reaches the wrong host.
+    Both of this row's sources are USABLE (the variable is set and the base url is a real
+    string), so neither the key control nor the endpoint control can explain the drop: only
+    the both-sources branch can."""
     with caplog.at_level(logging.WARNING):
         adapters = build_adapters(AZURE_POLICY, AZURE_ENVIRON)
 

@@ -1,7 +1,7 @@
 [project]
 name = "ai-operations-console"
 version = "0.1.0"
-description = "LLM gateway with routing, residency enforcement, redaction, caching, budgets and evals"
+description = "LLM gateway with routing, redaction, caching, budgets and evals"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi>=0.115",
@@ -33,7 +33,7 @@ dependencies = [
     # prerequisite for `uv sync`. Qdrant is probed over the `httpx` already here
     # rather than through a client library, because a probe is one GET.
     "redis>=5",
-    # `pool` on top of `binary`: the residency log is a
+    # `pool` on top of `binary`: the cost ledger is a
     # write on every served request, so a connect-per-write would put a TCP and
     # TLS handshake on the hot path. `psycopg_pool` ships separately from
     # `psycopg`, which is why the extra is named here rather than assumed.
@@ -45,7 +45,6 @@ dependencies = [
 # and CronJob that will call them all want one name that works inside the image.
 [project.scripts]
 ops-migrate = "app.cli.ledger:migrate"
-ops-purge-residency = "app.cli.ledger:purge"
 ops-refresh-rollup = "app.cli.ledger:refresh_rollup"
 # The eval harness. `make eval` names this command, and so will the
 # CronJob that runs the nightly set, which is why it is a script and not a

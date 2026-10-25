@@ -66,7 +66,6 @@ from .conftest import (
 ALIAS = "agent-default"
 PROVIDER_MODEL = "claude-haiku-5-5"
 
-NORDLICHT_KEY = TEST_KEYS["nordlicht"]
 
 DONE_FRAME = "data: [DONE]"
 
@@ -296,7 +295,6 @@ def test_finish_reason_table_on_the_stream(
 
 EXPECTED_GATEWAY_HEADERS = {
     "x-gateway-provider": "anthropic",
-    "x-gateway-region": "us",
     "x-gateway-model": PROVIDER_MODEL,
     "x-gateway-cache": "miss",
     "x-gateway-redacted": "false",
@@ -305,13 +303,13 @@ EXPECTED_GATEWAY_HEADERS = {
 
 def test_headers_on_a_streamed_success(chat_client: TestClient) -> None:
     """Catches a `StreamingResponse` built without the header set the non-streaming path
-    carries, which would leave an operator unable to say which provider and region served
+    carries, which would leave an operator unable to say which provider served
     a streamed request; catches a missing `Cache-Control: no-cache` or
     `X-Accel-Buffering: no`, either of which lets a proxy buffer the whole answer and
     deliver it as one block; and catches a cost header on a stream, which is not a
     number the gateway is withholding but one that does not exist yet: these headers
     are on the wire before the first frame, and the usage a cost is priced from arrives
-    with the last one. Six here and seven on a non-streamed answer is the
+    with the last one. Five here and six on a non-streamed answer is the
     permanent shape, not a stage of it."""
     response = post_chat(chat_client, stream_body(model=ALIAS))
 
@@ -320,7 +318,7 @@ def test_headers_on_a_streamed_success(chat_client: TestClient) -> None:
     for name, value in EXPECTED_GATEWAY_HEADERS.items():
         assert headers[name] == value
     assert len(headers["x-gateway-trace-id"]) == 32
-    assert len([name for name in headers if name.startswith("x-gateway-")]) == 6
+    assert len([name for name in headers if name.startswith("x-gateway-")]) == 5
     assert "x-gateway-cost-usd" not in headers
 
     assert headers["cache-control"] == "no-cache"
@@ -370,18 +368,10 @@ def test_a_stream_that_opens_and_yields_nothing_is_502(settings: Settings) -> No
 ROUTING_FAILURE_CASES: list[tuple[str, str, str, str, int, str]] = [
     ("an unknown alias", "no-such-alias", TEST_KEYS["evals"], "evals", 404, "ALIAS_UNKNOWN"),
     (
-        "an EU tenant on a US-only alias",
-        "agent-strong",
-        NORDLICHT_KEY,
-        "nordlicht",
-        451,
-        "RESIDENCY_UNAVAILABLE",
-    ),
-    (
         "no adapter for any candidate",
-        ALIAS,
-        NORDLICHT_KEY,
-        "nordlicht",
+        "embed",
+        TEST_KEYS["evals"],
+        "evals",
         503,
         "ALL_PROVIDERS_FAILED",
     ),
@@ -403,8 +393,7 @@ def test_a_routing_failure_on_a_stream_is_the_ordinary_typed_error(
     chat_client: TestClient,
 ) -> None:
     """Catches a streaming branch taken before the resolver runs, which would answer 200
-    and an error frame to a request that never had a provider to reach - and, on the
-    residency row, would report a refusal as a successful stream."""
+    and an error frame to a request that never had a provider to reach."""
     response = post_chat(chat_client, stream_body(model=alias), key=key, tenant=tenant)
 
     assert_error_body(response, status=status, code=code)

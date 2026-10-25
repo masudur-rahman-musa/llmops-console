@@ -97,7 +97,6 @@ LATENCY = "gateway_request_latency_seconds"
 TOKENS = "gateway_tokens_total"
 REDACTIONS = "gateway_redactions_total"
 PROVIDER_ERRORS = "gateway_provider_errors_total"
-RESIDENCY_VIOLATIONS = "gateway_residency_violations_total"
 FALLBACKS = "gateway_fallbacks_total"
 CIRCUIT_STATE = "gateway_circuit_state"
 COST_USD = "gateway_cost_usd_total"
@@ -118,13 +117,8 @@ FED_FAMILIES = (
     COST_USD,
     BUDGET_RATIO,
 )
-"""The families a request through a route in this file feeds. An earlier change took
-`gateway_residency_violations_total` OUT of this tuple: under
-decision E a 451 no longer moves it, and nothing else a route can do moves it
-either, so a case asserting it carries samples after a request would be asserting
-the behaviour that plan removed.
-
-An earlier change ADDED `gateway_budget_ratio` to it, from the other direction: the tuple
+"""The families a request through a route in this file feeds. An earlier change ADDED
+`gateway_budget_ratio` to it, from the other direction: the tuple
 of families that were declared and left empty shrank by one plan's worth each
 time a subsystem landed - an earlier change filled `gateway_fallbacks_total` and
 `gateway_circuit_state`, an earlier change filled `gateway_cache_hits_total`, an earlier change
@@ -139,13 +133,10 @@ it lives."""
 CACHE_HITS = "gateway_cache_hits_total"
 LEDGER_WRITES = "gateway_ledger_writes_total"
 
-ELSEWHERE_FED_FAMILIES = (RESIDENCY_VIOLATIONS, CACHE_HITS, LEDGER_WRITES)
+ELSEWHERE_FED_FAMILIES = (CACHE_HITS, LEDGER_WRITES)
 """Declared, empty after every request THIS file makes, and fed elsewhere in the
 session - so neither tuple above can hold them.
 
-`gateway_residency_violations_total` is fed by exactly one thing, an
-`allowed=false` residency log row the resolver cannot produce (an earlier change decision
-E); tests/gateway/test_residency_log.py writes one directly.
 `gateway_cache_hits_total` is fed by a route as of an earlier change, but only by a
 request eligible for the cache - a stated `temperature: 0` or the
 `X-Gateway-Cache: allow` header - and no request in this file is either, which is
@@ -160,8 +151,8 @@ nothing to do with the claim."""
 
 DECLARED_FAMILIES = frozenset(FED_FAMILIES) | frozenset(ELSEWHERE_FED_FAMILIES)
 
-DECLARED_FAMILY_COUNT = 12
-"""Nine fed by a request in this file and three fed only from elsewhere in the
+DECLARED_FAMILY_COUNT = 11
+"""Nine fed by a request in this file and two fed only from elsewhere in the
 session. The plan's own number, so a family added or dropped fails here as well
 as in the set comparison - and it did NOT change when an earlier change filled the last
 declared-and-empty family, because a plan here adds a value, never a family.
@@ -201,12 +192,10 @@ ALIAS = "agent-default"
 EMBED_ALIAS = "embed"
 TENANT = "evals"
 REMOTE_PROVIDER = "anthropic"
-REMOTE_REGION = "us"
 LOCAL_PROVIDER = "local"
 EMBED_PROVIDER = "local_embed"
 """The `embed` alias's only candidate. Its own provider, not the chat one beside it:
 one llama.cpp process serves one model, so the two servers are two addresses."""
-LOCAL_REGION = "self"
 PLAIN_CLASS = "internal"
 REDACT_CLASS = "confidential"
 
@@ -280,16 +269,14 @@ def request_labels(
     tenant: str,
     alias: str,
     provider: str,
-    region: str,
     status: str,
     cache: str,
 ) -> dict[str, str]:
-    """The six labels the design gives `gateway_requests_total`, in one place."""
+    """The five labels the design gives `gateway_requests_total`, in one place."""
     return {
         "tenant": tenant,
         "alias": alias,
         "provider": provider,
-        "region": region,
         "status": status,
         "cache": cache,
     }
@@ -514,7 +501,7 @@ def test_a_chat_request_is_counted_once_with_every_label(
     (`provider` would read `agent-default`, and the one question the dashboard asks -
     which provider served this - would be unanswerable), a request counted at route entry
     AND at the end (every RPS panel doubled), and a hardcoded `status` label. The
-    provider, region and cache labels are compared against the headers the SAME response
+    provider and cache labels are compared against the headers the SAME response
     carried, so the counter and the wire contract cannot disagree."""
     response = post_chat(chat_client, chat_body(model=ALIAS))
     assert response.status_code == 200, response.text
@@ -523,13 +510,11 @@ def test_a_chat_request_is_counted_once_with_every_label(
         tenant=TENANT,
         alias=ALIAS,
         provider=response.headers["x-gateway-provider"],
-        region=response.headers["x-gateway-region"],
         status="200",
         cache=response.headers["x-gateway-cache"],
     )
 
     assert labels["provider"] == REMOTE_PROVIDER
-    assert labels["region"] == REMOTE_REGION
     assert labels["cache"] == CACHE_MISS
     assert metrics.delta(REQUESTS, **labels) == 1
     assert metrics.total(REQUESTS) == 1
@@ -572,7 +557,6 @@ def test_a_streamed_request_is_counted_once(chat_client: TestClient, metrics: Me
         tenant=TENANT,
         alias=ALIAS,
         provider=REMOTE_PROVIDER,
-        region=REMOTE_REGION,
         status="200",
         cache=CACHE_MISS,
     )
@@ -834,39 +818,30 @@ def test_a_provider_failure_increments_the_provider_error_counter(
     """Catches a provider-error counter keyed on nothing a dashboard can use: the label
     pair is the provider and the TYPED code, so an implementation that leaves `provider`
     empty (or writes the alias into it) makes "which provider is failing" unanswerable at
-    the moment it is asked. Also catches a 502 that increments the residency counter
-    instead, which would fire the design's residency alert on an ordinary outage."""
+    the moment it is asked."""
     response = post_chat(failing_client, chat_body(model=ALIAS))
     assert_error_body(response, status=502, code="PROVIDER_ERROR")
 
     assert metrics.delta(PROVIDER_ERRORS, provider=REMOTE_PROVIDER, code="PROVIDER_ERROR") == 1
     assert metrics.total(PROVIDER_ERRORS) == 1
-    assert metrics.total(RESIDENCY_VIOLATIONS) == 0
     assert metrics.total(REQUESTS) == 1
 
 
-def test_a_residency_refusal_leaves_the_violation_counter_flat(
+def test_a_refusal_is_counted_and_is_not_a_provider_failure(
     chat_client: TestClient, metrics: MetricDelta
 ) -> None:
-    """An earlier change decision E. Catches the older reading, where `record_failure` moved
-    `gateway_residency_violations_total` on every 451: a 451 is the resolver refusing
-    correctly, and the design alerts this counter at greater than zero, so an EU tenant
-    asking for `agent-strong` - which the shipped policy refuses by design - would page
-    someone every time it happened. The counter is fed only by an `allowed=false`
-    residency log row, which the resolver cannot produce; that half is pinned by
-    tests/gateway/test_residency_log.py. The refusal is still counted, by
-    `gateway_requests_total`, because a 451 counted nowhere is a request the RPS panel
-    cannot reconcile with the access log; and it is still not a provider failure."""
+    """Catches `record_failure` moving the provider-error family on a refusal: an unknown
+    alias is the resolver working, not a provider outage. The refusal is still counted by
+    `gateway_requests_total`, because a refusal counted nowhere is a request the RPS panel
+    cannot reconcile with the access log."""
     response = post_chat(
         chat_client,
-        chat_body(model="agent-strong"),
+        chat_body(model="no-such-alias"),
         key=TEST_KEYS["nordlicht"],
         tenant="nordlicht",
     )
-    assert_error_body(response, status=451, code="RESIDENCY_UNAVAILABLE")
+    assert_error_body(response, status=404, code="ALIAS_UNKNOWN")
 
-    assert metrics.delta(RESIDENCY_VIOLATIONS, tenant="nordlicht") == 0
-    assert metrics.total(RESIDENCY_VIOLATIONS) == 0
     assert metrics.total(PROVIDER_ERRORS) == 0
     assert metrics.total(REQUESTS) == 1
 
@@ -883,9 +858,7 @@ def test_an_unauthorized_request_is_counted_with_empty_labels(
     response: HttpxResponse = chat_client.post(CHAT, json=chat_body(model=ALIAS))
     assert_error_body(response, status=401, code="UNAUTHORIZED")
 
-    labels = request_labels(
-        tenant=EMPTY, alias=EMPTY, provider=EMPTY, region=EMPTY, status="401", cache=EMPTY
-    )
+    labels = request_labels(tenant=EMPTY, alias=EMPTY, provider=EMPTY, status="401", cache=EMPTY)
 
     assert metrics.delta(REQUESTS, **labels) == 1
     assert metrics.total(REQUESTS) == 1
@@ -1000,7 +973,7 @@ def test_a_fallback_is_counted_once_against_the_serving_provider(
     """Catches the counter labelled with the provider that FAILED, which is the natural
     mistake when the failure is the thing being handled: the design's panel would then
     report fallbacks onto a provider that served nothing, and the tenant's traffic would be
-    attributed to the wrong region. The total pins "once per request" as well, so a loop
+    attributed to the wrong provider. The total pins "once per request" as well, so a loop
     that counted each candidate it tried is caught by the same case."""
     fallback_adapters[FIRST_PROVIDER].chat_error = retryable_error(FIRST_PROVIDER)
 

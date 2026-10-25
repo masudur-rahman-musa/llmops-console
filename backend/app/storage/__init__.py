@@ -1,15 +1,14 @@
-"""The Postgres write path: residency evidence and cost rows now, eval rows later.
+"""The Postgres write path: cost rows, console events and eval rows.
 
-This package holds the project's Postgres writes, and the residency log is the
-first of them, so the connection pool, the migration runner and the schema
-convention arrive here rather than in the one table that needed them first.
+This package holds the project's Postgres writes: the connection pool, the
+migration runner and the schema convention.
 
-The modules: `db` is the seam and the runner, `residency_log` is the decision
-log, `cost_ledger` is the spend row and its daily rollup, `console_events` is the
+The modules: `db` is the seam and the runner, `cost_ledger` is the spend row and
+its daily rollup, `console_events` is the
 two records an operator and CI write by hand through `/admin/*`, `eval_store` is
 the eval run and case rows, and `dashboard_reads` is the console's read side. The
 command-line entry points are not re-exported - they live in `app.cli.ledger`,
-which `make migrate`, `make purge-residency` and `make refresh-rollup` call.
+which `make migrate` and `make refresh-rollup` call.
 """
 
 from app.storage.console_events import (
@@ -47,22 +46,4 @@ from app.storage.db import (
 )
 from app.storage.db import (
     build_pool as build_pool,
-)
-from app.storage.residency_log import (
-    RESIDENCY_LOG_RETENTION_DAYS as RESIDENCY_LOG_RETENTION_DAYS,
-)
-from app.storage.residency_log import (
-    InMemoryResidencyLogWriter as InMemoryResidencyLogWriter,
-)
-from app.storage.residency_log import (
-    PostgresResidencyLogWriter as PostgresResidencyLogWriter,
-)
-from app.storage.residency_log import (
-    ResidencyLogRow as ResidencyLogRow,
-)
-from app.storage.residency_log import (
-    ResidencyLogWriter as ResidencyLogWriter,
-)
-from app.storage.residency_log import (
-    partition_name as partition_name,
 )

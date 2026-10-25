@@ -226,11 +226,9 @@ def test_the_ci_secret_carries_no_provider_key(built: list[dict[str, Any]]) -> N
 
 
 def test_the_alias_and_tenant_resolve_to_the_local_provider_only() -> None:
-    """The routing-policy half of `main.py`'s own claim: with no `X-Data-Class`
-    header (default `confidential`), the shipped `evals` tenant's own rule already
-    narrows `agent-default` to the `self` region alone, because `anthropic_eu`
-    ships disabled and `anthropic`'s region (`us`) is not in `[eu, self]` -
-    independent of whether any provider key is configured."""
+    """The routing-policy half of `main.py`'s own claim: with no provider key
+    configured, the only providers the `evals` tenant's `agent-default` can reach
+    are the ones that need no key - `local` alone."""
     from app.model_routing.policy import DataClass, load_policy
     from app.model_routing.resolver import resolve
 
@@ -241,4 +239,5 @@ def test_the_alias_and_tenant_resolve_to_the_local_provider_only() -> None:
         alias="agent-default",
         data_class=DataClass.CONFIDENTIAL.value,
     )
-    assert {candidate.provider for candidate in resolved} == {"local"}
+    keyless = {c.provider for c in resolved if policy.providers[c.provider].key_env is None}
+    assert keyless == {"local"}

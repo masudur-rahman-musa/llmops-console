@@ -43,7 +43,7 @@ value the passing candidate produced cannot make _SENTINEL come back."""
 
 def _make_resolved(provider: str) -> Resolved:
     """Build a minimal Resolved with the given provider name."""
-    return Resolved(provider=provider, model="m", region="us")
+    return Resolved(provider=provider, model="m")
 
 
 def _fake_scope(path: str) -> Scope:
@@ -236,7 +236,6 @@ def test_complete_chat_returns_a_stream_plan_for_a_streamed_body_and_a_chat_resu
             semantic_cache=state.semantic_cache,
             redaction_map_store=state.redaction_map_store,
             directory_store=state.directory_store,
-            residency_log=state.residency_log,
         )
 
         context = RequestContext(
@@ -302,7 +301,6 @@ def test_embed_texts_returns_a_result_the_route_only_wraps(settings: Settings) -
             semantic_cache=state.semantic_cache,
             redaction_map_store=state.redaction_map_store,
             directory_store=state.directory_store,
-            residency_log=state.residency_log,
         )
 
         context = RequestContext(

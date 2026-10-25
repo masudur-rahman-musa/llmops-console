@@ -32,10 +32,10 @@ Contract this file assumes (the implementation follows it):
     class SemanticCache(Protocol):
         def search(self, tenant: str, vector: Sequence[float], *, alias: str,
                    system_hash: str, tools_hash: str, provider: str,
-                   region: str, data_class: str) -> ChatResponse | None: ...
+                   data_class: str) -> ChatResponse | None: ...
         def put(self, tenant: str, vector: Sequence[float], answer: ChatResponse, *,
                 alias: str, system_hash: str, tools_hash: str, provider: str,
-                region: str, data_class: str) -> None: ...
+                data_class: str) -> None: ...
 
     class InProcessSemanticCache:
         def __init__(self) -> None: ...
@@ -81,8 +81,6 @@ TOOLS_HASH = "2" * 64
 OTHER_TOOLS_HASH = "3" * 64
 PROVIDER = "anthropic"
 OTHER_PROVIDER = "openai"
-REGION = "eu"
-OTHER_REGION = "us"
 DATA_CLASS = "public"
 OTHER_DATA_CLASS = "pii"
 
@@ -151,7 +149,6 @@ def stored(
     system_hash: str = SYSTEM_HASH,
     tools_hash: str = TOOLS_HASH,
     provider: str = PROVIDER,
-    region: str = REGION,
     data_class: str = DATA_CLASS,
 ) -> InProcessSemanticCache:
     """A cache holding one entry, defaulting to the probe vector and the base filters."""
@@ -164,7 +161,6 @@ def stored(
         system_hash=system_hash,
         tools_hash=tools_hash,
         provider=provider,
-        region=region,
         data_class=data_class,
     )
     return cache
@@ -179,7 +175,6 @@ def search(
     system_hash: str = SYSTEM_HASH,
     tools_hash: str = TOOLS_HASH,
     provider: str = PROVIDER,
-    region: str = REGION,
     data_class: str = DATA_CLASS,
 ) -> ChatResponse | None:
     """One search with the base arrangement, so a row changes exactly what it names.
@@ -194,7 +189,6 @@ def search(
         system_hash=system_hash,
         tools_hash=tools_hash,
         provider=provider,
-        region=region,
         data_class=data_class,
     )
 
@@ -265,7 +259,6 @@ def test_the_nearest_of_two_eligible_neighbours_is_the_one_returned(
             system_hash=SYSTEM_HASH,
             tools_hash=TOOLS_HASH,
             provider=PROVIDER,
-            region=REGION,
             data_class=DATA_CLASS,
         )
 
@@ -273,21 +266,20 @@ def test_the_nearest_of_two_eligible_neighbours_is_the_one_returned(
 
 
 # --------------------------------------------------------------------------
-# the three filter fields, one miss each at cosine 1.0
+# the filter fields, one miss each at cosine 1.0
 # --------------------------------------------------------------------------
 
-FILTER_ROWS: list[tuple[str, str, str, str, str, str, str]] = [
-    ("a different alias", OTHER_ALIAS, SYSTEM_HASH, TOOLS_HASH, PROVIDER, REGION, DATA_CLASS),
-    ("a different system hash", ALIAS, OTHER_SYSTEM_HASH, TOOLS_HASH, PROVIDER, REGION, DATA_CLASS),
-    ("a different tools hash", ALIAS, SYSTEM_HASH, OTHER_TOOLS_HASH, PROVIDER, REGION, DATA_CLASS),
-    ("a different provider", ALIAS, SYSTEM_HASH, TOOLS_HASH, OTHER_PROVIDER, REGION, DATA_CLASS),
-    ("a different region", ALIAS, SYSTEM_HASH, TOOLS_HASH, PROVIDER, OTHER_REGION, DATA_CLASS),
-    ("a different data class", ALIAS, SYSTEM_HASH, TOOLS_HASH, PROVIDER, REGION, OTHER_DATA_CLASS),
+FILTER_ROWS: list[tuple[str, str, str, str, str, str]] = [
+    ("a different alias", OTHER_ALIAS, SYSTEM_HASH, TOOLS_HASH, PROVIDER, DATA_CLASS),
+    ("a different system hash", ALIAS, OTHER_SYSTEM_HASH, TOOLS_HASH, PROVIDER, DATA_CLASS),
+    ("a different tools hash", ALIAS, SYSTEM_HASH, OTHER_TOOLS_HASH, PROVIDER, DATA_CLASS),
+    ("a different provider", ALIAS, SYSTEM_HASH, TOOLS_HASH, OTHER_PROVIDER, DATA_CLASS),
+    ("a different data class", ALIAS, SYSTEM_HASH, TOOLS_HASH, PROVIDER, OTHER_DATA_CLASS),
 ]
 
 
 @pytest.mark.parametrize(
-    ("case", "alias", "system_hash", "tools_hash", "provider", "region", "data_class"),
+    ("case", "alias", "system_hash", "tools_hash", "provider", "data_class"),
     FILTER_ROWS,
     ids=[row[0] for row in FILTER_ROWS],
 )
@@ -297,10 +289,9 @@ def test_a_query_differing_in_one_filter_field_misses_at_cosine_one(
     system_hash: str,
     tools_hash: str,
     provider: str,
-    region: str,
     data_class: str,
 ) -> None:
-    """Catches a query built over a subset of the six payload fields, one row per field: the
+    """Catches a query built over a subset of the five payload fields, one row per field: the
     vector is IDENTICAL to the stored one, so similarity cannot be what refuses it and the
     row for the dropped field is the only thing that reddens. A dropped filter serves
     another conversation's answer - a different system prompt's, a different alias's, a
@@ -312,7 +303,6 @@ def test_a_query_differing_in_one_filter_field_misses_at_cosine_one(
             system_hash=system_hash,
             tools_hash=tools_hash,
             provider=provider,
-            region=region,
             data_class=data_class,
         )
         is None
@@ -329,16 +319,9 @@ def test_a_query_matching_all_three_filters_hits_at_cosine_one() -> None:
 
 def test_an_answer_made_under_another_provider_is_not_served() -> None:
     """Catches a filter that does not include the provider field: an answer stored under
-    `anthropic` would be served to a request destined for `openai` -- same alias, hashes,
-    region and data class -- silently handing back a different provider's output."""
+    `anthropic` would be served to a request destined for `openai` -- same alias, hashes
+    and data class -- silently handing back a different provider's output."""
     assert search(stored(provider=OTHER_PROVIDER), provider=PROVIDER) is None
-
-
-def test_an_answer_made_in_another_region_is_not_served() -> None:
-    """Catches a filter that does not include the region field: an answer stored for the
-    `us` region would be served to an `eu` request, violating the residency rule the filter
-    exists to enforce -- the region is the only thing that differs."""
-    assert search(stored(region=OTHER_REGION), region=REGION) is None
 
 
 def test_an_answer_made_for_another_data_class_is_not_served() -> None:
@@ -370,7 +353,6 @@ def test_one_tenant_cannot_read_another_tenants_live_entry() -> None:
         system_hash=SYSTEM_HASH,
         tools_hash=TOOLS_HASH,
         provider=PROVIDER,
-        region=REGION,
         data_class=DATA_CLASS,
     )
     cache.put(
@@ -381,7 +363,6 @@ def test_one_tenant_cannot_read_another_tenants_live_entry() -> None:
         system_hash=SYSTEM_HASH,
         tools_hash=TOOLS_HASH,
         provider=PROVIDER,
-        region=REGION,
         data_class=DATA_CLASS,
     )
 
@@ -494,7 +475,6 @@ def test_search_refuses_a_malformed_tenant_before_touching_qdrant(case: str, ten
             system_hash=SYSTEM_HASH,
             tools_hash=TOOLS_HASH,
             provider=PROVIDER,
-            region=REGION,
             data_class=DATA_CLASS,
         )
 
@@ -517,7 +497,6 @@ def test_put_refuses_a_malformed_tenant_before_touching_qdrant(case: str, tenant
             system_hash=SYSTEM_HASH,
             tools_hash=TOOLS_HASH,
             provider=PROVIDER,
-            region=REGION,
             data_class=DATA_CLASS,
         )
 
@@ -539,7 +518,6 @@ def test_a_tenant_at_the_length_cap_is_accepted() -> None:
         system_hash=SYSTEM_HASH,
         tools_hash=TOOLS_HASH,
         provider=PROVIDER,
-        region=REGION,
         data_class=DATA_CLASS,
     )
 
@@ -560,7 +538,6 @@ def test_a_tenant_one_character_over_the_cap_is_rejected() -> None:
             system_hash=SYSTEM_HASH,
             tools_hash=TOOLS_HASH,
             provider=PROVIDER,
-            region=REGION,
             data_class=DATA_CLASS,
         )
 
@@ -630,7 +607,6 @@ def test_a_search_asks_for_exactly_one_neighbour() -> None:
         system_hash=SYSTEM_HASH,
         tools_hash=TOOLS_HASH,
         provider=PROVIDER,
-        region=REGION,
         data_class=DATA_CLASS,
     )
 
@@ -658,7 +634,6 @@ def test_an_entry_within_the_ttl_is_a_hit() -> None:
         system_hash=SYSTEM_HASH,
         tools_hash=TOOLS_HASH,
         provider=PROVIDER,
-        region=REGION,
         data_class=DATA_CLASS,
     )
     clock.now = START + 1
@@ -678,7 +653,6 @@ def test_an_entry_is_readable_up_to_and_including_the_ttl() -> None:
         system_hash=SYSTEM_HASH,
         tools_hash=TOOLS_HASH,
         provider=PROVIDER,
-        region=REGION,
         data_class=DATA_CLASS,
     )
     clock.now = START + RESPONSE_CACHE_TTL_SECONDS
@@ -698,7 +672,6 @@ def test_an_entry_is_a_miss_one_second_past_the_ttl() -> None:
         system_hash=SYSTEM_HASH,
         tools_hash=TOOLS_HASH,
         provider=PROVIDER,
-        region=REGION,
         data_class=DATA_CLASS,
     )
     clock.now = START + RESPONSE_CACHE_TTL_SECONDS + 1
@@ -726,7 +699,6 @@ def test_a_put_writes_the_stored_at_second_into_the_payload() -> None:
         system_hash=SYSTEM_HASH,
         tools_hash=TOOLS_HASH,
         provider=PROVIDER,
-        region=REGION,
         data_class=DATA_CLASS,
     )
     upsert = next(r for r in transport.requests if r.method == "PUT" and "points" in r.url.path)
@@ -746,7 +718,6 @@ def test_a_search_filters_on_stored_at_at_or_after_now_minus_the_ttl() -> None:
         system_hash=SYSTEM_HASH,
         tools_hash=TOOLS_HASH,
         provider=PROVIDER,
-        region=REGION,
         data_class=DATA_CLASS,
     )
     assert len(transport.requests) == 1

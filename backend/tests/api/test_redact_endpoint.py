@@ -294,7 +294,7 @@ def test_the_map_is_written_under_the_requesting_tenant(
 
 def test_the_response_carries_no_gateway_headers(redact_client: TestClient) -> None:
     """Catches a route that reused the chat route's header builder: there is no resolver
-    result here, so an `X-Gateway-Provider` or `X-Gateway-Region` on this answer would be
+    result here, so an `X-Gateway-Provider` or `X-Gateway-Model` on this answer would be
     a claim about where data went that nothing decided."""
     response = post_redact(redact_client, {"text": f"mail {EMAIL_A}"})
 

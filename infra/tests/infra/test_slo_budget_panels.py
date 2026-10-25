@@ -17,7 +17,6 @@ from typing import Any
 from app.services.prometheus_reads import (
     AVAILABILITY_BUDGET_QUERY,
     LATENCY_BUDGET_QUERY,
-    RESIDENCY_VIOLATIONS_30D_QUERY,
 )
 from infra.test_k8s_grafana import dashboard_documents, panels_of
 
@@ -26,7 +25,6 @@ ROW_TITLE = "SLO error budgets"
 BUDGET_EXPRS = [
     AVAILABILITY_BUDGET_QUERY,
     LATENCY_BUDGET_QUERY,
-    RESIDENCY_VIOLATIONS_30D_QUERY,
 ]
 
 
@@ -43,7 +41,7 @@ def target_exprs(panel: dict[str, Any]) -> list[str]:
 
 
 def budget_panels(panels: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The panels with any target reading one of the three budget queries."""
+    """The panels with any target reading one of the two budget queries."""
     return [panel for panel in panels if any(expr in BUDGET_EXPRS for expr in target_exprs(panel))]
 
 
@@ -53,12 +51,12 @@ def y_of(panel: dict[str, Any]) -> int:
     return int(grid["y"])
 
 
-def test_gateway_overview_has_the_slo_row_with_three_stat_panels(
+def test_gateway_overview_has_the_slo_row_with_two_stat_panels(
     built: list[dict[str, Any]],
 ) -> None:
     """Catches the row missing or titled otherwise, a budget drawn as a timeseries rather than
     a `stat` (a 30-day ratio has one value, not a line), a panel duplicated or left out, and
-    the three panels placed ABOVE their row header, where Grafana files them under whatever row
+    the two panels placed ABOVE their row header, where Grafana files them under whatever row
     precedes it."""
     panels = overview_panels(built)
 
@@ -68,7 +66,7 @@ def test_gateway_overview_has_the_slo_row_with_three_stat_panels(
     assert len(rows) == 1, f"{DASHBOARD_KEY} has {len(rows)} rows titled {ROW_TITLE!r}"
 
     found = budget_panels(panels)
-    assert len(found) == 3, [panel.get("title") for panel in found]
+    assert len(found) == 2, [panel.get("title") for panel in found]
     for panel in found:
         assert panel.get("type") == "stat", f"{panel.get('title')!r} is {panel.get('type')!r}"
         assert y_of(panel) > y_of(rows[0]), f"{panel.get('title')!r} sits above {ROW_TITLE!r}"

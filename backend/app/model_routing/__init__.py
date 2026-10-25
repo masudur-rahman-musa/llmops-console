@@ -1,1 +1,1 @@
-"""Routing policy and the residency resolver."""
+"""Routing policy and the resolver."""

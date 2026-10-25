@@ -2,12 +2,11 @@
 
 It lives beside the adapters rather than in `model_routing/` because what it observes is
 the outcome of a provider CALL. `model_routing/resolver.py` stays a pure function over a
-policy snapshot, which keeps the residency rule a
-proof rather than a sample; a breaker holding mutable state inside that function
+policy snapshot; a breaker holding mutable state inside that function
 would end that. The routes join the two through the seam the resolver already
 takes: `is_healthy` becomes "an adapter exists AND this breaker allows it", so an
 open provider is invisible to a resolution in exactly the way a missing adapter
-already is, and residency is still decided before health.
+already is.
 
 **The three numbers are fixed by the spec.** Five failures inside a rolling
 sixty seconds open it; thirty seconds later it offers one trial request; the trial

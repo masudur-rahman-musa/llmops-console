@@ -8,9 +8,8 @@ the running gateway serves cannot be one a store quietly refuses.
 
 This lives in `core` rather than in the routing package on purpose: the resolver
 was the first raiser, but the rule is a core concern that `core` must own with no
-import back into `model_routing`, which is what lets `core/config.py` read
-`ResidencyMode` from itself and the resolver import the check from here without a
-cycle.
+import back into `model_routing`, so the resolver imports the check from here
+without a cycle.
 
 A check with a different message, `param` or width keeps its own wrapper and only
 sources the constants from here (the `param=`-carrying stores, the Postgres

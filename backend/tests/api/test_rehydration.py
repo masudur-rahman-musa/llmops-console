@@ -132,21 +132,20 @@ UNKNOWN_ID = "0123456789abcdef0123456789abcdef"
 # ACCEPTABLE id by exactly the one defect it is named for.
 WELL_FORMED_ID = "fedcba9876543210fedcba9876543210"
 
-# The published set, lowercased as httpx returns header names. These six are the
+# The published set, lowercased as httpx returns header names. These five are the
 # ones a STREAM carries: they are on the wire before the first frame, which is
 # before the usage a cost could be priced from exists. This module asserts a
 # rehydrated stream still carries exactly them and no more (decision G).
 EXPECTED_HEADER_NAMES = {
     "x-gateway-provider",
-    "x-gateway-region",
     "x-gateway-model",
     "x-gateway-cache",
     "x-gateway-redacted",
     "x-gateway-trace-id",
 }
 
-# The set a non-streamed answer carries: the six above and the cost of the call,
-# which the route adds once the ledger has priced it. The same seven
+# The set a non-streamed answer carries: the five above and the cost of the call,
+# which the route adds once the ledger has priced it. The same six
 # `tests/gateway/test_response_headers.py` pins on an ordinary completion.
 EXPECTED_ANSWER_HEADER_NAMES = EXPECTED_HEADER_NAMES | {"x-gateway-cost-usd"}
 
@@ -157,7 +156,7 @@ STUB_TOOL_NAME = "send_email"
 
 DONE_PAYLOAD = "[DONE]"
 
-# The two SSE headers a streamed answer carries beside the six `X-Gateway-*`
+# The two SSE headers a streamed answer carries beside the five `X-Gateway-*`
 # ones. Named here so the rehydrated stream is compared against the same pair
 # `tests/gateway/test_chat_streaming.py` pins on an ordinary one, rather than
 # against whatever the rehydrating branch happens to build.
@@ -558,7 +557,7 @@ def test_a_rehydrated_answer_carries_the_same_headers(
     because it seemed helpful - and the opposite mistake of a rehydrating branch that
     returns its own response object and drops the ones a caller's dashboard reads. The
     set is compared whole, and against a request that really did rehydrate. It is the
-    seven of a non-streamed answer since an earlier change: rehydration changes what a header
+    six of a non-streamed answer since an earlier change: rehydration changes what a header
     SAYS about the body, never which headers there are."""
     rehydration_stub.response = stub_response(content="write to <EMAIL_1>")
 
@@ -566,7 +565,7 @@ def test_a_rehydrated_answer_carries_the_same_headers(
 
     headers = gateway_headers(response)
     assert set(headers) == EXPECTED_ANSWER_HEADER_NAMES
-    assert len(headers) == 7
+    assert len(headers) == 6
     assert content_of(response) == f"write to {EMAIL_A}"
 
 
@@ -742,10 +741,10 @@ def test_a_rehydrated_stream_carries_the_same_headers(
 ) -> None:
     """Catches the header decision G refuses - an `X-Gateway-Rehydrated: true` added
     because it seemed helpful - and the opposite mistake of a rehydrating branch that
-    builds its own `StreamingResponse` and drops the six an operator's dashboard reads,
+    builds its own `StreamingResponse` and drops the five an operator's dashboard reads,
     or the two SSE headers without which a proxy buffers the whole answer and delivers it
     as one block. The set is compared whole, against a request that really did rehydrate.
-    Six and not the answer's seven: a stream's headers are on the wire before its usage
+    Five and not the answer's six: a stream's headers are on the wire before its usage
     exists, so `X-Gateway-Cost-USD` cannot be among them."""
     rehydration_stub.events = stream_events(fragments=("write to <EMAIL_1>",))
 
@@ -753,7 +752,7 @@ def test_a_rehydrated_stream_carries_the_same_headers(
 
     headers = gateway_headers(response)
     assert set(headers) == EXPECTED_HEADER_NAMES
-    assert len(headers) == 6
+    assert len(headers) == 5
     lowered = {name.lower(): value for name, value in response.headers.items()}
     assert {name: lowered[name] for name in EXPECTED_SSE_HEADERS} == EXPECTED_SSE_HEADERS
     assert lowered["content-type"].split(";")[0] == "text/event-stream"

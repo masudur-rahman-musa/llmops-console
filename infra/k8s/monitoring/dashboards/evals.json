@@ -1,7 +1,7 @@
 {
   "uid": "evals",
   "title": "Evals",
-  "description": "Requests, latency, cost and residency violations filtered to the evals tenant. This dashboard reads the same gateway families every other dashboard reads, scoped to tenant=\"evals\", so it renders real data as soon as the eval runner sends traffic under that tenant; the nightly eval's own gateway_eval_* score metrics (row 24, REQUIREMENTS #43) are pushed to a Pushgateway rather than tagged with a tenant, and are read by NightlyEvalRegression, not by this dashboard. Provisioned from infra/k8s/monitoring/dashboards/; edits made in the Grafana UI are not saved.",
+  "description": "Requests, latency and cost filtered to the evals tenant. This dashboard reads the same gateway families every other dashboard reads, scoped to tenant=\"evals\", so it renders real data as soon as the eval runner sends traffic under that tenant; the nightly eval's own gateway_eval_* score metrics (row 24, REQUIREMENTS #43) are pushed to a Pushgateway rather than tagged with a tenant, and are read by NightlyEvalRegression, not by this dashboard. Provisioned from infra/k8s/monitoring/dashboards/; edits made in the Grafana UI are not saved.",
   "tags": ["evals", "opsconsole"],
   "timezone": "utc",
   "schemaVersion": 39,
@@ -81,27 +81,6 @@
           "range": true,
           "legendFormat": "{{provider}} {{model}}",
           "expr": "sum by (provider, model) (rate(gateway_cost_usd_total{tenant=\"evals\"}[5m]))"
-        }
-      ]
-    },
-    {
-      "id": 4,
-      "type": "timeseries",
-      "title": "Residency violations per second",
-      "description": "Expected flat at zero, same as the residency dashboard's panel of the same family.",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
-      "fieldConfig": {
-        "defaults": { "unit": "reqps", "min": 0 },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "editorMode": "code",
-          "range": true,
-          "legendFormat": "evals",
-          "expr": "sum(rate(gateway_residency_violations_total{tenant=\"evals\"}[5m]))"
         }
       ]
     }

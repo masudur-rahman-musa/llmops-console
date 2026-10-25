@@ -14,7 +14,7 @@ filters on, the fixed 0.97 threshold and the eligibility predicate's four refusa
 per-alias switch among them - over `vectors.py`, a `SemanticCache` Protocol with an
 in-process implementation and a Qdrant one, holding the same neutral `ChatResponse` in
 one collection per tenant. Nothing in it embeds anything: the vector arrives as an
-argument, because an embedding is a provider call with a residency regime and a failure
+argument, because an embedding is a provider call with a failure
 mode of its own: the chat route embeds the probe, and the lookup, the headers and the
 `kind="semantic"` metric are its too.
 

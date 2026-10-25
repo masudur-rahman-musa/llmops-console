@@ -37,7 +37,7 @@ from app.storage.cost_ledger import LEDGER_QUEUE_SIZE
 from .conftest import Pool
 
 WHEN = datetime(2026, 9, 7, 22, 45, 13, tzinfo=UTC)
-TRACE_ID_INDEX = 13
+TRACE_ID_INDEX = 12
 """Where `trace_id` sits in the INSERT's parameters, the 14th of fourteen."""
 
 DROPPED_RESULTS = (
@@ -56,7 +56,6 @@ def a_row(number: int = 0) -> CostLedgerRow:
         alias="agent-default",
         provider="local",
         model="qwen2.5-7b-instruct",
-        region="self",
         input_tokens=100,
         output_tokens=50,
         cached=False,

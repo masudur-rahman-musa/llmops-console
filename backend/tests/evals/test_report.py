@@ -14,7 +14,7 @@ Contract these tests are written against:
   -> RunReport`. `RunReport` keeps its header (`id` of 32 characters, times, set, run kind,
   git sha, tenant, target, `passed`, `metrics`, `calibration`) and holds one `CaseReport` per
   line (`case_id`, `category`, `passed`, `tags` always empty, the four measured fields
-  `latency_ms`, `cost_usd`, `provider`, `region` all `None`, `error`, `check`, `judged`).
+  `latency_ms`, `cost_usd`, `provider` all `None`, `error`, `check`, `judged`).
   `RunReport.passed` is true when every case passed. `tenant` is `ALL_TENANTS = "all"`
   for a conversation run: the cases name their own tenants.
 * `report_json(report)`, `report_markdown(report)`, `write_reports(out, report)`.
@@ -123,12 +123,7 @@ def test_the_report_carries_the_run_the_scores_and_one_row_per_case() -> None:
     assert [c.case_id for c in report.cases] == ["conv-001", "conv-002"]
     assert report.cases[1].error == "HTTP 500 for conv-002"
     broken = report.cases[1]
-    assert (broken.latency_ms, broken.cost_usd, broken.provider, broken.region) == (
-        None,
-        None,
-        None,
-        None,
-    )
+    assert (broken.latency_ms, broken.cost_usd, broken.provider) == (None, None, None)
     assert broken.tags == ()
 
 

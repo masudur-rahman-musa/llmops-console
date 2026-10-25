@@ -65,8 +65,8 @@ def tenant_directory(store: DirectoryStore, tenant: str) -> NameDirectory:
     is the difference between microseconds and a visible pause.
 
     `DirectoryStoreUnavailable` becomes `ProviderError` - 502, `PROVIDER_ERROR` -
-    and never an empty directory. That is decision H, and it is the same
-    deny-by-default rule residency holds: a request redacted without the tenant's
+    and never an empty directory. That is decision H, and it is the
+    deny-by-default rule: a request redacted without the tenant's
     names and served anyway carries the values this control exists to remove out
     to a provider, with `X-Gateway-Redacted: true` on the answer. The
     message is this module's own words, exactly as `filed_map_id`'s is: the

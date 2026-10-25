@@ -14,7 +14,7 @@ case takes IS the claim it makes:
 The cases needing a real server live in tests/storage/test_eval_store_postgres.py
 and are skipped without `OPSCONSOLE_TEST_DATABASE_URL`.
 
-Every pattern is checked with `fullmatch`: `tenant`, `provider`, `region`, `case_id` and
+Every pattern is checked with `fullmatch`: `tenant`, `provider`, `case_id` and
 `category` against the resolver's identifier rule, `git_sha` against
 `report.SET_SHA_PATTERN`, `run_kind` against the three words `ops-eval` accepts. Each
 rejection table below carries a trailing newline, a trailing CRLF and a trailing space.
@@ -75,7 +75,6 @@ TENANT = "all"
 TARGET = "https://helpdesk.example/gateway"
 RUN_ID = "9f2c1d7e4b0a48f5a6d3c1e0b7248f5a"
 PROVIDER = "anthropic_eu"
-REGION = "eu"
 
 SEVEN_HEX = "a1b2c3d"
 SIXTY_FOUR_HEX = "0123456789abcdef" * 4
@@ -142,7 +141,6 @@ def a_case_row(**overrides: Any) -> EvalCaseRow:  # noqa: ANN401
         "latency_ms": 137,
         "cost_usd": Decimal("0.001200"),
         "provider": PROVIDER,
-        "region": REGION,
         "details": {"check": None, "judged": [], "error": None},
     }
     fields.update(overrides)
@@ -298,7 +296,7 @@ def test_there_is_one_case_row_per_case_report_in_report_order() -> None:
 
 def test_a_conversation_case_stores_no_measurements() -> None:
     """Catches the four measured columns filled with `0` and `""`: a conversation answer
-    measures no latency, cost, provider or region, and a zero would be averaged in as a
+    measures no latency, cost, or provider, and a zero would be averaged in as a
     free, instant success. `is None` on each, for every case, the answered ones too."""
     _, case_rows = rows_from_report(build(MIXED), report_path=Path("/tmp/report.json"))
 
@@ -306,7 +304,6 @@ def test_a_conversation_case_stores_no_measurements() -> None:
         assert row.latency_ms is None
         assert row.cost_usd is None
         assert row.provider is None
-        assert row.region is None
         assert row.tags == ()
 
 
@@ -475,19 +472,15 @@ def test_write_refuses_a_malformed_tenant_before_any_sql(label: str, value: str)
     write_refused(tenant=value)
 
 
-@pytest.mark.parametrize("field", ["provider", "region"])
 @pytest.mark.parametrize(
     ("label", "value"), REJECTED_IDENTIFIERS, ids=[row[0] for row in REJECTED_IDENTIFIERS]
 )
-def test_write_refuses_a_malformed_provider_or_region_before_any_sql(
-    field: str, label: str, value: str
-) -> None:
+def test_write_refuses_a_malformed_provider_before_any_sql(label: str, value: str) -> None:
     """Catches a check applied to the run row's identifiers and not to the case rows',
-    which is the easy half to forget: `provider` and `region` arrive from a target's own
-    response headers rather than from a command line, so they are the two least trusted
-    strings in the whole record. Both fields are covered because a check written for one
-    of them passes every row of the other."""
-    case_write_refused(**{field: value})
+    which is the easy half to forget: `provider` arrives from a target's own
+    response headers rather than from a command line, so it is among the least trusted
+    strings in the whole record."""
+    case_write_refused(provider=value)
 
 
 @pytest.mark.parametrize(
@@ -502,8 +495,8 @@ def test_write_refuses_a_malformed_case_id_before_any_sql(label: str, value: str
 
 
 def test_a_case_that_measured_nothing_is_written_rather_than_refused() -> None:
-    """The other direction for the two case-row identifiers, and the row a broken turn
-    produces. Catches a pre-check that runs on `provider` and `region` unconditionally:
+    """The other direction for the case-row provider, and the row a broken turn
+    produces. Catches a pre-check that runs on `provider` unconditionally:
     `None` is not a malformed identifier, it is the absence the NULL column exists for,
     and a store refusing it would lose exactly the rows a failing target produces - the
     ones a run is stored for."""
@@ -519,7 +512,6 @@ def test_a_case_that_measured_nothing_is_written_rather_than_refused() -> None:
                 latency_ms=None,
                 cost_usd=None,
                 provider=None,
-                region=None,
                 details={"check": None, "judged": [], "error": "turn failed"},
             ),
         ),

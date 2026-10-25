@@ -13,8 +13,8 @@ Three things it holds that no single field states:
   nothing is recomputed or re-timed, so the row and the file a run leaves behind
   cannot disagree about the same run.
 * **A case that measured nothing stores NULL, never `0` and never `""`.** A turn
-  that never answered has no latency, cost, provider or region; a zero there
-  would be averaged in as a free, instant, in-region case and would lift every
+  that never answered has no latency, cost or provider; a zero there
+  would be averaged in as a free, instant case and would lift every
   number `evals/scores.py` reports exactly when the target is failing.
 * **Every pre-check runs before a connection is borrowed.** A refused row means
   "no connection was borrowed at all", not "the INSERT errored". As with
@@ -159,7 +159,6 @@ class EvalCaseRow(BaseModel):
     latency_ms: int | None
     cost_usd: Decimal | None
     provider: str | None
-    region: str | None
     details: Mapping[str, Any]
 
 
@@ -235,7 +234,6 @@ def rows_from_report(
             latency_ms=case.latency_ms,
             cost_usd=case.cost_usd,
             provider=case.provider,
-            region=case.region,
             details=_details(case),
         )
         for case in report.cases
@@ -304,8 +302,8 @@ class PostgresEvalStore:
                     sql.SQL(
                         "INSERT INTO {} ("
                         "run_id, case_id, category, passed, tags, latency_ms, "
-                        "cost_usd, provider, region, details) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                        "cost_usd, provider, details) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
                     ).format(sql.Identifier(self._schema, EVAL_CASES)),
                     [
                         (
@@ -317,7 +315,6 @@ class PostgresEvalStore:
                             case_row.latency_ms,
                             case_row.cost_usd,
                             case_row.provider,
-                            case_row.region,
                             Jsonb(dict(case_row.details)),
                         )
                         for case_row in case_rows
@@ -338,7 +335,7 @@ def _check_run_row(row: EvalRunRow) -> None:
 def _check_case_row(row: EvalCaseRow) -> None:
     """Every value on one case row, before a connection is borrowed.
 
-    `provider` and `region` are checked only when they are present: `None` is not
+    `provider` is checked only when it is present: `None` is not
     a malformed identifier, it is the absence the NULL column exists for, and an
     unconditional check would refuse exactly the rows a failing target produces.
     """
@@ -346,8 +343,6 @@ def _check_case_row(row: EvalCaseRow) -> None:
     _checked_category(row.category)
     if row.provider is not None:
         checked_identifier(row.provider, "provider")
-    if row.region is not None:
-        checked_identifier(row.region, "region")
 
 
 def _checked_length(value: str, field: str, cap: int) -> str:

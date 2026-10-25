@@ -598,7 +598,7 @@ def test_option_runs_the_named_set_as_the_evals_tenant_with_the_policy_it_built(
     rather than each being correct alone. Catches `--policy` left off (the gateway's shipped
     policy is used and the option is not what it says), a hard-coded reports directory that
     overwrites the previous option's files, the Helpdesk set named instead of the stand-in one
-    (decision E), and a tenant other than `evals`, whose residency rules the overlays edit."""
+    (decision E), and a tenant other than `evals`, whose rules the overlays edit."""
     succeeded(option_run)
     builds = policy_builds(option_run)
     evaluations = eval_runs(option_run)

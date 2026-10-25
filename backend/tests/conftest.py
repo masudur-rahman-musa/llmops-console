@@ -32,16 +32,12 @@ CLEARED_VARIABLES = (
     "OPSCONSOLE_DATABASE_URL",
     "OPSCONSOLE_QDRANT_URL",
     "OPSCONSOLE_PROMETHEUS_URL",
-    "OPSCONSOLE_RESIDENCY_MODE",
 )
 """Every setting whose value in the developer's shell would change what the suite
 IS, cleared for the whole session below.
 
-The four URLs are the ones whose PRESENCE decides what `create_app` builds (plan
-09a decisions B and C). `OPSCONSOLE_RESIDENCY_MODE` joined them in an earlier change for the
-same reason and a sharper one: exported as `relaxed` it would widen the region set
-for every `resolve()` in the suite, so the residency cases would pass against a
-gateway enforcing something else. A case that wants a value states it with
+These are the ones whose PRESENCE decides what `create_app` builds (plan
+09a decisions B and C). A case that wants a value states it with
 `monkeypatch.setenv` or passes it to `Settings` directly. The Redis suite reads
 `OPSCONSOLE_TEST_REDIS_URL` instead, which nothing in `Settings` looks at."""
 

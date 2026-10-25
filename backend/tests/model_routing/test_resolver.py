@@ -1,8 +1,7 @@
 """Resolving (tenant, alias, data class) to an ordered candidate list.
 
-Residency is deny by default. Every unhappy path here asserts the exact typed
-code and HTTP status, because an earlier change maps those values into
-the wire body and a drift would be invisible until then.
+Every unhappy path here asserts the exact typed code and HTTP status, because an earlier change maps those values into the wire body and a
+drift would be invisible until then.
 """
 
 from __future__ import annotations
@@ -11,28 +10,23 @@ from collections.abc import Callable
 
 import pytest
 
+from app.core.errors import TenantMismatch
 from app.core.validation import MAX_IDENTIFIER_LENGTH, IdentifierInvalid
-from app.model_routing.errors import (
-    AliasUnknown,
-    AllProvidersUnavailable,
-    ResidencyUnavailable,
-)
-from app.model_routing.policy import DataClass, Policy, Residency, load_policy
+from app.model_routing.errors import AliasUnknown, AllProvidersUnavailable
+from app.model_routing.policy import DataClass, Policy, load_policy
 from app.model_routing.resolver import Resolved, resolve
 from app.providers.factory import build_adapters
 
 from .conftest import SHIPPED_POLICY_PATH
 
 
-def as_tuples(resolved: tuple[Resolved, ...]) -> list[tuple[str, str, str]]:
-    return [(r.provider, r.model, r.region) for r in resolved]
+def as_tuples(resolved: tuple[Resolved, ...]) -> list[tuple[str, str]]:
+    return [(r.provider, r.model) for r in resolved]
 
 
 # The `judge` alias against the SHIPPED policy, resolved through the health seam
 # the routes fill: a provider is healthy when `build_adapters` built an adapter
-# for it. `evals` is the one tenant with `residency: any`, and both `judge`
-# candidates are `us`, so the reachable set is decided by the environment alone
-# and by nothing the residency clamp does.
+# for it, so the reachable set is decided by the environment alone.
 
 JUDGE_TENANT = "evals"
 JUDGE_ALIAS = "judge"
@@ -44,7 +38,7 @@ FAKE_ANTHROPIC_KEY = "sk-ant-not-a-real-key"
 FAKE_OPENAI_KEY = "sk-openai-not-a-real-key"
 
 
-def judge_candidates(environ: dict[str, str]) -> list[tuple[str, str, str]]:
+def judge_candidates(environ: dict[str, str]) -> list[tuple[str, str]]:
     """What `judge` resolves to when only `environ` is set, adapters as the health seam.
 
     The keys are injected rather than read from `os.environ`, so no case here
@@ -67,75 +61,51 @@ def test_override_beats_alias_default(policy: Policy) -> None:
     """`acme` overrides `chat`, so the alias default never appears."""
     result = resolve(policy, "acme", "chat", "public")
 
-    assert as_tuples(result) == [("eu-b", "m-override", "eu")]
+    assert as_tuples(result) == [("b", "m-override")]
 
 
 def test_disabled_provider_filtered(policy: Policy) -> None:
     result = resolve(policy, "acme", "disabled-first", "public")
 
-    assert as_tuples(result) == [("eu-a", "m-eu-a", "eu")]
+    assert as_tuples(result) == [("a", "m-a")]
 
 
 def test_order_preserved(policy: Policy) -> None:
     """Three candidates, returned in the policy's order, not sorted."""
     result = resolve(policy, "acme", "ordered", "public")
 
-    assert as_tuples(result) == [
-        ("eu-a", "m-eu-a", "eu"),
-        ("eu-b", "m-eu-b", "eu"),
-        ("self-a", "m-self-a", "self"),
-    ]
+    assert as_tuples(result) == [("a", "m-a"), ("b", "m-b"), ("self-a", "m-self-a")]
 
 
-def test_eu_residency_clamps_a_data_class_that_allows_us(policy: Policy) -> None:
-    """Decision B: residency is an outer clamp applied after the data class.
+def test_every_data_class_gets_the_same_candidates(policy: Policy) -> None:
+    """The data class decides redaction, not providers: all four resolve alike."""
+    results = {
+        data_class: resolve(policy, "acme", "ordered", data_class.value) for data_class in DataClass
+    }
 
-    `acme` is an eu tenant whose `public` rule allows `us`. The us candidate is
-    first in the alias, so a resolver that only applied the data class rule
-    would return it at the head of the list.
-    """
-    result = resolve(policy, "acme", "mixed", "public")
-
-    assert as_tuples(result) == [("eu-a", "m-eu-a", "eu")]
+    assert len(set(results.values())) == 1
 
 
-def test_non_eu_tenant_is_not_clamped(policy: Policy) -> None:
-    """The contrast case: without `residency: eu` the us candidate survives."""
-    result = resolve(policy, "globex", "mixed", "public")
-
-    assert as_tuples(result) == [("us-a", "m-us-a", "us"), ("eu-a", "m-eu-a", "eu")]
+def test_a_tenant_with_no_rule_for_a_data_class_still_resolves(policy: Policy) -> None:
+    """`acme` has no `pii` rule, and a missing rule is not a refusal."""
+    assert resolve(policy, "acme", "ordered", "pii")
 
 
-# Every route to an empty candidate list, including the missing-rule row where
-# the tenant has no entry for the data class at all.
-EMPTY_CASES: list[tuple[str, str, str, str]] = [
-    ("data class excludes the only region", "acme", "us-only", "internal"),
-    ("eu clamp empties an us-only allowance", "narrow", "us-only", "public"),
-    ("tenant has no rule for the data class", "acme", "ordered", "pii"),
-    ("tenant has no rule and no candidates survive", "globex", "ordered", "confidential"),
-]
+def test_all_candidates_disabled_raises_all_providers_unavailable(policy: Policy) -> None:
+    with pytest.raises(AllProvidersUnavailable) as excinfo:
+        resolve(policy, "acme", "all-off", "public")
+
+    assert excinfo.value.code == "ALL_PROVIDERS_FAILED"
+    assert excinfo.value.http_status == 503
 
 
-@pytest.mark.parametrize(
-    ("case", "tenant", "alias", "data_class"), EMPTY_CASES, ids=[c[0] for c in EMPTY_CASES]
-)
-def test_empty_candidates_raises_residency_unavailable(
-    case: str, tenant: str, alias: str, data_class: str, policy: Policy
-) -> None:
-    with pytest.raises(ResidencyUnavailable) as excinfo:
-        resolve(policy, tenant, alias, data_class)
-
-    assert excinfo.value.code == "RESIDENCY_UNAVAILABLE"
-    assert excinfo.value.http_status == 451
-
-
-def test_unknown_tenant_raises_residency_unavailable(policy: Policy) -> None:
-    """Deny by default: an unknown tenant has no rules, so nothing is allowed."""
-    with pytest.raises(ResidencyUnavailable) as excinfo:
+def test_unknown_tenant_raises_tenant_mismatch(policy: Policy) -> None:
+    """A tenant the policy does not carry is a 403, never a widened default."""
+    with pytest.raises(TenantMismatch) as excinfo:
         resolve(policy, "not-a-tenant", "ordered", "public")
 
-    assert excinfo.value.code == "RESIDENCY_UNAVAILABLE"
-    assert excinfo.value.http_status == 451
+    assert excinfo.value.code == "TENANT_MISMATCH"
+    assert excinfo.value.http_status == 403
 
 
 def test_unknown_alias_raises(policy: Policy) -> None:
@@ -150,8 +120,8 @@ def always_unhealthy(provider: str) -> bool:
     return False
 
 
-def only_eu_b_healthy(provider: str) -> bool:
-    return provider == "eu-b"
+def only_b_healthy(provider: str) -> bool:
+    return provider == "b"
 
 
 def always_healthy(provider: str) -> bool:
@@ -161,7 +131,7 @@ def always_healthy(provider: str) -> bool:
 def test_is_healthy_filtering_everything_raises_all_providers_unavailable(
     policy: Policy,
 ) -> None:
-    """A health outage is 503, never 451: the region set was fine."""
+    """A health outage is 503."""
     with pytest.raises(AllProvidersUnavailable) as excinfo:
         resolve(policy, "acme", "ordered", "public", is_healthy=always_unhealthy)
 
@@ -170,9 +140,9 @@ def test_is_healthy_filtering_everything_raises_all_providers_unavailable(
 
 
 def test_is_healthy_filters_a_subset_and_keeps_order(policy: Policy) -> None:
-    result = resolve(policy, "acme", "ordered", "public", is_healthy=only_eu_b_healthy)
+    result = resolve(policy, "acme", "ordered", "public", is_healthy=only_b_healthy)
 
-    assert as_tuples(result) == [("eu-b", "m-eu-b", "eu")]
+    assert as_tuples(result) == [("b", "m-b")]
 
 
 def test_default_is_healthy_keeps_every_candidate(policy: Policy) -> None:
@@ -227,7 +197,7 @@ def test_identifier_at_the_maximum_length_is_accepted(boundary_policy: Policy) -
 
     result = resolve(boundary_policy, name, name, "public")
 
-    assert as_tuples(result) == [("eu-a", "m-eu-a", "eu")]
+    assert as_tuples(result) == [("a", "m-a")]
 
 
 BAD_DATA_CLASSES: list[tuple[str, str]] = [
@@ -259,21 +229,8 @@ def test_identifier_check_runs_before_any_lookup(policy: Policy) -> None:
         resolve(policy, "acme", "no such alias", "public")
 
 
-def allowed_regions(policy: Policy, tenant_name: str, data_class: DataClass) -> set[str]:
-    tenant = policy.tenants[tenant_name]
-    rule = tenant.data_class_rules.get(data_class)
-    allowed = set(rule.allow_regions) if rule is not None else set()
-    if tenant.residency is Residency.EU:
-        allowed &= set(policy.eu_regions)
-    return allowed
-
-
 def test_shipped_policy_exhaustive() -> None:
-    """Every triple in the shipped file resolves inside the allowed set or 451.
-
-    There is no third outcome: no widening, no empty success, no candidate in a
-    region the tenant's rules (clamped by residency) do not permit.
-    """
+    """Every triple in the shipped file resolves to enabled providers only."""
     policy = load_policy(SHIPPED_POLICY_PATH)
     checked = 0
 
@@ -281,19 +238,9 @@ def test_shipped_policy_exhaustive() -> None:
         for alias_name in policy.aliases:
             for data_class in DataClass:
                 checked += 1
-                allowed = allowed_regions(policy, tenant_name, data_class)
-                try:
-                    result = resolve(policy, tenant_name, alias_name, data_class.value)
-                except ResidencyUnavailable:
-                    continue
+                result = resolve(policy, tenant_name, alias_name, data_class.value)
                 assert result, (tenant_name, alias_name, data_class)
                 for candidate in result:
-                    assert candidate.region in allowed, (
-                        tenant_name,
-                        alias_name,
-                        data_class,
-                        candidate,
-                    )
                     assert policy.providers[candidate.provider].enabled
 
     assert checked == len(policy.tenants) * len(policy.aliases) * len(DataClass)
@@ -307,14 +254,14 @@ def test_judge_stays_on_anthropic_when_the_openai_key_is_set() -> None:
         {ANTHROPIC_KEY_ENV: FAKE_ANTHROPIC_KEY, OPENAI_KEY_ENV: FAKE_OPENAI_KEY}
     )
 
-    assert candidates == [("anthropic", "claude-haiku-5-5", "us")]
+    assert candidates == [("anthropic", "claude-haiku-5-5")]
 
 
 def test_judge_has_one_candidate_when_it_is_not() -> None:
     """Catches a judge pointed anywhere but the cheaper Anthropic model."""
     candidates = judge_candidates({ANTHROPIC_KEY_ENV: FAKE_ANTHROPIC_KEY})
 
-    assert candidates == [("anthropic", "claude-haiku-5-5", "us")]
+    assert candidates == [("anthropic", "claude-haiku-5-5")]
 
 
 EVAL_FIRST_CHOICE = (
@@ -347,7 +294,7 @@ def test_eval_aliases_run_on_haiku_and_sonnet_5_5(alias: str, model: str) -> Non
 
 def test_no_candidate_in_the_shipped_policy_names_openai() -> None:
     """Catches a leftover `openai` or `gpt-4o` candidate on any alias or any tenant override:
-    OpenAI is not used for evals, and a relaxed-mode fallback to it would spend on a
+    OpenAI is not used for evals, and a fallback to it would spend on a
     provider the owner turned off. Checked on the policy file, not on what resolves, so a
     candidate hidden behind a disabled provider is still found."""
     policy = load_policy(SHIPPED_POLICY_PATH)

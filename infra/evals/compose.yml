@@ -15,7 +15,3 @@ services:
   gateway:
     environment:
       OPSCONSOLE_API_KEYS: ${OPSCONSOLE_API_KEYS}
-      # Relaxed, as in the local demo: `nordlicht` pins its chat to the box it runs on,
-      # and no local model runs here, so under strict its cases would score a 451
-      # instead of the help desk's chat. A deployment never runs relaxed.
-      OPSCONSOLE_RESIDENCY_MODE: relaxed

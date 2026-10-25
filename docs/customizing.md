@@ -17,21 +17,18 @@ class. It is also the only shipped file that contains a provider model id.
 What you change:
 
 - **Providers.** Replace the shipped rows with your own. A row names a `kind`
-  (`anthropic`, `openai_compatible`, `azure_openai`), a `region`, and the
+  (`anthropic`, `openai_compatible`, `azure_openai`), and the
   environment variable holding the key as `key_env`. Keys are never written
   here; only the name of the variable is. See [docs/azure.md](docs/azure.md)
   for the one provider kind that needs an endpoint variable too.
 - **Aliases.** Your callers ask for an alias, not a model. Give each alias the
   candidates you want tried, in order.
-- **Tenants.** One row per tenant, each with its residency region and its rule
-  per data class: which regions are allowed, and whether the request is
-  redacted on the way out.
-- **`eu_regions`.** The region set an EU tenant is intersected against.
+- **Tenants.** One row per tenant, each with its rule per data class: whether
+  the request is redacted on the way out.
 
-Residency is deny by default, and the resolver never widens a region set on
-failure — an empty result is a refusal, not a fallback. That behaviour is not
-configurable, and a property test over generated policies keeps it that way:
-[backend/tests/model_routing/test_residency_property.py](backend/tests/model_routing/test_residency_property.py).
+Fallback stays inside the alias: when a provider fails, the gateway tries only
+the next candidate the alias lists for that tenant:
+[backend/tests/api/test_fallback.py](backend/tests/api/test_fallback.py).
 
 ## `backend/config/prices.yaml` — what a token costs you
 

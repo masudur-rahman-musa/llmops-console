@@ -17,7 +17,7 @@ tests/storage/conftest.py, unchanged.
 The contract these cases are written against, before it exists:
 
 * `PostgresConsoleReader(pool, *, schema)` with `home`, `cost`, `quality`,
-  `residency`, `incidents` and `releases`, answering the frozen read models of
+  `incidents` and `releases`, answering the frozen read models of
   `app.storage.dashboard_reads`;
 * a window of `now - timedelta(days=days)`, compared with `>=` on timestamps and
   with `day >= since.date()` on the rollup; "today" is `[UTC midnight, +1 day)`.
@@ -42,7 +42,6 @@ from app.schemas.dashboard import (
     EvalRunSummary,
     Incident,
     LastEval,
-    RegionCount,
     Release,
     ReleaseMarker,
     Saving,
@@ -84,7 +83,6 @@ def insert_cost(
     alias: str = "agent-default",
     provider: str = SHIPPED_PROVIDER,
     model: str = SHIPPED_MODEL,
-    region: str = "us",
     input_tokens: int = 100,
     output_tokens: int = 50,
     cached: bool = False,
@@ -95,9 +93,9 @@ def insert_cost(
     with pool.connection() as conn:
         conn.execute(
             sql.SQL(
-                "INSERT INTO {} (ts, tenant, alias, provider, model, region, input_tokens, "
+                "INSERT INTO {} (ts, tenant, alias, provider, model, input_tokens, "
                 "output_tokens, cached, cost_usd, price_version, estimated, session, trace_id) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
             ).format(sql.Identifier(schema, "cost_ledger")),
             (
                 ts,
@@ -105,7 +103,6 @@ def insert_cost(
                 alias,
                 provider,
                 model,
-                region,
                 input_tokens,
                 output_tokens,
                 cached,
@@ -125,28 +122,6 @@ def refresh_rollup(pool: Pool, schema: str, /) -> None:
             sql.SQL("REFRESH MATERIALIZED VIEW {}").format(
                 sql.Identifier(schema, "cost_ledger_daily")
             )
-        )
-
-
-def insert_residency(
-    pool: Pool,
-    schema: str,
-    /,
-    *,
-    ts: datetime,
-    tenant: str,
-    region: str,
-    provider: str,
-    allowed: bool,
-) -> None:
-    """One `residency_log` row."""
-    with pool.connection() as conn:
-        conn.execute(
-            sql.SQL(
-                "INSERT INTO {} (ts, tenant, data_class, alias, provider, region, allowed) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s)"
-            ).format(sql.Identifier(schema, "residency_log")),
-            (ts, tenant, "internal", "agent-default", provider, region, allowed),
         )
 
 
@@ -275,7 +250,7 @@ def shipped_prices() -> PriceTable:
 def test_today_counts_only_the_current_utc_day(pool: Pool, migrated_schema: str) -> None:
     """Catches "today" computed as a rolling 24 hours (the 23:59:59 rows yesterday fall
     inside it), an exclusive lower bound at UTC midnight, an unbounded upper edge (a row at
-    tomorrow's midnight), violations counted without `NOT allowed`, the last eval chosen by
+    tomorrow's midnight), the last eval chosen by
     `finished_at` instead of `started_at`, and open incidents counted without
     `resolved_at IS NULL`."""
     schema = migrated_schema
@@ -283,22 +258,6 @@ def test_today_counts_only_the_current_utc_day(pool: Pool, migrated_schema: str)
     insert_cost(pool, schema, ts=NOW - timedelta(hours=1), cost_usd="0.250000")
     insert_cost(pool, schema, ts=MIDNIGHT - SECOND, cost_usd="4.000000")
     insert_cost(pool, schema, ts=MIDNIGHT + timedelta(days=1), cost_usd="8.000000")
-
-    insert_residency(
-        pool, schema, ts=MIDNIGHT, tenant="cuan", region="us", provider="anthropic", allowed=False
-    )
-    insert_residency(
-        pool,
-        schema,
-        ts=MIDNIGHT - SECOND,
-        tenant="cuan",
-        region="us",
-        provider="anthropic",
-        allowed=False,
-    )
-    insert_residency(
-        pool, schema, ts=NOW, tenant="cuan", region="eu", provider="anthropic_eu", allowed=True
-    )
 
     newest_start = NOW - timedelta(hours=2)
     insert_run(
@@ -336,7 +295,6 @@ def test_today_counts_only_the_current_utc_day(pool: Pool, migrated_schema: str)
     assert read == HomeRead(
         requests_today=2,
         cost_usd_today=0.75,
-        residency_violations_today=1,
         last_eval=LastEval(
             id="run-newest-start",
             finished_at=newest_start + timedelta(minutes=5),
@@ -358,7 +316,6 @@ def test_an_empty_ledger_answers_zeros_and_no_last_eval(pool: Pool, migrated_sch
     assert reader.home(now=NOW) == HomeRead(
         requests_today=0,
         cost_usd_today=0.0,
-        residency_violations_today=0,
         last_eval=None,
         open_incidents=0,
     )
@@ -393,7 +350,7 @@ def test_an_unpopulated_rollup_is_empty_and_flagged(
 def test_days_sum_the_rollup_by_day_tenant_and_provider(
     pool: Pool, migrated_schema: str, shipped_prices: PriceTable
 ) -> None:
-    """Catches days not summed across the rollup's alias, model and region columns (two
+    """Catches days not summed across the rollup's alias and model columns (two
     rows for one day, tenant and provider), a window compared by instant instead of by
     UTC date (the row at 01:00 on the window's first day would drop), a missing lower
     bound (the day before it), a wrong order, and a read of the live ledger instead of the
@@ -411,13 +368,10 @@ def test_days_sum_the_rollup_by_day_tenant_and_provider(
         ts=today,
         alias="judge",
         model="claude-opus-5",
-        region="us",
         cached=True,
         cost_usd="0.500000",
     )
-    insert_cost(
-        pool, schema, ts=today, provider="local", model="qwen", region="self", cost_usd="0.000000"
-    )
+    insert_cost(pool, schema, ts=today, provider="local", model="qwen", cost_usd="0.000000")
     insert_cost(pool, schema, ts=today, tenant="cuan", cost_usd="0.125000")
     refresh_rollup(pool, schema)
     insert_cost(pool, schema, ts=today, tenant="evals", cost_usd="1.000000")
@@ -557,7 +511,7 @@ def test_a_cached_row_of_a_shipped_priced_provider_saves_more_than_zero(
     pool: Pool, migrated_schema: str, shipped_prices: PriceTable
 ) -> None:
     """Catches the savings key built from anything but the ledger's `provider` and `model`
-    joined as `provider/model` - the provider kind, the alias, the region - which prices
+    joined as `provider/model` - the provider kind, the alias - which prices
     every group as `unpriced` zero, so the "money saved" figure reads 0 in production while
     a test table with a made-up key stays green."""
     key = f"{SHIPPED_PROVIDER}/{SHIPPED_MODEL}"
@@ -608,42 +562,6 @@ def test_cost_per_request_excludes_cached_rows(
     assert read.cost_per_request[0].cost_usd == pytest.approx(0.4)
     assert read.cost_per_request[1].cost_usd == pytest.approx(1.0)
     assert all(isinstance(row, AliasCost) for row in read.cost_per_request)
-
-
-# --- residency -------------------------------------------------------------------
-
-
-def test_residency_by_region_and_violations_over_the_window(
-    pool: Pool, migrated_schema: str
-) -> None:
-    """Catches the window compared with `>` (the row exactly at its start drops), no lower
-    bound (the violation a second before it counts), a grouping missing `provider` (the two
-    eu providers merge), violations counted over `allowed` rows, and a wrong order."""
-    schema = migrated_schema
-    recent = NOW - timedelta(days=1)
-    rows = [
-        (recent, "nordlicht", "eu", "anthropic_eu", True),
-        (WINDOW_30, "nordlicht", "eu", "anthropic_eu", True),
-        (recent, "nordlicht", "eu", "mistral_eu", True),
-        (recent, "nordlicht", "self", "local", True),
-        (recent, "cuan", "us", "anthropic", False),
-        (WINDOW_30 - SECOND, "cuan", "us", "anthropic", False),
-        (WINDOW_30 - SECOND, "evals", "us", "openai", True),
-    ]
-    for ts, tenant, region, provider, allowed in rows:
-        insert_residency(
-            pool, schema, ts=ts, tenant=tenant, region=region, provider=provider, allowed=allowed
-        )
-
-    read = PostgresConsoleReader(pool, schema=schema).residency(days=30, tenant=None, now=NOW)
-
-    assert read.by_region == (
-        RegionCount(tenant="cuan", region="us", provider="anthropic", requests=1),
-        RegionCount(tenant="nordlicht", region="eu", provider="anthropic_eu", requests=2),
-        RegionCount(tenant="nordlicht", region="eu", provider="mistral_eu", requests=1),
-        RegionCount(tenant="nordlicht", region="self", provider="local", requests=1),
-    )
-    assert read.violations == 1
 
 
 # --- quality ---------------------------------------------------------------------
@@ -949,12 +867,12 @@ def test_releases_left_join_eval_runs_and_cap_at_100(pool: Pool, migrated_schema
 # --- the tenant filter -------------------------------------------------------------
 
 
-def test_a_tenant_filter_narrows_cost_and_residency(
+def test_a_tenant_filter_narrows_cost(
     pool: Pool, migrated_schema: str, shipped_prices: PriceTable
 ) -> None:
     """Catches `tenant` applied to one cost query and not the others - the rollup days, the
     savings and the per-request average each carry a `nordlicht` row that would leak into
-    `cuan`'s page - and applied to residency's grouping but not its violation count."""
+    `cuan`'s page -"""
     schema = migrated_schema
     recent = NOW - timedelta(hours=1)
     for tenant, row_cost in (("nordlicht", "0.900000"), ("cuan", "0.100000")):
@@ -969,24 +887,6 @@ def test_a_tenant_filter_narrows_cost_and_residency(
             input_tokens=10_000,
             output_tokens=10_000,
         )
-        insert_residency(
-            pool,
-            schema,
-            ts=recent,
-            tenant=tenant,
-            region="eu",
-            provider="anthropic_eu",
-            allowed=True,
-        )
-    insert_residency(
-        pool,
-        schema,
-        ts=recent,
-        tenant="nordlicht",
-        region="us",
-        provider="anthropic",
-        allowed=False,
-    )
     refresh_rollup(pool, schema)
     reader = PostgresConsoleReader(pool, schema=schema)
 
@@ -1000,10 +900,3 @@ def test_a_tenant_filter_narrows_cost_and_residency(
     assert cost.savings_usd_total == pytest.approx(everyone.savings_usd_total / 2)
     assert [row.alias for row in cost.cost_per_request] == ["agent-default"]
     assert cost.cost_per_request[0].cost_usd == pytest.approx(0.1)
-
-    residency = reader.residency(days=30, tenant="cuan", now=NOW)
-    assert residency.by_region == (
-        RegionCount(tenant="cuan", region="eu", provider="anthropic_eu", requests=1),
-    )
-    assert residency.violations == 0
-    assert reader.residency(days=30, tenant=None, now=NOW).violations == 1

@@ -18,8 +18,8 @@ half alone is satisfiable by a constant:
 
 Every case runs against a stub registered under the policy provider `local`,
 which is the only provider all four data classes can reach for `evals`
-(`confidential` allows `[eu, self]` and `pii` allows `[self]` alone, so a stub
-under `anthropic` would make the redact rows a 451 and the test would pass for
+(the chat provider `anthropic` has no adapter in this module, so a stub
+under `anthropic` would leave the redact rows with no adapter and the test would pass for
 the wrong reason).
 
 `gateway_headers` is also called directly: that `redacted` is keyword-only and
@@ -182,17 +182,17 @@ def test_gateway_headers_reports_the_redaction_outcome(
     assert headers["X-Gateway-Redacted"] == expected
 
 
-def test_the_header_set_is_still_exactly_six(policy: Policy) -> None:
-    """Catches a redaction outcome added as a SEVENTH header rather than filling the
-    existing one: the six are a published contract (#9).
+def test_the_header_set_is_still_exactly_five(policy: Policy) -> None:
+    """Catches a redaction outcome added as a SIXTH header rather than filling the
+    existing one: the five are a published contract (#9).
 
-    Six, still, after an earlier change: `X-Gateway-Cost-USD` is the seventh header a non-streamed
+    Five, still, after an earlier change: `X-Gateway-Cost-USD` is the sixth header a non-streamed
     ANSWER carries, and the route sets it on the response once the ledger has priced the
     call. This builder runs before a provider is dialled, so it cannot know the number
     and does not carry it - which is also what keeps the header off a stream."""
     headers = gateway_headers(resolved_for(policy), "trace-id", redacted=True)
 
-    assert len(headers) == 6
+    assert len(headers) == 5
     assert "X-Gateway-Redacted" in headers
 
 
@@ -356,8 +356,8 @@ def test_a_refused_request_is_still_attributed_to_its_resolved_candidate(
 ) -> None:
     """Catches the resolution labelling being done only inside the fallback loop, which
     sits after redaction. Redaction can REFUSE a request - the case above is the 422 - and
-    such a request would then be counted under an empty alias, provider and region while
-    the resolver had already decided all three: the design's per-alias error panel would
+    such a request would then be counted under an empty alias and provider while
+    the resolver had already decided both: the design's per-alias error panel would
     show nothing during a redaction-side incident, and a trace search by alias would miss
     every refused request. The resolution happens before redaction either way, so an
     unlabelled row here is a label LOST rather than one that was never known."""
@@ -375,7 +375,6 @@ def test_a_refused_request_is_still_attributed_to_its_resolved_candidate(
     assert moved[0]["status"] == "422"
     assert moved[0]["alias"] != ""
     assert moved[0]["provider"] != ""
-    assert moved[0]["region"] != ""
 
 
 def test_the_redaction_cap_does_not_apply_on_a_non_redact_class(
@@ -411,7 +410,7 @@ def test_the_embedding_adapter_receives_only_what_the_class_allows(
     header: str,
 ) -> None:
     """Catches redaction wired into the chat route alone (decision B): `confidential`
-    allows region `eu`, so an unredacted embedding input leaves the box on the route
+    redacts, so an unredacted embedding input leaves the box on the route
     whose batches are largest, and the same three inversions apply here."""
     response = post_embeddings(
         inline_embeddings_client, embeddings_body(input=sent), data_class=data_class
@@ -655,7 +654,7 @@ def test_an_unreachable_directory_store_is_502_with_no_outbound_call(
     """Catches the failure mode decision H exists to forbid: a route that reads the
     directory in a `try` and carries on with an empty one would serve this request with
     the tenant's names in the clear, and the response would still say
-    `X-Gateway-Redacted: true`. Redaction is deny-by-default like residency, so the only
+    `X-Gateway-Redacted: true`. Redaction is deny-by-default, so the only
     acceptable answer is the 502 PROVIDER_ERROR `filed_map_id` already gives an
     unreachable map store - and NOTHING may reach the adapter."""
     app = cast(FastAPI, unavailable_directory_chat_client.app)

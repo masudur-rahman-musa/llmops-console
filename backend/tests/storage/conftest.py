@@ -1,12 +1,12 @@
 """Fixtures for the ledger suite: one pool for the session, one schema per test.
 
-Three of the four files here need a real PostgreSQL. It is required by an
+Most files here need a real PostgreSQL. It is required by an
 explicit conditional on `OPSCONSOLE_TEST_DATABASE_URL`: the
 `requires_postgres` marker below skips with that variable's NAME in the reason,
 so a run that checked nothing says so in its own output rather than leaving it
 to be inferred. Deliberately not `OPSCONSOLE_DATABASE_URL`, which `Settings`
 itself reads and which the root `tests/conftest.py` clears for the whole session: exporting that one to run this directory would hand every
-app in the suite a `postgres` readiness probe and a Postgres residency writer
+app in the suite a `postgres` readiness probe and a Postgres ledger writer
 neither asked for.
 
 a project rule: ONE session-scoped pool, opened once. Per-test isolation is a
@@ -15,10 +15,6 @@ fresh pool, never a wipe of a shared schema, which would delete a neighbouring
 suite's tables. The schema name is a uuid4 hex under a fixed prefix, so it is a
 lowercase slug and satisfies `SCHEMA_PATTERN` without the fixture having to
 special-case anything.
-
-The fourth file, tests/storage/test_residency_writer.py, needs nothing: its
-subject is the pre-checks and the row model, and it uses the pool doubles
-defined there rather than these fixtures.
 """
 
 from __future__ import annotations
@@ -86,32 +82,6 @@ def migrated_schema(pool: Pool, schema: str) -> str:
     with pool.connection() as conn:
         apply_migrations(conn, schema=schema)
     return schema
-
-
-RESIDENCY_LOG = "residency_log"
-"""The parent table's name, spelled once for every case that queries the catalogue."""
-
-
-def partitions(pool: Pool, schema: str) -> dict[str, str]:
-    """Every partition of `residency_log` in one schema, mapped to its bound expression.
-
-    The bound is what separates the DEFAULT partition (`DEFAULT`) from a day's
-    (`FOR VALUES FROM (...) TO (...)`), so a case can say which kind it found
-    rather than only that a relation with the right name exists.
-    """
-    with pool.connection() as conn:
-        rows = conn.execute(
-            """
-            select child.relname, pg_get_expr(child.relpartbound, child.oid)
-            from pg_inherits i
-            join pg_class parent on parent.oid = i.inhparent
-            join pg_class child on child.oid = i.inhrelid
-            join pg_namespace n on n.oid = parent.relnamespace
-            where n.nspname = %s and parent.relname = %s
-            """,
-            (schema, RESIDENCY_LOG),
-        ).fetchall()
-    return {str(row[0]): str(row[1]) for row in rows}
 
 
 def table_names(pool: Pool, schema: str) -> set[str]:

@@ -9,8 +9,6 @@ reference labels once, and `calibration` checks the judge against them with a tw
 kappa. `scores` and `report` write the two scores and the two report files, `gate`
 compares a run with `conversation-baseline.json`, `baseline_guard` protects both baseline
 files, `push` sends the gauges and `tradeoff` ranks runs by `check_score`.
-`region_check` stays because the routing rule test imports it; a conversation answer
-carries no region, so the runner no longer calls it.
 """
 
 from __future__ import annotations

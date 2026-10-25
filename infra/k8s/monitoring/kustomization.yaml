@@ -46,7 +46,6 @@ configMapGenerator:
     files:
       - dashboards/gateway-overview.json
       - dashboards/cost.json
-      - dashboards/residency.json
       - dashboards/platform.json
       - dashboards/evals.json
       - dashboards/helpdesk-agent.json

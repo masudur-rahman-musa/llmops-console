@@ -17,11 +17,7 @@ The contract these cases are written against, before it exists:
 * `app.state.breaker` is the `CircuitBreaker` built by `create_app`.
 
 The one thing the fallback list can never be is longer than what `resolve()`
-answered, which is the whole residency argument. It is
-tested here rather than in the resolver, by
-`test_an_eu_tenants_fallback_stays_inside_the_eu_regions`: a US provider sits in
-the middle of the EU policy's candidate list with an adapter registered, and no
-request in this file may ever reach it.
+answered: it moves between the enabled providers of the alias and no further.
 """
 
 from __future__ import annotations
@@ -42,12 +38,6 @@ from app.providers.breaker import CircuitBreaker, CircuitState
 from app.services.chat_pipeline import walk_candidates
 
 from .conftest import (
-    EU_ALLOWED_REGIONS,
-    EU_CLASS,
-    EU_EXCLUDED_PROVIDER,
-    EU_FIRST_PROVIDER,
-    EU_SECOND_PROVIDER,
-    EU_TENANT,
     FALLBACK_ALIAS,
     FALLBACK_CANDIDATES,
     FALLBACK_CLASS,
@@ -338,37 +328,6 @@ def test_an_open_breaker_skips_a_provider_on_the_next_request(
 
 
 # --------------------------------------------------------------------------
-# residency
-# --------------------------------------------------------------------------
-
-
-def test_an_eu_tenants_fallback_stays_inside_the_eu_regions(
-    eu_client: TestClient, eu_adapters: dict[str, FallbackStubAdapter]
-) -> None:
-    """The residency criterion, tested through the route. Catches a fallback that
-    re-resolves without the tenant's clamp, or that walks `app.state.adapters` instead of
-    the tuple `resolve()` returned: the US provider sits BETWEEN the two EU candidates in
-    the policy and has an adapter registered, so either mistake dials it, and its data
-    would have left the region on a request the resolver had already refused it for."""
-    excluded = eu_adapters[EU_EXCLUDED_PROVIDER]
-    eu_adapters[EU_FIRST_PROVIDER].chat_error = retryable_error(EU_FIRST_PROVIDER)
-
-    response = post_chat(
-        eu_client,
-        chat_body(model=FALLBACK_ALIAS),
-        key=TEST_KEYS[EU_TENANT],
-        tenant=EU_TENANT,
-        data_class=EU_CLASS,
-    )
-
-    assert response.status_code == 200, response.text
-    assert response.headers["x-gateway-provider"] == EU_SECOND_PROVIDER
-    assert response.headers["x-gateway-region"] in EU_ALLOWED_REGIONS
-    assert completion_text(response) == answer_of(EU_SECOND_PROVIDER)
-    assert excluded.call_count == 0, "a fallback crossed the residency boundary"
-
-
-# --------------------------------------------------------------------------
 # the embeddings route takes the same seam and the same loop
 # --------------------------------------------------------------------------
 
@@ -519,11 +478,10 @@ def test_a_200_refusal_is_served_without_trying_another_candidate(
 
 def test_a_console_block_inside_the_walk_stops_at_the_first_candidate() -> None:
     """Catches a walk that moves on after any exception and not only a retryable
-    `ProviderError`: the console's own blocks (a bad request, residency, budget) are
+    `ProviderError`: the console's own blocks (a bad request, budget) are
     raised from a call and must reach the caller after ONE call, with no breaker count."""
     candidates = tuple(
-        Resolved(provider=name, model="m", region=region)
-        for name, region in ((FIRST_PROVIDER, "us"), (SECOND_PROVIDER, "self"))
+        Resolved(provider=name, model="m") for name in (FIRST_PROVIDER, SECOND_PROVIDER)
     )
     breaker = CircuitBreaker()
     calls: list[str] = []

@@ -1,1 +1,1 @@
-"""Tests for `app.storage`: the migration runner, the residency writer, the CLI."""
+"""Tests for `app.storage`: the migration runner, the cost ledger, the CLI."""

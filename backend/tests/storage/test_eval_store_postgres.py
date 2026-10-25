@@ -88,7 +88,6 @@ EVAL_CASES_COLUMNS = (
     "latency_ms",
     "cost_usd",
     "provider",
-    "region",
     "details",
 )
 
@@ -299,14 +298,13 @@ def test_every_case_row_lands_with_its_own_measurements_and_its_details(
     assert case_column(measured, "category") == "paraphrases"
     assert case_column(measured, "passed") is True
     assert case_column(measured, "tags") == []
-    for column in ("latency_ms", "cost_usd", "provider", "region"):
+    for column in ("latency_ms", "cost_usd", "provider"):
         assert case_column(measured, column) is None, column
 
     assert case_column(broken, "passed") is False
     assert case_column(broken, "latency_ms") is None
     assert case_column(broken, "cost_usd") is None
     assert case_column(broken, "provider") is None
-    assert case_column(broken, "region") is None
     details = case_column(broken, "details")
     assert isinstance(details, dict)
     assert details["error"] == "turn failed: HTTP 502 for delta"

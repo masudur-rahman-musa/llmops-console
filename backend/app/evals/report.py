@@ -9,10 +9,10 @@ Things the module holds that no single field states:
   from a caller, so the report and the one line `ops-eval` prints cannot disagree;
 * `check` is `None` exactly where the saved line's is: a case that never answered, which
   is not the same claim as a case whose checks all passed;
-* the four fields a per-turn eval measured (`latency_ms`, `cost_usd`, `provider`,
-  `region`) are kept as `None` on every case. A conversation answer carries none of them,
-  and a zero there would read as a free, instant success. `tags` stays for the same reason
-  the columns do: the store and the console read it, and it is always empty;
+* the three fields a per-turn eval measured (`latency_ms`, `cost_usd`, `provider`) are
+  kept as `None` on every case. A conversation answer carries none of them, and a zero
+  there would read as a free, instant success. `tags` stays for the same reason the
+  columns do: the store and the console read it, and it is always empty;
 * `tenant` is `ALL_TENANTS` for a conversation run: the cases name their own tenants;
 * a case played several times is ONE `CaseReport`: it passed when every run passed, it
   carries its pass rate and 95% range, and an unstable one is listed in its own section
@@ -93,7 +93,6 @@ class CaseReport(BaseModel):
     latency_ms: int | None = None
     cost_usd: Decimal | None = None
     provider: str | None = None
-    region: str | None = None
     error: str | None
     check: CaseCheck | None
     judged: tuple[JudgedReply, ...]

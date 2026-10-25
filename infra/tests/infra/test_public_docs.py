@@ -40,7 +40,7 @@ README_HEADINGS = [
 
 #: The seven guarantees and the test file that pins each, all committed today.
 GUARANTEE_TESTS = [
-    "backend/tests/model_routing/test_residency_property.py",
+    "backend/tests/api/test_fallback.py",
     "backend/tests/redaction/test_redactor.py",
     "backend/tests/limits/test_budget.py",
     "backend/tests/limits/test_ratelimit.py",
@@ -70,11 +70,10 @@ THREAT_TABLE_HEADER = "| Component | Threat (S/T/R/I/D/E) | Scenario | Mitigatio
 THREAT_PLACEHOLDER_CELL = "ADAPT"
 
 #: One short distinctive phrase per threat, so a failure names the threat that is missing.
-#: Five from the request (#69) and five the file's own header always requires.
+#: Four from the request (#69) and five the file's own header always requires.
 THREAT_SCENARIOS = [
     "key leakage",
     "ssrf",
-    "residency bypass",
     "cache poisoning",
     "override forgery",
     "secrets exposure",
@@ -256,9 +255,9 @@ def test_every_relative_readme_link_resolves() -> None:
     assert missing_paths(relative_targets(read(README))) == []
 
 
-def test_the_threat_model_covers_all_ten_named_threats() -> None:
+def test_the_threat_model_covers_all_nine_named_threats() -> None:
     """Catches a threat model left as the unfilled template, and one filled with a convenient
-    subset: each of the ten threats the request and the file's own header name must appear in
+    subset: each of the nine threats the request and the file's own header name must appear in
     some row's scenario cell, and the template's placeholder row must be gone."""
     text = read(THREAT_MODEL)
 

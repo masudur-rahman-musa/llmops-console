@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from app.model_routing.policy import Policy, Residency, load_policy
+from app.model_routing.policy import Policy, load_policy
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 LOAD_POLICY = REPO_ROOT / "infra" / "load" / "routing.load.yaml"
@@ -27,7 +27,7 @@ def policy() -> Policy:
 
 def test_the_load_policy_is_a_whole_document_that_loads() -> None:
     """Criterion 5: catches a partial overlay in the style of `routing.ci.yaml`,
-    which `load_policy` refuses because `eu_regions`, `aliases` or `tenants` is
+    which `load_policy` refuses because `providers`, `aliases` or `tenants` is
     missing."""
     load_policy(LOAD_POLICY)
 
@@ -46,13 +46,12 @@ def test_both_enabled_providers_point_at_the_mock(policy: Policy, provider: str)
     assert policy.providers[provider].base_url == MOCK_BASE_URL
 
 
-def test_the_load_tenant_is_eu_with_the_load_sized_limits_and_budget(
+def test_the_load_tenant_has_the_load_sized_limits_and_budget(
     policy: Policy,
 ) -> None:
     """Criterion 7: catches the load tenant inheriting a real tenant's 60 rpm or
     15.00 budget, which would 429 or 402 the run long before 50 RPS."""
     tenant = policy.tenants["load"]
-    assert tenant.residency == Residency.EU
     assert tenant.rate_limit.rpm == 6000
     assert tenant.rate_limit.tpm == 6000000
     assert tenant.budget_usd_month == Decimal("100000.00")

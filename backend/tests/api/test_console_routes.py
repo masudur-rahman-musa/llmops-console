@@ -1,4 +1,4 @@
-"""The seven `/console/*` read routes: the key space, the pre-checks and the source flags.
+"""The six `/console/*` read routes: the key space, the pre-checks and the source flags.
 
 No backing service. Each case builds the admin app from `create_app` (cheap and
 in-process) and then replaces the two sources on `app.state`, exactly as the
@@ -10,7 +10,7 @@ pre-checks and the error handlers stay real.
 
 What is pinned, each case naming the wrong implementation it catches:
 
-* The seven routes are in the ADMIN key space: no key, an unknown key, and a
+* The six routes are in the ADMIN key space: no key, an unknown key, and a
   working tenant key are all 401, before anything is read.
 * `days` and `tenant` are refused before any query runs, at the inclusive
   boundaries, because `tenant` is interpolated into PromQL.
@@ -57,7 +57,6 @@ from app.schemas.dashboard import (
     EvalRunSummary,
     Incident,
     LastEval,
-    RegionCount,
     Regression,
     Release,
     ReleaseMarker,
@@ -72,7 +71,6 @@ from app.services.prometheus_reads import (
     P95_QUERY,
     QUERY_PATH,
     QUERY_RANGE_PATH,
-    RESIDENCY_VIOLATIONS_30D_QUERY,
     PrometheusClient,
 )
 from app.storage.dashboard_reads import (
@@ -81,7 +79,6 @@ from app.storage.dashboard_reads import (
     CostRead,
     HomeRead,
     QualityRead,
-    ResidencyRead,
     UnconfiguredConsoleReader,
     regressed_metrics,
 )
@@ -95,22 +92,21 @@ from .conftest import (
     assert_error_body,
 )
 
-# The seven paths, written out so no request below reads its target from the module
-# under test. `test_the_seven_console_paths_are_pinned` compares them with the module's
+# The six paths, written out so no request below reads its target from the module
+# under test. `test_the_six_console_paths_are_pinned` compares them with the module's
 # constants and with what the factory mounted.
 HOME = "/console/home"
 COST = "/console/cost"
 QUALITY = "/console/quality"
-RESIDENCY = "/console/residency"
 RELIABILITY = "/console/reliability"
 INCIDENTS = "/console/incidents"
 RELEASES = "/console/releases"
 
-ALL_PATHS = [HOME, COST, QUALITY, RESIDENCY, RELIABILITY, INCIDENTS, RELEASES]
-DAYS_PATHS = [COST, QUALITY, RESIDENCY, RELIABILITY]
-TENANT_PATHS = [COST, RESIDENCY]
-POSTGRES_PATHS = [HOME, COST, QUALITY, RESIDENCY, INCIDENTS, RELEASES]
-PROMETHEUS_PATHS = [HOME, RESIDENCY, RELIABILITY]
+ALL_PATHS = [HOME, COST, QUALITY, RELIABILITY, INCIDENTS, RELEASES]
+DAYS_PATHS = [COST, QUALITY, RELIABILITY]
+TENANT_PATHS = [COST]
+POSTGRES_PATHS = [HOME, COST, QUALITY, INCIDENTS, RELEASES]
+PROMETHEUS_PATHS = [HOME, RELIABILITY]
 
 LOGGER = "app.services.dashboard"
 
@@ -131,7 +127,6 @@ DEPLOYED = datetime(2026, 9, 15, 9, 15, tzinfo=UTC)
 HOME_READ = HomeRead(
     requests_today=42,
     cost_usd_today=1.25,
-    residency_violations_today=1,
     last_eval=LastEval(id="run-a", finished_at=FINISHED, passed=True, check_score=0.91),
     open_incidents=2,
 )
@@ -168,11 +163,6 @@ QUALITY_READ = QualityRead(
     categories=(CategoryCount(category="routing", passed=4, total=5),),
     taxonomy=(TagCount(tag="wrong_tool", count=2),),
     blocked=(),
-)
-
-RESIDENCY_READ = ResidencyRead(
-    by_region=(RegionCount(tenant="nordlicht", region="eu", provider="anthropic_eu", requests=7),),
-    violations=1,
 )
 
 INCIDENT_ROWS = (
@@ -231,10 +221,6 @@ class StubReader:
         self._record("quality", days=days, now=now)
         return self.quality_read
 
-    def residency(self, *, days: int, tenant: str | None, now: datetime) -> ResidencyRead:
-        self._record("residency", days=days, tenant=tenant, now=now)
-        return RESIDENCY_READ
-
     def incidents(self) -> tuple[Incident, ...]:
         self._record("incidents")
         return INCIDENT_ROWS
@@ -248,14 +234,12 @@ class StubReader:
 
 SAMPLE_TS = 1757980800
 
-REDACTIONS_PREFIX = "sum by (tenant, kind) (increase(gateway_redactions_total"
 FALLBACKS_PREFIX = "sum by (tenant, alias, provider) (increase(gateway_fallbacks_total"
 
-# An earlier change's three budget queries, answered by default so every reliability case sees a full
-# `slos`: a 5xx share of 0.001, a share under 6 seconds of 0.98, and no residency violation.
+# An earlier change's budget queries, answered by default so every reliability case sees a full
+# `slos`: a 5xx share of 0.001 and a share under 6 seconds of 0.98.
 BAD_RATIO_30D = "0.001"
 UNDER_THRESHOLD_SHARE_30D = "0.98"
-RESIDENCY_VIOLATIONS_30D = "0"
 
 
 def instant_result(query: str) -> list[dict[str, Any]]:
@@ -268,8 +252,6 @@ def instant_result(query: str) -> list[dict[str, Any]]:
         return [{"metric": {}, "value": [SAMPLE_TS, BAD_RATIO_30D]}]
     if query == LATENCY_BUDGET_QUERY:
         return [{"metric": {}, "value": [SAMPLE_TS, UNDER_THRESHOLD_SHARE_30D]}]
-    if query == RESIDENCY_VIOLATIONS_30D_QUERY:
-        return [{"metric": {}, "value": [SAMPLE_TS, RESIDENCY_VIOLATIONS_30D]}]
     if query == CIRCUITS_QUERY:
         return [
             {"metric": {"provider": "anthropic"}, "value": [SAMPLE_TS, "0"]},
@@ -277,8 +259,6 @@ def instant_result(query: str) -> list[dict[str, Any]]:
             {"metric": {"provider": "openai"}, "value": [SAMPLE_TS, "2"]},
             {"metric": {"provider": "vllm"}, "value": [SAMPLE_TS, "3"]},
         ]
-    if query.startswith(REDACTIONS_PREFIX):
-        return [{"metric": {"tenant": "nordlicht", "kind": "email"}, "value": [SAMPLE_TS, "3"]}]
     if query.startswith(FALLBACKS_PREFIX):
         return [
             {
@@ -410,7 +390,6 @@ POSTGRES_EMPTY: dict[str, dict[str, Any]] = {
     HOME: {
         "requests_today": None,
         "cost_usd_today": None,
-        "residency_violations_today": None,
         "last_eval": None,
         "open_incidents": None,
     },
@@ -422,7 +401,6 @@ POSTGRES_EMPTY: dict[str, dict[str, Any]] = {
         "cost_per_request": [],
     },
     QUALITY: {"runs": [], "release_markers": [], "categories": [], "taxonomy": [], "blocked": []},
-    RESIDENCY: {"by_region": [], "violations": None},
     RELIABILITY: {},
     INCIDENTS: {"incidents": []},
     RELEASES: {"releases": []},
@@ -432,7 +410,6 @@ PROMETHEUS_EMPTY: dict[str, dict[str, Any]] = {
     HOME: {"p95_seconds": None, "error_rate": None},
     COST: {},
     QUALITY: {},
-    RESIDENCY: {"redactions": []},
     RELIABILITY: {
         "latency_p95": [],
         "error_rate": [],
@@ -453,7 +430,7 @@ def subset(body: Mapping[str, Any], keys: Mapping[str, Any]) -> dict[str, Any]:
 # --- the paths and the key space ---------------------------------------------------
 
 
-def test_the_seven_console_paths_are_pinned(bare: TestClient) -> None:
+def test_the_six_console_paths_are_pinned(bare: TestClient) -> None:
     """Catches a route mounted under another path or method (`/console/costs`, a POST), a
     constant renamed away from the literal, and a constant that exists while the factory
     never included the router - the mounted set is read from the app's own OpenAPI
@@ -461,7 +438,6 @@ def test_the_seven_console_paths_are_pinned(bare: TestClient) -> None:
     assert console.CONSOLE_HOME == HOME
     assert console.CONSOLE_COST == COST
     assert console.CONSOLE_QUALITY == QUALITY
-    assert console.CONSOLE_RESIDENCY == RESIDENCY
     assert console.CONSOLE_RELIABILITY == RELIABILITY
     assert console.CONSOLE_INCIDENTS == INCIDENTS
     assert console.CONSOLE_RELEASES == RELEASES
@@ -469,7 +445,6 @@ def test_the_seven_console_paths_are_pinned(bare: TestClient) -> None:
         "/console/home",
         "/console/cost",
         "/console/quality",
-        "/console/residency",
         "/console/reliability",
         "/console/incidents",
         "/console/releases",
@@ -511,7 +486,7 @@ def test_every_console_route_is_401_with_a_tenant_key(
     path: str, wired: Wired, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Catches a console route authenticated against the TENANT key store (or against
-    either store), which lets any tenant read every tenant's spend and residency: the key
+    either store), which lets any tenant read every tenant's spend: the key
     presented is a working tenant key on this same app. It also catches the refusal
     echoing the key into the body or any log record, at DEBUG, in `msg` or `args`."""
     with caplog.at_level(logging.DEBUG):
@@ -633,8 +608,7 @@ TENANT_REJECTION_ROWS: list[tuple[str, str]] = [
 def test_the_tenant_rejection_table(path: str, case: str, tenant: str, wired: Wired) -> None:
     """Catches a route that skips admin's `_checked_tenant`, and a check written as `.match`
     with `$` (which lets a trailing newline through): every value here would otherwise reach
-    the stub reader and, on residency, be interpolated into the redactions matcher - a
-    PromQL injection - with a 200."""
+    the stub reader with a 200."""
     response = wired.get(path, tenant=tenant)
 
     assert_error_body(response, status=422, code="VALIDATION")
@@ -643,24 +617,9 @@ def test_the_tenant_rejection_table(path: str, case: str, tenant: str, wired: Wi
     assert wired.prom.calls == []
 
 
-def test_the_tenant_filter_reaches_the_promql_matcher(wired: Wired) -> None:
-    """Catches `?tenant=` honoured in SQL and dropped from PromQL, which shows one tenant's
-    residency page every tenant's redaction counts; and catches a matcher added when no
-    tenant was asked for, which would filter to an empty label."""
-    filtered = wired.get(RESIDENCY, tenant="nordlicht", days=7)
-    assert filtered.status_code == 200, filtered.text
-    assert wired.prom.queries(QUERY_PATH) == [
-        'sum by (tenant, kind) (increase(gateway_redactions_total{tenant="nordlicht"}[7d]))'
-    ]
-    assert [kwargs["tenant"] for _, kwargs in wired.reader.calls] == ["nordlicht"]
-
-    wired.prom.calls.clear()
-    unfiltered = wired.get(RESIDENCY, days=7)
-    assert unfiltered.status_code == 200, unfiltered.text
-    assert wired.prom.queries(QUERY_PATH) == [
-        "sum by (tenant, kind) (increase(gateway_redactions_total[7d]))"
-    ]
-
+def test_the_tenant_filter_reaches_the_reader(wired: Wired) -> None:
+    """Catches `?tenant=` accepted and dropped before the reader, which would show one
+    tenant's cost page every tenant's spend."""
     cost = wired.get(COST, tenant="cuan")
     assert cost.status_code == 200, cost.text
     assert [kwargs["tenant"] for name, kwargs in wired.reader.calls if name == "cost"] == ["cuan"]
@@ -731,11 +690,6 @@ def test_a_failing_prometheus_is_200_with_prometheus_error_and_an_error_log(
     if path == HOME:
         assert body["requests_today"] == 42
         assert body["open_incidents"] == 2
-    if path == RESIDENCY:
-        assert body["by_region"] == [
-            row.model_dump(mode="json") for row in RESIDENCY_READ.by_region
-        ]
-        assert body["violations"] == 1
 
 
 @pytest.mark.parametrize("path", POSTGRES_PATHS)
@@ -761,8 +715,6 @@ def test_a_failing_reader_is_200_with_postgres_error_and_an_error_log(
     if path == HOME:
         assert body["p95_seconds"] == 0.734
         assert body["error_rate"] == 0.012
-    if path == RESIDENCY:
-        assert body["redactions"] == [{"tenant": "nordlicht", "kind": "email", "count": 3.0}]
     if path == COST:
         assert body["estimated"] is True
         assert [row["tenant"] for row in body["budgets"]] == ["nordlicht", "cuan", "evals"]
@@ -784,7 +736,6 @@ def test_the_home_body_reads_both_sources(wired: Wired) -> None:
         "cost_usd_today": 1.25,
         "p95_seconds": 0.734,
         "error_rate": 0.012,
-        "residency_violations_today": 1,
         "last_eval": {
             "id": "run-a",
             "finished_at": HOME_READ.model_dump(mode="json")["last_eval"]["finished_at"],
@@ -849,21 +800,6 @@ def test_the_quality_body_carries_the_reader_answer(wired: Wired) -> None:
     assert wired.prom.calls == []
 
 
-def test_the_residency_body_reads_both_sources(wired: Wired) -> None:
-    """Catches a residency route that loses the reader's rows or violation count, keeps the
-    redaction count as a string, drops a label, or queries a window other than `days`."""
-    response = wired.get(RESIDENCY, days=7)
-
-    assert response.status_code == 200, response.text
-    assert response.json() == {
-        "sources": {"postgres": OK, "prometheus": OK},
-        "by_region": [row.model_dump(mode="json") for row in RESIDENCY_READ.by_region],
-        "violations": 1,
-        "redactions": [{"tenant": "nordlicht", "kind": "email", "count": 3.0}],
-    }
-    assert [kwargs["days"] for _, kwargs in wired.reader.calls] == [7]
-
-
 def sort_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Rows in a fixed order, for lists whose order the plan does not state."""
     return sorted(rows, key=lambda row: sorted((key, str(value)) for key, value in row.items()))
@@ -895,7 +831,7 @@ def test_the_reliability_body_reads_the_named_series(wired: Wired) -> None:
     ]
     assert set(body) == {"sources", "latency_p95", "error_rate", "circuits", "fallbacks", "slos"}
 
-    # An earlier change (a recorded deviation from its section 8): the three budget queries join the
+    # An earlier change (a recorded deviation from its section 8): the budget queries join the
     # instant queries, so the exact list gains them; their values are pinned in
     # tests/gateway/test_console_slo.py.
     assert sorted(wired.prom.queries(QUERY_PATH)) == sorted(
@@ -904,7 +840,6 @@ def test_the_reliability_body_reads_the_named_series(wired: Wired) -> None:
             "sum by (tenant, alias, provider) (increase(gateway_fallbacks_total[7d]))",
             AVAILABILITY_BUDGET_QUERY,
             LATENCY_BUDGET_QUERY,
-            RESIDENCY_VIOLATIONS_30D_QUERY,
         ]
     )
     ranged = [params for sent, params in wired.prom.calls if sent == QUERY_RANGE_PATH]

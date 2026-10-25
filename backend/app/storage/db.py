@@ -3,8 +3,8 @@ r"""The connection seam and the migration runner: this project's first Postgres 
 Until this module, Postgres existed here only as a readiness probe. Three things
 arrive together, and every later Postgres write inherits them.
 
-**The pool.** `build_pool` answers a `psycopg_pool.ConnectionPool`. The residency
-log is a write on every served request, so a connect per write would put a TCP
+**The pool.** `build_pool` answers a `psycopg_pool.ConnectionPool`. The cost ledger
+is a write on every served request, so a connect per write would put a TCP
 handshake and an authentication round trip on the hot path. The readiness probe
 in `app/api/routes/health.py` deliberately does NOT borrow from it: a probe that reported on
 the pool would go green while the server behind it was gone.
@@ -58,7 +58,7 @@ MAX_SCHEMA_LENGTH: Final[int] = 63
 
 A longer name is not rejected by the server - it is silently TRUNCATED to this
 many bytes, so the caller creates its tables in a schema with a different name
-from the one it asked for and `make purge-residency` then finds nothing to drop.
+from the one it asked for.
 """
 
 SCHEMA_MIGRATIONS: Final[str] = "schema_migrations"
@@ -158,7 +158,7 @@ def pool_conninfo(database_url: str) -> str:
 
 
 def build_pool(database_url: str) -> ConnectionPool[Connection[TupleRow]]:
-    """An opened connection pool for the residency log and the cost ledger.
+    """An opened connection pool for the cost ledger.
 
     Three timeouts:
     - `timeout` (pool wait): 2 s — a connection not free in 2 s means the pool

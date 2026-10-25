@@ -1,4 +1,4 @@
-.PHONY: help setup run up down rebuild all gateway console test test-infra fast test-slowest lint typecheck format verify security eval infra-check k8s-check k8s-aws-check k8s-server-check server-secrets server-helpdesk-data k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate purge-residency refresh-rollup secrets-encrypt secrets-decrypt secrets-check load
+.PHONY: help setup run up down rebuild all gateway console test test-infra fast test-slowest lint typecheck format verify security eval infra-check k8s-check k8s-aws-check k8s-server-check server-secrets server-helpdesk-data k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate refresh-rollup secrets-encrypt secrets-decrypt secrets-check load
 
 # The console's checks run through pnpm, and are skipped only in a checkout that
 # has no web, so the intended gate stays visible in this file. The
@@ -117,8 +117,6 @@ verify: format lint typecheck test security   ## The full gate, in order
 # mistake "nothing was configured" for "nothing needed doing".
 migrate:    ## Apply the ledger migrations (safe to run twice)
 	$(UV_ROOT) ops-migrate
-purge-residency: ## Drop residency log partitions past the retention
-	$(UV_ROOT) ops-purge-residency
 refresh-rollup: ## Refresh the daily cost rollup the console reads
 	$(UV_ROOT) ops-refresh-rollup
 # The eval gate: the help desk's 33 conversation cases against the

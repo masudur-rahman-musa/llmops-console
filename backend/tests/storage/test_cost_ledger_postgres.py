@@ -22,7 +22,7 @@ issued from one that was rejected.
 The contract these cases are written against, before it exists:
 
 * `cost_ledger_daily` has the columns `day, tenant, alias, provider, model,
-  region, requests, cached_requests, input_tokens, output_tokens, cost_usd`, with
+  requests, cached_requests, input_tokens, output_tokens, cost_usd`, with
   `day` the UTC date of `ts`;
 * `app.cli.ledger.refresh_daily_rollup(pool, *, schema=...) -> bool`
   refreshes it and answers whether it ran CONCURRENTLY - `False` the first time,
@@ -61,7 +61,6 @@ TENANT = "nordlicht"
 ALIAS = "agent-default"
 PROVIDER = "local"
 MODEL = "qwen2.5-7b-instruct"
-REGION = "self"
 SESSION = "sess-01j9x8"
 TRACE_ID = "0af7651916cd43dd8448eb211c80319c"
 PRICE_VERSION = "local/qwen2.5-7b-instruct@2026-01-01"
@@ -76,7 +75,6 @@ VIEW_COLUMNS = (
     "alias",
     "provider",
     "model",
-    "region",
     "requests",
     "cached_requests",
     "input_tokens",
@@ -90,7 +88,6 @@ LEDGER_COLUMNS = (
     "alias",
     "provider",
     "model",
-    "region",
     "input_tokens",
     "output_tokens",
     "cached",
@@ -110,7 +107,6 @@ def a_row(**overrides: Any) -> CostLedgerRow:  # noqa: ANN401
         "alias": ALIAS,
         "provider": PROVIDER,
         "model": MODEL,
-        "region": REGION,
         "input_tokens": 1000,
         "output_tokens": 500,
         "cached": False,
@@ -145,9 +141,7 @@ def rollup_rows(pool: Pool, schema: str) -> list[tuple[object, ...]]:
     """
     with pool.connection() as conn:
         rows = conn.execute(
-            sql.SQL(
-                "select {} from {} order by day, tenant, alias, provider, model, region"
-            ).format(
+            sql.SQL("select {} from {} order by day, tenant, alias, provider, model").format(
                 sql.SQL(", ").join(sql.Identifier(name) for name in VIEW_COLUMNS),
                 sql.Identifier(schema, COST_LEDGER_DAILY),
             )
@@ -160,7 +154,7 @@ def test_every_column_round_trips_through_the_shipped_migration(
     pool: Pool, migrated_schema: str
 ) -> None:
     """The plan's schema-drift risk in one case. Catches an INSERT whose column list
-    disagrees with the SQL file: `tenant`, `alias`, `provider`, `model` and `region` are
+    disagrees with the SQL file: `tenant`, `alias`, `provider`, and `model` are
     all `text`, so two of them swapped is a ledger that attributes a tenant's spend to
     another tenant's model and PostgreSQL accepts it without a murmur. Catches a
     timestamp stored without its zone, and an `estimated` column defaulting to false -
@@ -177,7 +171,6 @@ def test_every_column_round_trips_through_the_shipped_migration(
             ALIAS,
             PROVIDER,
             MODEL,
-            REGION,
             1000,
             500,
             False,
@@ -266,7 +259,6 @@ def test_rows_sharing_the_whole_group_key_become_one_rollup_row(
             ALIAS,
             PROVIDER,
             MODEL,
-            REGION,
             2,
             1,
             1007,
@@ -282,7 +274,6 @@ SPLITTING_ROWS: list[tuple[str, dict[str, Any]]] = [
     ("a different alias", {"alias": "agent-strong"}),
     ("a different provider", {"provider": "vllm"}),
     ("a different model", {"model": "bge-small-en-v1.5"}),
-    ("a different region", {"region": "eu"}),
 ]
 
 
@@ -294,11 +285,10 @@ def test_rows_differing_in_any_group_column_are_kept_apart(
     pool: Pool, migrated_schema: str, case: str, difference: dict[str, Any]
 ) -> None:
     """One row per column of the group key, because a GROUP BY that dropped exactly one of
-    them still passes the case above and every other row here. Dropping `region` merges a
-    tenant's EU and US spend into a single line, which is the number the residency page
-    exists to keep apart; dropping `provider` or `model` hides the failover that doubled
-    the bill; dropping the day makes the daily page a lifetime total. Two rollup rows is
-    the assertion, and the two ledger rows are identical in every other column, so the
+    them still passes the case above and every other row here. Dropping `provider` or `model`
+    hides the failover that doubled the bill; dropping the day makes the daily page a
+    lifetime total. Two rollup rows is the assertion, and the two ledger rows are
+    identical in every other column, so the
     column under test is the only thing that can split them."""
     writer = PostgresCostLedgerWriter(pool, schema=migrated_schema)
     writer.write(a_row())

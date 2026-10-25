@@ -14,7 +14,6 @@ function directly.
 
 from __future__ import annotations
 
-import logging
 import os
 import time
 from collections.abc import AsyncIterator, Mapping
@@ -55,8 +54,7 @@ from app.limits.ratelimit import (
     InProcessRateLimitStore,
     RedisRateLimitStore,
 )
-from app.model_routing.policy import PolicyStore, ResidencyMode, check_policy_models_priced
-from app.model_routing.resolver import RELAXED_REGIONS
+from app.model_routing.policy import PolicyStore, check_policy_models_priced
 from app.providers.breaker import CircuitBreaker
 from app.providers.factory import build_adapters
 from app.providers.factory import close_adapters as close_adapters
@@ -71,10 +69,8 @@ from app.services.routing_reload import RUNTIME_SCOPE_KEY, RoutingRuntimeStore
 from app.storage import (
     InMemoryConsoleEventWriter,
     InMemoryCostLedgerWriter,
-    InMemoryResidencyLogWriter,
     PostgresConsoleEventWriter,
     PostgresCostLedgerWriter,
-    PostgresResidencyLogWriter,
     build_pool,
 )
 from app.storage.dashboard_reads import (
@@ -123,21 +119,6 @@ def build_qdrant_data_client(base_url: str) -> httpx.Client:
     generous bound for a vector search and a miss is free.
     """
     return httpx.Client(base_url=base_url, timeout=httpx.Timeout(PROBE_TIMEOUT_SECONDS))
-
-
-logger = logging.getLogger(__name__)
-
-RELAXED_RESIDENCY_WARNING = (
-    "residency_mode is relaxed: this process allows %s for every data class "
-    "except pii. Never run a tenant's real traffic through it."
-)
-"""The one line that stops a relaxed process passing for a strict one.
-
-Logged exactly once, by `create_app`, and never per request: the mode is read at
-startup and cannot change, so a per-resolution warning would be five records per
-request and would bury itself.
-`/readyz` carries the same fact for anything that reads machines rather than logs.
-"""
 
 
 @asynccontextmanager
@@ -210,9 +191,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     pool = build_pool(resolved.database_url) if resolved.database_url is not None else None
     app.state.db_pool = pool
-    app.state.residency_log = (
-        PostgresResidencyLogWriter(pool) if pool is not None else InMemoryResidencyLogWriter()
-    )
     app.state.cost_ledger = (
         PostgresCostLedgerWriter(pool) if pool is not None else InMemoryCostLedgerWriter()
     )
@@ -376,10 +354,6 @@ def create_app(
     surfacing on a live request that then cannot be priced. It opens no socket,
     which is why it stays here while the connection-backed stores move.
 
-    `OPSCONSOLE_RESIDENCY_MODE=relaxed` logs `RELAXED_RESIDENCY_WARNING` here, once
-    and before any state is built. An unknown value never gets
-    this far: `Settings()` above refuses it, so the process exits instead of
-    serving one request under a mode nobody chose.
     """
     resolved = settings or Settings()
     if resolved.env != "local":
@@ -400,9 +374,6 @@ def create_app(
             raise ValueError(
                 f"a non-local process (env={resolved.env!r}) needs {' and '.join(missing)}"
             )
-    if resolved.residency_mode is ResidencyMode.RELAXED:
-        # Before anything is built, so the line precedes any startup noise.
-        logger.warning(RELAXED_RESIDENCY_WARNING, ", ".join(RELAXED_REGIONS))
     app = FastAPI(title="AI Operations Console gateway", lifespan=lifespan)
     app.state.settings = resolved
     app.state.probes = ProbeRegistry()

@@ -31,11 +31,9 @@ _GONE_STORAGE_AND_CLI_MODULES = (
     "app.ledger",
     "app.ledger.cli",
     "app.ledger.db",
-    "app.ledger.residency",
     "app.evals.store",
     "app.evals.metrics",
     "app.evals.metrics_push",
-    "app.evals.residency",
     "app.evals.cli",
     "app.redaction.directory",
 )
@@ -44,14 +42,12 @@ _NEW_STORAGE_AND_CLI_MODULES = (
     "app.storage.db",
     "app.storage.cost_ledger",
     "app.storage.console_events",
-    "app.storage.residency_log",
     "app.storage.eval_store",
     "app.storage.dashboard_reads",
     "app.cli.ledger",
     "app.cli.evals",
     "app.evals.scores",
     "app.evals.push",
-    "app.evals.region_check",
     "app.redaction.names_store",
 )
 
@@ -153,34 +149,26 @@ def test_the_admin_routes_are_split() -> None:
 # An earlier change: storage-only-data
 # ---------------------------------------------------------------------------
 
-_COST_RESIDENCY_NAMES = ("record_cost", "record_residency", "region_allowed")
+_COST_NAMES = ("record_cost",)
 
 
-def test_storage_holds_no_cost_or_residency_decision() -> None:
-    """Catches an impl that leaves record_cost, record_residency or region_allowed
-    importable from app.storage or its sub-modules."""
+def test_storage_holds_no_cost_decision() -> None:
+    """Catches an impl that leaves record_cost importable from app.storage or its
+    sub-modules."""
     cost_ledger = importlib.import_module("app.storage.cost_ledger")
-    residency_log = importlib.import_module("app.storage.residency_log")
     storage = importlib.import_module("app.storage")
 
     assert not hasattr(cost_ledger, "record_cost"), (
         "app.storage.cost_ledger must not expose record_cost"
     )
-    assert not hasattr(residency_log, "record_residency"), (
-        "app.storage.residency_log must not expose record_residency"
-    )
-    assert not hasattr(residency_log, "region_allowed"), (
-        "app.storage.residency_log must not expose region_allowed"
-    )
-    for name in _COST_RESIDENCY_NAMES:
+    for name in _COST_NAMES:
         assert not hasattr(storage, name), f"app.storage must not re-export {name}"
 
 
-def test_the_cost_and_residency_recording_lives_in_the_service() -> None:
-    """Catches an impl that did not move record_cost, record_residency and
-    region_allowed into app.services.ledger."""
+def test_the_cost_recording_lives_in_the_service() -> None:
+    """Catches an impl that did not move record_cost into app.services.ledger."""
     ledger = importlib.import_module("app.services.ledger")
-    for name in _COST_RESIDENCY_NAMES:
+    for name in _COST_NAMES:
         assert hasattr(ledger, name), f"app.services.ledger must define {name}"
 
 
@@ -220,22 +208,13 @@ def test_the_ledger_cli_runs_no_sql() -> None:
                 "app/cli/ledger.py must not call conn.execute; delegate to storage modules"
             )
 
-    # purge_partitions must import from app.storage.residency_log.
-    purge_from_residency = False
     refresh_from_cost = False
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module == "app.storage.residency_log":
-            for alias in node.names:
-                if alias.name == "purge_partitions":
-                    purge_from_residency = True
         if isinstance(node, ast.ImportFrom) and node.module == "app.storage.cost_ledger":
             for alias in node.names:
                 if alias.name == "refresh_daily_rollup":
                     refresh_from_cost = True
 
-    assert purge_from_residency, (
-        "app/cli/ledger.py must import purge_partitions from app.storage.residency_log"
-    )
     assert refresh_from_cost, (
         "app/cli/ledger.py must import refresh_daily_rollup from app.storage.cost_ledger"
     )
@@ -250,7 +229,6 @@ _DASHBOARD_MODEL_NAMES = (
     "ReleaseMarker",
     "CategoryCount",
     "TagCount",
-    "RegionCount",
     "Regression",
     "Incident",
     "Release",

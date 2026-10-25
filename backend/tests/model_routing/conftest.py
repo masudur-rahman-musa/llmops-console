@@ -1,4 +1,4 @@
-"""Fixtures for the routing policy and residency resolver tests.
+"""Fixtures for the routing policy and resolver tests.
 
 Everything here is in-process: a Pydantic model tree and a YAML file under
 `tmp_path`. There is no backing service, so a project rule (session-scoped
@@ -26,7 +26,6 @@ from app.model_routing.policy import (
     Provider,
     ProviderKind,
     RateLimit,
-    Residency,
     Tenant,
 )
 
@@ -69,32 +68,29 @@ def valid_document(rpm: int = 60) -> dict[str, object]:
     """
     return {
         "providers": {
-            "anthropic-eu": {"kind": "anthropic", "region": "eu", "key_env": "ANTHROPIC_API_KEY"},
-            "openai-us": {"kind": "openai", "region": "us", "key_env": "OPENAI_API_KEY"},
+            "anthropic-a": {"kind": "anthropic", "key_env": "ANTHROPIC_API_KEY"},
+            "openai-a": {"kind": "openai", "key_env": "OPENAI_API_KEY"},
             "local-self": {
                 "kind": "openai_compatible",
-                "region": "self",
                 "base_url": "http://localhost:8081/v1",
             },
         },
-        "eu_regions": ["eu", "self"],
         "aliases": {
             "chat": {
                 "candidates": [
-                    {"provider": "anthropic-eu", "model": "claude-sonnet-4-5"},
-                    {"provider": "openai-us", "model": "gpt-4o-mini"},
+                    {"provider": "anthropic-a", "model": "claude-sonnet-4-5"},
+                    {"provider": "openai-a", "model": "gpt-4o-mini"},
                 ]
             },
             "judge": {"candidates": [{"provider": "local-self", "model": "qwen2.5-7b-instruct"}]},
         },
         "tenants": {
             "acme": {
-                "residency": "eu",
                 "data_class_rules": {
-                    "public": {"allow_regions": ["us", "eu", "self"]},
-                    "internal": {"allow_regions": ["eu", "self"]},
-                    "confidential": {"allow_regions": ["self"]},
-                    "pii": {"allow_regions": ["self"], "redact": True},
+                    "public": {},
+                    "internal": {},
+                    "confidential": {"redact": True},
+                    "pii": {"redact": True},
                 },
                 "budget_usd_month": "100.00",
                 "rate_limit": {"rpm": rpm, "tpm": 100000},
@@ -107,14 +103,12 @@ def valid_document(rpm: int = 60) -> dict[str, object]:
 def make_policy(
     *,
     providers: Mapping[str, Provider] | None = None,
-    eu_regions: tuple[str, ...] = ("eu", "self"),
     aliases: Mapping[str, Alias] | None = None,
     tenants: Mapping[str, Tenant] | None = None,
 ) -> Policy:
     """Build a `Policy` straight from the models, skipping YAML entirely."""
     return Policy(
         providers=providers if providers is not None else {},
-        eu_regions=eu_regions,
         aliases=aliases if aliases is not None else {},
         tenants=tenants if tenants is not None else {},
     )
@@ -122,15 +116,13 @@ def make_policy(
 
 def make_tenant(
     *,
-    residency: Residency,
-    rules: Mapping[DataClass, tuple[str, ...]],
+    rules: Mapping[DataClass, bool] | None = None,
     overrides: Mapping[str, tuple[Candidate, ...]] | None = None,
 ) -> Tenant:
     return Tenant(
-        residency=residency,
         data_class_rules={
-            data_class: DataClassRule(allow_regions=regions)
-            for data_class, regions in rules.items()
+            data_class: DataClassRule(redact=redact)
+            for data_class, redact in (rules if rules is not None else {}).items()
         },
         budget_usd_month=Decimal("100.00"),
         rate_limit=RateLimit(rpm=60, tpm=100_000),
@@ -139,37 +131,30 @@ def make_tenant(
 
 
 PROVIDERS: Mapping[str, Provider] = {
-    "eu-a": Provider(kind=ProviderKind.ANTHROPIC, region="eu"),
-    "eu-b": Provider(kind=ProviderKind.OPENAI, region="eu"),
-    "eu-off": Provider(kind=ProviderKind.OPENAI, region="eu", enabled=False),
-    "us-a": Provider(kind=ProviderKind.OPENAI, region="us"),
-    "self-a": Provider(kind=ProviderKind.OPENAI_COMPATIBLE, region="self"),
+    "a": Provider(kind=ProviderKind.ANTHROPIC),
+    "b": Provider(kind=ProviderKind.OPENAI),
+    "off": Provider(kind=ProviderKind.OPENAI, enabled=False),
+    "c": Provider(kind=ProviderKind.OPENAI),
+    "self-a": Provider(kind=ProviderKind.OPENAI_COMPATIBLE),
 }
 
 ALIASES: Mapping[str, Alias] = {
     # Overridden by the `acme` tenant, so the default is never what resolves.
-    "chat": Alias(candidates=(Candidate(provider="eu-a", model="m-eu-a"),)),
-    # A us candidate first, to prove the eu clamp drops it rather than reorders.
-    "mixed": Alias(
-        candidates=(
-            Candidate(provider="us-a", model="m-us-a"),
-            Candidate(provider="eu-a", model="m-eu-a"),
-        )
-    ),
+    "chat": Alias(candidates=(Candidate(provider="a", model="m-a"),)),
     "ordered": Alias(
         candidates=(
-            Candidate(provider="eu-a", model="m-eu-a"),
-            Candidate(provider="eu-b", model="m-eu-b"),
+            Candidate(provider="a", model="m-a"),
+            Candidate(provider="b", model="m-b"),
             Candidate(provider="self-a", model="m-self-a"),
         )
     ),
     "disabled-first": Alias(
         candidates=(
-            Candidate(provider="eu-off", model="m-eu-off"),
-            Candidate(provider="eu-a", model="m-eu-a"),
+            Candidate(provider="off", model="m-off"),
+            Candidate(provider="a", model="m-a"),
         )
     ),
-    "us-only": Alias(candidates=(Candidate(provider="us-a", model="m-us-a"),)),
+    "all-off": Alias(candidates=(Candidate(provider="off", model="m-off"),)),
 }
 
 
@@ -181,27 +166,15 @@ def policy() -> Policy:
         aliases=ALIASES,
         tenants={
             "acme": make_tenant(
-                residency=Residency.EU,
                 rules={
-                    DataClass.PUBLIC: ("us", "eu", "self"),
-                    DataClass.INTERNAL: ("eu", "self"),
-                    DataClass.CONFIDENTIAL: ("self",),
-                    # No `pii` rule at all: deny by default must cover the gap.
+                    DataClass.PUBLIC: False,
+                    DataClass.INTERNAL: False,
+                    DataClass.CONFIDENTIAL: True,
+                    # No `pii` rule at all: a missing rule is not redacted.
                 },
-                overrides={"chat": (Candidate(provider="eu-b", model="m-override"),)},
+                overrides={"chat": (Candidate(provider="b", model="m-override"),)},
             ),
-            "globex": make_tenant(
-                residency=Residency.ANY,
-                rules={
-                    DataClass.PUBLIC: ("us", "eu", "self"),
-                    DataClass.INTERNAL: ("us", "eu"),
-                },
-            ),
-            "narrow": make_tenant(
-                residency=Residency.EU,
-                # An eu tenant allowed only `us`: the clamp empties this.
-                rules={DataClass.PUBLIC: ("us",)},
-            ),
+            "globex": make_tenant(rules={DataClass.PUBLIC: False}),
         },
     )
 
@@ -226,11 +199,9 @@ def boundary_policy() -> Policy:
     """
     name = "a" * MAX_IDENTIFIER_LENGTH
     return make_policy(
-        providers={"eu-a": Provider(kind=ProviderKind.ANTHROPIC, region="eu")},
-        aliases={name: Alias(candidates=(Candidate(provider="eu-a", model="m-eu-a"),))},
-        tenants={
-            name: make_tenant(residency=Residency.EU, rules={DataClass.PUBLIC: ("eu", "self")})
-        },
+        providers={"a": Provider(kind=ProviderKind.ANTHROPIC)},
+        aliases={name: Alias(candidates=(Candidate(provider="a", model="m-a"),))},
+        tenants={name: make_tenant(rules={DataClass.PUBLIC: False})},
     )
 
 

@@ -1,8 +1,6 @@
-# The two ledger-maintenance CronJobs. Both ship entrypoints
-# that nothing called on a schedule until now: `ops-purge-residency` drops the
-# residency_log day partitions past the 90-day retention, and `ops-refresh-rollup`
+# The ledger-maintenance CronJob. `ops-refresh-rollup`
 # recomputes the `cost_ledger_daily` materialised view the console's cost page reads
-# (`app/cli/ledger.py`). They run on the gateway image, the one image that already
+# (`app/cli/ledger.py`). It runs on the gateway image, the one image that already
 # carries that code.
 #
 # `image: gateway` is the bare name on purpose, the same as `apps/gateway.yaml`: the
@@ -26,50 +24,11 @@
 # three parts already live in that Secret, read in by `envFrom`, and Kubernetes expands
 # `$(POSTGRES_USER)` and friends in the `value` from the container's own environment.
 #
-# Schedules sit at their own hours, clear of the two backups' 03:00 and of each other
-# (`residency-purge` 01:00, `rollup-refresh` 02:00). A CronJob costs the quota only while
-# its Job pod exists, so staggered jobs never coexist and the platform envelope is
+# The schedule (`rollup-refresh` 02:00) sits clear of the two backups' 03:00. A CronJob
+# costs the quota only while its Job pod exists, so the platform envelope is
 # unchanged: the peak is still the two backups at 03:00. `restartPolicy: OnFailure` with
 # `concurrencyPolicy: Forbid` means a failed night is reported as one and never overlaps
 # the next.
-apiVersion: batch/v1
-kind: CronJob
-metadata:
-  name: residency-purge
-  namespace: platform
-  labels:
-    app.kubernetes.io/name: residency-purge
-spec:
-  schedule: "0 1 * * *"
-  concurrencyPolicy: Forbid
-  successfulJobsHistoryLimit: 3
-  failedJobsHistoryLimit: 3
-  jobTemplate:
-    spec:
-      template:
-        metadata:
-          labels:
-            app.kubernetes.io/name: residency-purge
-        spec:
-          restartPolicy: OnFailure
-          containers:
-            - name: residency-purge
-              image: gateway
-              command:
-                - ops-purge-residency
-              envFrom:
-                - secretRef:
-                    name: postgres-credentials
-              env:
-                - name: OPSCONSOLE_DATABASE_URL
-                  value: postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres.platform.svc.cluster.local:5432/$(POSTGRES_DB)
-              resources:
-                requests:
-                  memory: 128Mi
-                  cpu: 100m
-                limits:
-                  memory: 192Mi
----
 apiVersion: batch/v1
 kind: CronJob
 metadata:

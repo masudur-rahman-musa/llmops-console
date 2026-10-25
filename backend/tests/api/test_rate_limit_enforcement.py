@@ -52,7 +52,7 @@ The contract these cases are written against, before it exists:
   at the tenant's own `rpm`/`tpm` capacity and `rpm/60`/`tpm/60` rate, and raises
   `RateLimited` carrying `retry_after_seconds` when either is refused;
 * the tenant's limit is read with `.get`, so a tenant `routing.yaml` does not
-  carry has no limit at all and is left to the resolver's 451;
+  carry has no limit at all and is left to the resolver's 403;
 * `debit_tokens` is called from inside `book_cost` and nowhere else, beside
   `debit_budget`, and books `0` for a cached row and `input_tokens +
   output_tokens` for every other one;
@@ -638,15 +638,15 @@ def test_a_budget_refusal_carries_no_retry_after(
     assert RETRY_AFTER_HEADER not in response.headers
 
 
-def test_a_residency_refusal_carries_no_retry_after(limit_client: TestClient) -> None:
+def test_a_tenant_refusal_carries_no_retry_after(limit_client: TestClient) -> None:
     """The other typed error a request can meet on this app, so "only when the error carries
     one" is asserted across two statuses rather than one. Catches a `Retry-After` derived
     from anything the request holds rather than from the error itself - a header written
-    from `app.state` or from the tenant's policy would land on this 451 too, and telling a
-    client to retry a residency refusal is telling it to retry for ever."""
+    from `app.state` or from the tenant's policy would land on this 403 too, and telling a
+    client to retry a tenant refusal is telling it to retry for ever."""
     response = post(limit_client, chat_body(model=ALIAS), tenant=UNPOLICED_TENANT)
 
-    assert_error_body(response, status=451, code="RESIDENCY_UNAVAILABLE")
+    assert_error_body(response, status=403, code="TENANT_MISMATCH")
     assert RETRY_AFTER_HEADER not in response.headers
 
 
@@ -705,21 +705,22 @@ def test_every_swallowed_failure_is_logged_with_the_tenant_and_the_dimension(
 # --------------------------------------------------------------------------
 
 
-def test_a_tenant_the_policy_does_not_carry_is_still_the_resolvers_451(
+def test_a_tenant_the_policy_does_not_carry_is_still_the_resolvers_403(
     limit_client: TestClient, limit_store: RecordingRateLimitStore
 ) -> None:
     """The rate check runs before the resolver, so it meets tenants the policy has never
     heard of - a key the store carries with no `routing.yaml` entry.
 
     Catches a ceiling read as `policy.tenants[tenant]`, which raises `KeyError` and turns
-    today's typed 451 into an untyped 500; and catches a check that invents a ceiling of
-    zero for such a tenant, which would answer 429 and hide the residency refusal that is
-    the correct answer. Deny-by-default is the resolver's job here, not the limiter's. `takes == []` is what says the limiter did not merely happen to allow
+    today's typed 403 into an untyped 500; and catches a check that invents a ceiling of
+    zero for such a tenant, which would answer 429 and hide the tenant refusal that is
+    the correct answer. Deny-by-default is the resolver's job here, not the limiter's
+    . `takes == []` is what says the limiter did not merely happen to allow
     it - it never opened a bucket for a tenant with no published limit, so no key with an
     unpoliced name is ever written."""
     response = post(limit_client, chat_body(model=ALIAS), tenant=UNPOLICED_TENANT)
 
-    assert_error_body(response, status=451, code="RESIDENCY_UNAVAILABLE")
+    assert_error_body(response, status=403, code="TENANT_MISMATCH")
     assert limit_store.takes == []
 
 

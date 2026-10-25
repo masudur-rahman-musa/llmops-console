@@ -13,13 +13,12 @@ from pydantic import BaseModel, ConfigDict
 
 
 class ResolvedEntry(BaseModel):
-    """One place a triple resolves to: the provider, its model id and its region."""
+    """One place a triple resolves to: the provider and its model id."""
 
     model_config = ConfigDict(frozen=True)
 
     provider: str
     model: str
-    region: str
 
 
 class AliasView(BaseModel):

@@ -7,41 +7,31 @@
 # `opsconsole.routing.policy`, and the file itself is a test case: it is loaded
 # and swept for every (tenant, alias, data class) triple by the routing tests.
 #
-# Residency is deny by default. For a tenant with `residency: eu` the regions a
-# data class allows are intersected with `eu_regions`, so a rule that permits
-# `us` still does not send that tenant's traffic to a US provider. An empty
-# result is a 451, never a widened region set.
-#
 # Keys never hold a secret. `key_env` names the environment variable the
 # provider adapter reads.
 
 providers:
   anthropic:
     kind: anthropic
-    region: us
     base_url: https://api.anthropic.com
     key_env: ANTHROPIC_API_KEY
   anthropic_eu:
     kind: anthropic
-    region: eu
     base_url: https://api.anthropic.com
     key_env: ANTHROPIC_EU_API_KEY
     enabled: false
   openai:
     kind: openai
-    region: us
     base_url: https://api.openai.com/v1
     key_env: OPENAI_API_KEY
     enabled: false
   azure_eu:
     kind: azure_openai
-    region: eu
     endpoint_env: AZURE_OPENAI_ENDPOINT
     key_env: AZURE_OPENAI_KEY
     enabled: false
   local:
     kind: openai_compatible
-    region: self
     base_url: http://llama:8082/v1
   # One llama.cpp process serves ONE model, so the embedding server is a second
   # address and therefore a second provider rather than another alias here. Its
@@ -49,16 +39,11 @@ providers:
   # that row's price key.
   local_embed:
     kind: openai_compatible
-    region: self
     base_url: http://llama-embed:8083/v1
   vllm:
     kind: openai_compatible
-    region: self
     base_url: http://vllm.gpu.svc.cluster.local:8000/v1
     enabled: false
-
-# The regions an `eu` tenant may reach. `self` is the box we run ourselves.
-eu_regions: [eu, self]
 
 aliases:
   # The only alias on the semantic cache (#23). A chat assistant's callers ask the
@@ -75,10 +60,8 @@ aliases:
       - { provider: anthropic, model: claude-haiku-5-5 }
       - { provider: anthropic_eu, model: claude-haiku-5-5 }
       - { provider: local, model: qwen2.5-3b-instruct }
-  # Both strong aliases are US-only until `anthropic_eu` is enabled, so a tenant
-  # with `residency: eu` gets a 451 for them rather than a weaker model under a
-  # strong name. Widen this by enabling the EU provider, never by adding a
-  # candidate the alias does not honestly describe.
+  # A strong alias lists only strong models. Never add a candidate the alias does
+  # not honestly describe.
   agent-strong:
     candidates:
       - { provider: anthropic, model: claude-sonnet-5-5 }
@@ -94,41 +77,32 @@ aliases:
 
 tenants:
   nordlicht:
-    residency: eu
     data_class_rules:
-      public: { allow_regions: [us, eu, self] }
-      internal: { allow_regions: [eu, self] }
-      confidential: { allow_regions: [eu, self], redact: true }
-      pii: { allow_regions: [self], redact: true }
+      public: { redact: false }
+      internal: { redact: false }
+      confidential: { redact: true }
+      pii: { redact: true }
     budget_usd_month: "15.00"
     rate_limit: { rpm: 60, tpm: 60000 }
-    # Everything this tenant sends stays on the box we run - under the default
-    # strict mode, which is the only mode a deployment runs. The US candidate
-    # below is first so that a relaxed LOCAL DEMO reaches a model that extracts
-    # entities correctly; strict drops it in the clamp, leaves `local` as the one
-    # permitted candidate, and this tenant's traffic still never leaves the box
-    # (`test_nordlicht_confidential_stays_local_under_strict`, a design note).
+    # This tenant prefers the cheap hosted model first, then the local one.
     overrides:
       agent-default:
         - { provider: anthropic, model: claude-haiku-5-5 }
         - { provider: local, model: qwen2.5-3b-instruct }
   cuan:
-    residency: eu
     data_class_rules:
-      public: { allow_regions: [us, eu, self] }
-      internal: { allow_regions: [us, eu, self] }
-      confidential: { allow_regions: [eu, self], redact: true }
-      pii: { allow_regions: [self], redact: true }
+      public: { redact: false }
+      internal: { redact: false }
+      confidential: { redact: true }
+      pii: { redact: true }
     budget_usd_month: "60.00"
     rate_limit: { rpm: 6000, tpm: 6000000 }
-  # The eval harness. No residency regime, because it is our own traffic and the
-  # judge runs on a US provider.
+  # The eval harness: our own traffic.
   evals:
-    residency: any
     data_class_rules:
-      public: { allow_regions: [us, eu, self] }
-      internal: { allow_regions: [us, eu, self] }
-      confidential: { allow_regions: [eu, self], redact: true }
-      pii: { allow_regions: [self], redact: true }
+      public: { redact: false }
+      internal: { redact: false }
+      confidential: { redact: true }
+      pii: { redact: true }
     budget_usd_month: "10.00"
     rate_limit: { rpm: 120, tpm: 120000 }

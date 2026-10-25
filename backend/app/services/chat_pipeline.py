@@ -24,7 +24,7 @@ from app.core.metrics import (
 )
 from app.core.tracing import SpanAttributes, annotate, stage_span
 from app.model_routing.errors import AllProvidersUnavailable
-from app.model_routing.policy import DataClass, Policy, ResidencyMode
+from app.model_routing.policy import Policy
 from app.model_routing.resolver import Resolved, resolve
 from app.providers.breaker import CircuitBreaker
 from app.redaction import DirectoryStore
@@ -62,7 +62,6 @@ from app.services.chat_headers import (
 from app.services.chat_headers import (
     gateway_headers as _gateway_headers,
 )
-from app.services.ledger import record_residency
 from app.services.redaction_flow import (
     REDACT_SPAN,
     redact_or_reject,
@@ -75,9 +74,6 @@ from app.services.wire_mapping import (
     requested_mapping,
     to_neutral,
     to_wire,
-)
-from app.storage import (
-    ResidencyLogWriter,
 )
 
 COST_HEADER = "X-Gateway-Cost-USD"
@@ -147,11 +143,8 @@ def record_served(
     alias: str,
     chosen: Resolved,
     failed: int,
-    policy: Policy,
-    data_class: DataClass,
-    log: ResidencyLogWriter,
 ) -> None:
-    """Close the loop on the candidate that served: the breaker, the counter, the span, the log.
+    """Close the loop on the candidate that served: the breaker, the counter, the span.
 
     On a STREAM this runs when the first event arrives, not when the last one does,
     because that is where the route hands the response back. The consequence is
@@ -166,23 +159,11 @@ def record_served(
     counter and the attribute move once per REQUEST rather than once per attempt,
     and neither is touched at all when nothing fell back.
 
-    The residency row is written here, and here is the ONLY place it is written,
-    which is what makes "one row per served request" true of all three paths -
-    both chat paths and `/v1/embeddings` reach the log through this function and
-    through nothing else. It names `chosen`, so a request that fell back records
-    the candidate that SERVED. On a stream
-    that is still before the first frame is on the wire, so a stream that dies
-    mid-answer has already recorded where its data went. The write is guarded
-    inside `record_residency`: it cannot change a status
-    code, a body or a header on any of the three paths.
     """
     breaker.record_success(chosen.provider)
     from app.core.metrics import record_circuit_state
 
     record_circuit_state(provider=chosen.provider, state=int(breaker.state(chosen.provider)))
-    record_residency(
-        log, policy=policy, tenant=tenant, data_class=data_class, alias=alias, chosen=chosen
-    )
     if failed == 0:
         return
     record_fallback(tenant=tenant, alias=alias, provider=chosen.provider)
@@ -340,8 +321,8 @@ def walk_candidates[T](
     once.
 
     A content policy refusal is a `ProviderError` that is never retryable, so it
-    stops at the candidate that refused. The console's own blocks (residency,
-    redaction, budget, rate limit, a bad request) are not `ProviderError`s and
+    stops at the candidate that refused. The console's own blocks (redaction, budget,
+    rate limit, a bad request) are not `ProviderError`s and
     pass straight through. Both are pinned in `tests/api/test_fallback.py`.
     """
     if not candidates:
@@ -384,7 +365,6 @@ def complete_chat(
     check_rate_limit(clients, context)
     _check_budget(clients, context, override=budget_override)
 
-    mode: ResidencyMode = clients.settings.residency_mode
     allowed = allowed_by_header(cache_header)
     mapping = requested_mapping(clients.redaction_map_store, context.tenant, rehydrate_header)
 
@@ -395,7 +375,6 @@ def complete_chat(
             body.model,
             context.data_class.value,
             is_healthy=health_seam(clients.breaker, lambda provider: provider in clients.adapters),
-            mode=mode,
         )
     label_candidate(scope, body.model, candidates[0])
 
@@ -437,7 +416,6 @@ def complete_chat(
                 breaker=clients.breaker,
                 tenant=context.tenant,
                 data_class=context.data_class,
-                mode=mode,
             )
             near = _semantic_answer(
                 clients.semantic_cache,
@@ -447,7 +425,6 @@ def complete_chat(
                 system_hash=system_hash(outbound),
                 tools_hash=tools_hash(outbound),
                 provider=candidates[0].provider,
-                region=candidates[0].region,
                 data_class=context.data_class.value,
             )
         if near is not None:
@@ -497,9 +474,6 @@ def complete_chat(
                 alias=body.model,
                 chosen=chosen,
                 failed=failed_so_far,
-                policy=clients.policy,
-                data_class=context.data_class,
-                log=clients.residency_log,
             )
             return plan
         with stage_span(scope, provider_span_name(chosen.provider)):
@@ -511,9 +485,6 @@ def complete_chat(
             alias=body.model,
             chosen=chosen,
             failed=failed_so_far,
-            policy=clients.policy,
-            data_class=context.data_class,
-            log=clients.residency_log,
         )
         record_tokens(
             tenant=context.tenant,
@@ -543,7 +514,6 @@ def complete_chat(
             system_hash=system_hash(outbound),
             tools_hash=tools_hash(outbound),
             provider=chosen.provider,
-            region=chosen.region,
             data_class=context.data_class.value,
         )
         headers[COST_HEADER] = _book_cost(

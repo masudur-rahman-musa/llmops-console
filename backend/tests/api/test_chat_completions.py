@@ -681,31 +681,12 @@ def test_a_malformed_alias_is_422_not_404(chat_client: TestClient) -> None:
     assert_error_body(response, status=422, code="VALIDATION")
 
 
-def test_eu_tenant_on_a_us_alias_is_451_with_no_call(
-    chat_client: TestClient, chat_stub: StubAdapter
-) -> None:
-    """Catches a route that calls the provider and then checks residency, or that widens
-    the region set when nothing is allowed: `agent-strong` is US-only while `anthropic_eu`
-    is disabled, so an EU tenant's request must not leave the process at all."""
-    before = len(chat_stub.requests)
-
-    response = post_chat(
-        chat_client,
-        chat_body(model="agent-strong"),
-        key=NORDLICHT_KEY,
-        tenant="nordlicht",
-    )
-
-    assert_error_body(response, status=451, code="RESIDENCY_UNAVAILABLE")
-    assert len(chat_stub.requests) == before, "the provider was called for a denied request"
-
-
 def test_no_adapter_for_any_candidate_is_503(chat_client: TestClient) -> None:
     """Catches a route that ignores the resolver's health seam and calls the first
-    candidate regardless: `nordlicht` overrides `agent-default` onto `local`, which has no
-    adapter, so the answer is an unavailability the operator can act on rather than a
+    candidate regardless: `embed` resolves to `local_embed`, which has no
+    adapter here, so the answer is an unavailability the operator can act on rather than a
     `KeyError` served as a 500."""
-    response = post_chat(chat_client, chat_body(model=ALIAS), key=NORDLICHT_KEY, tenant="nordlicht")
+    response = post_chat(chat_client, chat_body(model="embed"))
 
     assert_error_body(response, status=503, code="ALL_PROVIDERS_FAILED")
 
@@ -746,7 +727,7 @@ def test_an_adapter_raising_provider_error_is_502(settings: Settings) -> None:
 
 def test_chat_requires_auth(chat_client: TestClient) -> None:
     """Catches a route declared without the request context dependency: it would serve an
-    unauthenticated caller, and with no tenant there is no residency rule to apply."""
+    unauthenticated caller, and with no tenant there is no policy to apply."""
     response = chat_client.post(CHAT, json=chat_body())
 
     assert_error_body(response, status=401, code="UNAUTHORIZED")
@@ -754,8 +735,8 @@ def test_chat_requires_auth(chat_client: TestClient) -> None:
 
 def test_chat_rejects_a_tenant_that_is_not_the_keys(chat_client: TestClient) -> None:
     """Catches a route that resolves on the `X-Tenant` header without the key/tenant
-    match: one tenant could then route under another's residency rules, which is the
-    residency guarantee bypassed by a header."""
+    match: one tenant could then route under another's policy, which is a
+    tenant boundary bypassed by a header."""
     response = chat_client.post(
         CHAT,
         json=chat_body(),
@@ -765,20 +746,21 @@ def test_chat_rejects_a_tenant_that_is_not_the_keys(chat_client: TestClient) -> 
     assert_error_body(response, status=403, code="TENANT_MISMATCH")
 
 
-def test_an_eu_pii_request_is_served_by_the_local_provider(
+def test_a_pii_request_is_served_by_the_local_provider(
     settings: Settings, chat_client: TestClient
 ) -> None:
     """Catches the local adapter being reachable everywhere except from the route: this is
-    the request the plan exists for, and it is the one path with no alternative - the
-    `nordlicht` tenant's `pii` rule allows the region `self` alone, so a resolver, a
-    factory or an adapter set that does not offer `local` leaves it a 503 forever rather
-    than falling back to somewhere the data may not go.
+    the request the plan exists for. With no adapter at all the answer is a 503, so a
+    factory or an adapter set that does not offer `local` leaves it unserved.
 
     The first half asserts that same request IS a 503 without a `local` adapter, so the
-    200 below can only be the new adapter and not a residency rule that quietly widened."""
+    200 below can only be the new adapter and not a provider that quietly appeared."""
     body = chat_body(model=ALIAS)
 
-    denied = post_chat(chat_client, body, key=NORDLICHT_KEY, tenant="nordlicht", data_class="pii")
+    with build_chat_client(settings, {}) as empty_client:
+        denied = post_chat(
+            empty_client, body, key=NORDLICHT_KEY, tenant="nordlicht", data_class="pii"
+        )
     assert_error_body(denied, status=503, code="ALL_PROVIDERS_FAILED")
 
     adapter, scripted = make_local_adapter(
@@ -789,9 +771,8 @@ def test_an_eu_pii_request_is_served_by_the_local_provider(
         served = post_chat(client, body, key=NORDLICHT_KEY, tenant="nordlicht", data_class="pii")
 
     assert served.status_code == 200, served.text
-    # TWO calls to the one adapter, in this order, and the reason is an earlier change: the
-    # `pii` rule allows the region `self` alone, where both self-hosted providers
-    # live, so an `agent-default` request first embeds its semantic probe through
+    # TWO calls to the one adapter, in this order, and the reason is an earlier change: an
+    # `agent-default` request first embeds its semantic probe through
     # `local_embed` and then asks `local` for the completion. One object stands in
     # for both servers here, so the calls land on the same recorder: the chat call
     # is index 1, and the count is asserted exactly so that a tier which embedded
@@ -799,7 +780,6 @@ def test_an_eu_pii_request_is_served_by_the_local_provider(
     assert scripted.request_count == 2, "the local provider was not called for both"
     assert scripted.requests[0].url.path.endswith("/embeddings")
     assert served.headers["x-gateway-provider"] == "local"
-    assert served.headers["x-gateway-region"] == "self"
     assert served.headers["x-gateway-model"] == "qwen2.5-3b-instruct"
     assert served.json()["choices"][0]["message"]["content"] == "Ship it."
     assert scripted.body(1)["model"] == "qwen2.5-3b-instruct", (

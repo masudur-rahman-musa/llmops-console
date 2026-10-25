@@ -17,7 +17,7 @@
       "id": 1,
       "type": "timeseries",
       "title": "Requests per second, by status",
-      "description": "Every request the gateway served, split by the status it answered with. A 451 is a residency refusal and is expected to be visible rather than zero.",
+      "description": "Every request the gateway served, split by the status it answered with.",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
       "fieldConfig": {
         "defaults": { "unit": "reqps", "min": 0 },
@@ -67,7 +67,7 @@
       "id": 3,
       "type": "timeseries",
       "title": "Provider errors per second, by code",
-      "description": "Provider call failures by typed error code. A residency refusal is deliberately NOT counted here: it is a decision, not an outage, and it moves gateway_requests_total's status label only.",
+      "description": "Provider call failures by typed error code. Only provider failures are counted here; every other error moves gateway_requests_total's status label only.",
       "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
       "fieldConfig": {
         "defaults": { "unit": "reqps", "min": 0 },
@@ -223,41 +223,6 @@
           "editorMode": "code",
           "instant": true,
           "expr": "sum(increase(gateway_request_latency_seconds_bucket{le=\"6.0\",provider!~\"local|local_embed|vllm\"}[30d])) / sum(increase(gateway_request_latency_seconds_count{provider!~\"local|local_embed|vllm\"}[30d]))"
-        }
-      ]
-    },
-    {
-      "id": 9,
-      "type": "stat",
-      "title": "Residency violations over 30d",
-      "description": "Objective 0. There is no budget to spend: any value above zero is an incident.",
-      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 17 },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "red", "value": 1 }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-        "colorMode": "background",
-        "textMode": "auto"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "editorMode": "code",
-          "instant": true,
-          "expr": "sum(increase(gateway_residency_violations_total[30d]))"
         }
       ]
     }

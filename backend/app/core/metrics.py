@@ -32,8 +32,8 @@ those gauges to a Pushgateway, so they are not this process's to declare.
 
 **Why no client string becomes a label without passing a check first.** A
 registry has no cap of its own: one distinct label tuple is one time series, in
-process memory and in Prometheus's index, forever. So `alias`, `provider`,
-`region` and `model` are only ever the RESOLVER's answer, `tenant` is only ever
+process memory and in Prometheus's index, forever. So `alias`, `provider`
+and `model` are only ever the RESOLVER's answer, `tenant` is only ever
 the identifier the request context already checked against `IDENTIFIER_PATTERN`
 and `MAX_IDENTIFIER_LENGTH`, `kind` is only ever a `Kind` member and `code` only
 ever an `ErrorCode` member. Everything else is the empty string. That is standing
@@ -110,19 +110,14 @@ PROVIDER_FAILURE_CODES = frozenset({ErrorCode.PROVIDER_ERROR})
 One member, and it stays one. `ALL_PROVIDERS_FAILED` is raised by the resolver
 BEFORE any provider is chosen - the breaker's contribution is to make the seam
 refuse more often, not to name a provider - so it has no provider to label with
-and would need the empty one, which is a series nobody can act on. A residency refusal is
-deliberately not here either: a 451 is a
-residency decision, not a provider outage, and counting it as one would fire
-the provider panel on a request no provider ever saw. It moves no failure family at all and is
-counted only by
-`gateway_requests_total`'s `status` label."""
+and would need the empty one, which is a series nobody can act on."""
 
 _registry = CollectorRegistry()
 
 REQUESTS = Counter(
     "gateway_requests_total",
-    "Requests served, by tenant, alias, resolved provider and region, status and cache outcome.",
-    ("tenant", "alias", "provider", "region", "status", "cache"),
+    "Requests served, by tenant, alias, resolved provider, status and cache outcome.",
+    ("tenant", "alias", "provider", "status", "cache"),
     registry=_registry,
 )
 
@@ -152,13 +147,6 @@ PROVIDER_ERRORS = Counter(
     "gateway_provider_errors_total",
     "Provider call failures, by provider and typed error code.",
     ("provider", "code"),
-    registry=_registry,
-)
-
-RESIDENCY_VIOLATIONS = Counter(
-    "gateway_residency_violations_total",
-    "Requests served from a region the tenant's policy does not allow. Zero by construction.",
-    ("tenant",),
     registry=_registry,
 )
 
@@ -251,7 +239,6 @@ class RequestMetrics:
     tenant: str = UNSET_LABEL
     alias: str = UNSET_LABEL
     provider: str = UNSET_LABEL
-    region: str = UNSET_LABEL
     cache: str = UNSET_LABEL
 
 
@@ -291,7 +278,7 @@ def label_tenant(scope: Scope, tenant: str) -> None:
             record.tenant = tenant
 
 
-def label_resolution(scope: Scope, *, alias: str, provider: str, region: str, cache: str) -> None:
+def label_resolution(scope: Scope, *, alias: str, provider: str, cache: str) -> None:
     """Note what the resolver decided, and the cache outcome this request had.
 
     Called only AFTER `resolve()` returns, which is what bounds the cardinality of
@@ -304,7 +291,6 @@ def label_resolution(scope: Scope, *, alias: str, provider: str, region: str, ca
         if record is not None:
             record.alias = alias
             record.provider = provider
-            record.region = region
             record.cache = cache
 
 
@@ -323,7 +309,6 @@ def observe_request(scope: Scope, *, status: int, seconds: float) -> None:
             tenant=record.tenant,
             alias=record.alias,
             provider=record.provider,
-            region=record.region,
             status=str(status),
             cache=record.cache,
         ).inc()
@@ -499,14 +484,6 @@ def record_failure(scope: Scope, error: GatewayError) -> None:
     so it is labelled with the one that failed and with the typed code. Every other
     typed failure is already counted by `gateway_requests_total`'s `status` label
     and gets no second family.
-
-    A 451 is NOT among them, and used to be. A residency
-    refusal is the resolver working: it is the guarantee being kept, not a
-    violation of it, and the alert on `gateway_residency_violations_total` fires at
-    greater than zero - so counting 451s there paged someone every time an EU
-    tenant asked for `agent-strong`. That counter is now moved only by an
-    `allowed=false` row in the residency log, from `record_residency_violation`
-    below, which is what makes it zero by construction and alertable at all.
     """
     with _guarded("failure counters"):
         record = request_metrics(scope)
@@ -527,22 +504,3 @@ def record_ledger_write(*, result: str) -> None:
     """
     with _guarded("ledger write"):
         LEDGER_WRITES.labels(result=result).inc()
-
-
-def record_residency_violation(*, tenant: str) -> None:
-    """Book one residency violation: a request SERVED from a region policy forbids.
-
-    The resolver cannot produce one - it filters the candidate list by region
-    before anything is dialled, and the residency property test
-    is the proof - so this counter is expected to stay at zero forever, which is
-    exactly what makes "alert above zero" a usable alert rather than
-    a threshold someone has to tune. It moves only from
-    `storage/residency_log.py::record_residency`, on a row whose `allowed` came back
-    false; if it ever moves, the log row beside it names the tenant, the alias,
-    the provider and the region.
-
-    Moved BEFORE the write rather than after it, so a violation is still visible
-    when the database is the thing that has broken.
-    """
-    with _guarded("residency violations"):
-        RESIDENCY_VIOLATIONS.labels(tenant=tenant).inc()

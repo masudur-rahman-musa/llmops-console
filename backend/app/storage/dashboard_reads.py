@@ -50,7 +50,6 @@ from app.schemas.dashboard import (
     EvalRunSummary,
     Incident,
     LastEval,
-    RegionCount,
     Regression,
     Release,
     ReleaseMarker,
@@ -80,7 +79,6 @@ class _Read(BaseModel):
 class HomeRead(_Read):
     requests_today: int
     cost_usd_today: float
-    residency_violations_today: int
     last_eval: LastEval | None
     open_incidents: int
 
@@ -114,11 +112,6 @@ class QualityRead(_Read):
     categories: tuple[CategoryCount, ...]
     taxonomy: tuple[TagCount, ...]
     blocked: tuple[BlockedRelease, ...]
-
-
-class ResidencyRead(_Read):
-    by_region: tuple[RegionCount, ...]
-    violations: int
 
 
 def _number(value: object) -> float | None:
@@ -159,8 +152,6 @@ class ConsoleReader(Protocol):
 
     def quality(self, *, days: int, now: datetime) -> QualityRead: ...
 
-    def residency(self, *, days: int, tenant: str | None, now: datetime) -> ResidencyRead: ...
-
     def incidents(self) -> tuple[Incident, ...]: ...
 
     def releases(self) -> tuple[Release, ...]: ...
@@ -179,7 +170,6 @@ class UnconfiguredConsoleReader:
         return HomeRead(
             requests_today=0,
             cost_usd_today=0.0,
-            residency_violations_today=0,
             last_eval=None,
             open_incidents=0,
         )
@@ -191,9 +181,6 @@ class UnconfiguredConsoleReader:
 
     def quality(self, *, days: int, now: datetime) -> QualityRead:
         return QualityRead(runs=(), release_markers=(), categories=(), taxonomy=(), blocked=())
-
-    def residency(self, *, days: int, tenant: str | None, now: datetime) -> ResidencyRead:
-        return ResidencyRead(by_region=(), violations=0)
 
     def incidents(self) -> tuple[Incident, ...]:
         return ()
@@ -245,12 +232,6 @@ class PostgresConsoleReader:
                 ).format(self._table("cost_ledger")),
                 (start, end),
             ).fetchone()
-            violations = conn.execute(
-                sql.SQL(
-                    "SELECT count(*) FROM {} WHERE NOT allowed AND ts >= %s AND ts < %s"
-                ).format(self._table("residency_log")),
-                (start, end),
-            ).fetchone()
             run = conn.execute(
                 sql.SQL(
                     "SELECT id, finished_at, passed, metrics FROM {} "
@@ -262,11 +243,10 @@ class PostgresConsoleReader:
                     self._table("incidents")
                 )
             ).fetchone()
-        assert ledger is not None and violations is not None and open_incidents is not None
+        assert ledger is not None and open_incidents is not None
         return HomeRead(
             requests_today=ledger[0],
             cost_usd_today=float(ledger[1]),
-            residency_violations_today=violations[0],
             last_eval=None
             if run is None
             else LastEval(
@@ -428,33 +408,6 @@ class PostgresConsoleReader:
                 )
                 for row in blocked
             ),
-        )
-
-    def residency(self, *, days: int, tenant: str | None, now: datetime) -> ResidencyRead:
-        since = now - timedelta(days=days)
-        where_tenant, tenant_params = _tenant_clause(tenant)
-        table = self._table("residency_log")
-        with self._pool.connection() as conn:
-            regions = conn.execute(
-                sql.SQL(
-                    "SELECT tenant, region, provider, count(*) FROM {} WHERE ts >= %s{} "
-                    "GROUP BY tenant, region, provider ORDER BY tenant, region, provider"
-                ).format(table, where_tenant),
-                (since, *tenant_params),
-            ).fetchall()
-            violations = conn.execute(
-                sql.SQL("SELECT count(*) FROM {} WHERE NOT allowed AND ts >= %s{}").format(
-                    table, where_tenant
-                ),
-                (since, *tenant_params),
-            ).fetchone()
-        assert violations is not None
-        return ResidencyRead(
-            by_region=tuple(
-                RegionCount(tenant=row[0], region=row[1], provider=row[2], requests=row[3])
-                for row in regions
-            ),
-            violations=violations[0],
         )
 
     def incidents(self) -> tuple[Incident, ...]:

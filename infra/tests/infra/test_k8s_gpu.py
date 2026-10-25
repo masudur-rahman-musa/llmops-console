@@ -877,7 +877,7 @@ def test_the_fetch_except_list_equals_the_gateway_egress_one(
 
 def test_the_gateway_may_reach_vllm_on_8000(built_gpu: list[dict[str, Any]]) -> None:
     """Criterion 26. Catches the policy scoped to every `apps` pod (a Helpdesk workload then
-    dials the model directly, bypassing the gateway's residency and budget checks), a peer
+    dials the model directly, bypassing the gateway's budget checks), a peer
     missing its `gpu` namespaceSelector, and a port other than TCP 8000."""
     document = policy(built_gpu, APPS, "gateway-egress-vllm")
 

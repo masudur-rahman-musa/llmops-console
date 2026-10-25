@@ -36,21 +36,8 @@ class AliasUnknown(RoutingError):
     http_status: ClassVar[int] = 404
 
 
-class ResidencyUnavailable(RoutingError):
-    """No candidate is allowed to serve this request.
-
-    Deny by default: this is what an empty candidate list becomes. The resolver
-    never widens the region set to avoid raising it - `ResidencyMode.RELAXED`
-    widens by the configured mode alone, before any result exists to react to,
-    and never for `pii`.
-    """
-
-    code: ClassVar[ErrorCode] = ErrorCode.RESIDENCY_UNAVAILABLE
-    http_status: ClassVar[int] = 451
-
-
 class AllProvidersUnavailable(RoutingError):
-    """Candidates were allowed by residency, but none of them is healthy."""
+    """No candidate is turned on and healthy: all are disabled, tripped or missing."""
 
     code: ClassVar[ErrorCode] = ErrorCode.ALL_PROVIDERS_FAILED
     http_status: ClassVar[int] = 503

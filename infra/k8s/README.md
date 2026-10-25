@@ -90,12 +90,12 @@ a row raised in isolation fails there rather than at `helm install`. Row 23d's t
 CronJobs leave the namespace 448Mi / 95m / 32Mi of headroom - the limits column is
 now the tight one.
 
-An earlier change adds two more `platform` CronJobs on the gateway image - `residency-purge`
-and `rollup-refresh` (`app/cli/ledger.py`) - but the table above does not grow,
+An earlier change adds one more `platform` CronJob on the gateway image - `rollup-refresh`
+(`app/cli/ledger.py`) - but the table above does not grow,
 and the headroom does not shrink. A CronJob costs the quota only while its Job pod
 exists, so jobs at different hours never coexist. The two backups share 03:00 and
-are counted together (the peak); the two maintenance jobs run at 01:00 and 02:00,
-each alone at its hour and no larger than a backup job, so they add nothing to the
+are counted together (the peak); the maintenance job runs at 02:00,
+alone at its hour and no larger than a backup job, so they add nothing to the
 peak the quota is sized for. That is why the subtotals test counts the costliest
 single hour rather than the sum of every CronJob, and a maintenance job moved onto
 03:00 would make the peak three pods and fail it.
@@ -552,13 +552,12 @@ make k8s-server-check
 ```
 
 It carries `base`, the platform data stores, the staging issuer, the
-middlewares, the backups (suspended until the node has a bucket), the two
-ledger-maintenance CronJobs (`residency-purge`, `rollup-refresh`, which run live
+middlewares, the backups (suspended until the node has a bucket), the
+ledger-maintenance CronJob (`rollup-refresh`, which runs live
 here because Postgres is on the node - an earlier change, a design note), the gateway
 and the console. Left out: llama, llama-embed, `monitoring` and `evals`, which
 do not fit; our own `letsencrypt-prod`, so the live one is never overwritten;
-and the Helpdesk's workloads, config and images, which its own repo deploys. The gateway runs one replica with no HPA and
-`OPSCONSOLE_RESIDENCY_MODE=relaxed`. Its two Ingresses answer on
+and the Helpdesk's workloads, config and images, which its own repo deploys. The gateway runs one replica with no HPA. Its two Ingresses answer on
 `gateway.example.com`, the console's three on `llmops.example.com`,
 the Helpdesk's two on `helpdesk.example.com`. The Helpdesk's Ingresses and
 NetworkPolicies stay in this build, so one repo owns the hosts and policies on

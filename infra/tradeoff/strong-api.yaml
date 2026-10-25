@@ -1,8 +1,8 @@
 # Option `strong-api`: the strong API tier.
 #
 # A PARTIAL policy, deep-merged over the shipped `routing.yaml` by
-# `infra/scripts/tradeoff_policy.py`. See `cheap-api.yaml` for why the two API options
-# widen `confidential` and why every option turns the semantic cache off.
+# `infra/scripts/tradeoff_policy.py`. See `cheap-api.yaml` for why every option turns the
+# semantic cache off.
 #
 # The alias narrowed is still `agent-default`, not `agent-strong`: the table
 # compares one alias resolved four ways, so the option that changes is the model
@@ -12,9 +12,3 @@ aliases:
     semantic_cache: false
     candidates:
       - { provider: anthropic, model: claude-sonnet-5-5 }
-
-tenants:
-  evals:
-    data_class_rules:
-      confidential:
-        allow_regions: [us, eu, self]

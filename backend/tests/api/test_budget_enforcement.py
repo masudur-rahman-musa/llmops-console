@@ -439,7 +439,7 @@ def test_a_refused_request_dials_no_provider_and_books_no_row(
     )
 
 
-def test_a_tenant_the_policy_does_not_carry_is_still_the_resolvers_451(
+def test_a_tenant_the_policy_does_not_carry_is_still_the_resolvers_403(
     budget_client: TestClient,
     budget_store: RecordingBudgetStore,
     metrics_registry: CollectorRegistry,
@@ -448,12 +448,12 @@ def test_a_tenant_the_policy_does_not_carry_is_still_the_resolvers_451(
     heard of - a key the store carries with no `routing.yaml` entry.
 
     Catches a cap read as `policy.tenants[tenant]`, which raises `KeyError` and turns
-    today's typed 451 into an untyped 500; and catches a check that invents a cap of zero
-    for such a tenant, which would answer 429 and hide the residency refusal that is the
+    today's typed 403 into an untyped 500; and catches a check that invents a cap of zero
+    for such a tenant, which would answer 429 and hide the tenant refusal that is the
     correct answer. Deny-by-default is the resolver's job here, not the budget's."""
     response = post(budget_client, chat_body(model=ALIAS), tenant=UNPOLICED_TENANT)
 
-    assert_error_body(response, status=451, code="RESIDENCY_UNAVAILABLE")
+    assert_error_body(response, status=403, code="TENANT_MISMATCH")
     assert budget_store.debits == []
     assert gauge(metrics_registry, UNPOLICED_TENANT) is None
 

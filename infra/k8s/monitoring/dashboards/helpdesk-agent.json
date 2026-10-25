@@ -1,7 +1,7 @@
 {
   "uid": "helpdesk-agent",
   "title": "Helpdesk agent",
-  "description": "Requests, latency, cost and residency violations filtered to the Helpdesk-shaped routing aliases (agent-default, agent-strong, embed - from this repo's routing.yaml), pod health for the three Helpdesk workloads, and stuck chats read from the help desk's own counters: how each turn ended, how many turns it took to file a request, and how many chats wait on a question for 30 minutes or more. Provisioned from infra/k8s/monitoring/dashboards/; edits made in the Grafana UI are not saved.",
+  "description": "Requests, latency and cost filtered to the Helpdesk-shaped routing aliases (agent-default, agent-strong, embed - from this repo's routing.yaml), pod health for the three Helpdesk workloads, and stuck chats read from the help desk's own counters: how each turn ended, how many turns it took to file a request, and how many chats wait on a question for 30 minutes or more. Provisioned from infra/k8s/monitoring/dashboards/; edits made in the Grafana UI are not saved.",
   "tags": ["helpdesk", "opsconsole"],
   "timezone": "utc",
   "schemaVersion": 39,
@@ -81,27 +81,6 @@
           "range": true,
           "legendFormat": "{{provider}} {{model}}",
           "expr": "sum by (provider, model) (rate(gateway_cost_usd_total[5m]))"
-        }
-      ]
-    },
-    {
-      "id": 4,
-      "type": "timeseries",
-      "title": "Residency violations per second",
-      "description": "Expected flat at zero, same as the residency dashboard's panel of the same family, scoped to nothing beyond that expectation - Helpdesk traffic has no dedicated tenant to filter by.",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
-      "fieldConfig": {
-        "defaults": { "unit": "reqps", "min": 0 },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "editorMode": "code",
-          "range": true,
-          "legendFormat": "total",
-          "expr": "sum(rate(gateway_residency_violations_total[5m]))"
         }
       ]
     },
