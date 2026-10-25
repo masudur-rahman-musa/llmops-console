@@ -29,7 +29,7 @@ from typing import Annotated, Final
 
 from fastapi import APIRouter, Query, Request
 
-from app.api.deps import PricesDep, checked_tenant
+from app.api.deps import PricesDep, SettingsDep, checked_tenant
 from app.schemas.dashboard import (
     BlockedItem,
     Circuit,
@@ -138,11 +138,11 @@ def cost(
 
 
 @router.get(CONSOLE_QUALITY)
-def quality(request: Request, days: Days = DEFAULT_DAYS) -> QualityPage:
+def quality(request: Request, settings: SettingsDep, days: Days = DEFAULT_DAYS) -> QualityPage:
     """The eval gate, eval runs over the window, and what regressed behind each blocked release."""
     now = datetime.now(UTC)
     pg, read = postgres(request, "quality", lambda reader: reader.quality(days=days, now=now))
-    baseline_path = request.app.state.settings.eval_baseline_path
+    baseline_path = settings.eval_baseline_path
     if read is None:
         return QualityPage(
             sources=Sources(postgres=pg, prometheus=SourceState.UNCONFIGURED),

@@ -373,6 +373,12 @@ def get_policy(request: Request) -> PolicyStore:
     return policy
 
 
+def get_settings(request: Request) -> Settings:
+    """The settings `create_app` was built with."""
+    settings: Settings = request.app.state.settings
+    return settings
+
+
 def get_prices(request: Request) -> PriceStore:
     """The price table store, built in `create_app`."""
     prices: PriceStore = request.app.state.prices
@@ -424,6 +430,7 @@ def get_provider_environ(request: Request) -> Mapping[str, str]:
 ClientsDep = Annotated[Clients, Depends(get_clients)]
 PolicyDep = Annotated[PolicyStore, Depends(get_policy)]
 PricesDep = Annotated[PriceStore, Depends(get_prices)]
+SettingsDep = Annotated[Settings, Depends(get_settings)]
 RedactionMapStoreDep = Annotated[RedactionMapStore, Depends(get_redaction_map_store)]
 DirectoryStoreDep = Annotated[DirectoryStore, Depends(get_directory_store)]
 ConsoleEventsDep = Annotated[ConsoleEventWriter, Depends(get_console_events)]
