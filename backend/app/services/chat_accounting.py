@@ -345,6 +345,7 @@ def book_cost(
         cached=cached,
         session=context.session,
         trace_id=context.trace_id,
+        prompt_version=context.prompt_version,
         price_key=adapters[chosen.provider].price_key(chosen.model),
     )
     record_cost_usd(

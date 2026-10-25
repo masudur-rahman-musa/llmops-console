@@ -157,6 +157,14 @@ class Settings(BaseSettings):
     No readiness probe reads it: `/readyz` names the stores a served request
     needs, and Prometheus is not one of them."""
 
+    langfuse_project_url: str | None = None
+    """The Langfuse project page, e.g. `https://cloud.langfuse.com/project/<id>`, or
+    `None` for no trace links.
+
+    Read only by `GET /console/requests`, which links a listed request to
+    `<this>/traces/<trace_id>` when it is set. Unset on the cluster until the real
+    project is known."""
+
     otel_service_name: str = "opsconsole-gateway"
     """What this process is called in a trace viewer. One trace carries spans from
     the Helpdesk and from the gateway, so the two need different names to be

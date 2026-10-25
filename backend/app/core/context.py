@@ -28,8 +28,9 @@ class DataClass(StrEnum):
 class RequestContext(BaseModel):
     """The identity and labels every later stage of a request reads.
 
-    No user identity, by construction: a tenant, an optional session and a trace
-    id are the only things here, which is what keeps telemetry free of it.
+    No user identity, by construction: a tenant, an optional session, a trace id
+    and an optional prompt version are the only things here, which is what keeps
+    telemetry free of it.
     A test compares the field set exactly, so a field added here goes red rather
     than quietly reaching a trace; that red is the rule, not a stale expectation
     to update.
@@ -41,3 +42,4 @@ class RequestContext(BaseModel):
     data_class: DataClass
     session: str | None
     trace_id: str
+    prompt_version: str | None = None

@@ -1,0 +1,47 @@
+{
+  "sources": { "postgres": "ok", "prometheus": "ok" },
+  "redactions": [
+    { "kind": "email", "count": 41 },
+    { "kind": "iban", "count": 7 }
+  ],
+  "refusals": [
+    { "reason": "out_of_scope", "count": 12 },
+    { "reason": "needs_approval", "count": 3 }
+  ],
+  "guardrail_blocks": 5,
+  "tokens": [
+    { "model": "claude-haiku-5-5", "input": 120450, "output": 30210 },
+    { "model": "gpt-5-mini", "input": 8800, "output": 2100 }
+  ],
+  "cache_hit_rate": 0.3125,
+  "requests": [
+    {
+      "ts": "2026-10-26T08:30:00Z",
+      "tenant": "nordlicht",
+      "alias": "agent-default",
+      "provider": "anthropic",
+      "model": "claude-haiku-5-5",
+      "input_tokens": 137,
+      "output_tokens": 29,
+      "cached": false,
+      "cost_usd": 0.000028,
+      "prompt_version": "9f2c4be07a1d3c58e6b0a4d2f1c7e9835b6a0d4c2e8f1a7b3c5d9e0f2a4b6c8d",
+      "trace_id": "0af7651916cd43dd8448eb211c80319c",
+      "trace_url": "https://cloud.langfuse.com/project/demo/traces/0af7651916cd43dd8448eb211c80319c"
+    },
+    {
+      "ts": "2026-10-26T08:12:00Z",
+      "tenant": "cuan",
+      "alias": "agent-default",
+      "provider": "anthropic",
+      "model": "claude-haiku-5-5",
+      "input_tokens": 90,
+      "output_tokens": 41,
+      "cached": true,
+      "cost_usd": 0,
+      "prompt_version": null,
+      "trace_id": "b7ad6b7169203331b7ad6b7169203331",
+      "trace_url": null
+    }
+  ]
+}

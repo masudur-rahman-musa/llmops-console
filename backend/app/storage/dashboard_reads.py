@@ -53,6 +53,7 @@ from app.schemas.dashboard import (
     Regression,
     Release,
     ReleaseMarker,
+    RequestRow,
     Saving,
     TagCount,
 )
@@ -156,6 +157,8 @@ class ConsoleReader(Protocol):
 
     def releases(self) -> tuple[Release, ...]: ...
 
+    def recent_requests(self) -> tuple[RequestRow, ...]: ...
+
 
 class UnconfiguredConsoleReader:
     """What a gateway with no `database_url` holds. The routes never call it.
@@ -186,6 +189,9 @@ class UnconfiguredConsoleReader:
         return ()
 
     def releases(self) -> tuple[Release, ...]:
+        return ()
+
+    def recent_requests(self) -> tuple[RequestRow, ...]:
         return ()
 
 
@@ -453,6 +459,35 @@ class PostgresConsoleReader:
                 eval_run_id=row[4],
                 eval_passed=row[5],
                 check_score=_accuracy(row[6]),
+            )
+            for row in rows
+        )
+
+    def recent_requests(self) -> tuple[RequestRow, ...]:
+        """The newest `ROW_LIMIT` ledger rows, newest first, each with `trace_url` null."""
+        with self._pool.connection() as conn:
+            rows = conn.execute(
+                sql.SQL(
+                    "SELECT ts, tenant, alias, provider, model, input_tokens, output_tokens, "
+                    "cached, cost_usd, prompt_version, trace_id "
+                    "FROM {} ORDER BY ts DESC LIMIT %s"
+                ).format(self._table("cost_ledger")),
+                (ROW_LIMIT,),
+            ).fetchall()
+        return tuple(
+            RequestRow(
+                ts=row[0],
+                tenant=row[1],
+                alias=row[2],
+                provider=row[3],
+                model=row[4],
+                input_tokens=row[5],
+                output_tokens=row[6],
+                cached=row[7],
+                cost_usd=float(row[8]),
+                prompt_version=row[9],
+                trace_id=row[10],
+                trace_url=None,
             )
             for row in rows
         )

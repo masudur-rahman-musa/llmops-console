@@ -99,6 +99,26 @@ class Incident(_Body):
     open: bool
 
 
+class RequestRow(_Body):
+    """One ledger row as the Requests page lists it.
+
+    The reader answers `trace_url` as null; the route fills it, because the link
+    needs a setting and the id check lives in one place."""
+
+    ts: datetime
+    tenant: str
+    alias: str
+    provider: str
+    model: str
+    input_tokens: int
+    output_tokens: int
+    cached: bool
+    cost_usd: float
+    prompt_version: str | None
+    trace_id: str
+    trace_url: str | None
+
+
 class Release(_Body):
     git_sha: str
     deployed_at: datetime
@@ -242,3 +262,34 @@ class ModelsPage(_Body):
     loaded_at: datetime
     aliases: tuple[ModelAlias, ...]
     provider_files: tuple[ProviderFileRow, ...]
+
+
+class RedactionCount(_Body):
+    kind: str
+    count: float
+
+
+class RefusalCount(_Body):
+    reason: str
+    count: float
+
+
+class ModelTokens(_Body):
+    model: str
+    input: float
+    output: float
+
+
+class RequestsPage(_Body):
+    """What the gateway hid, tokens per model, the cache hit rate and the newest requests.
+
+    `guardrail_blocks` and `cache_hit_rate` are null when Prometheus has no series:
+    no traffic is not a 0% hit rate."""
+
+    sources: Sources
+    redactions: tuple[RedactionCount, ...]
+    refusals: tuple[RefusalCount, ...]
+    guardrail_blocks: float | None
+    tokens: tuple[ModelTokens, ...]
+    cache_hit_rate: float | None
+    requests: tuple[RequestRow, ...]

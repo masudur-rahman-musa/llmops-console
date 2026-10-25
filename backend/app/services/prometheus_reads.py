@@ -94,6 +94,34 @@ def fallbacks_query(days: int) -> str:
     return f"sum by (tenant, alias, provider) (increase(gateway_fallbacks_total[{days}d]))"
 
 
+def redactions_query(days: int) -> str:
+    """Placeholders minted over the window, by detector kind."""
+    return f"sum by (kind) (increase(gateway_redactions_total[{days}d]))"
+
+
+def tokens_query(days: int) -> str:
+    """Tokens billed over the window, by served model and direction (`in` or `out`)."""
+    return f"sum by (model, direction) (increase(gateway_tokens_total[{days}d]))"
+
+
+def cache_hit_rate_query(days: int) -> str:
+    """The share of requests a cache answered, either tier, over the window."""
+    return (
+        f'sum(increase(gateway_requests_total{{cache=~"hit|semantic"}}[{days}d]))'
+        f" / sum(increase(gateway_requests_total[{days}d]))"
+    )
+
+
+def refusals_query(days: int) -> str:
+    """The help desk's refusals over the window, by reason. The gateway counts none of its own."""
+    return f"sum by (reason) (increase(helpdesk_refusals_total[{days}d]))"
+
+
+def guardrail_blocks_query(days: int) -> str:
+    """The help desk's separation-of-duties blocks over the window."""
+    return f"sum(increase(helpdesk_sod_blocks_total[{days}d]))"
+
+
 class PrometheusError(Exception):
     """Prometheus could not answer this query. The message never reaches a response body."""
 

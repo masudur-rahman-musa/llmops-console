@@ -231,14 +231,16 @@ def request_context(
     x_tenant: Annotated[str | None, Header()] = None,
     x_data_class: Annotated[str | None, Header()] = None,
     x_session: Annotated[str | None, Header()] = None,
+    x_prompt_version: Annotated[str | None, Header()] = None,
 ) -> RequestContext:
     """Authenticate the request and build its context, in a fixed order.
 
     1. the bearer key, resolved to a tenant, or `UNAUTHORIZED`;
     2. `X-Tenant`, present and a lowercase slug within the cap, or `VALIDATION`;
     3. the two agreeing, or `TENANT_MISMATCH`;
-    4. `X-Data-Class`, defaulting to the most restrictive class, and `X-Session`,
-       optional and slug-checked;
+    4. `X-Data-Class`, defaulting to the most restrictive class, and `X-Session`
+       and `X-Prompt-Version`, both optional and slug-checked (a SHA-256 hex digest
+       is exactly the 64-character cap);
     5. the trace id, read off the root span `TracingMiddleware` started.
 
     Auth comes first so an unauthenticated caller learns nothing about which of
@@ -268,6 +270,9 @@ def request_context(
             data_class=_checked_data_class(x_data_class),
             session=_checked_identifier(x_session, "X-Session") if x_session is not None else None,
             trace_id=emitted_trace_id(request.scope),
+            prompt_version=_checked_identifier(x_prompt_version, "X-Prompt-Version")
+            if x_prompt_version is not None
+            else None,
         )
 
     annotate(

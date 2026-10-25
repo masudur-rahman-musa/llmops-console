@@ -39,6 +39,7 @@ def record_cost(
     session: str | None,
     trace_id: str,
     price_key: str,
+    prompt_version: str | None = None,
     now: Callable[[], datetime] = _utcnow_cost,
 ) -> CostLedgerRow:
     """Price one request, write its row, and answer the row. Never raises.
@@ -81,6 +82,7 @@ def record_cost(
         estimated=cost.estimated,
         session=session,
         trace_id=trace_id,
+        prompt_version=prompt_version,
     )
     try:
         ledger.write(row)

@@ -96,7 +96,7 @@ from .conftest import (
 )
 
 # The six paths, written out so no request below reads its target from the module
-# under test. `test_the_seven_console_paths_are_pinned` compares them with the module's
+# under test. `test_the_eight_console_paths_are_pinned` compares them with the module's
 # constants and with what the factory mounted.
 HOME = "/console/home"
 COST = "/console/cost"
@@ -105,11 +105,13 @@ RELIABILITY = "/console/reliability"
 INCIDENTS = "/console/incidents"
 RELEASES = "/console/releases"
 MODELS = "/console/models"
+REQUESTS = "/console/requests"
 
 ALL_PATHS = [HOME, COST, QUALITY, RELIABILITY, INCIDENTS, RELEASES]
 # The seventh route reads no source, so it is outside ALL_PATHS (whose cases all assert
-# source flags); tests/api/test_console_models.py owns its cases.
-MOUNTED_PATHS = [*ALL_PATHS, MODELS]
+# source flags); tests/api/test_console_models.py owns its cases. The eighth reads both
+# sources in its own shape; tests/api/test_console_requests.py owns its cases.
+MOUNTED_PATHS = [*ALL_PATHS, MODELS, REQUESTS]
 DAYS_PATHS = [COST, QUALITY, RELIABILITY]
 TENANT_PATHS = [COST]
 POSTGRES_PATHS = [HOME, COST, QUALITY, INCIDENTS, RELEASES]
@@ -439,7 +441,7 @@ def subset(body: Mapping[str, Any], keys: Mapping[str, Any]) -> dict[str, Any]:
 # --- the paths and the key space ---------------------------------------------------
 
 
-def test_the_seven_console_paths_are_pinned(bare: TestClient) -> None:
+def test_the_eight_console_paths_are_pinned(bare: TestClient) -> None:
     """Catches a route mounted under another path or method (`/console/costs`, a POST), a
     constant renamed away from the literal, and a constant that exists while the factory
     never included the router - the mounted set is read from the app's own OpenAPI
@@ -451,6 +453,7 @@ def test_the_seven_console_paths_are_pinned(bare: TestClient) -> None:
     assert console.CONSOLE_INCIDENTS == INCIDENTS
     assert console.CONSOLE_RELEASES == RELEASES
     assert console.CONSOLE_MODELS == MODELS
+    assert console.CONSOLE_REQUESTS == REQUESTS
     assert tuple(console.CONSOLE_PATHS) == (
         "/console/home",
         "/console/cost",
@@ -459,6 +462,7 @@ def test_the_seven_console_paths_are_pinned(bare: TestClient) -> None:
         "/console/incidents",
         "/console/releases",
         "/console/models",
+        "/console/requests",
     )
 
     app = bare.app

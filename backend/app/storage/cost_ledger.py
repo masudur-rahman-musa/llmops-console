@@ -161,9 +161,9 @@ class CostLedgerRow(BaseModel):
     the second candidate: the field answering "what did this cost" has to name
     the thing that charged for it.
 
-    `session` is the one nullable field. A request with no session header is
-    still a request that cost money, and refusing it here would lose exactly
-    those rows.
+    `session` and `prompt_version` are the nullable fields. A request with no
+    session or prompt version header is still a request that cost money, and
+    refusing it here would lose exactly those rows.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -181,6 +181,7 @@ class CostLedgerRow(BaseModel):
     estimated: bool
     session: str | None
     trace_id: str
+    prompt_version: str | None = None
 
 
 class CostLedgerWriter(Protocol):
@@ -283,6 +284,8 @@ class PostgresCostLedgerWriter:
         checked_identifier(row.provider, "provider")
         if row.session is not None:
             checked_identifier(row.session, "session")
+        if row.prompt_version is not None:
+            checked_identifier(row.prompt_version, "prompt_version")
         _checked_model(row.model)
         _checked_trace_id(row.trace_id)
         _checked_price_version(row.price_version)
@@ -398,8 +401,8 @@ class PostgresCostLedgerWriter:
                         "INSERT INTO {} ("
                         "ts, tenant, alias, provider, model, input_tokens, "
                         "output_tokens, cached, cost_usd, price_version, estimated, "
-                        "session, trace_id) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                        "session, trace_id, prompt_version) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
                     ).format(sql.Identifier(self._schema, COST_LEDGER)),
                     (
                         row.ts,
@@ -415,6 +418,7 @@ class PostgresCostLedgerWriter:
                         row.estimated,
                         row.session,
                         row.trace_id,
+                        row.prompt_version,
                     ),
                 )
                 stage = "commit"

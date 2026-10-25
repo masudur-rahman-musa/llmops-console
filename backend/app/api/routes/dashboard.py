@@ -1,6 +1,6 @@
 """The console's read surface: one route per page, every number a page shows.
 
-Seven routes, all behind `app.api.deps.admin_key`:
+Eight routes, all behind `app.api.deps.admin_key`:
 
     GET /console/home          today's traffic, spend, latency and the last eval
     GET /console/cost          the daily rollup, estimated cache savings, budgets
@@ -9,9 +9,10 @@ Seven routes, all behind `app.api.deps.admin_key`:
     GET /console/incidents     the timeline
     GET /console/releases      deploys, each with its eval result
     GET /console/models        each alias and its providers, from the live policy
+    GET /console/requests      redactions, refusals, blocks, tokens, hit rate, newest requests
 
 The console reads through here and never touches Postgres or Prometheus itself.
-A working tenant key is 401 on all seven, as on `/admin/*`. The sums and source
+A working tenant key is 401 on all eight, as on `/admin/*`. The sums and source
 helpers are `app.services.dashboard`; the page shapes are `app.schemas.dashboard`.
 
 **Inputs.** `days` is an integer from `MIN_DAYS` to `MAX_DAYS`, refused as 422
@@ -41,10 +42,14 @@ from app.schemas.dashboard import (
     ModelAlias,
     ModelCandidate,
     ModelsPage,
+    ModelTokens,
     ProviderFileRow,
     QualityPage,
+    RedactionCount,
+    RefusalCount,
     ReleasesPage,
     ReliabilityPage,
+    RequestsPage,
     Sources,
 )
 from app.schemas.dashboard import SourceState as SourceState
@@ -54,8 +59,14 @@ from app.services.prometheus_reads import (
     ERROR_RATE_QUERY,
     P95_QUERY,
     PrometheusClient,
+    cache_hit_rate_query,
     fallbacks_query,
+    guardrail_blocks_query,
+    redactions_query,
+    refusals_query,
+    tokens_query,
 )
+from app.storage.cost_ledger import TRACE_ID_PATTERN
 from app.storage.dashboard_reads import regressed_metrics
 
 CONSOLE_HOME: Final[str] = "/console/home"
@@ -65,6 +76,7 @@ CONSOLE_RELIABILITY: Final[str] = "/console/reliability"
 CONSOLE_INCIDENTS: Final[str] = "/console/incidents"
 CONSOLE_RELEASES: Final[str] = "/console/releases"
 CONSOLE_MODELS: Final[str] = "/console/models"
+CONSOLE_REQUESTS: Final[str] = "/console/requests"
 
 CONSOLE_PATHS: Final[tuple[str, ...]] = (
     CONSOLE_HOME,
@@ -74,8 +86,9 @@ CONSOLE_PATHS: Final[tuple[str, ...]] = (
     CONSOLE_INCIDENTS,
     CONSOLE_RELEASES,
     CONSOLE_MODELS,
+    CONSOLE_REQUESTS,
 )
-"""All seven, spelled as literals and kept off every public router."""
+"""All eight, spelled as literals and kept off every public router."""
 
 DAYS_PARAM: Final[str] = "days"
 MIN_DAYS: Final[int] = 1
@@ -262,5 +275,78 @@ def models(store: PolicyDep) -> ModelsPage:
                 name=f"{name}.yaml", provider=name, kind=provider.kind, enabled=provider.enabled
             )
             for name, provider in sorted(policy.providers.items())
+        ),
+    )
+
+
+RequestCounts = tuple[
+    tuple[RedactionCount, ...],
+    tuple[RefusalCount, ...],
+    float | None,
+    tuple[ModelTokens, ...],
+    float | None,
+]
+"""The Prometheus half of the requests page: redactions, refusals, blocks, tokens, hit rate."""
+
+
+def trace_url(project_url: str | None, trace_id: str) -> str | None:
+    """`<project_url>/traces/<trace_id>`, or `None` without a project URL or a 32-hex id.
+
+    The id becomes a URL segment, so it is matched with `re.fullmatch` against the
+    ledger's own pattern: a trailing newline or a `../` gets no link. Pinned by
+    tests/api/test_console_requests.py."""
+    if not project_url or TRACE_ID_PATTERN.fullmatch(trace_id) is None:
+        return None
+    return f"{project_url.rstrip('/')}/traces/{trace_id}"
+
+
+def _tokens(samples: list[tuple[dict[str, str], float]]) -> tuple[ModelTokens, ...]:
+    """One row per model, `in` and `out` folded together; a missing direction is 0."""
+    by_model: dict[str, dict[str, float]] = {}
+    for labels, value in samples:
+        directions = by_model.setdefault(labels.get("model", ""), {"in": 0.0, "out": 0.0})
+        direction = labels.get("direction", "")
+        if direction in directions:
+            directions[direction] += value
+    return tuple(
+        ModelTokens(model=model, input=d["in"], output=d["out"])
+        for model, d in sorted(by_model.items())
+    )
+
+
+@router.get(CONSOLE_REQUESTS)
+def requests(request: Request, settings: SettingsDep, days: Days = DEFAULT_DAYS) -> RequestsPage:
+    """Counts over the window from Prometheus, the newest ledger rows from Postgres."""
+
+    def read(client: PrometheusClient) -> RequestCounts:
+        return (
+            tuple(
+                RedactionCount(kind=labels.get("kind", ""), count=value)
+                for labels, value in client.instant_query(redactions_query(days))
+            ),
+            tuple(
+                RefusalCount(reason=labels.get("reason", ""), count=value)
+                for labels, value in client.instant_query(refusals_query(days))
+            ),
+            first(client.instant_query(guardrail_blocks_query(days))),
+            _tokens(client.instant_query(tokens_query(days))),
+            first(client.instant_query(cache_hit_rate_query(days))),
+        )
+
+    prom, counts = prometheus(request, "requests", read)
+    empty: RequestCounts = ((), (), None, (), None)
+    redactions, refusals, blocks, tokens, hit_rate = counts if counts is not None else empty
+    pg, rows = postgres(request, "requests", lambda reader: reader.recent_requests())
+    project_url = settings.langfuse_project_url
+    return RequestsPage(
+        sources=Sources(postgres=pg, prometheus=prom),
+        redactions=redactions,
+        refusals=refusals,
+        guardrail_blocks=blocks,
+        tokens=tokens,
+        cache_hit_rate=hit_rate,
+        requests=tuple(
+            row.model_copy(update={"trace_url": trace_url(project_url, row.trace_id)})
+            for row in rows or ()
         ),
     )

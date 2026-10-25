@@ -5,12 +5,13 @@ import { modelsGuard, type ModelsBody } from "@/features/models/guards";
 import { qualityGuard, type QualityBody } from "@/features/quality/guards";
 import { releasesGuard, type ReleasesBody } from "@/features/releases/guards";
 import { reliabilityGuard, type ReliabilityBody } from "@/features/reliability/guards";
+import { requestsGuard, type RequestsBody } from "@/features/requests/guards";
 
 /**
  * The console's only read client: server-side, one fixed path per page, never a
  * query string. A failure is a reason, never a throw, so a page
  * degrades to a notice. The admin key is sent and never
- * logged. The seven per-page guards (one feature folder each) are assembled
+ * logged. The eight per-page guards (one feature folder each) are assembled
  * here into PageBodies and GUARDS.
  */
 
@@ -22,6 +23,7 @@ export const CONSOLE_PATHS = {
   incidents: "/console/incidents",
   releases: "/console/releases",
   models: "/console/models",
+  requests: "/console/requests",
 } as const;
 
 export type PageName = keyof typeof CONSOLE_PATHS;
@@ -34,6 +36,7 @@ export type PageBodies = {
   incidents: IncidentsBody;
   releases: ReleasesBody;
   models: ModelsBody;
+  requests: RequestsBody;
 };
 
 export const GUARDS: { [N in PageName]: (value: unknown) => value is PageBodies[N] } = {
@@ -44,6 +47,7 @@ export const GUARDS: { [N in PageName]: (value: unknown) => value is PageBodies[
   incidents: incidentsGuard,
   releases: releasesGuard,
   models: modelsGuard,
+  requests: requestsGuard,
 };
 
 export const FETCH_TIMEOUT_MS = 5000;

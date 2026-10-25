@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { CONSOLE_PATHS, GUARDS, type PageName } from "@/lib/console-api";
 
-const PAGES: PageName[] = ["home", "cost", "quality", "reliability", "incidents", "releases", "models"];
+const PAGES: PageName[] = ["home", "cost", "quality", "reliability", "incidents", "releases", "models", "requests"];
 
 type Path = ReadonlyArray<string | number>;
 
@@ -171,6 +171,29 @@ const RENDERED: Record<PageName, Path[]> = {
     ["provider_files", -1, "provider"],
     ["provider_files", -1, "kind"],
     ["provider_files", -1, "enabled"],
+  ],
+  requests: [
+    ["sources"],
+    ["redactions"],
+    ["refusals"],
+    ["guardrail_blocks"],
+    ["tokens"],
+    ["cache_hit_rate"],
+    ["requests"],
+    ["redactions", -1, "kind"],
+    ["redactions", -1, "count"],
+    ["refusals", -1, "reason"],
+    ["refusals", -1, "count"],
+    ["tokens", -1, "model"],
+    ["tokens", -1, "input"],
+    ["tokens", -1, "output"],
+    ["requests", -1, "model"],
+    ["requests", -1, "input_tokens"],
+    ["requests", -1, "output_tokens"],
+    ["requests", -1, "cached"],
+    ["requests", -1, "cost_usd"],
+    ["requests", -1, "prompt_version"],
+    ["requests", -1, "trace_url"],
   ],
 };
 
