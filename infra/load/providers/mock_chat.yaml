@@ -1,0 +1,17 @@
+# The load run's chat provider: the fixed-delay mock in `infra/load/mock-provider/`.
+#
+# No real provider file is in this folder, so a load run cannot reach one whatever
+# `.env` holds. The price is zero: the mock costs nothing, and the run measures the
+# gateway, not a bill.
+
+provider: mock_chat
+kind: openai_compatible
+base_url: http://mock-provider:8090/v1
+enabled: true
+
+models:
+  mock-chat:
+    prices:
+      - effective_from: 2025-01-01
+        input_usd_per_1m: "0.0"
+        output_usd_per_1m: "0.0"

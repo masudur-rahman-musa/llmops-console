@@ -12,14 +12,13 @@
 # 3 CPU exactly, inside the CAX21's 8 GiB and 4 vCPU, leaving both a memory and
 # a CPU margin for k3s itself. The limits column is oversubscribed (12Gi) on
 # purpose: requests are what the scheduler packs, limits are the ceiling one
-# container may burst to, and llama.cpp alone carries a 3 GiB limit.
+# container may burst to.
 #
 # `apps` holds 7Gi of that column. What it has to fit - the gateway at its HPA
-# ceiling, the two llama.cpp servers, the four Helpdesk workloads and the
-# console - totals 6784Mi of limits, and trimming llama.cpp's ceiling to fit
-# less would contradict the 3 GiB it is sized for. The requests column is the
-# one the scheduler enforces, and its 6Gi total is what the box actually has to
-# hold.
+# ceiling, the llama.cpp embedding server, the four Helpdesk workloads and the
+# console - fits inside it with room to spare since the local chat model left
+#. The requests column is the one the scheduler enforces, and its
+# 6Gi total is what the box actually has to hold.
 #
 # Raising any row means re-totalling it here AND in `../README.md`. `monitoring`
 # is the one with no room left at all: Prometheus, the two exporters, Grafana

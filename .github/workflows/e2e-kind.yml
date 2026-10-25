@@ -12,7 +12,7 @@ name: e2e-kind
 # that directory's own comments for why the four Helpdesk workloads, the
 # console, every Ingress and two of `platform`'s files are absent.
 #
-# The cluster has no model (the llama.cpp servers are out of use), so the stub
+# The cluster has no model (no llama.cpp server, and no provider key), so the stub
 # answers from the case file alone and the cases check the console's own
 # scoring path, not a model.
 on:

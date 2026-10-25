@@ -1,5 +1,6 @@
 # The gateway: one of the three workloads in `apps` that serve public traffic.
-# llama.cpp sits beside it in `llama.yaml`, unrouted from outside, and the four
+# The llama.cpp embedding server sits beside it in `llama-embed.yaml`, unrouted
+# from outside, and the four
 # Helpdesk workloads in `helpdesk.yaml`, of which `helpdesk-web` has its own
 # Ingress pair in `ingress.yaml`. The console is in `console.yaml`, with its own
 # routers.
@@ -25,7 +26,7 @@
 # below, which is a property of the cluster and readable by anyone with
 # `kubectl get`, and `gateway-secrets`, which this file only NAMES - it is
 # supplied SOPS-encrypted and carries the database URL, the provider keys
-# `routing.yaml` reads by `key_env`, the Langfuse pair and the tenant key
+# provider files read by `key_env`, the Langfuse pair and the tenant key
 # digests. Adding a variable is then a change to one of two objects and never
 # to this Deployment.
 #

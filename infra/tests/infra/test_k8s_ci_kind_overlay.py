@@ -23,6 +23,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CI_KIND_ROOT = REPO_ROOT / "infra" / "k8s" / "kind"
 ROUTING_POLICY = REPO_ROOT / "backend" / "config" / "routing.yaml"
+PROVIDERS_DIR = REPO_ROOT / "backend" / "config" / "providers"
 
 #: Criterion 2: the object set this overlay must contain, by `(kind, name, namespace)`,
 #: read as a strict SUBSET check (not equality) - `base`'s four `Namespace`s, four
@@ -73,16 +74,6 @@ GATEWAY_IMAGE_TAG = "e2e-kind"
 STUB_IMAGE_TAG = "e2e-kind"
 LLAMA_IMAGE_REPOSITORY = "ghcr.io/ggml-org/llama.cpp"
 LLAMA_IMAGE_TAG = "server-b10902"
-
-#: The exact upstream file and its published git-LFS `oid sha256`, resolved from
-#: `Qwen/Qwen2.5-3B-Instruct-GGUF` at implementation time - copied here rather than
-#: parsed out of the patch's inline Python (a project rule: both files say the
-#: value, so the two cannot drift silently).
-MODEL_URL = (
-    "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/"
-    "resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf"
-)
-MODEL_SHA256 = "626b4a6678b86442240e33df819e00132d3ba7dddfe1cdc4fbb18e0a9615c62d"
 
 
 @pytest.fixture(scope="module")
@@ -187,26 +178,14 @@ def test_the_stub_image_is_the_locally_built_ci_tag(
     assert container["image"] == f"eval-target-stub:{STUB_IMAGE_TAG}"
 
 
-def test_no_llama_server_is_deployed_while_the_local_model_is_out_of_use(
+def test_no_llama_server_is_deployed(
     built: list[dict[str, Any]],
 ) -> None:
-    """2026-10-12: the local model is out of use, and on a 2-CPU runner its weight
-    never finished downloading before the run needed it. Catches either llama.cpp
-    server creeping back into this build without the golden set that needs it."""
+    """2026-10-12: on a 2-CPU runner the embedding weight never finished downloading
+    before the run needed it, and the local chat model is gone. Catches
+    either llama.cpp server creeping back into this build."""
     names = {document["metadata"]["name"] for document in built}
     assert names.isdisjoint({"llama", "llama-embed", "llama-models", "llama-embed-models"})
-
-
-def test_the_kept_model_fetch_patch_still_verifies_a_checksum() -> None:
-    """`llama-model-init-patch.yaml` stays in this directory for the day the local
-    model returns. Read directly, since nothing builds it now: it must still name
-    the exact upstream URL and its sha256 and actually compare them (`hashlib` and
-    `!=`), honouring `infra/k8s/README.md`'s no-unverified-download rule."""
-    patch = (CI_KIND_ROOT / "llama-model-init-patch.yaml").read_text(encoding="utf-8")
-    assert MODEL_URL in patch.replace("\n", "")
-    assert MODEL_SHA256 in patch
-    assert "hashlib" in patch
-    assert "!=" in patch
 
 
 def test_the_ci_secret_carries_no_provider_key(built: list[dict[str, Any]]) -> None:
@@ -225,19 +204,21 @@ def test_the_ci_secret_carries_no_provider_key(built: list[dict[str, Any]]) -> N
     assert keys == {"OPSCONSOLE_API_KEYS"}
 
 
-def test_the_alias_and_tenant_resolve_to_the_local_provider_only() -> None:
+def test_no_chat_provider_is_reachable_without_a_key() -> None:
     """The routing-policy half of `main.py`'s own claim: with no provider key
-    configured, the only providers the `evals` tenant's `agent-default` can reach
-    are the ones that need no key - `local` alone."""
+    configured, no provider the `evals` tenant's `agent-default` can reach is keyless,
+    so CI can never spend on a chat provider (a design note: chat runs only on Anthropic
+    and OpenAI)."""
     from app.model_routing.policy import DataClass, load_policy
     from app.model_routing.resolver import resolve
 
-    policy = load_policy(ROUTING_POLICY)
+    policy = load_policy(ROUTING_POLICY, PROVIDERS_DIR)
     resolved = resolve(
         policy,
         tenant="evals",
         alias="agent-default",
         data_class=DataClass.CONFIDENTIAL.value,
     )
+    assert resolved
     keyless = {c.provider for c in resolved if policy.providers[c.provider].key_env is None}
-    assert keyless == {"local"}
+    assert keyless == set()

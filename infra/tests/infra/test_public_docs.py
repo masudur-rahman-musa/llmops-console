@@ -62,7 +62,7 @@ AWS_LINK = "docs/aws-evidence/"
 #: The three claims §1 requires of `docs/azure.md`, by literal phrase.
 AZURE_CLAIMS = ("recorded fixtures", "ships disabled", "configuration change")
 AZURE_ADAPTER = "backend/app/providers/azure_openai.py"
-AZURE_ROUTING_ROW = "azure_eu"
+AZURE_ROUTING_ROW = "azure.yaml"
 
 THREAT_MODEL_HEADING = "# Threat model"
 THREAT_TABLE_HEADER = "| Component | Threat (S/T/R/I/D/E) | Scenario | Mitigation | Status |"
@@ -91,8 +91,10 @@ SCENARIO_COLUMN = 2
 MITIGATION_COLUMN = 3
 STATUS_COLUMN = 4
 
-CUSTOMIZING_MUST_EDIT = re.compile(r"only two files", re.IGNORECASE)
-MUST_EDIT_FILES = {"backend/config/routing.yaml", "backend/config/prices.yaml"}
+CUSTOMIZING_MUST_EDIT = re.compile(r"only two things", re.IGNORECASE)
+MUST_EDIT_FILES = {"backend/config/routing.yaml"}
+#: The provider folder, the other must-edit thing since a design note (a folder, so not a `.yaml`).
+MUST_EDIT_FOLDER = "backend/config/providers/"
 #: Any `.yaml` or `.py` path written on the must-edit line, backticked or bare.
 YAML_OR_PY_PATH = re.compile(r"[A-Za-z0-9_./-]+\.(?:yaml|py)")
 
@@ -303,7 +305,7 @@ def test_every_path_a_mitigation_names_exists() -> None:
 def test_azure_says_the_path_is_disabled_and_configuration_only() -> None:
     """Catches an Azure page that leaves the reader thinking the path is live, or that it needs
     code: all three claims (recorded fixtures, ships disabled, configuration change) must be
-    written, and the page must name the adapter module and the routing row a reader enables."""
+    written, and the page must name the adapter module and the provider file a reader drops in."""
     text = read(AZURE)
 
     for claim in AZURE_CLAIMS:
@@ -323,6 +325,7 @@ def test_customizing_names_exactly_two_must_edit_files() -> None:
 
     named = set(YAML_OR_PY_PATH.findall(lines[0]))
     assert named == MUST_EDIT_FILES, sorted(named)
+    assert MUST_EDIT_FOLDER in lines[0], lines[0]
 
 
 def test_every_path_customizing_names_exists() -> None:

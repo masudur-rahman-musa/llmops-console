@@ -23,11 +23,15 @@ answered: it moves between the enabled providers of the alias and no further.
 from __future__ import annotations
 
 import json
+import shutil
+from pathlib import Path
 
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 from httpx import Response
 
+from app.core.config import Settings
 from app.core.errors import ProviderError
 from app.core.validation import IdentifierInvalid
 from app.model_routing.policy import DataClass, load_policy
@@ -49,8 +53,11 @@ from .conftest import (
     SHIPPED_POLICY_PATH,
     TEST_KEYS,
     FallbackStubAdapter,
+    SilentSemanticCache,
     answer_of,
+    app_of,
     assert_error_body,
+    build_chat_client,
     chat_body,
     embeddings_body,
     fragment_of,
@@ -132,7 +139,7 @@ def test_the_fallback_alias_resolves_to_the_expected_candidates() -> None:
     cases would keep passing while asserting something else. Read from `resolve()` rather
     than from the file, because the tuple the route walks is the resolver's answer."""
     candidates = resolve(
-        load_policy(SHIPPED_POLICY_PATH),
+        load_policy(SHIPPED_POLICY_PATH, SHIPPED_PROVIDERS_DIR),
         FALLBACK_TENANT,
         FALLBACK_ALIAS,
         DataClass(FALLBACK_CLASS).value,
@@ -538,3 +545,70 @@ def test_rate_limit_5xx_and_timeout_still_fall_back(
     assert completion_text(response) == answer_of(SECOND_PROVIDER)
     assert len(first.requests) == 1
     assert len(second.requests) == 1
+
+
+# --------------------------------------------------------------------------
+# an earlier change: chat runs on anthropic and openai, in either order
+# --------------------------------------------------------------------------
+
+SHIPPED_PROVIDERS_DIR = SHIPPED_POLICY_PATH.parent / "providers"
+
+
+def two_provider_client(settings: Settings, stubs: dict[str, FallbackStubAdapter]) -> TestClient:
+    """An app over `settings` whose adapters are exactly these stubs, with no semantic tier."""
+    client = build_chat_client(settings, stubs)
+    app_of(client).state.semantic_cache = SilentSemanticCache()
+    return client
+
+
+def test_openai_answers_when_anthropic_fails(settings: Settings) -> None:
+    """Catches a shipped policy where openai is not the fallback for `agent-default`
+    (still `local`, or disabled): anthropic answers 503, openai answers 200, and the
+    client gets openai's words under `x-gateway-provider: openai`. Own stubs are used
+    so the case does not lean on which pair the shared fixtures register."""
+    anthropic = FallbackStubAdapter(name="anthropic")
+    openai = FallbackStubAdapter(name="openai")
+    anthropic.chat_error = retryable_error("anthropic")
+    with two_provider_client(settings, {"anthropic": anthropic, "openai": openai}) as client:
+        response = send(client, body())
+
+    assert response.status_code == 200, response.text
+    assert response.headers["x-gateway-provider"] == "openai"
+    assert completion_text(response) == answer_of("openai")
+    assert len(anthropic.requests) == 1
+    assert len(openai.requests) == 1
+
+
+def test_anthropic_answers_when_openai_is_first_and_fails(
+    settings: Settings, tmp_path: Path
+) -> None:
+    """Catches a fallback that only works in the shipped order: a tenant override that
+    lists openai first, with openai failing 503, must still be answered by anthropic.
+    Catches a loop that skips the provider list's second member when it is anthropic."""
+    providers_dir = tmp_path / "providers"
+    shutil.copytree(SHIPPED_PROVIDERS_DIR, providers_dir)
+    document = yaml.safe_load(SHIPPED_POLICY_PATH.read_text(encoding="utf-8"))
+    document["tenants"][FALLBACK_TENANT]["overrides"] = {
+        FALLBACK_ALIAS: [
+            {"provider": "openai", "model": "gpt-5-mini"},
+            {"provider": "anthropic", "model": "claude-haiku-5-5"},
+        ]
+    }
+    policy_path = tmp_path / "routing.yaml"
+    policy_path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    custom = Settings(
+        api_keys=settings.api_keys,
+        routing_policy_path=policy_path,
+        providers_dir=providers_dir,
+    )
+    anthropic = FallbackStubAdapter(name="anthropic")
+    openai = FallbackStubAdapter(name="openai")
+    openai.chat_error = retryable_error("openai")
+    with two_provider_client(custom, {"anthropic": anthropic, "openai": openai}) as client:
+        response = send(client, body())
+
+    assert response.status_code == 200, response.text
+    assert response.headers["x-gateway-provider"] == "anthropic"
+    assert completion_text(response) == answer_of("anthropic")
+    assert len(openai.requests) == 1
+    assert len(anthropic.requests) == 1

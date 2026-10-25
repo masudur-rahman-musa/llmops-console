@@ -232,7 +232,7 @@ spec:
     requests:
       storage: 4Gi
   # `storageClassName` deliberately absent, the same reason `platform`'s
-  # Postgres and `apps`'s llama.cpp claim omit it: k3s defaults to `local-path`
+  # Postgres and `apps`'s llama.cpp embedding claim omit it: k3s defaults to `local-path`
   # and EKS to `gp2`, and the manifest stays portable between the two.
 ---
 apiVersion: apps/v1

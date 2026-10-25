@@ -16,7 +16,7 @@ half alone is satisfiable by a constant:
 * a non-redact class WITH personal data -> the raw text reaches the adapter and
   the header is `false`.
 
-Every case runs against a stub registered under the policy provider `local`,
+Every case runs against a stub registered under the policy provider `openai`,
 which is the only provider all four data classes can reach for `evals`
 (the chat provider `anthropic` has no adapter in this module, so a stub
 under `anthropic` would leave the redact rows with no adapter and the test would pass for
@@ -69,11 +69,11 @@ REDACTED_PII = "write to <EMAIL_1> about it"
 WITHOUT_PII = "which city is the capital of Germany"
 
 ALIAS = "agent-default"
-PROVIDER = "local"
+PROVIDER = "openai"
 
 EMBED_PROVIDER = "local_embed"
 """The `embed` alias's only candidate: the embedding server is its own provider,
-because one llama.cpp process serves one model. The chat rows keep `local`."""
+because one llama.cpp process serves one model. The chat rows use `openai`."""
 
 # (data class, what the caller sent, what the adapter must receive, the header)
 INLINE_ROWS: tuple[tuple[str, str, str, str], ...] = (
@@ -89,7 +89,7 @@ INLINE_IDS = tuple(f"{row[0]}-{'pii' if row[1] == WITH_PII else 'clean'}" for ro
 
 @pytest.fixture(scope="module")
 def inline_chat_stub() -> StubAdapter:
-    """The chat stub, registered under `local` so every data class can reach it."""
+    """The chat stub, registered under `openai` so every data class can reach it."""
     return StubAdapter(name=PROVIDER, response=stub_response())
 
 
@@ -155,7 +155,7 @@ def redacted_header(response: Response) -> str:
 
 
 def resolved_for(policy: Policy, data_class: str = "internal") -> Resolved:
-    """Where the shipped policy sends `evals`' `agent-default`, with only `local` healthy."""
+    """Where the shipped policy sends `evals`' `agent-default`, with only `openai` healthy."""
     return resolve(policy, "evals", ALIAS, data_class, is_healthy=lambda p: p == PROVIDER)[0]
 
 
@@ -510,7 +510,7 @@ def test_a_full_batch_of_capped_inputs_is_accepted_on_a_redact_class(
 #
 # The cross-tenant row is the sharp one. `nordlicht` sends the SAME text under a
 # redact class and reaches the same stub (its `agent-default` override resolves
-# to `local`), and the text carries an address as well - so redaction demonstrably
+# to `openai`), and the text carries an address as well - so redaction demonstrably
 # ran for that request and simply did not know the name. Without that second
 # tenant, "the directory was loaded for the authenticated tenant" and "one global
 # directory was loaded" are indistinguishable.

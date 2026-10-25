@@ -12,9 +12,9 @@ directory. `parents[2]` is `backend/`, so this resolves to `backend/config/`. A
 deployment that does not carry the repository layout - the container image, a
 wheel install - sets `OPSCONSOLE_ROUTING_POLICY_PATH` instead."""
 
-DEFAULT_PRICES_PATH = Path(__file__).resolve().parents[2] / "config" / "prices.yaml"
-"""The shipped `prices.yaml`, found the same way and for the same reason, with
-`OPSCONSOLE_PRICES_PATH` as the escape hatch."""
+DEFAULT_PROVIDERS_DIR = Path(__file__).resolve().parents[2] / "config" / "providers"
+"""The shipped provider folder, one YAML file per provider, found the same way and
+for the same reason, with `OPSCONSOLE_PROVIDERS_DIR` as the escape hatch."""
 
 DEFAULT_EVAL_BASELINE_PATH = (
     Path(__file__).resolve().parents[2] / "evals" / "conversation-baseline.json"
@@ -45,13 +45,13 @@ class Settings(BaseSettings):
 
     routing_policy_path: Path = DEFAULT_ROUTING_POLICY_PATH
 
-    prices_path: Path = DEFAULT_PRICES_PATH
-    """Where the price table is read from.
+    providers_dir: Path = DEFAULT_PROVIDERS_DIR
+    """The folder of provider files: providers, their models and their prices.
 
-    Read by `create_app`, which builds the `PriceStore` on `app.state.prices` from
-    it at startup, so a malformed file stops the process rather than surfacing on
-    a request that then cannot be priced. Every served request is costed against
-    that one snapshot."""
+    Read by `create_app`, which builds the policy and the `PriceStore` from it at
+    startup, so a bad file stops the process rather than surfacing on a request
+    that then cannot be routed or priced. Read again, with `routing.yaml`, on
+    every routing reload."""
 
     eval_baseline_path: Path = DEFAULT_EVAL_BASELINE_PATH
     """Where the quality page reads the eval gate's thresholds from.

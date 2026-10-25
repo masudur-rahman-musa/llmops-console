@@ -1,8 +1,13 @@
 """Loading, validating and selecting from the versioned price table.
 
-A bad price file is an operator error, never a client error: every rejection
-case here expects `PriceTableInvalid` and a message naming the offending field
-path, exactly as `tests/routing/test_policy_load.py` does for the policy. The
+Prices live in the provider files. The crafted cases here are still
+written as one `prices:` document keyed `provider/model`, because that is the
+shortest way to state a price; `load_prices` below splits such a document into
+one provider file per provider and loads the folder through the real loader.
+
+A bad price is an operator error, never a client error: every rejection case
+here expects `PolicyInvalid` and a message naming the file and the offending
+field path, exactly as `tests/model_routing/test_policy_load.py` does for the policy. The
 selection cases pin the effective-from rule, which is the part of this module a
 wrong implementation gets wrong silently - the wrong price is still a plausible
 number, and nothing downstream can tell.
@@ -17,12 +22,12 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 import pytest
+import yaml
 
-from app.limits.errors import PriceTableInvalid
-from app.limits.prices import PriceStore, PriceTable, load_prices, price_for
+from app.limits.prices import PriceStore, PriceTable, price_for
 from app.model_routing.errors import PolicyInvalid
 from app.model_routing.policy import (
     Policy,
@@ -30,13 +35,68 @@ from app.model_routing.policy import (
     load_policy,
     reachable_price_keys,
 )
+from app.model_routing.provider_files import build_price_table, load_provider_files
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SHIPPED_PRICES_PATH = REPO_ROOT / "config" / "prices.yaml"
+SHIPPED_PROVIDERS_DIR = REPO_ROOT / "config" / "providers"
 SHIPPED_POLICY_PATH = REPO_ROOT / "config" / "routing.yaml"
 
 KEY = "prov-a/model-a"
 """The one price key every crafted document below carries."""
+
+PROVIDER_FILE = "prov-a.yaml"
+MODEL = "model-a"
+"""Where KEY's price lives once the document is split into provider files."""
+
+
+def folder_of(path: Path) -> Path:
+    """Split the `prices:` document at `path` into provider files beside it.
+
+    A document that does not parse, or has no `prices` mapping, is written as is
+    into `prov-a.yaml`, so the real loader is what refuses it.
+    """
+    folder = path.parent / "providers"
+    folder.mkdir(exist_ok=True)
+    for old in folder.glob("*.yaml"):
+        old.unlink()
+    text = path.read_text(encoding="utf-8")
+    try:
+        document = yaml.safe_load(text)
+    except yaml.YAMLError:
+        document = None
+    prices = document.get("prices") if isinstance(document, dict) else None
+    if not isinstance(prices, dict):
+        (folder / PROVIDER_FILE).write_text(text, encoding="utf-8")
+        return folder
+    files: dict[str, dict[str, Any]] = {}
+    for key, entries in prices.items():
+        provider, model = str(key).split("/", 1)
+        file = files.setdefault(
+            provider,
+            {
+                "provider": provider,
+                "kind": "openai_compatible",
+                "base_url": "http://x",
+                "models": {},
+            },
+        )
+        file["models"][model] = {"prices": entries}
+    if not files:
+        files["prov-a"] = {"provider": "prov-a", "kind": "openai_compatible", "models": {}}
+    for provider, file in files.items():
+        (folder / f"{provider}.yaml").write_text(
+            yaml.safe_dump(file, sort_keys=False), encoding="utf-8"
+        )
+    return folder
+
+
+def load_prices(path: Path) -> PriceTable:
+    """The table the gateway would build from the document at `path`."""
+    return build_price_table(load_provider_files(folder_of(path)))
+
+
+def shipped_table() -> PriceTable:
+    return build_price_table(load_provider_files(SHIPPED_PROVIDERS_DIR))
 
 
 class PriceWriter(Protocol):
@@ -111,25 +171,24 @@ def test_safe_load_only(price_file: PriceWriter, tmp_path: Path) -> None:
     """Catches a loader written with `yaml.load` and the default `Loader`, which
     constructs the tagged python object and runs the shell command inside it; only
     `yaml.safe_load` refuses the tag, and only the wrapping turns that refusal into
-    `PriceTableInvalid` rather than a bare `yaml.YAMLError` reaching the caller."""
+    `PolicyInvalid` rather than a bare `yaml.YAMLError` reaching the caller."""
     marker = tmp_path / "pwned.txt"
     document = f"""
 prices: !!python/object/apply:os.system ["touch {marker}"]
 """
     path = price_file(document)
 
-    with pytest.raises(PriceTableInvalid):
+    with pytest.raises(PolicyInvalid):
         load_prices(path)
 
     assert not marker.exists()
 
 
-def test_missing_file_is_price_table_invalid(tmp_path: Path) -> None:
-    """Catches a loader that lets `path.read_text`'s `OSError` escape, so an operator who
-    mistyped the prices path gets a `FileNotFoundError` traceback from a layer that has no
-    idea what a price table is, instead of the one typed error the load path reports."""
-    with pytest.raises(PriceTableInvalid):
-        load_prices(tmp_path / "does-not-exist.yaml")
+def test_a_missing_folder_is_policy_invalid(tmp_path: Path) -> None:
+    """Catches a store that lets the folder's absence escape as a `FileNotFoundError`
+    traceback, instead of the one typed error the load path reports."""
+    with pytest.raises(PolicyInvalid):
+        PriceStore(tmp_path / "does-not-exist")
 
 
 NEGATIVE_INPUT_PRICE = f"""
@@ -166,10 +225,14 @@ prices:
 
 # (case id, document, the fragments the message must name)
 PRICE_REJECTIONS: list[tuple[str, str, tuple[str, ...]]] = [
-    ("negative input price", NEGATIVE_INPUT_PRICE, (KEY, "input_usd_per_1m")),
-    ("negative output price", NEGATIVE_OUTPUT_PRICE, (KEY, "output_usd_per_1m")),
-    ("non finite input price", INFINITE_INPUT_PRICE, (KEY, "input_usd_per_1m")),
-    ("not a number output price", NOT_A_NUMBER_OUTPUT_PRICE, (KEY, "output_usd_per_1m")),
+    ("negative input price", NEGATIVE_INPUT_PRICE, (PROVIDER_FILE, MODEL, "input_usd_per_1m")),
+    ("negative output price", NEGATIVE_OUTPUT_PRICE, (PROVIDER_FILE, MODEL, "output_usd_per_1m")),
+    ("non finite input price", INFINITE_INPUT_PRICE, (PROVIDER_FILE, MODEL, "input_usd_per_1m")),
+    (
+        "not a number output price",
+        NOT_A_NUMBER_OUTPUT_PRICE,
+        (PROVIDER_FILE, MODEL, "output_usd_per_1m"),
+    ),
 ]
 
 
@@ -195,7 +258,7 @@ def test_price_rejection_table(
     four trailing forms."""
     path = price_file(document + trailing)
 
-    with pytest.raises(PriceTableInvalid) as excinfo:
+    with pytest.raises(PolicyInvalid) as excinfo:
         load_prices(path)
 
     message = str(excinfo.value)
@@ -230,10 +293,14 @@ prices:
 """
 
 SHAPE_REJECTIONS: list[tuple[str, str, tuple[str, ...]]] = [
-    ("unknown key", UNKNOWN_KEY, (KEY, "surcharge_usd")),
-    ("effective_from is not a date", EFFECTIVE_FROM_IS_NOT_A_DATE, (KEY, "effective_from")),
-    ("empty key set", EMPTY_KEY_SET, ("prices",)),
-    ("a key with no entries", NO_ENTRIES_FOR_A_KEY, (KEY,)),
+    ("unknown key", UNKNOWN_KEY, (PROVIDER_FILE, MODEL, "surcharge_usd")),
+    (
+        "effective_from is not a date",
+        EFFECTIVE_FROM_IS_NOT_A_DATE,
+        (PROVIDER_FILE, MODEL, "effective_from"),
+    ),
+    ("empty key set", EMPTY_KEY_SET, (PROVIDER_FILE, "models")),
+    ("a key with no entries", NO_ENTRIES_FOR_A_KEY, (PROVIDER_FILE, MODEL)),
 ]
 
 
@@ -259,7 +326,7 @@ def test_invalid_price_table_names_the_field(
     hand. Every row runs against all four trailing forms."""
     path = price_file(document + trailing)
 
-    with pytest.raises(PriceTableInvalid) as excinfo:
+    with pytest.raises(PolicyInvalid) as excinfo:
         load_prices(path)
 
     message = str(excinfo.value)
@@ -285,7 +352,7 @@ def test_non_mapping_or_broken_document_is_refused(
     is actually wrong."""
     path = price_file(document)
 
-    with pytest.raises(PriceTableInvalid):
+    with pytest.raises(PolicyInvalid):
         load_prices(path)
 
 
@@ -447,8 +514,8 @@ def test_store_rejects_a_bad_file_at_construction(price_file: PriceWriter) -> No
     than at boot, where a rollout can still see it and stop."""
     path = price_file(NEGATIVE_INPUT_PRICE)
 
-    with pytest.raises(PriceTableInvalid):
-        PriceStore(path)
+    with pytest.raises(PolicyInvalid):
+        PriceStore(folder_of(path))
 
 
 def test_reload_swaps_the_price_snapshot(price_file: PriceWriter, valid_doc: DocFactory) -> None:
@@ -458,11 +525,12 @@ def test_reload_swaps_the_price_snapshot(price_file: PriceWriter, valid_doc: Doc
     The last assertion is what only in-place mutation can break - the snapshot captured
     before the reload must still read 3.00."""
     path = price_file(valid_doc(input_price="3.00"))
-    store = PriceStore(path)
+    store = PriceStore(folder_of(path))
     before = store.table
     assert before.prices[KEY][0].input_usd_per_1m == Decimal("3.00")
 
     path.write_text(valid_document(input_price="9.00"), encoding="utf-8")
+    folder_of(path)
     # `reload` returns None: call it, never assert on its result.
     store.reload()
 
@@ -475,15 +543,16 @@ def test_a_failed_reload_keeps_the_previous_price_table(
     price_file: PriceWriter, valid_doc: DocFactory
 ) -> None:
     """Catches a `reload` that clears or assigns the attribute before it validates, which
-    turns one bad edit to `prices.yaml` into an unpriced ledger - or an exception on every
+    turns one bad edit to the provider files into an unpriced ledger - or an exception on every
     request - until someone notices and fixes the file."""
     path = price_file(valid_doc(input_price="3.00"))
-    store = PriceStore(path)
+    store = PriceStore(folder_of(path))
     before = store.table
 
     path.write_text("prices: [oops\n  - :::\n", encoding="utf-8")
+    folder_of(path)
 
-    with pytest.raises(PriceTableInvalid):
+    with pytest.raises(PolicyInvalid):
         store.reload()
 
     assert store.table is before
@@ -494,12 +563,12 @@ def test_a_failed_reload_keeps_the_previous_price_table(
 
 
 def test_the_shipped_price_file_loads() -> None:
-    """Catches a `prices.yaml` shipped in a shape the schema refuses - the one file no
+    """Catches a the provider files shipped in a shape the schema refuses - the one file no
     test would otherwise validate, because an operator never edits it in a unit test -
     which would take the process down at boot on the first deploy that reads it."""
-    assert SHIPPED_PRICES_PATH.exists()
+    assert SHIPPED_PROVIDERS_DIR.is_dir()
 
-    table = load_prices(SHIPPED_PRICES_PATH)
+    table = shipped_table()
 
     assert len(table.prices) >= 1
     for entries in table.prices.values():
@@ -513,8 +582,8 @@ def test_the_shipped_prices_cover_every_pair_the_shipped_routing_can_resolve() -
     overrides both, so no hand-written list in this file can go stale behind a routing
     change; the non-emptiness assertion is what stops a derivation that silently returns
     nothing from passing this vacuously."""
-    policy = load_policy(SHIPPED_POLICY_PATH)
-    table = load_prices(SHIPPED_PRICES_PATH)
+    policy = load_policy(SHIPPED_POLICY_PATH, SHIPPED_PROVIDERS_DIR)
+    table = shipped_table()
 
     reachable = reachable_price_keys(policy)
 
@@ -586,8 +655,8 @@ def test_check_policy_models_priced_passes_when_every_routed_model_is_priced() -
     when every reachable pair is present in the price table, making the app
     unbootable on a correctly priced policy."""
 
-    policy = load_policy(SHIPPED_POLICY_PATH)
-    table = load_prices(SHIPPED_PRICES_PATH)
+    policy = load_policy(SHIPPED_POLICY_PATH, SHIPPED_PROVIDERS_DIR)
+    table = shipped_table()
 
     # Must not raise.
     check_policy_models_priced(policy, table)
@@ -652,19 +721,18 @@ def test_check_policy_models_priced_names_every_unpriced_model() -> None:
     assert "prov-b/model-y" in message
 
 
-SELF_HOSTED_PROVIDERS = ["local", "vllm"]
+SELF_HOSTED_PROVIDERS = ["local_embed"]
 
 
 @pytest.mark.parametrize("provider", SELF_HOSTED_PROVIDERS)
 def test_a_self_hosted_provider_is_priced_at_exactly_zero(provider: str) -> None:
-    """Catches decision D being dropped or softened: a `vllm` key left out of the file
-    entirely - that provider ships disabled and no alias names it, so the coverage case
-    above cannot reach it, and its first served request would book `unpriced` - or a
+    """Catches decision D being dropped or softened: the self-hosted embedding server
+    left unpriced, so every embedding books `unpriced`, or a
     self-hosted rate written as a per-token guess rather than the 0.0 its marginal API
     spend actually is. Asserted against the SHIPPED file, because that is the one a
     deployment bills from, and the presence assertion is what makes the zero check
     non-vacuous on a file that simply omitted the provider."""
-    table = load_prices(SHIPPED_PRICES_PATH)
+    table = shipped_table()
 
     matching = [key for key in table.prices if key.split("/", 1)[0] == provider]
 

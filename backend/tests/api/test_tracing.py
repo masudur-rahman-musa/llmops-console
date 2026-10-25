@@ -130,13 +130,13 @@ EVALS_KEY = TEST_KEYS["evals"]
 NORDLICHT_KEY = TEST_KEYS["nordlicht"]
 
 # `evals` under `confidential` allows [eu, self] and carries `redact: true`, so a
-# stub registered under the policy provider `local` is both the resolved
+# stub registered under the policy provider `openai` is both the resolved
 # candidate and a request that actually runs redaction. Under `internal` the same
 # tenant reaches `anthropic` in `us` and redaction does not apply, which is the
 # pair that makes the `redact` span's ABSENCE observable.
 REDACT_CLASS = "confidential"
 PLAIN_CLASS = "internal"
-LOCAL_PROVIDER = "local"
+OPENAI_PROVIDER = "openai"
 EMBED_PROVIDER = "local_embed"
 """The `embed` alias's only candidate, and therefore the provider span an embeddings
 request carries. Its own server on its own address: one llama.cpp process serves one
@@ -275,15 +275,15 @@ def duration_seconds(span: ReadableSpan) -> float:
 
 
 @pytest.fixture(scope="module")
-def local_chat_stub() -> StubAdapter:
-    """A chat stub under `local`, the provider every data class can reach."""
-    return StubAdapter(name=LOCAL_PROVIDER, response=stub_response())
+def openai_chat_stub() -> StubAdapter:
+    """A chat stub under `openai`, the provider every data class can reach."""
+    return StubAdapter(name=OPENAI_PROVIDER, response=stub_response())
 
 
 @pytest.fixture(scope="module")
-def local_chat_client(settings: Settings, local_chat_stub: StubAdapter) -> Iterator[TestClient]:
+def openai_chat_client(settings: Settings, openai_chat_stub: StubAdapter) -> Iterator[TestClient]:
     """One app for the redact-class chat rows, built once."""
-    with build_chat_client(settings, {local_chat_stub.name: local_chat_stub}) as client:
+    with build_chat_client(settings, {openai_chat_stub.name: openai_chat_stub}) as client:
         yield client
 
 
@@ -623,8 +623,8 @@ def test_two_separate_simulated_turns_never_share_a_trace_id(
 SPAN_NAME_ROWS: list[tuple[str, str, str, Callable[[TestClient], Response], set[str]]] = [
     (
         "chat-redact-class",
-        "local_chat_client",
-        LOCAL_PROVIDER,
+        "openai_chat_client",
+        OPENAI_PROVIDER,
         lambda client: post_chat(
             client,
             chat_body(model=ALIAS, messages=[{"role": "user", "content": TEXT_WITH_PII}]),
@@ -636,7 +636,7 @@ SPAN_NAME_ROWS: list[tuple[str, str, str, Callable[[TestClient], Response], set[
             CACHE_SPAN,
             SEMANTIC_SPAN,
             REDACT_SPAN,
-            f"provider:{LOCAL_PROVIDER}",
+            f"provider:{OPENAI_PROVIDER}",
         },
     ),
     (
@@ -702,14 +702,14 @@ def test_no_ledger_span_is_emitted(
 
 
 def test_the_stage_spans_share_the_roots_trace_id(
-    local_chat_client: TestClient, spans: InMemorySpanExporter
+    openai_chat_client: TestClient, spans: InMemorySpanExporter
 ) -> None:
     """Catches the plan's threadpool risk: the routes are `def`, so they run in a worker
     thread, and a stage span started there without the request's context becomes the root
     of a SECOND trace. The request would look traced and the provider call would be
     missing from the trace an engineer opens."""
     response = post_chat(
-        local_chat_client,
+        openai_chat_client,
         chat_body(model=ALIAS, messages=[{"role": "user", "content": TEXT_WITH_PII}]),
         data_class=REDACT_CLASS,
     )
@@ -728,7 +728,7 @@ def test_the_stage_spans_share_the_roots_trace_id(
 
 
 def test_redact_span_is_absent_on_a_non_redact_class(
-    local_chat_client: TestClient, spans: InMemorySpanExporter
+    openai_chat_client: TestClient, spans: InMemorySpanExporter
 ) -> None:
     """Catches a `with` block placed around the `redaction_applies` CHECK rather than
     inside the branch it guards: every request would carry a `redact` span, and the trace
@@ -737,12 +737,12 @@ def test_redact_span_is_absent_on_a_non_redact_class(
     route that never emits the span at all."""
     body = chat_body(model=ALIAS, messages=[{"role": "user", "content": TEXT_WITH_PII}])
 
-    plain = post_chat(local_chat_client, body, data_class=PLAIN_CLASS)
+    plain = post_chat(openai_chat_client, body, data_class=PLAIN_CLASS)
     assert plain.status_code == 200, plain.text
     plain_names = stage_names(finished(spans))
 
     spans.clear()
-    redacted = post_chat(local_chat_client, body, data_class=REDACT_CLASS)
+    redacted = post_chat(openai_chat_client, body, data_class=REDACT_CLASS)
     assert redacted.status_code == 200, redacted.text
     redacted_names = stage_names(finished(spans))
 
@@ -1073,7 +1073,7 @@ def test_the_failed_candidate_keeps_its_own_provider_span(
     handler. Catches a loop wrapped in one provider span, or the span moved outside the
     `try` so a failed attempt leaves none: either way both passages become false and
     nothing else in the suite would notice. The request's own `provider` attribute names
-    the OTHER one, which is what makes the pair readable as "anthropic shed, local served"
+    the OTHER one, which is what makes the pair readable as "anthropic shed, openai served"
     rather than as two providers that were both used."""
     fallback_adapters[FIRST_PROVIDER].chat_error = retryable_error(FIRST_PROVIDER)
 

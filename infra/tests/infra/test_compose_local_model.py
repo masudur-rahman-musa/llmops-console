@@ -1,9 +1,10 @@
-r"""The two local llama.cpp models are off by default and come back with one profile.
+r"""The local embedding server is off by default and comes back with one profile.
 
-An earlier change puts `llama` and `llama-embed` in `docker-compose.yml` behind the `local-model`
+An earlier change put the llama.cpp servers in `docker-compose.yml` behind the `local-model`
 profile, so `docker compose up -d` starts the same model-free stack the node runs.
-Their config stays whole, so turning them back on is `--profile local-model` (or
-`COMPOSE_PROFILES=local-model` in `.env`), never a rewrite.
+An earlier change removed the local chat model; only `llama-embed` is left behind the
+profile. Its config stays whole, so turning it on is `--profile local-model` (or
+`COMPOSE_PROFILES=local-model` in `.env.demo`), never a rewrite.
 
 Most cases read files as TEXT or as parsed YAML (`yaml.safe_load`), through `read` and
 `load_yaml` from `test_hetzner_module.py`, spelled as the package `__init__` files make it. A file the plan has not changed yet fails the case that reads it, never
@@ -34,14 +35,14 @@ COMPOSE_FILE = REPO_ROOT / "docker-compose.yml"
 TRADEOFF_SCRIPT = REPO_ROOT / "infra" / "scripts" / "tradeoff_run.sh"
 README = REPO_ROOT / "README.md"
 
-#: The profile both local models sit behind.
+#: The profile the embedding server sits behind.
 PROFILE = "local-model"
 
 #: The services that start with a plain `docker compose up -d`.
 DEFAULT_SERVICES = frozenset({"gateway", "redis", "postgres", "pushgateway", "qdrant"})
 
-#: The two local models, each with the host port mapping it must keep.
-LLAMA_PORTS = {"llama": ["18082:8082"], "llama-embed": ["8083:8083"]}
+#: The local embedding server, with the host port mapping it must keep.
+LLAMA_PORTS = {"llama-embed": ["8083:8083"]}
 
 LLAMA_IMAGE = "ghcr.io/ggml-org/llama.cpp:server-b10902"
 MODELS_MOUNT = "${MODELS_DIR:-./.cache/models}:/models:ro"
@@ -87,13 +88,15 @@ def listed() -> dict[str, set[str]]:
     }
 
 
-def test_the_two_llama_services_sit_behind_the_local_model_profile() -> None:
-    """Both models carry exactly the `local-model` profile.
+def test_the_llama_services_sit_behind_the_local_model_profile() -> None:
+    """The embedding server carries exactly the `local-model` profile, and the chat
+    model is gone.
 
-    Catches a compose file that leaves either model unprofiled, or names the profile
+    Catches a compose file that leaves it unprofiled, or brings back `llama`, or names the profile
     something the script and README do not use.
     """
     found = services()
+    assert "llama" not in found
     for name in LLAMA_PORTS:
         assert name in found, f"{name} is gone from docker-compose.yml; it must be kept"
         assert found[name].get("profiles") == [PROFILE], name
@@ -139,7 +142,7 @@ def test_the_gateway_does_not_wait_on_a_local_model() -> None:
 
 
 def test_the_default_stack_starts_no_local_model(listed: dict[str, set[str]]) -> None:
-    """Compose itself leaves both models out by default and lists them with the profile.
+    """Compose itself leaves the embedding server out by default and lists it with the profile.
 
     Catches a profile spelled in a way the YAML cases accept but Compose ignores, and a
     profile name `--profile local-model` does not bring back.
@@ -148,23 +151,23 @@ def test_the_default_stack_starts_no_local_model(listed: dict[str, set[str]]) ->
     assert listed["profile"] == set(DEFAULT_SERVICES) | set(LLAMA_PORTS)
 
 
-def test_the_tradeoff_run_brings_the_local_model_up() -> None:
-    """The one `COMPOSE=` line carries both `--profile tradeoff` and `--profile local-model`.
+def test_the_tradeoff_run_starts_no_local_model() -> None:
+    """The one `COMPOSE=` line carries `--profile tradeoff` and not `--profile local-model`.
 
-    Catches a tradeoff script that never enables the profile, so its `local-cpu` option
-    routes to a llama service that was never started.
+    Catches a tradeoff script still starting a local model: no option routes to one
+    since the `local-cpu` option left with the local chat model.
     """
     lines = [line for line in read(TRADEOFF_SCRIPT).splitlines() if line.startswith("COMPOSE=")]
     assert len(lines) == 1, f"expected exactly one COMPOSE= line, found {lines}"
     flags = re.findall(r"--profile\s+(\S+?)\)?(?=\s|$)", lines[0])
     assert "tradeoff" in flags, lines[0]
-    assert PROFILE in flags, lines[0]
+    assert PROFILE not in flags, lines[0]
 
 
 def test_the_readme_quickstart_names_the_profile() -> None:
-    """The README shows how to start the stack with the local model.
+    """The README shows how to start the stack with the local embedding server.
 
-    Catches a README that turns the models off without saying how to turn them back on.
+    Catches a README that turns it off without saying how to turn it back on.
     """
     assert "docker compose --profile local-model up -d" in read(README)
 

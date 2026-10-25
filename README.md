@@ -214,9 +214,9 @@ engine skips any number the input has already used.
 
 ## Self-hosted vs API tradeoff
 
-One alias, `agent-default`, resolved four ways over the same small conversation file: a cheap
-API tier, a strong API tier, the local CPU model on the box this project runs
-on, and vLLM on a GPU instance applied for the run and destroyed after it. Each
+One alias, `agent-default`, resolved three ways over the same small conversation file: a cheap
+API tier, a strong API tier, and vLLM on a GPU instance applied for the run and
+destroyed after it. Each
 option reports its check score and USD per 1,000 turns. API cost comes from the ledger;
 self-hosted cost comes from the instance's hourly price divided by the
 throughput it actually delivered.
@@ -224,30 +224,28 @@ throughput it actually delivered.
 How the runs are made, and what three cases on one sequential stream can and
 cannot tell you: [docs/tradeoff-run/README.md](docs/tradeoff-run/README.md). The
 computed table and the winner it picks are written to `docs/tradeoff.md` by the
-same harness once all four runs have landed.
+same harness once all three runs have landed.
 
 **Conclusion and the cost of the measurement run: pending**, written once the
-four runs have been made and the GPU instance's bill has arrived.
+three runs have been made and the GPU instance's bill has arrived.
 
-### The local model
+### Providers, one file each
 
-A small quantised model is wired in as one of the providers the gateway routes
-to, and it runs on the project's own ARM server. It exists to show the
-self-hosted side of the cost and quality tradeoff, not for speed: it costs
-nothing per token, and the tradeoff table says what that saving gives up.
-
-It is slower than a hosted API, and by how much is not stated here yet. Nothing
-in CI can measure the machine it runs on, and a number produced anywhere else
-would be a guess wearing a decimal point. The measured latency, throughput and
-cost per token land in the tradeoff table above.
+Chat runs on Anthropic, with OpenAI as the fallback: if one does not answer, the
+other does. Each provider is one YAML file in `backend/config/providers/` with its
+kind, address, key name and models with their prices. Adding a model is one new
+file and one alias line in `backend/config/routing.yaml`, reviewed in a pull
+request and checked by the eval gate. No code changes, and no live settings page.
+How to write one: [docs/customizing.md](docs/customizing.md).
 
 ### Embeddings
 
 `POST /v1/embeddings` speaks the OpenAI shape and answers from the same routing
 policy every other request goes through, so an embedding is resolved, limited and
 priced the same way as a completion. In the shipped policy the `embed` alias has
-one candidate and it is the local model, so the text being embedded never leaves
-the box we run.
+one candidate and it is the local embedding server, so the text being embedded
+never leaves the box we run. It has no fallback on purpose: a second embedding
+model writes vectors in a different space and would quietly break search.
 
 A bare string or a list of strings is accepted, up to 64 inputs of 8192
 characters each. The answer returns one vector per input, in the order given:
@@ -256,7 +254,7 @@ the contract rather than a convenience. `encoding_format: "base64"` returns each
 vector as little-endian float32, which is what the OpenAI SDK asks for by
 default; the gateway renders it and always asks the provider for plain floats.
 
-The endpoint needs a running local model server started with embeddings enabled,
+The endpoint needs a running local embedding server started with embeddings enabled,
 because the server exposes its embeddings endpoint only when launched with
 `--embedding`. That flag comes with the local stack deployment, so until that
 lands this endpoint answers 502: the provider is configured and unreachable.
@@ -338,7 +336,7 @@ Requires Docker, [uv](https://docs.astral.sh/uv/) and pnpm.
     docker compose up -d                   # gateway, Redis, Postgres, Qdrant
     uv sync --project backend
 
-The local llama.cpp model servers are off by default. To start them too:
+The local llama.cpp embedding server is off by default. To start it too:
 
     docker compose --profile local-model up -d
 

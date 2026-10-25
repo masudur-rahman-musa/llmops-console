@@ -1,0 +1,43 @@
+# Anthropic: the first choice for every chat alias.
+#
+# One file per provider. The file name is the provider name, and the
+# gateway reads every file in this folder at startup and on a routing reload. A
+# bad file stops startup with a message naming the file and the field.
+#
+# `key_env` names the environment variable that holds the key. The key itself is
+# never in this file.
+#
+# Prices are USD per 1,000,000 tokens, written as quoted strings so the digits
+# stay exactly as written. Each model keeps a LIST of prices: to re-price, append
+# a row with a later `effective_from`, never edit an old one. A ledger row names
+# the row it was priced at as `anthropic/<model>@YYYY-MM-DD`.
+
+provider: anthropic
+kind: anthropic
+base_url: https://api.anthropic.com
+key_env: ANTHROPIC_API_KEY
+enabled: true
+
+models:
+  # The cheap model the evals and `agent-default` run on.
+  claude-haiku-5-5:
+    prices:
+      - effective_from: 2026-10-01
+        input_usd_per_1m: "0.10"
+        output_usd_per_1m: "0.50"
+  claude-haiku-4-5:
+    prices:
+      - effective_from: 2025-10-15
+        input_usd_per_1m: "1.00"
+        output_usd_per_1m: "5.00"
+  claude-opus-5:
+    prices:
+      - effective_from: 2025-11-24
+        input_usd_per_1m: "5.00"
+        output_usd_per_1m: "25.00"
+  # The strong model `agent-strong` runs on.
+  claude-sonnet-5-5:
+    prices:
+      - effective_from: 2026-10-21
+        input_usd_per_1m: "2.00"
+        output_usd_per_1m: "10.00"

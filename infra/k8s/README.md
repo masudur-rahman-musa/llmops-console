@@ -8,7 +8,7 @@ kubeconform` is the whole automated check, and `kubectl apply` is a human's.
 kustomization.yaml     the single root; `resources` grows as directories land
 base/                  namespaces, quotas, limit ranges, network policies
 platform/              Postgres, Redis, Qdrant, the ACME issuers, the middlewares
-apps/                  the gateway, llama.cpp, the Helpdesk, their config and the four public Ingresses
+apps/                  the gateway, the llama.cpp embedding server, the Helpdesk, their config and the four public Ingresses
 monitoring/            Prometheus, node-exporter, kube-state-metrics, Grafana and the `grafana.` Ingress
 gpu/                   vLLM on one GPU host; standalone, not in the root build (`make k8s-gpu-check`)
 ```
@@ -27,15 +27,14 @@ to fit; they total exactly 6Gi and 3 CPU, leaving k3s itself a margin in both.
 | namespace | requests.memory | requests.cpu | limits.memory | holds |
 |---|---|---|---|---|
 | `platform` | 2Gi | 800m | 3Gi | Postgres, Redis, Qdrant, cert-manager, the Traefik middlewares |
-| `apps` | 3Gi | 1500m | 7Gi | the gateway, the console, llama.cpp, the Helpdesk services |
+| `apps` | 3Gi | 1500m | 7Gi | the gateway, the console, the llama.cpp embedding server, the Helpdesk services |
 | `evals` | 512Mi | 300m | 1Gi | the Pushgateway |
 | `monitoring` | 512Mi | 400m | 1Gi | Prometheus, Grafana, Alertmanager |
 | **total** | **6Gi** | **3** | 12Gi | |
 
 The limits column is oversubscribed against an 8 GiB box on purpose. Requests
 are what the scheduler packs and limits are the ceiling a single container may
-burst to; llama.cpp alone carries a 3 GiB limit, and it is not resident while
-the eval CronJob is running.
+burst to.
 
 `limits.cpu` is deliberately not in the table. A CPU limit throttles rather
 than kills, so requiring one on every container would cost the gateway tail
@@ -110,27 +109,19 @@ scale-up at admission, which is the one event an autoscaler exists to serve.
 | workload | requests.memory | requests.cpu | limits.memory |
 |---|---|---|---|
 | `gateway`, 3 pods at HPA max (256Mi / 150m / 512Mi) | 768Mi | 450m | 1536Mi |
-| `llama`, 1 pod | 1024Mi | 300m | 3072Mi |
 | `llama-embed`, 1 pod | 256Mi | 100m | 512Mi |
 | `helpdesk-agent-api`, 1 pod | 192Mi | 100m | 384Mi |
 | `helpdesk-mcp-server`, 1 pod | 128Mi | 75m | 256Mi |
 | `helpdesk-web`, 1 pod | 128Mi | 75m | 256Mi |
 | `helpdesk-scheduler`, 1 pod | 128Mi | 50m | 256Mi |
 | `console`, 1 pod | 256Mi | 100m | 512Mi |
-| **total** | **2880Mi** | **1250m** | **6784Mi** |
+| **total** | **1856Mi** | **950m** | **3712Mi** |
 
 `infra/tests/infra/test_k8s_apps.py` derives those three totals the same way - the
 built pod templates, the gateway multiplied by the `maxReplicas` of the HPA in
-the same build - and checks them against the `apps` quota. llama.cpp and the
-console each moved from a reserve row to the built side when their manifests
-landed, and the totals did not move: the manifest was written to the
-reserve, not the reserve rewritten to the manifest.
-
-The embedding server is the one row that DID move them. No reserve was ever held
-for it - it exists because one llama.cpp process serves one model, so the
-`embed` alias needs a second address - and pretending otherwise by carving its
-256Mi out of the chat model's row would be shrinking that model to fit the
-table.
+the same build - and checks them against the `apps` quota. The local chat
+model's row (1024Mi / 300m / 3072Mi) left with it; the quota was not
+lowered, so `apps` now has room to spare.
 
 The four Helpdesk rows divide the envelope that was held for three. The reserve
 priced three pods at 192Mi / 100m / 384Mi and the service list turned out to be
@@ -148,10 +139,8 @@ than a silent degradation.
 With the console built there is no reserve left: it was the last workload this
 envelope holds, and a new one is a conversation about this table.
 
-The limits column is why that quota holds 7Gi rather than the 5Gi the envelope
-first gave it: llama.cpp is sized for 3 GiB on its own, and trimming its ceiling
-to fit would be shrinking the model to fit the table. The requests column, the
-one the scheduler actually packs, did not move.
+The quota still holds 7Gi of limits, sized when a 3 GiB local chat model lived
+here. Lowering it is a later change; nothing needs it now.
 
 ## The monitoring budget
 
@@ -286,11 +275,11 @@ provider keys is the one closed both ways.
 | `default-deny` | `apps` | every pod | nothing, in either direction |
 | `allow-dns` | `apps` | every pod | egress to `kube-system` on UDP 53 and TCP 53 |
 | `gateway-ingress` | `apps` | `gateway` | ingress from `kube-system` (Traefik), from any pod in `apps` and from any pod in `monitoring`, on its serving port |
-| `gateway-egress` | `apps` | `gateway` | egress to the public internet on TCP 443, to llama 8082, llama-embed 8083, to Postgres, Redis and Qdrant in `platform`, and to `prometheus:9090` in `monitoring` |
+| `gateway-egress` | `apps` | `gateway` | egress to the public internet on TCP 443, to llama-embed 8083, to Postgres, Redis and Qdrant in `platform`, and to `prometheus:9090` in `monitoring` |
 | `helpdesk-web-ingress` | `apps` | `helpdesk-web` | ingress from `kube-system` on its serving port |
 | `helpdesk-api-ingress` | `apps` | `helpdesk-agent-api`, `helpdesk-mcp-server` | ingress from the four Helpdesk pods, each on its own serving port |
 | `helpdesk-egress` | `apps` | the four Helpdesk pods | egress to `gateway:8080`, `helpdesk-agent-api:8000`, `helpdesk-mcp-server:8081`, `postgres:5432`, `redis:6379`, `qdrant:6333` - and no route off the cluster at all |
-| `llama-ingress` | `apps` | `llama`, `llama-embed` | ingress from `gateway`, each on its own serving port |
+| `llama-ingress` | `apps` | `llama-embed` | ingress from `gateway`, on its serving port |
 | `console-ingress` | `apps` | `console` | ingress from `kube-system` (Traefik) on its serving port, and from nowhere else |
 | `console-egress` | `apps` | `console` | egress to `gateway:8080` - and no route off the cluster at all |
 | `default-deny-ingress` | `platform` | every pod | nothing inbound; egress is not constrained |
@@ -329,9 +318,9 @@ with two empty panels.
 Every row above that reads `on its serving port`, `on its own serving port` or
 `on its own metrics port` is written by NAME rather than by number. A policy has
 one `podSelector` and its ports apply to every pod that selector matches, so
-`llama-ingress` - one policy over two pods listening on 8082 and 8083 - cannot
-say "each on its own port" with a literal. Both pods call their port `http`, and
-Kubernetes resolves a named port against each target pod's own container port.
+`helpdesk-api-ingress` - one policy over two pods listening on 8000 and 8081 -
+cannot say "each on its own port" with a literal. Kubernetes resolves a named
+port against each target pod's own container port.
 `platform`'s policy is the exception and reads in numbers: its three targets
 name their ports differently.
 
@@ -399,7 +388,7 @@ are asserted equal, and equal to the names the build references, by
 |---|---|---|---|
 | `postgres-credentials` | `platform` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` | the Postgres StatefulSet, by `envFrom` |
 | `traefik-basic-auth` | `platform`, `apps` | `users` (htpasswd lines) | the `basic-auth` middleware in each namespace |
-| `gateway-secrets` | `apps` | `OPSCONSOLE_DATABASE_URL`, `OPSCONSOLE_API_KEYS`, `OPSCONSOLE_ADMIN_KEY_SHA256`, `OPSCONSOLE_BUDGET_OVERRIDE_SECRET`, `OPSCONSOLE_OTLP_ENDPOINT`, `OPSCONSOLE_OTLP_HEADERS`, `ANTHROPIC_API_KEY`, `ANTHROPIC_EU_API_KEY`, `OPENAI_API_KEY`, `AZURE_OPENAI_KEY`, `AZURE_OPENAI_ENDPOINT` | the gateway Deployment, by `envFrom` |
+| `gateway-secrets` | `apps` | `OPSCONSOLE_DATABASE_URL`, `OPSCONSOLE_API_KEYS`, `OPSCONSOLE_ADMIN_KEY_SHA256`, `OPSCONSOLE_BUDGET_OVERRIDE_SECRET`, `OPSCONSOLE_OTLP_ENDPOINT`, `OPSCONSOLE_OTLP_HEADERS`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `AZURE_OPENAI_KEY`, `AZURE_OPENAI_ENDPOINT` | the gateway Deployment, by `envFrom` |
 | `helpdesk-secrets` | `apps` | `DATABASE_URL`, `APP_DATABASE_URL`, `APP_DB_PASSWORD`, `GATEWAY_API_KEYS`, `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST`, `JWT_SECRET` | the four Helpdesk Deployments, by `envFrom` |
 | `ghcr-pull` | `apps` | `.dockerconfigjson` | the four Helpdesk Deployments, by `imagePullSecrets` |
 | `console-secrets` | `apps` | `CONSOLE_PASSWORD_SHA256`, `CONSOLE_SESSION_SECRET`, `CONSOLE_ADMIN_KEY` | the console Deployment, by `envFrom`; `CONSOLE_ADMIN_KEY` must hash to `gateway-secrets`' `OPSCONSOLE_ADMIN_KEY_SHA256` |
@@ -430,36 +419,26 @@ path there, the build emits no `Secret` at all, and both are asserted.
 The model weights are the third thing this repo does not supply. No GGUF is
 committed, no image carries one and no container downloads one: an unverified
 download URL with a checksum nobody has ever compared anything to is worse than
-an absence that says so. The `llama-models` claim is filled once, by hand, with
-the same file `docker-compose.yml` loads locally - `qwen2.5-3b-instruct-q4_k_m.gguf`,
-the upstream Q4_K_M build. A 3B rather than a 7B because the pod's ceiling is
-3 GiB and a 7B Q4_K_M is ~4.4 GB before its KV cache.
-
-Both llama.cpp claims are filled this way, and each has its own: a
-`ReadWriteOnce` volume mounted by two Deployments would pin both pods to one
-node forever.
+an absence that says so. The `llama-embed-models` claim is filled once, by hand,
+with the same file `docker-compose.yml` loads locally - `bge-small-en-v1.5-q8_0.gguf`,
+the upstream Q8_0 build of a 33M-parameter encoder, where quantising harder buys
+nothing and costs vector quality. There is no local chat model.
 
 ```
-kubectl -n apps scale deployment/llama --replicas=0
+kubectl -n apps scale deployment/llama-embed --replicas=0
 kubectl -n apps run llama-load --image=busybox:1.36 --restart=Never \
   --overrides='{"spec":{"containers":[{"name":"llama-load","image":"busybox:1.36",
   "command":["sleep","3600"],"volumeMounts":[{"name":"models","mountPath":"/models"}]}],
-  "volumes":[{"name":"models","persistentVolumeClaim":{"claimName":"llama-models"}}]}}'
-kubectl -n apps cp qwen2.5-3b-instruct-q4_k_m.gguf llama-load:/models/
+  "volumes":[{"name":"models","persistentVolumeClaim":{"claimName":"llama-embed-models"}}]}}'
+kubectl -n apps cp bge-small-en-v1.5-q8_0.gguf llama-load:/models/
 kubectl -n apps delete pod llama-load
-kubectl -n apps scale deployment/llama --replicas=1
+kubectl -n apps scale deployment/llama-embed --replicas=1
 ```
 
 The scale to zero is not optional: the claim is `ReadWriteOnce`, so the helper
 pod cannot mount it while the llama.cpp pod holds it. Until the file is there
-the pod fails its startup probe for 600 seconds and then restarts, which is a
+the pod fails its startup probe for 120 seconds and then restarts, which is a
 visibly unready workload rather than a silent one.
-
-The embedding claim is filled by the same five commands with three names
-changed - `llama-embed`, `llama-embed-models` and
-`bge-small-en-v1.5-q8_0.gguf`, the upstream Q8_0 build of a 33M-parameter
-encoder, where quantising harder buys nothing and costs vector quality. Its
-startup ceiling is 120 seconds rather than 600: the file is ~130 MB.
 
 ## What the Helpdesk reads
 
@@ -555,7 +534,7 @@ It carries `base`, the platform data stores, the staging issuer, the
 middlewares, the backups (suspended until the node has a bucket), the
 ledger-maintenance CronJob (`rollup-refresh`, which runs live
 here because Postgres is on the node - an earlier change, a design note), the gateway
-and the console. Left out: llama, llama-embed, `monitoring` and `evals`, which
+and the console. Left out: llama-embed, `monitoring` and `evals`, which
 do not fit; our own `letsencrypt-prod`, so the live one is never overwritten;
 and the Helpdesk's workloads, config and images, which its own repo deploys. The gateway runs one replica with no HPA. Its two Ingresses answer on
 `gateway.example.com`, the console's three on `llmops.example.com`,

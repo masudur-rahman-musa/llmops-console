@@ -1,6 +1,6 @@
 r"""`infra/scripts/tradeoff_policy.py` and `infra/tradeoff/`: the per-option effective policy.
 
-The measurement run resolves one alias four different ways. Rather than four full
+The measurement run resolves one alias three different ways. Rather than three full
 copies of `routing.yaml` that drift silently, each option ships a PARTIAL overlay that is
 deep-merged over the shipped file. Two things can go wrong quietly and are pinned here.
 
@@ -8,7 +8,7 @@ The merge. A `dict.update` at the top level would drop every tenant the overlay 
 mention; a merge that EXTENDS lists would leave the shipped three candidates in place and the
 option would measure whichever provider answers first. So the merge is exercised twice: once as
 a pure function over synthetic mappings whose siblings are all observable, and once end to end
-over the real `routing.yaml` and the four real overlays, each result loaded through
+over the real `routing.yaml` and the three real overlays, each result loaded through
 `app.model_routing.policy.load_policy`.
 
 The pre-check. The option id names the overlay file AND the evidence directory, so it is a
@@ -22,7 +22,7 @@ what makes the boundary rows (1 and 32 characters accepted, 33 refused) observab
 The script lives in `dev/scripts/`, which is not a package, so its pure functions are loaded by file
 path with `importlib.util` - the same technique `test_eval_target_stub.py` uses for the stub.
 Exit codes go through `subprocess`; merge semantics go through the import. No backing service,
-no network: the four end-to-end runs are made once for the module.
+no network: the three end-to-end runs are made once for the module.
 """
 
 from __future__ import annotations
@@ -65,13 +65,12 @@ def read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-#: Section 1's four overlays, in SPEC section 11's order, with the ONE candidate each pins.
+#: Section 1's three overlays, in SPEC section 11's order, with the ONE candidate each pins.
 #: Provider and model are required TOGETHER: a file naming the right
 #: provider with the wrong model is the drift this table exists to see.
 OPTIONS: tuple[tuple[str, dict[str, str]], ...] = (
     ("cheap-api", {"provider": "anthropic", "model": "claude-haiku-5-5"}),
     ("strong-api", {"provider": "anthropic", "model": "claude-sonnet-5-5"}),
-    ("local-cpu", {"provider": "local", "model": "qwen2.5-3b-instruct"}),
     ("gpu-vllm", {"provider": "vllm", "model": "qwen2.5-7b-instruct"}),
 )
 
@@ -114,11 +113,17 @@ def builder() -> ModuleType:
     return _load_script()
 
 
+def providers_of(output: Path) -> Path:
+    """The provider folder `build` writes for the policy at `output`."""
+    return output.with_name(f"{output.stem}-providers")
+
+
 def build(option_id: str, output: Path) -> subprocess.CompletedProcess[str]:
-    """Run the script for `option_id`, writing to `output`. Never raises on a non-zero exit."""
+    """Run the script for `option_id`, writing the policy to `output` and its provider
+    folder to `providers_of(output)`. Never raises on a non-zero exit."""
     assert SCRIPT.is_file(), f"{SCRIPT} does not exist"
     return subprocess.run(
-        [sys.executable, str(SCRIPT), option_id, str(output)],
+        [sys.executable, str(SCRIPT), option_id, str(output), str(providers_of(output))],
         capture_output=True,
         text=True,
         timeout=60,
@@ -347,7 +352,7 @@ def test_each_effective_policy_loads_and_carries_exactly_one_candidate(
     an option, `semantic_cache` left at the shipped `true` (decision F: option two would then
     read option one's answers and report a cost no provider charged), and a merge that loses the
     other aliases or tenants entirely."""
-    policy = load_policy(effective[option_id])
+    policy = load_policy(effective[option_id], providers_of(effective[option_id]))
     document = yaml.safe_load(read(effective[option_id]))
     entry = alias_of(document)
 
@@ -377,12 +382,12 @@ def test_the_gpu_option_enables_vllm_at_the_published_node_port(
     effective: dict[str, Path],
 ) -> None:
     """Criterion 28. The gateway runs in a container and the model server behind a NodePort, so
-    the two numbers live in two files and are compared here. Catches `providers.vllm.enabled`
-    left `false` (the shipped value: every GPU turn would resolve to nothing), the container
-    reaching `vllm.gpu.svc.cluster.local` which does not resolve from compose, and the URL and
-    the manifest drifting apart - the run would then measure a connection refused."""
-    document = yaml.safe_load(read(effective["gpu-vllm"]))
-    provider = document["providers"]["vllm"]
+    the two numbers live in two files and are compared here. Catches the option's own
+    `vllm` provider file left out of its folder or switched off (every GPU turn would
+    resolve to nothing), the container reaching `vllm.gpu.svc.cluster.local` which does not
+    resolve from compose, and the URL and the manifest drifting apart - the run would then
+    measure a connection refused."""
+    provider = yaml.safe_load(read(providers_of(effective["gpu-vllm"]) / "vllm.yaml"))
     parsed = urlparse(str(provider["base_url"]))
 
     assert provider["enabled"] is True
@@ -394,7 +399,7 @@ def test_the_gpu_option_enables_vllm_at_the_published_node_port(
 # The overlay files themselves
 
 
-def test_the_overlay_directory_holds_exactly_the_four_option_files() -> None:
+def test_the_overlay_directory_holds_exactly_the_option_files() -> None:
     """Criterion 20. Catches a fifth overlay left behind from a trial run, which `tradeoff.json`
     does not name and no test reads, and an option file named for an id the manifest never uses
     - the run would build a policy nobody measures."""

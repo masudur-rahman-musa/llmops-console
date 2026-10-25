@@ -13,16 +13,16 @@ so an extra `to` peer, an extra port or an extra `ipBlock` is exactly as dangero
 one, and only equality sees both. The guarantee #54 asks for is a property of what is ABSENT.
 
 Named ports are the reason this file resolves rather than compares. One NetworkPolicy has one
-`podSelector`, and its `ports` apply to every pod that selector matches - but `llama-ingress`
-protects two pods listening on different numbers (llama 8082, llama-embed 8083) and
-`helpdesk-api-ingress` protects two more (8000, 8081). The manifest resolves that by NAMING the
-port (`port: http`), which Kubernetes resolves against each target pod's own container port. So
-`resolved_ports` looks the name up in the pod templates the same build emitted and the
-assertions read in numbers, while the manifest reads in names. A literal number asserted against
-those rules would either be wrong for one of the two pods or would force the manifest into a
-shape that cannot express criterion 6 at all. `platform`'s `data-ingress-from-apps` is the
-exception and is asserted numerically: its three targets name their ports differently
-(`postgres`, `redis`, `http`), so there is no shared name to resolve.
+`podSelector`, and its `ports` apply to every pod that selector matches - but
+`helpdesk-api-ingress` protects two pods listening on different numbers (8000, 8081). The
+manifest resolves that by NAMING the port (`port: http`), which Kubernetes resolves against
+each target pod's own container port. So `resolved_ports` looks the name up in the pod
+templates the same build emitted and the assertions read in numbers, while the manifest reads
+in names. A literal number asserted against those rules would either be wrong for one of the
+two pods or would force the manifest into a shape that cannot express criterion 6 at all.
+`platform`'s `data-ingress-from-apps` is the exception and is asserted numerically: its three
+targets name their ports differently (`postgres`, `redis`, `http`), so there is no shared name
+to resolve.
 
 `helpdesk-api-ingress` is pinned by name in `POLICY_NAMES` and by the selector scan, but its
 `from` peers are not pinned here: criterion 6 states peers for `llama-ingress`,
@@ -81,7 +81,6 @@ NAMESPACE_NAME_LABEL = "kubernetes.io/metadata.name"
 GATEWAY = "gateway"
 #: An earlier change's own pod, the second and last one in the build with a route to the public internet.
 ALERTMANAGER = "alertmanager"
-LLAMA = "llama"
 LLAMA_EMBED = "llama-embed"
 HELPDESK_AGENT_API = "helpdesk-agent-api"
 HELPDESK_MCP_SERVER = "helpdesk-mcp-server"
@@ -437,9 +436,9 @@ def resolved_ports(
 ) -> dict[str, set[tuple[str, int]]]:
     """An INGRESS rule's ports resolved per pod the policy's own `podSelector` protects.
 
-    `{workload: {(protocol, number)}}`. This is the shape criterion 6 needs: one `llama-ingress`
-    rule saying `port: http` is 8082 on `llama` and 8083 on `llama-embed`, and only a per-pod
-    resolution can assert both from the one rule.
+    `{workload: {(protocol, number)}}`. This is the shape criterion 6 needs: one
+    `helpdesk-api-ingress` rule naming a port that is 8000 on one pod and 8081 on the other,
+    and only a per-pod resolution can assert both from the one rule.
     """
     namespace = namespace_of(document)
     assert namespace is not None, f"{name_of(document)} declares no metadata.namespace"
@@ -708,7 +707,7 @@ def test_the_helpdesk_may_reach_exactly_six_destinations_and_no_ip_block(
         pytest.param(
             "llama-ingress",
             {(APPS, GATEWAY)},
-            {LLAMA: {("TCP", 8082)}, LLAMA_EMBED: {("TCP", 8083)}},
+            {LLAMA_EMBED: {("TCP", 8083)}},
             id="llama-from-gateway-only",
         ),
         pytest.param(
@@ -732,11 +731,10 @@ def test_each_ingress_policy_admits_exactly_its_named_sources_on_its_own_port(
     expected_ports: dict[str, set[tuple[str, int]]],
 ) -> None:
     """Criterion 6, with every port RESOLVED against the target pod's own container port rather
-    than compared to a literal. Catches `llama-ingress` written with a numeric port, which can
-    only be right for one of the two llama pods and silently denies the other - the embedding
-    endpoint answering nothing while the manifest looks correct. Catches a `from` peer opening
-    llama to every pod in `apps` instead of to the gateway alone, which is the hop that lets a
-    Helpdesk pod use the local model without a trace or a budget. Catches `gateway-ingress`
+    than compared to a literal. Catches `llama-ingress` admitting a port other than the
+    embedding server's 8083, and a `from` peer opening it to every pod in `apps` instead of to
+    the gateway alone, which is the hop that lets a Helpdesk pod use the local model without a
+    trace or a budget. Catches `gateway-ingress`
     losing its `kube-system` peer, which is Traefik denied and the public host dead, or losing
     the in-namespace peer, which is every internal caller denied. Catches a second port added to
     any of the three, since each rule's resolved ports are compared by equality."""

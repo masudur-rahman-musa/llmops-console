@@ -2,8 +2,9 @@
 #
 # An override over `docker-compose.yml`, under profile `load`, so the everyday
 # stack never starts either service below. The gateway is the real image; its
-# providers are the fixed-delay mock, through a whole routing policy of its own,
-# so no request can reach a real provider or a model on disk.
+# providers are the fixed-delay mock, through a whole routing policy and a
+# provider folder of its own, so no request can reach a real provider or a model
+# on disk.
 #
 # No credential is written in this file. `make load` generates a throwaway
 # tenant key per run and passes it, and its digest, as environment only.
@@ -14,9 +15,11 @@ services:
       # this path against the mount target below, and a drift between the two is
       # a gateway that refuses to start.
       OPSCONSOLE_ROUTING_POLICY_PATH: /etc/opsconsole/routing.load.yaml
+      OPSCONSOLE_PROVIDERS_DIR: /etc/opsconsole/providers
       OPSCONSOLE_API_KEYS: ${OPSCONSOLE_API_KEYS}
     volumes:
       - ./infra/load/routing.load.yaml:/etc/opsconsole/routing.load.yaml:ro
+      - ./infra/load/providers:/etc/opsconsole/providers:ro
     depends_on:
       mock-provider: { condition: service_healthy }
 

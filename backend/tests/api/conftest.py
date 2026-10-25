@@ -85,6 +85,7 @@ from app.providers.breaker import CircuitBreaker
 # Resolved from this file, so the tests do not depend on pytest's working
 # directory. The same path the shipped `Settings.routing_policy_path` defaults to.
 SHIPPED_POLICY_PATH = Path(__file__).resolve().parents[2] / "config" / "routing.yaml"
+SHIPPED_PROVIDERS_DIR = SHIPPED_POLICY_PATH.parent / "providers"
 
 # A tenant name of exactly `MAX_IDENTIFIER_LENGTH` characters, used for the
 # inclusive boundary row of the `X-Tenant` pre-check. It has a key of its own so
@@ -268,7 +269,7 @@ def crashing_client(settings: Settings) -> Iterator[TestClient]:
 @pytest.fixture(scope="session")
 def policy() -> Policy:
     """The shipped routing policy, loaded once, for computing expectations."""
-    return load_policy(SHIPPED_POLICY_PATH)
+    return load_policy(SHIPPED_POLICY_PATH, SHIPPED_PROVIDERS_DIR)
 
 
 # --- chat completions ---------------------------------------------
@@ -281,9 +282,7 @@ def policy() -> Policy:
 #
 # It is keyed by the POLICY provider name, which is what `app.state.adapters` is
 # keyed by and what the resolver's health seam looks up. In the shipped
-# `routing.yaml` only `anthropic` gets a stub, so `local` and `openai` have no
-# adapter: that is what makes the 503 case reachable through `nordlicht`'s
-# `agent-default` override, without editing the policy.
+# `routing.yaml` only `anthropic` gets a stub, so `openai` has no adapter.
 #
 # `chat_client` and its stub are session-scoped and shared. A case that needs a
 # differently-behaving adapter builds its own client with `build_chat_client`;
@@ -500,8 +499,7 @@ def chat_client(settings: Settings, chat_stub: StubAdapter) -> Iterator[TestClie
 # The shipped policy sends `embed` to the provider `local_embed` alone -
 # its own server on its own address, because one llama.cpp process
 # serves one model - so every case here registers its stub under `local_embed`.
-# The chat provider `local` is a DIFFERENT adapter in this suite for the same
-# reason it is a different pod in the cluster.
+# The chat providers are DIFFERENT adapters in this suite.
 
 EMBEDDINGS = "/v1/embeddings"
 """The published route path. `test_the_route_path_is_the_published_one` asserts
@@ -511,7 +509,7 @@ EMBED_ALIAS = "embed"
 
 EMBED_PROVIDER = "local_embed"
 """The `embed` alias's only candidate in the shipped policy: the embedding server,
-which is not the chat provider `local`. A stub registered under the chat name
+which is not a chat provider. A stub registered under a chat name
 leaves the alias with no healthy candidate, which is a 503 and not a test of
 anything this suite is about."""
 
@@ -846,21 +844,19 @@ def no_admin_key_client() -> Iterator[TestClient]:
 #
 # The alias is `agent-default` and the tenant `evals` under `internal`, which the
 # shipped policy resolves to exactly two candidates in this order: `anthropic`
-# then `local`. `anthropic_eu` sits between them in `routing.yaml`
-# and is disabled, so the pair is also proof the loop walks the RESOLVER's tuple
-# rather than the policy file's.
+# then `openai`.
 
 FALLBACK_ALIAS = "agent-default"
 FALLBACK_TENANT = "evals"
 FALLBACK_CLASS = "internal"
 
 FIRST_PROVIDER = "anthropic"
-SECOND_PROVIDER = "local"
+SECOND_PROVIDER = "openai"
 
 FALLBACK_RESOLUTION = (FIRST_PROVIDER, SECOND_PROVIDER)
 """What `resolve()` answers for the triple above with no health seam, best first.
 
-Two since OpenAI left `agent-default`. Asserted against the resolver itself by
+Anthropic, then OpenAI as the fallback. Asserted against the resolver itself by
 `test_the_fallback_alias_resolves_to_the_expected_candidates`, so a policy edit
 that reorders it fails there."""
 
@@ -1028,7 +1024,7 @@ class SilentSemanticCache:
 
     An earlier change wires the semantic tier into the chat route, and `agent-default` -
     the alias every case in the fallback family sends - carries
-    `semantic_cache: true`. This app registers an adapter under `local`, and the
+    `semantic_cache: true`. This app registers an adapter under `openai`, and the
     probe resolves `embed` to `local_embed`, so the tier is live here whenever
     that adapter is registered too:
     a second identical chat request would be served from it, and the loop, the

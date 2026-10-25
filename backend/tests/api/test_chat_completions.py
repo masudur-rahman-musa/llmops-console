@@ -36,9 +36,7 @@ from providers.conftest import (
     PROVIDER_DETAIL_MARKER,
     fail,
     load_fixture,
-    local_ok,
     make_adapter,
-    make_local_adapter,
     ok,
 )
 
@@ -746,16 +744,16 @@ def test_chat_rejects_a_tenant_that_is_not_the_keys(chat_client: TestClient) -> 
     assert_error_body(response, status=403, code="TENANT_MISMATCH")
 
 
-def test_a_pii_request_is_served_by_the_local_provider(
-    settings: Settings, chat_client: TestClient
-) -> None:
-    """Catches the local adapter being reachable everywhere except from the route: this is
-    the request the plan exists for. With no adapter at all the answer is a 503, so a
-    factory or an adapter set that does not offer `local` leaves it unserved.
+def test_a_pii_request_is_served_by_anthropic_with_redaction(settings: Settings) -> None:
+    """Catches a `pii` request that can only reach a provider the policy no longer has:
+    data classes decide redaction and nothing else, so `pii` goes to the same Anthropic
+    model as every other class, redacted on the way.
 
-    The first half asserts that same request IS a 503 without a `local` adapter, so the
-    200 below can only be the new adapter and not a provider that quietly appeared."""
-    body = chat_body(model=ALIAS)
+    The first half asserts that same request IS a 503 with no adapter at all, so the 200
+    below can only be the Anthropic stub and not a provider that quietly appeared."""
+    body = chat_body(
+        model=ALIAS, messages=[{"role": "user", "content": "write to ana@example.com today"}]
+    )
 
     with build_chat_client(settings, {}) as empty_client:
         denied = post_chat(
@@ -763,25 +761,16 @@ def test_a_pii_request_is_served_by_the_local_provider(
         )
     assert_error_body(denied, status=503, code="ALL_PROVIDERS_FAILED")
 
-    adapter, scripted = make_local_adapter(
-        [local_ok("embeddings_single"), local_ok("plain")], name="local"
-    )
-    adapters = {"local": adapter, "local_embed": adapter}
-    with build_chat_client(settings, adapters) as client:
+    stub = StubAdapter(name="anthropic")
+    with build_chat_client(settings, {stub.name: stub}) as client:
         served = post_chat(client, body, key=NORDLICHT_KEY, tenant="nordlicht", data_class="pii")
 
     assert served.status_code == 200, served.text
-    # TWO calls to the one adapter, in this order, and the reason is an earlier change: an
-    # `agent-default` request first embeds its semantic probe through
-    # `local_embed` and then asks `local` for the completion. One object stands in
-    # for both servers here, so the calls land on the same recorder: the chat call
-    # is index 1, and the count is asserted exactly so that a tier which embedded
-    # twice, or a loop which called the provider twice, still fails here.
-    assert scripted.request_count == 2, "the local provider was not called for both"
-    assert scripted.requests[0].url.path.endswith("/embeddings")
-    assert served.headers["x-gateway-provider"] == "local"
-    assert served.headers["x-gateway-model"] == "qwen2.5-3b-instruct"
-    assert served.json()["choices"][0]["message"]["content"] == "Ship it."
-    assert scripted.body(1)["model"] == "qwen2.5-3b-instruct", (
+    assert len(stub.requests) == 1
+    assert served.headers["x-gateway-provider"] == "anthropic"
+    assert served.headers["x-gateway-model"] == "claude-haiku-5-5"
+    assert served.headers["x-gateway-redacted"] == "true"
+    assert "ana@example.com" not in stub.requests[0].messages[0].content
+    assert stub.requests[0].model == "claude-haiku-5-5", (
         "the provider model id, never the alias, goes on the wire"
     )

@@ -135,8 +135,8 @@ CONSOLE_SECRET_KEYS = frozenset(
 GATEWAY_ADMIN_DIGEST_KEY = "OPSCONSOLE_ADMIN_KEY_SHA256"
 PLACEHOLDER = "REPLACE_ME"
 
-#: The apps budget's total row, which the console moving from reserve to built does not change.
-APPS_BUDGET_TOTAL = ["**total**", "**2880Mi**", "**1250m**", "**6784Mi**"]
+#: The apps budget's total row: the local chat model's row left with a design note.
+APPS_BUDGET_TOTAL = ["**total**", "**1856Mi**", "**950m**", "**3712Mi**"]
 APPS_BUDGET_HEADING = "## The apps budget"
 
 #: Criterion: each router's path, `pathType`, TLS Secret and middleware set, by value.

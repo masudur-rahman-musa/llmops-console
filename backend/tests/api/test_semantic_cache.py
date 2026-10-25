@@ -35,7 +35,7 @@ exact tier is the control under test.
 a project rule: one app for the module, built once, plus four more for the
 arrangements a stub swap cannot express (a policy whose `embed` alias is refused
 by being turned off, a policy with no `embed` alias at all, an app with no
-embedding-capable adapter, and the `local`-only app a `pii` request reaches).
+embedding-capable adapter, and the `openai` and `local_embed` app a `pii` request reaches).
 Per-test isolation is the stubs' reset and fresh `response_cache`,
 `semantic_cache` objects on `app.state` - never a new app,
 exactly as `fresh_breaker` in this directory's `conftest.py` replaces the one
@@ -55,6 +55,7 @@ from typing import Any
 
 import httpx
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 from httpx import Response
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -165,8 +166,8 @@ REDACTED_PII = "write to <EMAIL_1> about the capital of Germany"
 the chat route. The raw address is what must never reach the embedding adapter."""
 
 PII_CLASS = "pii"
-LOCAL_PROVIDER = "local"
-"""`evals` under `pii` reaches the chat candidate `local` and the `embed` candidate
+OPENAI_PROVIDER = "openai"
+"""`evals` under `pii` reaches the chat candidate `openai` and the `embed` candidate
 `local_embed` on the app this row builds, and both are needed there, because the
 probe resolves the alias separately from the request."""
 
@@ -308,10 +309,10 @@ class EmbedStub:
 
 
 class ChatAndEmbedStub(ChatStub):
-    """One adapter that chats AND embeds, for the row where both resolve to `local`.
+    """One adapter that chats AND embeds, for the row where both resolve to one stub.
 
     On the `pii` app the chat candidate and the
-    `embed` candidate are both local providers and one object has to answer both.
+    `embed` candidate are two providers and one object has to answer both.
     The embedding half is delegated rather than reimplemented, so the recorded
     requests this file reads are the same shape everywhere.
     """
@@ -418,18 +419,18 @@ def _fresh(
 
 @pytest.fixture(scope="module")
 def pii_stub() -> ChatAndEmbedStub:
-    """The adapter a `pii` chat request reaches, registered under both local
+    """The adapter a `pii` chat request reaches, registered under both
     providers: it both chats and embeds, so the same object answers the request and
     the probe."""
-    return ChatAndEmbedStub(name=LOCAL_PROVIDER, embedder=EmbedStub(name=EMBED_PROVIDER))
+    return ChatAndEmbedStub(name=OPENAI_PROVIDER, embedder=EmbedStub(name=EMBED_PROVIDER))
 
 
 @pytest.fixture(scope="module")
 def pii_client(settings: Settings, pii_stub: ChatAndEmbedStub) -> Iterator[TestClient]:
-    """An app whose adapters are the two local providers a `pii` request reaches - the chat
+    """An app whose adapters are the two providers a `pii` request reaches - the chat
     server and the embedding server, which are one object here and two pods in the
     cluster."""
-    adapters: dict[str, Adapter] = {LOCAL_PROVIDER: pii_stub, EMBED_PROVIDER: pii_stub}
+    adapters: dict[str, Adapter] = {OPENAI_PROVIDER: pii_stub, EMBED_PROVIDER: pii_stub}
     with build_chat_client(settings, adapters) as client:
         yield client
 
@@ -499,34 +500,39 @@ NO_EMBED_ALIAS_POLICY = REFUSAL_POLICY.replace(
 )
 
 
-POLICY_PRICES = "prices:\n" + "".join(
-    f"""  {provider}/{model}:
-    - effective_from: 2025-01-01
-      input_usd_per_1m: "1.00"
-      output_usd_per_1m: "5.00"
-"""
-    for provider, model in (
-        (CHAT_PROVIDER, "model-chat-a"),
-        (EMBED_OFF_PROVIDER, "model-embed-off"),
-    )
-)
-"""A price for every pair either policy above can reach. The app refuses to start on
-a policy with an unpriced pair, and the amounts do not matter to any case here."""
+PRICED_MODELS = {CHAT_PROVIDER: "model-chat-a", EMBED_OFF_PROVIDER: "model-embed-off"}
+"""The one model each provider file carries, priced. The app refuses to start on a
+policy with an unpriced pair, and the amounts do not matter to any case here."""
 
 
 def written(tmp_path_factory: pytest.TempPathFactory, name: str, policy: str) -> Path:
-    """One policy document on disk, written once, with `POLICY_PRICES` beside it."""
+    """One policy on disk, written once, its `providers:` block split into provider
+    files in a `providers/` folder beside it, as the gateway reads them."""
     folder = tmp_path_factory.mktemp(name)
-    (folder / "prices.yaml").write_text(POLICY_PRICES, encoding="utf-8")
+    document = yaml.safe_load(policy)
+    providers_dir = folder / "providers"
+    providers_dir.mkdir()
+    for provider, body in document.pop("providers").items():
+        price = {
+            "effective_from": "2025-01-01",
+            "input_usd_per_1m": "1.00",
+            "output_usd_per_1m": "5.00",
+        }
+        file = {
+            "provider": provider,
+            **body,
+            "models": {PRICED_MODELS[provider]: {"prices": [price]}},
+        }
+        (providers_dir / f"{provider}.yaml").write_text(yaml.safe_dump(file), encoding="utf-8")
     path = folder / "routing.yaml"
-    path.write_text(policy, encoding="utf-8")
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
     return path
 
 
 def policy_client(path: Path, adapters: Mapping[str, Adapter]) -> TestClient:
-    """An app built on the policy at `path`, priced by the file beside it, with the given stubs."""
+    """An app built on the policy at `path` and the provider folder beside it, with these stubs."""
     settings = Settings(
-        api_keys=API_KEYS, routing_policy_path=path, prices_path=path.parent / "prices.yaml"
+        api_keys=API_KEYS, routing_policy_path=path, providers_dir=path.parent / "providers"
     )
     return build_chat_client(settings, adapters)
 
@@ -962,7 +968,7 @@ def test_the_embedding_does_not_relabel_the_requests_candidate(
     """The scope-label half of decision G. Catches an embedding resolution that runs
     through `label_candidate`: every eligible chat request would then be attributed to the
     embedding provider on the counter and on the span, so the per-alias latency and error
-    panels of the design would show `local` serving traffic it never served. Asserted as
+    panels of the design would show `openai` serving traffic it never served. Asserted as
     the ABSENCE of a series as well as the presence of the right one, because a relabel
     moves the count rather than adding to it."""
     response = send(semantic_client, QUESTION)
@@ -1069,7 +1075,7 @@ def test_an_embed_alias_with_every_provider_off_is_a_miss(
 def test_an_embed_alias_with_no_healthy_candidate_is_a_miss(chat_only_client: TestClient) -> None:
     """The 503 row, and the arrangement every other chat suite in this directory runs
     under. Catches a seam that lets `AllProvidersUnavailable` escape: a deployment with no
-    embedding provider configured - which is the shipped default, since `local` needs a
+    embedding provider configured - which is the shipped default, since `local_embed` needs a
     llama.cpp box - would answer 503 to every chat request against `agent-default`, and
     the whole existing suite would go red for a tier nobody asked for."""
     response = send(chat_only_client, QUESTION)

@@ -17,7 +17,7 @@ from app.model_routing.policy import DataClass, Policy, load_policy
 from app.model_routing.resolver import Resolved, resolve
 from app.providers.factory import build_adapters
 
-from .conftest import SHIPPED_POLICY_PATH
+from .conftest import SHIPPED_POLICY_PATH, SHIPPED_PROVIDERS_DIR
 
 
 def as_tuples(resolved: tuple[Resolved, ...]) -> list[tuple[str, str]]:
@@ -44,7 +44,7 @@ def judge_candidates(environ: dict[str, str]) -> list[tuple[str, str]]:
     The keys are injected rather than read from `os.environ`, so no case here
     depends on a provider key being present in the environment (#66).
     """
-    policy = load_policy(SHIPPED_POLICY_PATH)
+    policy = load_policy(SHIPPED_POLICY_PATH, SHIPPED_PROVIDERS_DIR)
     adapters = build_adapters(policy, environ)
     return as_tuples(
         resolve(
@@ -231,7 +231,7 @@ def test_identifier_check_runs_before_any_lookup(policy: Policy) -> None:
 
 def test_shipped_policy_exhaustive() -> None:
     """Every triple in the shipped file resolves to enabled providers only."""
-    policy = load_policy(SHIPPED_POLICY_PATH)
+    policy = load_policy(SHIPPED_POLICY_PATH, SHIPPED_PROVIDERS_DIR)
     checked = 0
 
     for tenant_name in policy.tenants:
@@ -247,18 +247,19 @@ def test_shipped_policy_exhaustive() -> None:
     assert checked > 0
 
 
-def test_judge_stays_on_anthropic_when_the_openai_key_is_set() -> None:
-    """Catches a judge that reaches OpenAI while the `openai` provider is turned off: a set
-    `OPENAI_API_KEY` must not bring back a second candidate the policy has switched off."""
+def test_judge_falls_back_to_openai_when_the_openai_key_is_set() -> None:
+    """Catches a judge with no fallback: with both keys set, Anthropic answers first and
+    OpenAI stands behind it, so a judge run survives Anthropic being down."""
     candidates = judge_candidates(
         {ANTHROPIC_KEY_ENV: FAKE_ANTHROPIC_KEY, OPENAI_KEY_ENV: FAKE_OPENAI_KEY}
     )
 
-    assert candidates == [("anthropic", "claude-haiku-5-5")]
+    assert candidates == [("anthropic", "claude-haiku-5-5"), ("openai", "gpt-5-mini")]
 
 
-def test_judge_has_one_candidate_when_it_is_not() -> None:
-    """Catches a judge pointed anywhere but the cheaper Anthropic model."""
+def test_judge_has_one_candidate_when_the_openai_key_is_not_set() -> None:
+    """Catches a judge pointed anywhere but the cheaper Anthropic model, and an OpenAI
+    adapter built with no key."""
     candidates = judge_candidates({ANTHROPIC_KEY_ENV: FAKE_ANTHROPIC_KEY})
 
     assert candidates == [("anthropic", "claude-haiku-5-5")]
@@ -278,7 +279,7 @@ def test_eval_aliases_run_on_haiku_and_sonnet_5_5(alias: str, model: str) -> Non
     """Catches a shipped policy that still sends the cheap alias or the judge to Haiku 4.5,
     or the strong alias to anything but Sonnet 5.5: the eval baseline is set on these
     exact models, so a different first choice makes every later run incomparable."""
-    policy = load_policy(SHIPPED_POLICY_PATH)
+    policy = load_policy(SHIPPED_POLICY_PATH, SHIPPED_PROVIDERS_DIR)
 
     resolved = resolve(
         policy,
@@ -292,16 +293,11 @@ def test_eval_aliases_run_on_haiku_and_sonnet_5_5(alias: str, model: str) -> Non
     assert (resolved[0].provider, resolved[0].model) == ("anthropic", model)
 
 
-def test_no_candidate_in_the_shipped_policy_names_openai() -> None:
-    """Catches a leftover `openai` or `gpt-4o` candidate on any alias or any tenant override:
-    OpenAI is not used for evals, and a fallback to it would spend on a
-    provider the owner turned off. Checked on the policy file, not on what resolves, so a
-    candidate hidden behind a disabled provider is still found."""
-    policy = load_policy(SHIPPED_POLICY_PATH)
-    candidates = [c for alias in policy.aliases.values() for c in alias.candidates]
-    for tenant in policy.tenants.values():
-        for override in tenant.overrides.values():
-            candidates.extend(override)
+def test_openai_is_every_chat_alias_second() -> None:
+    """Catches a chat alias with no OpenAI fallback, or one that puts OpenAI first:
+    Anthropic answers, and OpenAI answers when it does not."""
+    policy = load_policy(SHIPPED_POLICY_PATH, SHIPPED_PROVIDERS_DIR)
 
-    assert candidates
-    assert [c for c in candidates if c.provider == "openai" or c.model.startswith("gpt")] == []
+    for alias in ("agent-default", "agent-strong", "judge"):
+        providers = [c.provider for c in policy.aliases[alias].candidates]
+        assert providers == ["anthropic", "openai"], alias

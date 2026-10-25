@@ -34,7 +34,8 @@ import pytest
 from psycopg import sql
 from psycopg.types.json import Jsonb
 
-from app.limits.prices import PriceTable, load_prices
+from app.limits.prices import PriceTable
+from app.model_routing.provider_files import build_price_table, load_provider_files
 from app.schemas.dashboard import (
     AliasCost,
     CategoryCount,
@@ -59,7 +60,7 @@ from .conftest import Pool, requires_postgres
 pytestmark = requires_postgres
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SHIPPED_PRICES = REPO_ROOT / "config" / "prices.yaml"
+SHIPPED_PROVIDERS = REPO_ROOT / "config" / "providers"
 
 NOW = datetime(2026, 9, 16, 12, 0, tzinfo=UTC)
 MIDNIGHT = datetime(2026, 9, 16, 0, 0, tzinfo=UTC)
@@ -241,7 +242,7 @@ def hex_id(number: int) -> str:
 @pytest.fixture(scope="module")
 def shipped_prices() -> PriceTable:
     """The shipped price table, read once."""
-    return load_prices(SHIPPED_PRICES)
+    return build_price_table(load_provider_files(SHIPPED_PROVIDERS))
 
 
 # --- home ------------------------------------------------------------------------

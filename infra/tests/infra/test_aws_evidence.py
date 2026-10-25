@@ -62,18 +62,18 @@ WORKFLOW = WORKFLOWS / "ci.yml"
 #: A real-looking commit SHA: 40 lowercase hex, with letters so `.upper()` changes it.
 VALID_SHA = "3f9c2a7e1b4d6f8a0c2e4b6d8f0a1c3e5b7d9f1a"
 
-#: Section 1's six overlay resources, in the form kustomize reads them.
+#: Section 1's overlay resources, in the form kustomize reads them. The local chat model
+#: left with a design note, so `../apps/llama.yaml` is gone.
 EXPECTED_RESOURCES = (
     "../base",
     "../platform/qdrant.yaml",
     "../apps/gateway.yaml",
-    "../apps/llama.yaml",
     "../apps/llama-embed.yaml",
     "backups-sa.yaml",
 )
 
-#: The kind overlay's llama patch, reused by path and never copied (criterion 20).
-KIND_LLAMA_PATCH = "../../../infra/k8s/kind/llama-model-init-patch.yaml"
+#: A key the script hands to the Secret it pipes to the fake kubectl. Not a real one.
+FAKE_ANTHROPIC_KEY = "test-key-not-a-real-one"
 
 #: The captures section 1 names under `docs/aws-evidence/<UTC date>/`.
 CAPTURES = ("terraform-output.json", "nodes.txt", "pods.txt", "smoke.json", "irsa.txt")
@@ -107,6 +107,7 @@ SECRET_LITERALS = (
     "OPSCONSOLE_API_KEYS",
     "OPSCONSOLE_ADMIN_KEY_SHA256",
     "OPSCONSOLE_BUDGET_OVERRIDE_SECRET",
+    "ANTHROPIC_API_KEY",
     DB_PASSWORD,
 )
 
@@ -253,6 +254,7 @@ def invoke(base: Path, arguments: Sequence[str], /, **switches: str) -> Run:
         "FAKE_LOG": str(log_path),
         "FAKE_STDIN_DIR": str(stdin_dir),
         "FAKE_KUBECONFIG_SEEN": str(seen_path),
+        "ANTHROPIC_API_KEY": FAKE_ANTHROPIC_KEY,
         **switches,
     }
     assert SCRIPT.is_file(), f"{SCRIPT} does not exist"
@@ -685,24 +687,23 @@ def test_the_overlay_holds_exactly_the_six_resources() -> None:
     assert set(resources) == set(EXPECTED_RESOURCES), resources
 
 
-def test_the_overlay_reuses_the_kind_llama_patch_by_path() -> None:
-    """Criterion 20. Catches a copy of the kind patch under `infra/k8s/aws/`, which drifts the
-    first time the kind one is fixed, the reference aimed at the wrong Deployment, and the
-    emptyDir patch not wired into the overlay at all."""
+def test_the_overlay_patches_no_local_chat_model() -> None:
+    """Catches the kind model-fetch patch or a `llama` Deployment target left in the overlay
+    after the local chat model left: kustomize would fail on a patch with no
+    target, and the run would wait thirty minutes for a pod that is never built."""
     patches = load_yaml(AWS_KUSTOMIZATION).get("patches")
     assert isinstance(patches, list), "the overlay has no patches list"
     by_path = {str(entry.get("path")): entry for entry in patches if isinstance(entry, dict)}
-    assert AWS_OVERLAY.is_dir(), f"{AWS_OVERLAY} does not exist"
-    copies = [path for path in AWS_OVERLAY.rglob("*") if path.name == Path(KIND_LLAMA_PATCH).name]
+    targets = [
+        (entry.get("target") or {}).get("name") for entry in patches if isinstance(entry, dict)
+    ]
 
-    assert KIND_LLAMA_PATCH in by_path, f"patches: {sorted(by_path)}"
-    target = by_path[KIND_LLAMA_PATCH].get("target") or {}
-    assert (target.get("kind"), target.get("name")) == ("Deployment", "llama"), target
     assert "emptydir-patch.yaml" in by_path, f"patches: {sorted(by_path)}"
-    assert copies == [], f"a copy of the kind patch: {copies}"
+    assert not any("llama-model-init" in path for path in by_path), sorted(by_path)
+    assert "llama" not in targets, targets
 
 
-def test_the_overlay_deletes_exactly_the_two_llama_claims_by_inline_patch() -> None:
+def test_the_overlay_deletes_exactly_the_llama_embed_claim_by_inline_patch() -> None:
     """Criterion 19's deletions. Catches a deleted claim left out (EKS has no EBS CSI driver, so
     it stays Pending and the pod never schedules), a delete aimed at a claim in the wrong
     namespace, and an extra `$patch: delete` removing an object the run needs. The deletes are
@@ -720,10 +721,7 @@ def test_the_overlay_deletes_exactly_the_two_llama_claims_by_inline_patch() -> N
     deleted = {identity(doc) for doc in inline if doc.get("$patch") == "delete"}
     in_file = [identity(doc) for doc in documents(EMPTYDIR_PATCH) if "$patch" in doc]
 
-    assert deleted == {
-        ("PersistentVolumeClaim", "llama-models", "apps"),
-        ("PersistentVolumeClaim", "llama-embed-models", "apps"),
-    }
+    assert deleted == {("PersistentVolumeClaim", "llama-embed-models", "apps")}
     assert in_file == [], f"emptydir-patch.yaml carries a $patch directive: {in_file}"
 
 
@@ -739,9 +737,9 @@ def test_the_emptydir_patch_drops_qdrants_claim_template_for_an_emptydir() -> No
     assert "emptyDir" in volume(qdrant, "storage")
 
 
-@pytest.mark.parametrize("name", ["llama", "llama-embed"])
+@pytest.mark.parametrize("name", ["llama-embed"])
 def test_the_emptydir_patch_swaps_each_llama_models_volume(name: str) -> None:
-    """Criterion 19 for the two llama Deployments. Catches `emptyDir` added beside the claim
+    """Criterion 19 for the llama-embed Deployment. Catches `emptyDir` added beside the claim
     without nulling `persistentVolumeClaim` (a strategic merge keeps both, which the API
     rejects as two volume sources), and the patch naming a volume other than `models`."""
     deployment = the_one(EMPTYDIR_PATCH, "Deployment", name)

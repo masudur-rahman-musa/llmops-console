@@ -50,11 +50,11 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     # The image does not carry the repository layout, so the defaults computed
     # from `core/settings.py`'s file position would point outside /app. Both
-    # files are loaded eagerly at startup - the routing policy and the price
-    # table are built in `create_app` - so a wrong path here is a container that
-    # never answers its first request rather than one that degrades.
+    # are loaded eagerly at startup - the routing policy, and the provider folder
+    # that holds each provider and its prices - so a wrong path here is a
+    # container that never answers its first request rather than one that degrades.
     OPSCONSOLE_ROUTING_POLICY_PATH=/app/config/routing.yaml \
-    OPSCONSOLE_PRICES_PATH=/app/config/prices.yaml \
+    OPSCONSOLE_PROVIDERS_DIR=/app/config/providers \
     # Read on each quality page request, not at startup: a wrong path shows
     # "Threshold not set" rather than stopping the container.
     OPSCONSOLE_EVAL_BASELINE_PATH=/app/evals/conversation-baseline.json

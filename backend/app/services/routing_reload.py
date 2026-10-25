@@ -1,4 +1,4 @@
-"""Atomic swap of the routing runtime: policy, adapters and breaker as one.
+"""Atomic swap of the routing runtime: policy, prices, adapters and breaker as one.
 
 Every in-flight request holds one `RoutingRuntime` for its whole life, so it
 never sees a new policy beside old adapters. The old adapter set closes only
@@ -22,7 +22,13 @@ from dataclasses import dataclass
 
 from starlette.datastructures import State
 
-from app.model_routing.policy import Policy, PolicyStore, check_policy_models_priced, load_policy
+from app.limits.prices import PriceStore
+from app.model_routing.policy import (
+    Policy,
+    PolicyStore,
+    check_policy_models_priced,
+    load_routing,
+)
 from app.providers.base import Adapter
 from app.providers.breaker import CircuitBreaker
 from app.providers.factory import build_adapters, close_adapters
@@ -116,11 +122,13 @@ class RoutingRuntimeStore:
             close_adapters(to_close)
 
     def reload(self, environ: Mapping[str, str]) -> tuple[str, ...]:
-        """Parse the new policy, build new adapters and breaker, swap all three.
+        """Parse the new policy and prices, build new adapters and breaker, swap all four.
 
-        Parsing happens outside the lock — it is the slow part and raises
-        `PolicyInvalid` without touching any shared state if the file is bad.
-        Under the lock the three pieces are swapped atomically, so `acquire()`
+        `routing.yaml` and the provider folder are read together, once, so the
+        new policy and the new prices come from the same files. Parsing happens
+        outside the lock — it is the slow part and raises `PolicyInvalid`
+        without touching any shared state if a file is bad. Under the lock the
+        four pieces are swapped atomically, so `acquire()`
         always sees a consistent set. The old adapter set is closed once all
         leases on it are released; if none are open it is closed right away.
 
@@ -128,10 +136,11 @@ class RoutingRuntimeStore:
         is what `ReloadResult.providers` publishes.
         """
         policy_store: PolicyStore = self._state.policy
+        price_store: PriceStore = self._state.prices
         # Parse OUTSIDE the lock: raises PolicyInvalid without changing state.
         # The price-coverage check runs here too, for the same reason.
-        new_policy = load_policy(policy_store._path)
-        check_policy_models_priced(new_policy, self._state.prices.table)
+        new_policy, new_table = load_routing(policy_store._path, policy_store._providers_dir)
+        check_policy_models_priced(new_policy, new_table)
 
         to_close: Mapping[str, Adapter] | None = None
         with self._lock:
@@ -140,8 +149,9 @@ class RoutingRuntimeStore:
             old_adapters: Mapping[str, Adapter] = self._state.adapters
             old_key = id(old_adapters)
 
-            # Swap all three atomically.
+            # Swap all four atomically.
             policy_store._policy = new_policy
+            price_store._table = new_table
             self._state.adapters = new_adapters
             self._state.breaker = new_breaker
 

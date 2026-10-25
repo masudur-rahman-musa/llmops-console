@@ -1,7 +1,9 @@
 """The routing policy: its schema, its loader and the snapshot the gateway reads.
 
-`routing.yaml` is the only shipped file that names a provider model id; every
-other module names a model by alias. This schema is the boundary where an
+`routing.yaml` and the provider files in `backend/config/providers/` are the
+only shipped files that name a provider model id; every other module names a
+model by alias. The providers themselves come from that folder, never from
+`routing.yaml`. This schema is the boundary where an
 operator's YAML becomes typed data.
 
 Loading is deliberately strict. `yaml.safe_load` is the only deserialiser used,
@@ -16,27 +18,25 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from decimal import Decimal
-from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Self
+from typing import Self
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.core.context import DataClass as DataClass
+from app.limits.prices import PriceTable
 from app.model_routing.errors import PolicyInvalid
+from app.model_routing.provider_files import Provider as Provider
+from app.model_routing.provider_files import ProviderKind as ProviderKind
+from app.model_routing.provider_files import (
+    build_price_table,
+    build_providers,
+    load_provider_files,
+)
 
-if TYPE_CHECKING:
-    from app.limits.prices import PriceTable
-
-
-class ProviderKind(StrEnum):
-    """Which adapter drives a provider. The adapters themselves arrive later."""
-
-    ANTHROPIC = "anthropic"
-    OPENAI = "openai"
-    AZURE_OPENAI = "azure_openai"
-    OPENAI_COMPATIBLE = "openai_compatible"
+PROVIDERS_FOLDER_HINT = "backend/config/providers/"
+"""Where a provider is declared now, named in the refusal of an old `providers:` block."""
 
 
 class _Frozen(BaseModel):
@@ -46,16 +46,6 @@ class _Frozen(BaseModel):
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
-
-
-class Provider(_Frozen):
-    """One reachable endpoint."""
-
-    kind: ProviderKind
-    base_url: str | None = None
-    endpoint_env: str | None = None
-    key_env: str | None = None
-    enabled: bool = True
 
 
 class Candidate(_Frozen):
@@ -153,13 +143,7 @@ class Policy(_Frozen):
         return self
 
 
-def load_policy(path: Path) -> Policy:
-    """Read, parse and validate one policy file.
-
-    Every failure is a `PolicyInvalid` carrying the path and the underlying
-    message, so an operator reading a failed reload sees the field, not a
-    traceback in three different exception types.
-    """
+def _read_routing(path: Path) -> dict[str, object]:
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
@@ -174,11 +158,34 @@ def load_policy(path: Path) -> Policy:
         raise PolicyInvalid(
             f"{path}: the document must be a mapping, got {type(document).__name__}"
         )
+    if "providers" in document:
+        raise PolicyInvalid(
+            f"{path}: providers: not allowed here; each provider is one file in "
+            f"{PROVIDERS_FOLDER_HINT}"
+        )
+    return document
 
+
+def load_routing(path: Path, providers_dir: Path) -> tuple[Policy, PriceTable]:
+    """Read `routing.yaml` and the provider folder together, as one set.
+
+    The folder is read once and gives both the policy's providers and the price
+    table, so a reload can never pair a new policy with old prices. Every failure
+    is a `PolicyInvalid` naming the file and the field.
+    """
+    document = _read_routing(path)
+    files = load_provider_files(providers_dir)
     try:
-        return Policy.model_validate(document)
+        policy = Policy.model_validate({**document, "providers": build_providers(files)})
     except ValidationError as exc:
         raise PolicyInvalid(f"{path}: {exc}") from exc
+    return policy, build_price_table(files)
+
+
+def load_policy(path: Path, providers_dir: Path) -> Policy:
+    """The policy alone, for callers that do not cost anything."""
+    policy, _ = load_routing(path, providers_dir)
+    return policy
 
 
 class PolicyStore:
@@ -189,9 +196,10 @@ class PolicyStore:
     holding a snapshot keeps reading a consistent one.
     """
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, providers_dir: Path) -> None:
         self._path = path
-        self._policy = load_policy(path)
+        self._providers_dir = providers_dir
+        self._policy = load_policy(path, providers_dir)
 
     @property
     def policy(self) -> Policy:
@@ -199,8 +207,8 @@ class PolicyStore:
         return self._policy
 
     def reload(self) -> None:
-        """Re-read the file and swap the snapshot, or raise and keep the old one."""
-        self._policy = load_policy(self._path)
+        """Re-read the files and swap the snapshot, or raise and keep the old one."""
+        self._policy = load_policy(self._path, self._providers_dir)
 
 
 def reachable_price_keys(policy: Policy) -> set[str]:

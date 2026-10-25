@@ -7,7 +7,7 @@
 #
 # `resources` grows as each directory lands: `base/` the namespaces and the
 # envelope, `platform/` the backing services and the cluster's own machinery,
-# `apps/` the gateway, the two llama.cpp servers, the four Helpdesk workloads
+# `apps/` the gateway, the llama.cpp embedding server, the four Helpdesk workloads
 # and the four public routers, `monitoring/` the scrape plane, `evals/` the
 # Pushgateway. What is still to come - the console
 # - lands inside `apps/` rather than as a sixth entry here.

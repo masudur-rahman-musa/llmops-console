@@ -16,14 +16,6 @@
       "notes": "Cost comes from the ledger's own per-turn number, so this option carries no hourly price."
     },
     {
-      "id": "local-cpu",
-      "label": "Local CPU (llama.cpp, Qwen2.5-3B)",
-      "kind": "self_hosted",
-      "report": "../docs/tradeoff-run/reports/local-cpu/report.json",
-      "hourly_usd": "0.0098",
-      "notes": "Hetzner Cloud CAX21, the host the steady-state gateway runs on: EUR 6.49 per month over 720 hours at 1.09 USD per EUR. Recorded 2026-09-16 from the published Hetzner Cloud price list. UNVERIFIED against the live page: confirm both rates before the table is published."
-    },
-    {
       "id": "gpu-vllm",
       "label": "GPU (vLLM, Qwen2.5-7B)",
       "kind": "self_hosted",

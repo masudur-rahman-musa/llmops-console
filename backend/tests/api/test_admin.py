@@ -29,6 +29,7 @@ policy file is the thing under test, so they cannot share the session-scoped
 from __future__ import annotations
 
 import logging
+import shutil
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -71,6 +72,9 @@ NORDLICHT_KEY = TEST_KEYS["nordlicht"]
 # request in this file leaves the process.
 FAKE_ANTHROPIC_KEY = "test-key-not-a-real-one"
 WITH_ANTHROPIC_KEY = {"ANTHROPIC_API_KEY": FAKE_ANTHROPIC_KEY}
+WITH_CHAT_KEYS = {**WITH_ANTHROPIC_KEY, "OPENAI_API_KEY": FAKE_ANTHROPIC_KEY}
+"""Both chat providers' keys, so the reload cases have a chat adapter that survives
+when `anthropic` is turned off."""
 
 ADMIN_HEADERS = {"Authorization": f"Bearer {ADMIN_KEY}"}
 
@@ -140,14 +144,24 @@ def admin_app_on(tmp_path: Path, environ: dict[str, str] | None = None) -> Itera
     """
     policy_path = tmp_path / "routing.yaml"
     policy_path.write_text(SHIPPED_POLICY_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+    shutil.copytree(SHIPPED_POLICY_PATH.parent / "providers", tmp_path / "providers")
     settings = Settings(
         api_keys=API_KEYS,
         routing_policy_path=policy_path,
+        providers_dir=tmp_path / "providers",
         admin_key_sha256=sha256_hex(ADMIN_KEY),
     )
     app = create_app(settings, NO_PROVIDER_KEYS if environ is None else environ)
     with TestClient(app) as client:
         yield AdminApp(client=client, app=app, policy_path=policy_path)
+
+
+def disable_provider(built: AdminApp, name: str) -> None:
+    """Turn one provider off in the app's own copy of the provider folder."""
+    path = built.policy_path.parent / "providers" / f"{name}.yaml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    document["enabled"] = False
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
 
 
 def rewrite_policy(path: Path, edit: Callable[[dict[str, Any]], object]) -> None:
@@ -315,7 +329,7 @@ def test_the_view_resolves_every_tenant_alias_and_data_class(
             for place in item["resolved"]:
                 assert set(place) == {"provider", "model"}
 
-    # One triple asserted literally: nordlicht's override, not the alias default.
+    # One triple asserted literally: anthropic first, openai as the fallback.
     nordlicht = tenant_slice(body, "nordlicht")
     entry = [
         item
@@ -328,7 +342,7 @@ def test_the_view_resolves_every_tenant_alias_and_data_class(
             "data_class": "internal",
             "resolved": [
                 {"provider": "anthropic", "model": "claude-haiku-5-5"},
-                {"provider": "local", "model": "qwen2.5-3b-instruct"},
+                {"provider": "openai", "model": "gpt-5-mini"},
             ],
         }
     ]
@@ -470,7 +484,7 @@ def test_a_failed_reload_keeps_the_previous_policy_serving(tmp_path: Path) -> No
     store, or emptying `app.state.adapters` on the way to rebuilding it - which
     would leave the gateway serving nothing after an operator's typo.
     """
-    with admin_app_on(tmp_path, WITH_ANTHROPIC_KEY) as built:
+    with admin_app_on(tmp_path, WITH_CHAT_KEYS) as built:
         before = listed_aliases(built.client)
         adapters_before = dict(built.app.state.adapters)
         assert adapters_before, "the fixture must build at least one adapter to be a test"
@@ -484,7 +498,7 @@ def test_a_failed_reload_keeps_the_previous_policy_serving(tmp_path: Path) -> No
 
         assert listed_aliases(built.client) == before
         assert built.app.state.adapters == adapters_before
-        assert not http_client_of(built.app.state.adapters["local"]).is_closed
+        assert not http_client_of(built.app.state.adapters["openai"]).is_closed
 
 
 def test_a_reload_rebuilds_the_adapter_set_for_the_new_policy(tmp_path: Path) -> None:
@@ -492,19 +506,16 @@ def test_a_reload_rebuilds_the_adapter_set_for_the_new_policy(tmp_path: Path) ->
     as it was: the dropped provider would keep an adapter the new policy does not
     name, and the resolver's health seam would go on reporting it as usable.
     """
-    with admin_app_on(tmp_path, WITH_ANTHROPIC_KEY) as built:
-        assert set(built.app.state.adapters) == {"anthropic", "local", "local_embed"}
+    with admin_app_on(tmp_path, WITH_CHAT_KEYS) as built:
+        assert set(built.app.state.adapters) == {"anthropic", "openai", "local_embed"}
 
-        rewrite_policy(
-            built.policy_path,
-            lambda document: document["providers"]["anthropic"].update({"enabled": False}),
-        )
+        disable_provider(built, "anthropic")
 
         response = built.client.post(ADMIN_ROUTING_RELOAD, headers=ADMIN_HEADERS)
         assert response.status_code == 200, response.text
 
-        assert response.json()["providers"] == ["local", "local_embed"]
-        assert set(built.app.state.adapters) == {"local", "local_embed"}
+        assert response.json()["providers"] == ["local_embed", "openai"]
+        assert set(built.app.state.adapters) == {"local_embed", "openai"}
         assert "anthropic" not in built.app.state.adapters
 
 
@@ -516,7 +527,7 @@ def test_a_policy_reload_rebuilds_the_breaker(tmp_path: Path) -> None:
     by editing the file, refused for the next thirty seconds by state about the old
     one. The breaker is opened here first, so a kept breaker reads OPEN afterwards
     and only a rebuilt one reads CLOSED."""
-    with admin_app_on(tmp_path, WITH_ANTHROPIC_KEY) as built:
+    with admin_app_on(tmp_path, WITH_CHAT_KEYS) as built:
         breaker = built.app.state.breaker
         for _ in range(MAX_FAILURES):
             breaker.record_failure("anthropic")
@@ -536,21 +547,18 @@ def test_a_reload_leaves_the_new_adapter_set_callable(tmp_path: Path) -> None:
     set-comparison test and leaves every later request holding a closed connection
     pool.
     """
-    with admin_app_on(tmp_path, WITH_ANTHROPIC_KEY) as built:
+    with admin_app_on(tmp_path, WITH_CHAT_KEYS) as built:
         dropped = built.app.state.adapters["anthropic"]
 
-        rewrite_policy(
-            built.policy_path,
-            lambda document: document["providers"]["anthropic"].update({"enabled": False}),
-        )
+        disable_provider(built, "anthropic")
         assert built.client.post(ADMIN_ROUTING_RELOAD, headers=ADMIN_HEADERS).status_code == 200
 
-        survivor = built.app.state.adapters["local"]
+        survivor = built.app.state.adapters["openai"]
         assert not http_client_of(survivor).is_closed
         # The set the reload dropped is closed, which is the other half of C.
         assert http_client_of(dropped).is_closed
         # And the app still serves under the new snapshot.
-        assert listed_aliases(built.client) == ["agent-default", "embed"]
+        assert listed_aliases(built.client) == ["agent-default", "agent-strong", "judge", "embed"]
 
 
 # --- an earlier change: reload swaps the three together as one atomic runtime ----------
@@ -568,16 +576,13 @@ def test_a_reload_hands_one_request_the_same_policy_adapters_and_breaker(
     """
     from app.services.routing_reload import RoutingRuntime, RoutingRuntimeStore
 
-    with admin_app_on(tmp_path, WITH_ANTHROPIC_KEY) as built:
+    with admin_app_on(tmp_path, WITH_CHAT_KEYS) as built:
         store: RoutingRuntimeStore = built.app.state.routing_store
 
         runtime_before: RoutingRuntime = store.acquire()
         assert "anthropic" in runtime_before.adapters
 
-        rewrite_policy(
-            built.policy_path,
-            lambda document: document["providers"]["anthropic"].update({"enabled": False}),
-        )
+        disable_provider(built, "anthropic")
         response = built.client.post(ADMIN_ROUTING_RELOAD, headers=ADMIN_HEADERS)
         assert response.status_code == 200, response.text
 
@@ -606,16 +611,13 @@ def test_dropped_adapters_close_only_after_the_last_request_holding_them_finishe
     """
     from app.services.routing_reload import RoutingRuntimeStore
 
-    with admin_app_on(tmp_path, WITH_ANTHROPIC_KEY) as built:
+    with admin_app_on(tmp_path, WITH_CHAT_KEYS) as built:
         store: RoutingRuntimeStore = built.app.state.routing_store
 
         runtime = store.acquire()
         held_adapter = runtime.adapters["anthropic"]
 
-        rewrite_policy(
-            built.policy_path,
-            lambda document: document["providers"]["anthropic"].update({"enabled": False}),
-        )
+        disable_provider(built, "anthropic")
         response = built.client.post(ADMIN_ROUTING_RELOAD, headers=ADMIN_HEADERS)
         assert response.status_code == 200, response.text
 
@@ -636,13 +638,10 @@ def test_a_reload_with_nothing_in_flight_closes_the_dropped_adapters_at_once(
     dropped adapter immediately, so a close that only fires on release would leave
     this adapter open.
     """
-    with admin_app_on(tmp_path, WITH_ANTHROPIC_KEY) as built:
+    with admin_app_on(tmp_path, WITH_CHAT_KEYS) as built:
         dropped = built.app.state.adapters["anthropic"]
 
-        rewrite_policy(
-            built.policy_path,
-            lambda document: document["providers"]["anthropic"].update({"enabled": False}),
-        )
+        disable_provider(built, "anthropic")
         response = built.client.post(ADMIN_ROUTING_RELOAD, headers=ADMIN_HEADERS)
         assert response.status_code == 200, response.text
 
@@ -662,13 +661,13 @@ def test_a_reload_that_introduces_an_unpriced_model_is_422_and_keeps_the_old_pol
         rewrite_policy(
             built.policy_path,
             lambda document: document["aliases"]["agent-default"]["candidates"].append(
-                {"provider": "local", "model": "model-that-has-no-price"}
+                {"provider": "openai", "model": "model-that-has-no-price"}
             ),
         )
 
         response = built.client.post(ADMIN_ROUTING_RELOAD, headers=ADMIN_HEADERS)
         assert_error_body(response, status=422, code="VALIDATION")
-        assert "local/model-that-has-no-price" in response.json()["error"]["message"]
+        assert "openai/model-that-has-no-price" in response.json()["error"]["message"]
 
         assert listed_aliases(built.client) == before
 
@@ -680,7 +679,7 @@ def test_a_failed_reload_closes_nothing_and_keeps_the_runtime(tmp_path: Path) ->
     """
     from app.services.routing_reload import RoutingRuntimeStore
 
-    with admin_app_on(tmp_path, WITH_ANTHROPIC_KEY) as built:
+    with admin_app_on(tmp_path, WITH_CHAT_KEYS) as built:
         store: RoutingRuntimeStore = built.app.state.routing_store
         runtime = store.acquire()
 
@@ -699,3 +698,110 @@ def test_a_failed_reload_closes_nothing_and_keeps_the_runtime(tmp_path: Path) ->
         assert built.app.state.breaker is runtime.breaker
 
         store.release(runtime)
+
+
+# --- an earlier change: providers come from a folder of files, and reload reads it -------
+
+SHIPPED_PROVIDERS_DIR = SHIPPED_POLICY_PATH.parent / "providers"
+NEW_PROVIDER_ENV = {**WITH_ANTHROPIC_KEY, "MISTRAL_API_KEY": "test-key-not-a-real-one"}
+
+NEW_PROVIDER_CANDIDATE = {"provider": "mistral", "model": "mistral-small"}
+
+NEW_PROVIDER_FILE: dict[str, Any] = {
+    "provider": "mistral",
+    "kind": "openai_compatible",
+    "base_url": "http://mistral.invalid/v1",
+    "key_env": "MISTRAL_API_KEY",
+    "enabled": True,
+    "models": {
+        "mistral-small": {
+            "prices": [
+                {
+                    "effective_from": "2026-10-01",
+                    "input_usd_per_1m": "0.20",
+                    "output_usd_per_1m": "0.60",
+                }
+            ]
+        }
+    },
+}
+
+
+@contextmanager
+def admin_app_over_folder(
+    tmp_path: Path, environ: dict[str, str]
+) -> Iterator[tuple[AdminApp, Path]]:
+    """An app over a private copy of the shipped policy AND the shipped provider folder.
+
+    Both are copied so a case can drop a file or rewrite the policy, then reload.
+    """
+    providers_dir = tmp_path / "providers"
+    shutil.copytree(SHIPPED_PROVIDERS_DIR, providers_dir)
+    policy_path = tmp_path / "routing.yaml"
+    policy_path.write_text(SHIPPED_POLICY_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+    settings = Settings(
+        api_keys=API_KEYS,
+        routing_policy_path=policy_path,
+        providers_dir=providers_dir,
+        admin_key_sha256=sha256_hex(ADMIN_KEY),
+    )
+    app = create_app(settings, environ)
+    with TestClient(app) as client:
+        yield AdminApp(client=client, app=app, policy_path=policy_path), providers_dir
+
+
+def test_a_reload_picks_up_a_new_provider_file(tmp_path: Path) -> None:
+    """Catches a reload that re-reads `routing.yaml` but not the provider folder, or
+    rebuilds adapters while leaving the old price table: after a file and an alias
+    line are added, the new provider must be served by an adapter AND priced."""
+    with admin_app_over_folder(tmp_path, NEW_PROVIDER_ENV) as (built, providers_dir):
+        assert "mistral" not in built.app.state.adapters
+        (providers_dir / "mistral.yaml").write_text(
+            yaml.safe_dump(NEW_PROVIDER_FILE, sort_keys=False), encoding="utf-8"
+        )
+        rewrite_policy(
+            built.policy_path,
+            lambda document: document["aliases"].update(
+                {
+                    "mistral-chat": {
+                        "candidates": [{"provider": "mistral", "model": "mistral-small"}]
+                    }
+                }
+            ),
+        )
+
+        response = built.client.post(ADMIN_ROUTING_RELOAD, headers=ADMIN_HEADERS)
+
+        assert response.status_code == 200, response.text
+        assert "mistral" in response.json()["providers"]
+        assert "mistral" in built.app.state.adapters
+        assert "mistral-chat" in listed_aliases(built.client)
+        assert "mistral/mistral-small" in built.app.state.prices.table.prices
+
+
+def test_a_reload_with_a_bad_file_keeps_the_old_set(tmp_path: Path) -> None:
+    """Catches a reload that swaps the policy (or the prices, or the adapters) before
+    the provider folder has been proved good: a typo in one file must answer 422
+    naming that file and leave the whole old set serving. The same reload also drops
+    the `embed` alias, so a half-applied swap shows."""
+    with admin_app_over_folder(tmp_path, WITH_ANTHROPIC_KEY) as (built, providers_dir):
+        aliases_before = listed_aliases(built.client)
+        adapters_before = dict(built.app.state.adapters)
+        policy_before = built.app.state.policy.policy
+        table_before = built.app.state.prices.table
+        assert "embed" in aliases_before and adapters_before
+
+        broken = yaml.safe_load((providers_dir / "openai.yaml").read_text(encoding="utf-8"))
+        broken["bogus_key"] = 1
+        (providers_dir / "openai.yaml").write_text(yaml.safe_dump(broken), encoding="utf-8")
+        rewrite_policy(built.policy_path, lambda document: document["aliases"].pop("embed"))
+
+        response = built.client.post(ADMIN_ROUTING_RELOAD, headers=ADMIN_HEADERS)
+
+        assert_error_body(response, status=422, code="VALIDATION")
+        assert "openai.yaml" in response.json()["error"]["message"]
+        assert listed_aliases(built.client) == aliases_before
+        assert built.app.state.adapters == adapters_before
+        assert built.app.state.policy.policy is policy_before
+        assert built.app.state.prices.table is table_before
+        assert not http_client_of(built.app.state.adapters["anthropic"]).is_closed

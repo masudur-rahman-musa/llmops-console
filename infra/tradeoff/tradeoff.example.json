@@ -16,14 +16,6 @@
       "notes": "PLACEHOLDER. Cost comes from the ledger, so this option carries no price here."
     },
     {
-      "id": "local-cpu",
-      "label": "Local CPU (llama.cpp)",
-      "kind": "self_hosted",
-      "report": "reports/local-cpu/report.json",
-      "hourly_usd": "0.0100",
-      "notes": "PLACEHOLDER price. The measured run replaces it with the instance's real hourly rate."
-    },
-    {
       "id": "gpu-vllm",
       "label": "GPU (vLLM)",
       "kind": "self_hosted",

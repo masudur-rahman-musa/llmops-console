@@ -28,12 +28,12 @@ Three arrangements are worth reading before the assertions:
   a statement about ONE request rather than about a pair.
 * THE EMBEDDING ADAPTER IS LIVE ON THE CHAT APP. `agent-default` carries
   `semantic_cache: true`, so a chat request on this app really does embed
-  through the `embed` alias against `local`. That is deliberate: an
+  through the `embed` alias against `local_embed`. That is deliberate: an
   implementation that booked the INTERNAL embedding as a second row is caught by
   the one-row cases, and it cannot be caught on an app where the semantic tier
   never runs (a project rule's fourth target).
 * THE PRICES ARE THE SHIPPED ONES. `anthropic/claude-haiku-5-5` is 0.10 in and
-  0.50 out per million, `local/*` is zero, so the chat rows carry a NON-ZERO
+  0.50 out per million, `local_embed/*` is zero, so the chat rows carry a NON-ZERO
   cost written out here as arithmetic (137 * 0.1 + 29 * 0.5 = 28.2 millionths, 28 at
   six places) rather than recomputed from the table the implementation reads. A zero-priced row is
   never used to prove a cost was booked: what those rows prove is the
@@ -43,7 +43,7 @@ Three arrangements are worth reading before the assertions:
 The contract these cases are written against, before it exists:
 
 * `create_app` builds `app.state.prices` (a `PriceStore` over
-  `settings.prices_path`), `app.state.db_pool` (one pool, decision D) and
+  `settings.providers_dir`), `app.state.db_pool` (one pool, decision D) and
   `app.state.cost_ledger` (`PostgresCostLedgerWriter` with a database URL, else
   `InMemoryCostLedgerWriter`);
 * `book_cost` in `services/chat_pipeline.py` calls `record_cost`, takes the row it
@@ -57,6 +57,7 @@ The contract these cases are written against, before it exists:
 from __future__ import annotations
 
 import json
+import shutil
 from collections.abc import Iterator, Mapping, Sequence
 from datetime import date
 from decimal import Decimal
@@ -72,10 +73,11 @@ from app.cache import (
     InProcessResponseCache,
     InProcessSemanticCache,
 )
-from app.core.config import DEFAULT_PRICES_PATH, Settings
+from app.core.config import DEFAULT_PROVIDERS_DIR, Settings
 from app.core.errors import ProviderError
-from app.limits import PriceStore, PriceTableInvalid, price_for
+from app.limits import PriceStore, price_for
 from app.main import close_adapters, create_app
+from app.model_routing.errors import PolicyInvalid
 from app.providers.base import (
     Adapter,
     ChatRequest,
@@ -151,25 +153,23 @@ EMBED_MODEL = "bge-small-en-v1.5"
 """The shipped `embed` alias's only candidate, which `/v1/embeddings` serves from
 and which the semantic tier embeds through."""
 
-LOCAL_PROVIDER = "local"
-"""The CHAT server on the box we run, which is not the embedding server beside it:
-one llama.cpp process serves one model, so `agent-default`'s local candidate
-and the `embed` alias's candidate are two providers with two addresses."""
+OPENAI_PROVIDER = "openai"
+"""`agent-default`'s fallback chat provider, which is not the embedding server:
+the `embed` alias's candidate is a provider of its own."""
 
-FALLBACK_MODEL = "qwen2.5-3b-instruct"
-"""The model of `agent-default`'s SECOND candidate, `local`. The fallback row
-must name this and not `claude-haiku-5-5`. Renamed with the shipped policy when
-an earlier change sized the self-hosted model to the 3 GiB ceiling its pod carries: this
-is a copy of what `routing.yaml` resolves to, so it moves when that file does."""
+FALLBACK_MODEL = "gpt-5-mini"
+"""The model of `agent-default`'s SECOND candidate, `openai`. The fallback row
+must name this and not `claude-haiku-5-5`. This is a copy of what `routing.yaml`
+resolves to, so it moves when that file does."""
 
 CHAT_PRICE_VERSION = f"{PROVIDER}/{POLICY_MODEL}@2026-10-01"
 EMBED_PRICE_VERSION = f"{EMBED_PROVIDER}/{EMBED_MODEL}@2025-01-01"
-FALLBACK_PRICE_VERSION = f"{LOCAL_PROVIDER}/{FALLBACK_MODEL}@2025-01-01"
-"""The entries in force in the shipped `prices.yaml`, spelled as the literals the
+FALLBACK_PRICE_VERSION = f"{OPENAI_PROVIDER}/{FALLBACK_MODEL}@2025-08-07"
+"""The entries in force in the shipped provider files, spelled as the literals the
 row must carry. A row that priced the ALIAS, or that fell through to `unpriced`,
 carries a different string and fails - which is what makes the zero-priced
-self-hosted rows worth asserting at all. The embedding row and the fallback row are
-priced from DIFFERENT keys now that the two servers are two providers."""
+self-hosted embedding row worth asserting at all. The chat row and the fallback row
+are priced from DIFFERENT keys because they are two providers."""
 
 WHEN_PRICED = date(2026, 10, 22)
 """The instant the two price-store cases price at: after every `effective_from`
@@ -187,7 +187,7 @@ STREAM_COST = Decimal("0.000069")
 usage is a different number here."""
 
 ZERO_COST = Decimal("0.000000")
-"""What a cache hit costs (decision B) and what a zero-priced `local` row costs.
+"""What a cache hit costs (decision B) and what a zero-priced `local_embed` row costs.
 Written at six places because `Decimal("0") == Decimal("0.000000")`: the exponent
 is asserted separately wherever the scale is the claim."""
 
@@ -299,7 +299,7 @@ class CostChatStub:
 
 
 class CostEmbedStub:
-    """The embedding adapter under `local`: the `embed` alias and the semantic tier both.
+    """The embedding adapter under `local_embed`: the `embed` alias and the semantic tier both.
 
     A fixed vector per text rather than a model, so the cosine the semantic hit
     depends on is decided here. It satisfies `Adapter` too - `chat` and
@@ -1118,36 +1118,43 @@ def test_every_postgres_writer_shares_one_pool() -> None:
 
 def test_create_app_refuses_a_malformed_prices_file(tmp_path: Path) -> None:
     """The startup half of the criterion, and the reason the store is built in the factory
-    at all. Catches a `PriceStore` built lazily on the first request, where a typo in
-    `prices.yaml` becomes a 500 on live traffic hours after the deploy that caused it
-    instead of a process that refuses to start. The same rule the key store and the policy
-    snapshot already follow."""
-    path = tmp_path / "prices.yaml"
-    path.write_text("prices: [not, a, mapping]\n", encoding="utf-8")
+    at all. Catches a `PriceStore` built lazily on the first request, where a typo in a
+    provider file's prices becomes a 500 on live traffic hours after the deploy that caused
+    it instead of a process that refuses to start. The same rule the key store and the
+    policy snapshot already follow."""
+    folder = tmp_path / "providers"
+    shutil.copytree(DEFAULT_PROVIDERS_DIR, folder)
+    path = folder / "anthropic.yaml"
+    path.write_text(path.read_text(encoding="utf-8").replace('"0.10"', '"-0.10"'), encoding="utf-8")
     settings = Settings(
-        api_keys=API_KEYS, routing_policy_path=SHIPPED_POLICY_PATH, prices_path=path
+        api_keys=API_KEYS, routing_policy_path=SHIPPED_POLICY_PATH, providers_dir=folder
     )
 
-    with pytest.raises(PriceTableInvalid):
+    with pytest.raises(PolicyInvalid):
         create_app(settings, NO_PROVIDER_KEYS)
 
 
 def test_the_price_store_is_built_over_the_configured_path(tmp_path: Path) -> None:
-    """Catches a factory that ignores `settings.prices_path` and hardcodes the shipped
-    file: every case above would still pass, and a deployment pointing at its own price
-    table would silently bill against ours. The key asserted here exists in no shipped
-    `prices.yaml`, so only a store built over this path can answer it. The shipped
-    rows come first because the app refuses a policy with an unpriced pair."""
-    path = tmp_path / "prices.yaml"
-    path.write_text(
-        DEFAULT_PRICES_PATH.read_text(encoding="utf-8") + "  someprovider/some-model:\n"
-        "    - effective_from: 2026-01-01\n"
-        '      input_usd_per_1m: "2.00"\n'
-        '      output_usd_per_1m: "9.00"\n',
+    """Catches a factory that ignores `settings.providers_dir` and hardcodes the shipped
+    folder: every case above would still pass, and a deployment pointing at its own
+    provider files would silently bill against ours. The key asserted here exists in no
+    shipped file, so only a store built over this folder can answer it."""
+    folder = tmp_path / "providers"
+    shutil.copytree(DEFAULT_PROVIDERS_DIR, folder)
+    (folder / "someprovider.yaml").write_text(
+        "provider: someprovider\n"
+        "kind: openai_compatible\n"
+        "base_url: http://someprovider.invalid/v1\n"
+        "models:\n"
+        "  some-model:\n"
+        "    prices:\n"
+        "      - effective_from: 2026-01-01\n"
+        '        input_usd_per_1m: "2.00"\n'
+        '        output_usd_per_1m: "9.00"\n',
         encoding="utf-8",
     )
     settings = Settings(
-        api_keys=API_KEYS, routing_policy_path=SHIPPED_POLICY_PATH, prices_path=path
+        api_keys=API_KEYS, routing_policy_path=SHIPPED_POLICY_PATH, providers_dir=folder
     )
 
     app = create_app(settings, NO_PROVIDER_KEYS)
@@ -1166,7 +1173,7 @@ def test_the_shipped_price_store_prices_the_key_the_chat_path_books_against(
     settings: Settings,
 ) -> None:
     """Catches the arrangement this whole file rests on going stale: if
-    `anthropic/claude-haiku-5-5` ever leaves `prices.yaml`, every cost above becomes
+    `anthropic/claude-haiku-5-5` ever leaves `anthropic.yaml`, every cost above becomes
     `0.000000` with `unpriced` beside it, and the equality cases would fail with no
     indication that the price table, and not the route, is what changed."""
     app = create_app(settings, NO_PROVIDER_KEYS)

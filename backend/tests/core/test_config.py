@@ -5,22 +5,23 @@ from __future__ import annotations
 import pytest
 
 from app.core.config import (
-    DEFAULT_PRICES_PATH,
+    DEFAULT_PROVIDERS_DIR,
     DEFAULT_ROUTING_POLICY_PATH,
     Settings,
 )
 
 
-def test_routing_and_prices_default_to_backend_config() -> None:
+def test_routing_and_providers_default_to_backend_config() -> None:
     """Both defaults resolve inside `backend/config/`, not a parent-folder climb."""
     for default, name in (
         (DEFAULT_ROUTING_POLICY_PATH, "routing.yaml"),
-        (DEFAULT_PRICES_PATH, "prices.yaml"),
+        (DEFAULT_PROVIDERS_DIR, "providers"),
     ):
         assert default.name == name
         assert default.parent.name == "config"
         assert default.parent.parent.name == "backend"
-        assert default.is_file()
+        assert default.exists()
+    assert DEFAULT_PROVIDERS_DIR.is_dir()
 
 
 ENV_CASES: list[tuple[str, str | None, str]] = [

@@ -1,6 +1,6 @@
 # The self-hosted versus API measurement run
 
-Four options, one set of conversation cases, one table. This directory holds the evidence: each
+Three options, one set of conversation cases, one table. This directory holds the evidence: each
 option's two report files under `reports/<option id>/`, the GPU host's capture
 under a dated directory, and `cost.json` once the spend has landed.
 
@@ -12,17 +12,16 @@ by `make tradeoff`.
 - `ANTHROPIC_API_KEY` in `.env`. The two API options play three small conversations each and
   bill a real account. Opus 5 on a few short turns is cents, not dollars, but it is
   not free.
-- The local stack's model on disk (`MODELS_DIR`), for the CPU option.
 - For the GPU option only: a Terraform Cloud workspace
   `ai-operations-console-aws-gpu` in local execution mode, an AWS G-instance vCPU
   quota of at least 4 in `eu-central-1`, and `infra/terraform/aws-gpu/terraform.tfvars`
   filled in. The instance bills by the hour from the moment apply finishes.
 - Nothing else on the machine holding ports 8080, 16379, 15432, 9091, 16333,
-  18082, 8083 or 8090. The four shifted ones are shifted precisely so the
-  companion Helpdesk stack, which publishes 6379, 5432, 6333 and 8082, can run at
+  8083 or 8090. The three shifted ones are shifted precisely so the
+  companion Helpdesk stack, which publishes 6379, 5432 and 6333, can run at
   the same time.
 
-## The four runs, in order
+## The three runs, in order
 
 Each option is measured on its own, with the harness torn down in between, so no
 option inherits another's warm cache or loaded model.
@@ -31,14 +30,11 @@ option inherits another's warm cache or loaded model.
 | --- | --- | --- |
 | `cheap-api` | anywhere | `make tradeoff-option OPTION=cheap-api TARGET=http://localhost:8090` |
 | `strong-api` | anywhere | `make tradeoff-option OPTION=strong-api TARGET=http://localhost:8090` |
-| `local-cpu` | the Hetzner CAX21 | `make tradeoff-option OPTION=local-cpu TARGET=http://localhost:8090` |
 | `gpu-vllm` | the AWS g5.xlarge, via `tradeoff-gpu` | `make tradeoff-gpu SHA=<published commit>` |
 
 The two API options may run anywhere: their cost comes from the ledger's own
-per-turn number and is hardware-independent. The CPU option may not. It is priced
-at the CAX21's hourly rate, so measuring its throughput anywhere faster would
-price ARM inference at another box's rate and publish a CPU option that looks
-better than the one this project actually runs.
+per-turn number and is hardware-independent. There is no local CPU option: chat
+runs on Anthropic and OpenAI only.
 
 `tradeoff-gpu` does the whole GPU half in one command: apply, deploy, wait for the
 weights and the rollout, measure, capture, destroy. The apply is interactive, and

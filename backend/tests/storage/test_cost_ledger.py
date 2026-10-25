@@ -77,6 +77,7 @@ from app.storage.cost_ledger import (
 Pool = ConnectionPool[Connection[TupleRow]]
 
 SHIPPED_POLICY_PATH = Path(__file__).resolve().parents[2] / "config" / "routing.yaml"
+SHIPPED_PROVIDERS_DIR = SHIPPED_POLICY_PATH.parent / "providers"
 """Resolved from this file, so the cases do not depend on pytest's directory."""
 
 # One fixed instant, with a time of day far from both midnights so a writer that
@@ -244,7 +245,7 @@ class RaisingWriter:
 @pytest.fixture(scope="module")
 def policy() -> Policy:
     """The shipped routing policy, loaded once."""
-    return load_policy(SHIPPED_POLICY_PATH)
+    return load_policy(SHIPPED_POLICY_PATH, SHIPPED_PROVIDERS_DIR)
 
 
 # --------------------------------------------------------------------------
@@ -620,7 +621,7 @@ def test_the_cost_is_priced_from_the_table_and_cannot_be_supplied_by_the_caller(
 
 def test_an_unpriced_key_is_recorded_as_zero_at_six_places_and_flagged_estimated() -> None:
     """The criterion's exact words, and the case that must never raise: a model added to
-    `routing.yaml` and not to `prices.yaml` is a normal Friday, and a `record_cost` that
+    `routing.yaml` and not to its provider file is a normal Friday, and a `record_cost` that
     raised there would take out the request as well as the row. Catches a row filed with
     no cost at all, or with a NULL price version, either of which makes the unpriced rows
     unfindable - the literal `unpriced` is what an operator greps for. The exponent is

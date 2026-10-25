@@ -2,7 +2,7 @@
 # up` on its own.
 #
 # An override over `docker-compose.yml`, under profile `tradeoff`, so the everyday
-# stack never starts the stub below. One harness measures all four options (plan
+# stack never starts the stub below. One harness measures all three options (plan
 # 27c decision B): the gateway is the real image, and the only thing that changes
 # between options is the routing policy mounted into it.
 #
@@ -17,13 +17,16 @@ services:
       # gateway that quietly loads the shipped `routing.yaml` instead - every
       # option would then measure the same three candidates.
       OPSCONSOLE_ROUTING_POLICY_PATH: /etc/opsconsole/routing.tradeoff.yaml
+      OPSCONSOLE_PROVIDERS_DIR: /etc/opsconsole/providers
       OPSCONSOLE_API_KEYS: ${OPSCONSOLE_API_KEYS}
     volumes:
       # The effective policy the run built for this option, read-only: the process
       # that is being measured cannot rewrite the definition of the measurement.
       - ${TRADEOFF_POLICY_FILE}:/etc/opsconsole/routing.tradeoff.yaml:ro
+      # And its provider folder: the shipped files plus the option's own.
+      - ${TRADEOFF_PROVIDERS_DIR}:/etc/opsconsole/providers:ro
     # The GPU option's provider is an SSH-forwarded NodePort on the host, so the
-    # container needs a name for the host it runs on. The other three options
+    # container needs a name for the host it runs on. The other two options
     # never resolve it.
     extra_hosts:
       - "host.docker.internal:host-gateway"

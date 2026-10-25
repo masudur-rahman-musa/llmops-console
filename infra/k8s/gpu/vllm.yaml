@@ -202,8 +202,8 @@ spec:
   type: ClusterIP
   selector:
     app.kubernetes.io/name: vllm
-  # The port `routing.yaml`'s `providers.vllm.base_url` dials, written out in
-  # both files so a test can compare them.
+  # The port vLLM serves on, for an in-cluster caller. No shipped provider file
+  # names `vllm`; the measurement run dials the NodePort below.
   ports:
     - name: http
       port: 8000
@@ -212,12 +212,12 @@ spec:
 # The same pod, reachable from the HOST the cluster runs on, for the measurement
 # run alone. The harness that measures every option is a
 # compose stack, so the gateway's container dials `host.docker.internal:30800`
-# and arrives here; `routing.yaml`'s in-cluster address does not resolve from
+# and arrives here; the in-cluster address does not resolve from
 # outside the cluster, and `kubectl port-forward` sources its traffic from the
 # node, which k3s's NetworkPolicy controller drops against a pod-selector rule.
 #
 # The port is written out in three places - here, the `vllm-ingress` policy's
-# ipBlock rule and `infra/tradeoff/gpu-vllm.yaml`'s `base_url` - and a
+# ipBlock rule and `infra/tradeoff/providers/vllm.yaml`'s `base_url` - and a
 # test compares them, because the drift is only visible if both files say the
 # value. The host lives about four hours and is destroyed
 # with the run; a design note records the widening.

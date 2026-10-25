@@ -41,11 +41,9 @@ configMapGenerator:
 generatorOptions:
   disableNameSuffixHash: true
 
-# `llama.yaml` and `llama-embed.yaml` are out while the local model is out of use
-# (2026-10-12): on a 2-CPU runner the chat weight never finished downloading and
-# the embedding weight was never fetched, so the run checks `smoke.sh`'s
-# model-free paths instead. To bring them back, re-add both files and
-# `llama-model-init-patch.yaml` (kept in this directory) as a patch on `llama`.
+# `llama-embed.yaml` is out (2026-10-12): on a 2-CPU runner the embedding weight
+# was never fetched, so the run checks `smoke.sh`'s model-free paths instead.
+# There is no local chat model at all.
 #
 # These patches fit the build onto one kind node on a 2-CPU runner, where
 # qdrant-0 sat Pending on "Insufficient cpu": one gateway and no HPA (the server

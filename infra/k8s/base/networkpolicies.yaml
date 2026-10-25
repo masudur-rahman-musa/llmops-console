@@ -20,11 +20,10 @@
 #
 # Ports are written by NAME wherever one policy protects pods that listen on
 # different numbers. A NetworkPolicy has one `podSelector` and its `ports` apply
-# to every pod that selector matches, so `llama-ingress` - one policy over llama
-# (8082) and llama-embed (8083) - cannot express "each on its own port" with a
-# literal. A named port resolves against each target pod's own container port,
-# and both pods call theirs `http`, so `port: http` is 8082 on one and 8083 on
-# the other. The same holds for `helpdesk-api-ingress` (8000 and 8081).
+# to every pod that selector matches, so `helpdesk-api-ingress` - one policy over
+# two pods listening on 8000 and 8081 - cannot express "each on its own port"
+# with a literal. A named port resolves against each target pod's own container
+# port.
 # `platform`'s policy is the exception and reads in numbers: its three targets
 # name their ports `postgres`, `redis` and `http`, so there is no shared name.
 #
@@ -121,8 +120,8 @@ spec:
 # is a conversation, not a widened rule.
 #
 # The in-cluster rules are separate so that the `ipBlock` rule carries exactly
-# one port. Written as one rule with four peers, the 443 allow would apply to
-# llama and the data services too.
+# one port. Written as one rule with several peers, the 443 allow would apply to
+# the embedding server and the data services too.
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -147,13 +146,6 @@ spec:
       ports:
         - protocol: TCP
           port: 443
-    - to:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: llama
-      ports:
-        - protocol: TCP
-          port: 8082
     - to:
         - podSelector:
             matchLabels:
@@ -264,7 +256,7 @@ spec:
           port: http
 
 # Prometheus scraping the help desk's own counters: the agent API on its `http`
-# port (8000) and the scheduler on its `metrics` port (8082). Named ports, and
+# port (8000) and the scheduler on its `metrics` port. Named ports, and
 # each pod carries only one of the two names, so this admits no other pairing.
 ---
 apiVersion: networking.k8s.io/v1
@@ -378,10 +370,10 @@ spec:
         - protocol: TCP
           port: 6333
 
-# The local models answer to the gateway and to nothing else. Without this, any
-# pod in `apps` could call the local model directly - no ledger row, no budget
+# The local embedding server answers to the gateway and to nothing else. Without
+# this, any pod in `apps` could call it directly - no ledger row, no budget
 # check, no trace - which is the same bypass a provider key in the Helpdesk
-# would be, one hop shorter.
+# would be, one hop shorter. There is no local chat model.
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -390,12 +382,8 @@ metadata:
   namespace: apps
 spec:
   podSelector:
-    matchExpressions:
-      - key: app.kubernetes.io/name
-        operator: In
-        values:
-          - llama
-          - llama-embed
+    matchLabels:
+      app.kubernetes.io/name: llama-embed
   policyTypes:
     - Ingress
   ingress:

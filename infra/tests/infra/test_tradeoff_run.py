@@ -1,4 +1,4 @@
-r"""`infra/scripts/tradeoff_run.sh` and the artefacts around it: the four-option measurement run.
+r"""`infra/scripts/tradeoff_run.sh` and the artefacts around it: the three-option measurement run.
 
 The run itself is a human action (a project rule: `terraform apply` against a real account, a GPU
 instance that bills by the hour), so what can be proven before it happens is the tooling, in
@@ -69,8 +69,8 @@ WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 #: A real-looking commit SHA: 40 lowercase hex, with letters so `.upper()` changes it.
 VALID_SHA = "3f9c2a7e1b4d6f8a0c2e4b6d8f0a1c3e5b7d9f1a"
 
-#: SPEC section 11's four options, in the order the manifest lists them.
-OPTION_IDS = ("cheap-api", "strong-api", "local-cpu", "gpu-vllm")
+#: SPEC section 11's three options, in the order the manifest lists them.
+OPTION_IDS = ("cheap-api", "strong-api", "gpu-vllm")
 
 #: The option every non-GPU case runs, and the target the stub is reached at.
 OPTION = "cheap-api"
@@ -101,11 +101,11 @@ CAPTURES = (
 
 #: The host ports `docker-compose.yml` publishes today (criterion 34, a project rule and 59).
 #: Asserted against the file as well, so this list cannot silently go stale. The backing
-#: services sit on shifted numbers - 15432, 16379, 16333, 18082 - so this stack and the
+#: services sit on shifted numbers - 15432, 16379, 16333 - so this stack and the
 #: companion Helpdesk stack can be up together; only the gateway's 8080 is stock, because that
 #: is the address the Helpdesk dials. The console's 3001 joined when it moved into compose; it
 #: clashes with no Helpdesk port.
-BASE_HOST_PORTS = frozenset({8080, 16379, 15432, 9091, 16333, 18082, 8083, 3001})
+BASE_HOST_PORTS = frozenset({8080, 16379, 15432, 9091, 16333, 8083, 3001})
 
 #: What the companion Helpdesk repository's own compose publishes. This stack may not hold any
 #: of them: one of the two would then fail at `up`, which is the whole reason for the shift.
@@ -119,6 +119,7 @@ STUB_BUILD_DIR = "backend/evals/target-stub"
 
 #: The environment variable the overlay points at the mounted effective policy (criterion 32).
 POLICY_ENV = "OPSCONSOLE_ROUTING_POLICY_PATH"
+PROVIDERS_ENV = "OPSCONSOLE_PROVIDERS_DIR"
 
 #: Criterion 61's three targets and the subcommand each must reach.
 MAKE_TARGETS = (
@@ -366,7 +367,7 @@ def flag(tokens: list[str], name: str) -> str | None:
 
 
 def policy_builds(run: Run) -> list[tuple[int, list[str]]]:
-    """Every `python3 infra/scripts/tradeoff_policy.py <id> <out>` call, in call order."""
+    """Every `python3 infra/scripts/tradeoff_policy.py <id> <out> <dir>` call, in call order."""
     return [
         (index, tokens)
         for index, tokens in calls(run, "python3")
@@ -861,9 +862,10 @@ def test_the_overlay_adds_exactly_the_stub_service() -> None:
 
 def test_the_overlay_mounts_the_effective_policy_read_only_and_points_the_gateway_at_it() -> None:
     """Criteria 32 and 33. Catches the policy mounted read-write (the gateway process could
-    rewrite the file the measurement is defined by), the mount and `OPSCONSOLE_ROUTING_POLICY_PATH`
-    naming different paths - the gateway then silently loads the shipped `routing.yaml` and every
-    option measures the same candidates - and `extra_hosts` left off, without which the GPU
+    rewrite the file the measurement is defined by), the mounts and
+    `OPSCONSOLE_ROUTING_POLICY_PATH` or `OPSCONSOLE_PROVIDERS_DIR` naming different paths - the
+    gateway then silently loads the shipped files and every option measures the same
+    candidates - and `extra_hosts` left off, without which the GPU
     option's `host.docker.internal` does not resolve and every turn fails to connect."""
     gateway = (load_yaml(COMPOSE_OVERLAY).get("services") or {}).get("gateway") or {}
     environment = gateway.get("environment") or {}
@@ -874,10 +876,14 @@ def test_the_overlay_mounts_the_effective_policy_read_only_and_points_the_gatewa
     mounts = [str(entry) for entry in gateway.get("volumes") or []]
     read_only = [entry for entry in mounts if entry.endswith(":ro")]
     target = str(environment.get(POLICY_ENV, ""))
+    providers = str(environment.get(PROVIDERS_ENV, ""))
 
     assert target, f"{POLICY_ENV} is not set on the gateway"
-    assert len(read_only) == len(mounts) == 1, f"gateway volumes: {mounts}"
-    assert read_only[0].split(":")[1] == target, f"{read_only[0]} does not mount {target}"
+    assert providers, f"{PROVIDERS_ENV} is not set on the gateway"
+    assert len(read_only) == len(mounts) == 2, f"gateway volumes: {mounts}"
+    assert sorted(entry.split(":")[1] for entry in read_only) == sorted([target, providers]), (
+        f"{read_only} do not mount {target} and {providers}"
+    )
     assert "host.docker.internal:host-gateway" in [
         str(entry) for entry in gateway.get("extra_hosts") or []
     ], f"extra_hosts: {gateway.get('extra_hosts')}"
@@ -908,12 +914,12 @@ def test_the_overlay_publishes_no_port_the_base_stack_already_publishes() -> Non
 # The manifest, the Makefile, the workflows and the two READMEs
 
 
-def test_the_manifest_names_the_four_options_in_order_against_the_stand_in_set() -> None:
+def test_the_manifest_names_the_three_options_in_order_against_the_stand_in_set() -> None:
     """Criteria 58 and 59, and a project rule's spirit about published numbers. Catches the
     example manifest copied across with its `helpdesk-golden-v1.jsonl` set name (decision E: the
     Helpdesk set does not exist yet), the options reordered so the table's rows do not match
     SPEC section 11, an absolute report path or one resolving outside the repository,
-    and above all either self-hosted option keeping the example's `0.0100` placeholder - a
+    and above all the self-hosted option keeping the example's `0.0100` placeholder - a
     fabricated hourly rate produces a fabricated USD per 1,000 turns, which is the one number
     the whole table exists to publish.
 
@@ -933,7 +939,7 @@ def test_the_manifest_names_the_four_options_in_order_against_the_stand_in_set()
         assert resolved.is_relative_to(REPO_ROOT), report
         assert Path(report).name == "report.json", report
     self_hosted = [option for option in options if option["kind"] == "self_hosted"]
-    assert len(self_hosted) == 2, [option["id"] for option in self_hosted]
+    assert len(self_hosted) == 1, [option["id"] for option in self_hosted]
     for option in self_hosted:
         assert str(option["hourly_usd"]) != PLACEHOLDER_HOURLY, f"{option['id']} keeps the example"
         assert NOTE_DATE.search(str(option["notes"])) is not None, option["notes"]

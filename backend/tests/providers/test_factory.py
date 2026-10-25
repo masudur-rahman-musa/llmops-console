@@ -14,6 +14,7 @@ key and the `enabled` check could be deleted with the test still passing.
 from __future__ import annotations
 
 import logging
+import shutil
 from pathlib import Path
 
 import httpx
@@ -716,23 +717,43 @@ def test_exactly_the_usable_azure_providers_are_built() -> None:
 # The policy file the product ships with, resolved from this file so the test does
 # not depend on the working directory pytest was started from.
 SHIPPED_POLICY_PATH = Path(__file__).resolve().parents[2] / "config" / "routing.yaml"
+SHIPPED_PROVIDERS_DIR = SHIPPED_POLICY_PATH.parent / "providers"
 
 
-def test_the_shipped_azure_provider_is_disabled_and_builds_nothing(
-    caplog: pytest.LogCaptureFixture,
+AZURE_PROVIDER_FILE = """\
+provider: azure
+kind: azure_openai
+endpoint_env: AZURE_OPENAI_ENDPOINT
+key_env: AZURE_OPENAI_KEY
+enabled: false
+models:
+  gpt-5-mini:
+    prices:
+      - effective_from: 2025-08-07
+        input_usd_per_1m: "0.25"
+        output_usd_per_1m: "2.00"
+"""
+"""The file `docs/azure.md` tells an operator to drop in, switched off. The shipped
+folder carries no Azure file, so the case brings its own."""
+
+
+def test_a_disabled_azure_provider_file_builds_nothing(
+    caplog: pytest.LogCaptureFixture, tmp_path: Path
 ) -> None:
-    """Catches an azure branch that ignores `enabled` - the shipped `azure_eu` row would
-    then become a live adapter the moment an operator exported the two variables for
-    something else, against a resource nobody has reviewed - and catches a branch that
-    warns about a deliberate `enabled: false`, which trains operators to ignore the
-    warning that matters.
+    """Catches an azure branch that ignores `enabled` - a dropped-in `azure.yaml` with
+    `enabled: false` would then become a live adapter the moment an operator exported
+    the two variables for something else, against a resource nobody has reviewed - and
+    catches a branch that warns about a deliberate `enabled: false`, which trains
+    operators to ignore the warning that matters.
 
     Both variables are set in the injected environment on purpose: without them "absent"
     would be explained by a missing credential and the `enabled` check could be deleted
-    with this test still green. The two assertions on the row itself keep the case honest
-    if `routing.yaml` ever loses it."""
-    policy = load_policy(SHIPPED_POLICY_PATH)
-    shipped = policy.providers["azure_eu"]
+    with this test still green."""
+    folder = tmp_path / "providers"
+    shutil.copytree(SHIPPED_PROVIDERS_DIR, folder)
+    (folder / "azure.yaml").write_text(AZURE_PROVIDER_FILE, encoding="utf-8")
+    policy = load_policy(SHIPPED_POLICY_PATH, folder)
+    shipped = policy.providers["azure"]
     assert shipped.kind is ProviderKind.AZURE_OPENAI
     assert shipped.enabled is False
 
@@ -743,7 +764,7 @@ def test_the_shipped_azure_provider_is_disabled_and_builds_nothing(
     with caplog.at_level(logging.WARNING):
         adapters = build_adapters(policy, environ)
 
-    assert "azure_eu" not in adapters
+    assert "azure" not in adapters
     assert [
         record.getMessage() for record in caplog.records if "azure" in record.getMessage().lower()
     ] == []

@@ -350,7 +350,7 @@ def create_app(
     `app.api.deps` rather than off `app.state`.
 
     The price table is built here for the reason the key store and the policy are:
-    a malformed `prices.yaml` stops the process from starting rather than
+    a bad provider file stops the process from starting rather than
     surfacing on a live request that then cannot be priced. It opens no socket,
     which is why it stays here while the connection-backed stores move.
 
@@ -378,11 +378,11 @@ def create_app(
     app.state.settings = resolved
     app.state.probes = ProbeRegistry()
     app.state.key_store = SettingsKeyStore(resolved.api_keys)
-    app.state.policy = PolicyStore(resolved.routing_policy_path)
+    app.state.policy = PolicyStore(resolved.routing_policy_path, resolved.providers_dir)
     app.state.provider_environ = os.environ if environ is None else environ
     app.state.adapters = build_adapters(app.state.policy.policy, app.state.provider_environ)
     app.state.breaker = CircuitBreaker()
-    app.state.prices = PriceStore(resolved.prices_path)
+    app.state.prices = PriceStore(resolved.providers_dir)
     check_policy_models_priced(app.state.policy.policy, app.state.prices.table)
     app.state.provider_limiter = build_provider_limiter()
     routing_store = RoutingRuntimeStore(app.state)

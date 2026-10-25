@@ -5,7 +5,7 @@
 # semantic cache off.
 #
 # The alias narrowed is still `agent-default`, not `agent-strong`: the table
-# compares one alias resolved four ways, so the option that changes is the model
+# compares one alias resolved three ways, so the option that changes is the model
 # behind it and never the name the stub asks for.
 aliases:
   agent-default:

@@ -1,0 +1,15 @@
+# The load run's embedding provider: the same file as the shipped
+# `backend/config/providers/local_embed.yaml`, pointed at the fixed-delay mock in
+# `infra/load/mock-provider/` instead of the llama.cpp server.
+
+provider: local_embed
+kind: openai_compatible
+base_url: http://mock-provider:8090/v1
+enabled: true
+
+models:
+  bge-small-en-v1.5:
+    prices:
+      - effective_from: 2025-01-01
+        input_usd_per_1m: "0.0"
+        output_usd_per_1m: "0.0"

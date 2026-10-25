@@ -12,7 +12,13 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 def test_the_old_tree_is_gone() -> None:
     """Catches a move that copied files forward but left the originals behind."""
-    for old in ("packages", "services/gateway/main.py", "routing.yaml", "prices.yaml"):
+    for old in (
+        "packages",
+        "services/gateway/main.py",
+        "routing.yaml",
+        "prices.yaml",
+        "backend/config/prices.yaml",
+    ):
         assert not (REPO_ROOT / old).exists(), f"old path still present: {old}"
 
 

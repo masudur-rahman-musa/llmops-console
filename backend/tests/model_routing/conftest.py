@@ -32,6 +32,7 @@ from app.model_routing.policy import (
 # The policy file the product ships with, resolved from this file so the tests
 # do not depend on the working directory pytest was started from.
 SHIPPED_POLICY_PATH = Path(__file__).resolve().parents[2] / "config" / "routing.yaml"
+SHIPPED_PROVIDERS_DIR = SHIPPED_POLICY_PATH.parent / "providers"
 
 
 class PolicyWriter(Protocol):
@@ -40,21 +41,72 @@ class PolicyWriter(Protocol):
     def __call__(self, document: str | Mapping[str, object], name: str = ...) -> Path: ...
 
 
+PLACEHOLDER_MODEL: dict[str, object] = {
+    "placeholder-model": {
+        "prices": [
+            {"effective_from": "2025-01-01", "input_usd_per_1m": "0", "output_usd_per_1m": "0"}
+        ]
+    }
+}
+"""The one model each split-out provider file carries: a file needs at least one."""
+
+
+def providers_dir_of(path: Path) -> Path:
+    """The provider folder `policy_file` writes beside a routing file."""
+    return path.parent / "providers"
+
+
+def _split_providers(document: object, folder: Path) -> object:
+    """Move a `providers:` block out into one file per provider, as the gateway wants.
+
+    The cases here were written with providers inline; the folder is where they
+    live now. A document with no such block leaves the folder holding one plain
+    provider, so the folder is never what fails.
+    """
+    folder.mkdir(exist_ok=True)
+    providers: object = None
+    if isinstance(document, dict) and isinstance(document.get("providers"), dict):
+        document = dict(document)
+        providers = document.pop("providers")
+    if not isinstance(providers, dict):
+        providers = {"a": {"kind": "anthropic"}}
+    for name, body in providers.items():
+        file = {"provider": name, **(body if isinstance(body, dict) else {})}
+        file.setdefault("models", PLACEHOLDER_MODEL)
+        (folder / f"{name}.yaml").write_text(
+            yaml.safe_dump(file, sort_keys=False), encoding="utf-8"
+        )
+    return document
+
+
 @pytest.fixture
 def policy_file(tmp_path: Path) -> PolicyWriter:
     """Write a policy file, either as raw text or as a document to be dumped.
 
     Raw text is needed for the documents that must never reach the schema at
-    all: broken YAML and a python object tag.
+    all: broken YAML and a python object tag. A `providers:` block is split out
+    into `providers_dir_of(path)`; text that does not parse is written as is.
     """
 
     def write(document: str | Mapping[str, object], name: str = "routing.yaml") -> Path:
-        if isinstance(document, str):
-            text = document
-        else:
-            text = yaml.safe_dump(dict(document), sort_keys=False)
         path = tmp_path / name
-        path.write_text(text, encoding="utf-8")
+        folder = providers_dir_of(path)
+        parsed: object
+        if isinstance(document, str):
+            try:
+                parsed = yaml.safe_load(document)
+            except yaml.YAMLError:
+                _split_providers(None, folder)
+                path.write_text(document, encoding="utf-8")
+                return path
+            if not (isinstance(parsed, dict) and "providers" in parsed):
+                _split_providers(None, folder)
+                path.write_text(document, encoding="utf-8")
+                return path
+        else:
+            parsed = dict(document)
+        routing = _split_providers(parsed, folder)
+        path.write_text(yaml.safe_dump(routing, sort_keys=False), encoding="utf-8")
         return path
 
     return write

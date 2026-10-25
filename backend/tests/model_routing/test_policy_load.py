@@ -16,14 +16,20 @@ import pytest
 from app.model_routing.errors import PolicyInvalid
 from app.model_routing.policy import PolicyStore, RateLimit, load_policy
 
-from .conftest import SHIPPED_POLICY_PATH, DocFactory, PolicyWriter
+from .conftest import (
+    SHIPPED_POLICY_PATH,
+    SHIPPED_PROVIDERS_DIR,
+    DocFactory,
+    PolicyWriter,
+    providers_dir_of,
+)
 
 
 def test_policy_loads_shipped_file() -> None:
     """The file the product ships with is itself a test case."""
     assert SHIPPED_POLICY_PATH.exists()
 
-    policy = load_policy(SHIPPED_POLICY_PATH)
+    policy = load_policy(SHIPPED_POLICY_PATH, SHIPPED_PROVIDERS_DIR)
 
     assert len(policy.providers) >= 1
     assert len(policy.aliases) >= 1
@@ -56,7 +62,7 @@ def test_only_agent_default_carries_the_semantic_cache_switch() -> None:
     file is what a deployment runs, and stated as an exhaustive pair (the one that is on,
     every other one off) so that a later alias added with the switch on cannot slip in
     behind a check that only names today's aliases (#23, "off by default per alias")."""
-    policy = load_policy(SHIPPED_POLICY_PATH)
+    policy = load_policy(SHIPPED_POLICY_PATH, SHIPPED_PROVIDERS_DIR)
 
     enabled = {name for name, alias in policy.aliases.items() if alias.semantic_cache}
 
@@ -70,7 +76,7 @@ def test_an_alias_that_omits_the_semantic_switch_is_off(policy_file: PolicyWrite
     the opposite of what "off by default per alias" means."""
     path = policy_file(ALIAS_WITHOUT_THE_SWITCH)
 
-    policy = load_policy(path)
+    policy = load_policy(path, providers_dir_of(path))
 
     assert policy.aliases["chat"].semantic_cache is False
 
@@ -158,7 +164,7 @@ INVALID_CASES: list[tuple[str, str, str]] = [
         UNKNOWN_PROVIDER_IN_OVERRIDE,
         "tenants.acme.overrides.chat[0].provider",
     ),
-    ("provider has no kind", PROVIDER_WITHOUT_KIND, "providers.a.kind"),
+    ("provider has no kind", PROVIDER_WITHOUT_KIND, "a.yaml"),
     ("top level key missing", MISSING_TOP_LEVEL_KEY, "tenants"),
 ]
 
@@ -172,7 +178,7 @@ def test_invalid_policy_names_the_field(
     path = policy_file(document)
 
     with pytest.raises(PolicyInvalid) as excinfo:
-        load_policy(path)
+        load_policy(path, providers_dir_of(path))
 
     assert field in str(excinfo.value)
 
@@ -192,7 +198,7 @@ def test_non_mapping_or_broken_document_is_rejected(
     path = policy_file(document)
 
     with pytest.raises(PolicyInvalid):
-        load_policy(path)
+        load_policy(path, providers_dir_of(path))
 
 
 def test_safe_load_only(policy_file: PolicyWriter, tmp_path: Path) -> None:
@@ -210,27 +216,27 @@ tenants: {{}}
     path = policy_file(document)
 
     with pytest.raises(PolicyInvalid):
-        load_policy(path)
+        load_policy(path, providers_dir_of(path))
 
     assert not marker.exists()
 
 
 def test_missing_file_is_policy_invalid(tmp_path: Path) -> None:
     with pytest.raises(PolicyInvalid):
-        load_policy(tmp_path / "does-not-exist.yaml")
+        load_policy(tmp_path / "does-not-exist.yaml", SHIPPED_PROVIDERS_DIR)
 
 
 def test_store_rejects_a_bad_file_at_construction(policy_file: PolicyWriter) -> None:
     path = policy_file(PROVIDER_WITHOUT_KIND)
 
     with pytest.raises(PolicyInvalid):
-        PolicyStore(path)
+        PolicyStore(path, providers_dir_of(path))
 
 
 def test_reload_swaps_snapshot(policy_file: PolicyWriter, valid_doc: DocFactory) -> None:
     """The swap is atomic: the snapshot a caller already holds never mutates."""
     path = policy_file(valid_doc(rpm=60))
-    store = PolicyStore(path)
+    store = PolicyStore(path, providers_dir_of(path))
     before = store.policy
     assert before.tenants["acme"].rate_limit.rpm == 60
 
@@ -252,7 +258,7 @@ def test_failed_reload_keeps_previous_policy(
     policy_file: PolicyWriter, valid_doc: DocFactory
 ) -> None:
     path = policy_file(valid_doc(rpm=60))
-    store = PolicyStore(path)
+    store = PolicyStore(path, providers_dir_of(path))
     before = store.policy
 
     path.write_text("providers: [oops\n  - :::\n", encoding="utf-8")
@@ -319,7 +325,7 @@ def test_a_zero_rate_limit_is_refused_at_load(
     path = policy_file(rate_limited_policy(rpm=rpm, tpm=tpm))
 
     with pytest.raises(PolicyInvalid) as excinfo:
-        load_policy(path)
+        load_policy(path, providers_dir_of(path))
 
     assert field in str(excinfo.value)
 

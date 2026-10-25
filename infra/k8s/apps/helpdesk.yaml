@@ -1,7 +1,7 @@
 # The four Helpdesk workloads: the companion repo's agent API, its MCP tool
 # server, its scheduler and its web front end. They are CLIENTS of the gateway
 # in `gateway.yaml`, not providers of it, so nothing here touches `routing.yaml`
-# or `prices.yaml` - the Helpdesk reaches this cluster's models the same way any
+# or the provider files - the Helpdesk reaches this cluster's models the same way any
 # other caller does, over `GATEWAY_URL`.
 #
 # All four are written INTO the `Helpdesk reserve, 3 pods` envelope
@@ -133,7 +133,7 @@ spec:
   resources:
     requests:
       storage: 256Mi
-  # `storageClassName` is deliberately absent, the same reason `llama.yaml`'s
+  # `storageClassName` is deliberately absent, the same reason `llama-embed.yaml`'s
   # claim omits it: k3s defaults to `local-path` and EKS to `gp2`, so one build
   # deploys to both without leaving a Pending claim on a class that is not there.
 ---

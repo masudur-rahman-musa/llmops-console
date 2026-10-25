@@ -1,4 +1,4 @@
-# The gateway, the two llama.cpp servers, the four Helpdesk workloads and the
+# The gateway, the llama.cpp embedding server, the four Helpdesk workloads and the
 # four public routers - the `api.` pair and the `helpdesk.` pair, both in
 # `ingress.yaml` - and the console with its three `console.` routers, in
 # `console.yaml`.
@@ -11,7 +11,6 @@ kind: Kustomization
 
 resources:
   - gateway.yaml
-  - llama.yaml
   - llama-embed.yaml
   - helpdesk.yaml
   - console.yaml
@@ -28,8 +27,8 @@ resources:
 # A `latest` or a `main` here would be a cluster whose running code no commit
 # names, and a rollout that changes meaning with no diff to show for it.
 #
-# Both llama.cpp pods write the bare name `llama` and share the one entry below,
-# which is pinned to an exact upstream build for the same reason, and
+# The llama.cpp embedding pod writes the bare name `llama` and uses the entry
+# below, which is pinned to an exact upstream build for the same reason, and
 # `docker-compose.yml` names the same one so the two stacks run the same server.
 # Upstream's `server` tag floats: it is whatever the last build published, so a
 # cluster on it runs code no commit here names. `server-b10902` was resolved

@@ -27,27 +27,40 @@ CI never needs a live Azure key.
 
 ## It ships disabled
 
-The shipped provider row in `backend/config/routing.yaml` is `azure_eu`, and it carries
-`enabled: false`. The factory builds no Azure adapter from it, which is pinned
-by `test_the_shipped_azure_provider_is_disabled_and_builds_nothing` in
-`backend/tests/providers/test_factory.py`.
+Azure ships disabled: the shipped folder `backend/config/providers/` has no
+Azure file, so the gateway builds no Azure adapter. A file with `enabled: false` builds none
+either, which is pinned by `test_a_disabled_azure_provider_file_builds_nothing`
+in `backend/tests/providers/test_factory.py`.
 
 ## Enabling it is a configuration change
 
-Turning that row on is the whole of enabling Azure. No code change is needed,
-and none lands here.
+Dropping in one provider file is the whole of enabling Azure. No code change is
+needed, and none lands here. Add a file `azure.yaml` to `backend/config/providers/`:
 
-An operator sets `enabled: true` on the `azure_eu` row in `backend/config/routing.yaml` and
-supplies two values in the environment the gateway is handed:
+    provider: azure
+    kind: azure_openai
+    endpoint_env: AZURE_OPENAI_ENDPOINT
+    key_env: AZURE_OPENAI_KEY
+    enabled: true
+    models:
+      # the DEPLOYMENT name on your resource, not a vendor model id
+      gpt-5-mini:
+        prices:
+          - effective_from: 2025-08-07
+            input_usd_per_1m: "0.25"
+            output_usd_per_1m: "2.00"
+
+Then name it in an alias in `backend/config/routing.yaml`, and supply two
+values in the environment the gateway is handed:
 
 | Variable | What it holds |
 |---|---|
-| `AZURE_OPENAI_ENDPOINT` | the resource's base URL, named by the row's `endpoint_env` |
-| `AZURE_OPENAI_KEY` | the resource key, named by the row's `key_env` |
+| `AZURE_OPENAI_ENDPOINT` | the resource's base URL, named by the file's `endpoint_env` |
+| `AZURE_OPENAI_KEY` | the resource key, named by the file's `key_env` |
 | `AZURE_OPENAI_API_VERSION` | optional; overrides the pinned `api-version` default |
 
-An Azure row needs both the endpoint and the key, and neither has a default. A
-row missing either is dropped with a warning rather than built half-configured,
+An Azure provider needs both the endpoint and the key, and neither has a default. A
+provider missing either is dropped with a warning rather than built half-configured,
 so a misconfigured resource never becomes a candidate the resolver can pick.
 
 The `api-version` is pinned in the adapter rather than tracked, because the

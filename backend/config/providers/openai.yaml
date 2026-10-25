@@ -1,0 +1,24 @@
+# OpenAI: the fallback for every chat alias. When Anthropic does not answer,
+# the gateway asks OpenAI.
+#
+# Same shape as `anthropic.yaml`. The prices are the list prices published when
+# these models came out, typed by hand; check them against OpenAI's price page and
+# re-price by appending a row.
+
+provider: openai
+kind: openai
+base_url: https://api.openai.com/v1
+key_env: OPENAI_API_KEY
+enabled: true
+
+models:
+  gpt-5-mini:
+    prices:
+      - effective_from: 2025-08-07
+        input_usd_per_1m: "0.25"
+        output_usd_per_1m: "2.00"
+  gpt-5:
+    prices:
+      - effective_from: 2025-08-07
+        input_usd_per_1m: "1.25"
+        output_usd_per_1m: "10.00"

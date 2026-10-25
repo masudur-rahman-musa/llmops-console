@@ -1,0 +1,18 @@
+# The local embedding server: one llama.cpp process serving one embedding model.
+# It is the only provider for the `embed` alias. A second embedding model would
+# write vectors in a different space and break search over stored ones.
+#
+# It needs no key, so it names no `key_env`. Its price is zero because we host
+# it ourselves: what it really costs is machine hours, measured elsewhere.
+
+provider: local_embed
+kind: openai_compatible
+base_url: http://llama-embed:8083/v1
+enabled: true
+
+models:
+  bge-small-en-v1.5:
+    prices:
+      - effective_from: 2025-01-01
+        input_usd_per_1m: "0.0"
+        output_usd_per_1m: "0.0"

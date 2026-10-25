@@ -92,6 +92,8 @@ manifest = {
         "OPSCONSOLE_API_KEYS": "evals:" + digest(os.environ["TENANT_KEY"]),
         "OPSCONSOLE_ADMIN_KEY_SHA256": digest(secrets.token_urlsafe(32)),
         "OPSCONSOLE_BUDGET_OVERRIDE_SECRET": secrets.token_urlsafe(32),
+        # The smoke chat turn goes to Anthropic: there is no local chat model.
+        "ANTHROPIC_API_KEY": os.environ["ANTHROPIC_API_KEY"],
     },
 }
 json.dump(manifest, sys.stdout)
@@ -143,6 +145,8 @@ output_value() {
 cmd_run() {
   local sha=$1
   [[ $sha =~ $SHA_PATTERN ]] || die "the sha must be 40 lowercase hex characters"
+  # Checked before apply, so a missing key never costs a cluster.
+  [ -n "${ANTHROPIC_API_KEY:-}" ] || die "export ANTHROPIC_API_KEY first: the smoke chat turn goes to Anthropic"
 
   local evidence_dir
   evidence_dir="$EVIDENCE_ROOT/$(date -u +%Y-%m-%d)"
@@ -192,8 +196,6 @@ cmd_run() {
 
   kubectl -n platform rollout status statefulset/qdrant --timeout=10m
   kubectl -n apps rollout status deployment/gateway --timeout=10m
-  # The model fetch is about 2 GB before llama.cpp loads it.
-  kubectl -n apps rollout status deployment/llama --timeout=30m
 
   # Creates the ledger tables in RDS, so the smoke's turn lands a row there.
   kubectl -n apps exec deployment/gateway -- ops-migrate

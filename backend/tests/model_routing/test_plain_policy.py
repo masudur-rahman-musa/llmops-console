@@ -9,6 +9,7 @@ policy built straight from the models.
 from __future__ import annotations
 
 import re
+import shutil
 from collections.abc import Callable
 from decimal import Decimal
 from pathlib import Path
@@ -33,7 +34,7 @@ from app.model_routing.policy import (
 )
 from app.model_routing.resolver import resolve
 
-from .conftest import SHIPPED_POLICY_PATH
+from .conftest import SHIPPED_POLICY_PATH, SHIPPED_PROVIDERS_DIR
 
 REMOVED_KEYS = ("region", "residency", "eu_regions", "allow_regions")
 REDACTED_CLASSES = {DataClass.CONFIDENTIAL, DataClass.PII}
@@ -54,7 +55,7 @@ def test_every_tenant_alias_and_data_class_resolves() -> None:
     """Catches a policy rewritten plain but left with a candidate list that is empty or all
     disabled for some triple: the old file made demo tenants fail with a 451, and the point
     of removing the rule is that no triple in the shipped file is refused any more."""
-    policy = load_policy(SHIPPED_POLICY_PATH)
+    policy = load_policy(SHIPPED_POLICY_PATH, SHIPPED_PROVIDERS_DIR)
     checked = 0
 
     for tenant in policy.tenants:
@@ -68,26 +69,29 @@ def test_every_tenant_alias_and_data_class_resolves() -> None:
     assert checked > 0
 
 
-# Where each removed key lives in the document, so the key is added back in the one
-# place the old schema read it.
-def _add_region(document: dict[str, Any]) -> None:
-    next(iter(document["providers"].values()))["region"] = "eu"
+# Where each removed key lives, so the key is added back in the one place the old
+# schema read it. A provider's `region` now goes in that provider's own file.
+def _add_region(document: dict[str, Any], folder: Path) -> None:
+    path = folder / "anthropic.yaml"
+    provider = yaml.safe_load(path.read_text(encoding="utf-8"))
+    provider["region"] = "eu"
+    path.write_text(yaml.safe_dump(provider, sort_keys=False), encoding="utf-8")
 
 
-def _add_residency(document: dict[str, Any]) -> None:
+def _add_residency(document: dict[str, Any], folder: Path) -> None:
     next(iter(document["tenants"].values()))["residency"] = "eu"
 
 
-def _add_eu_regions(document: dict[str, Any]) -> None:
+def _add_eu_regions(document: dict[str, Any], folder: Path) -> None:
     document["eu_regions"] = ["eu", "self"]
 
 
-def _add_allow_regions(document: dict[str, Any]) -> None:
+def _add_allow_regions(document: dict[str, Any], folder: Path) -> None:
     tenant = next(iter(document["tenants"].values()))
     next(iter(tenant["data_class_rules"].values()))["allow_regions"] = ["eu"]
 
 
-ADDERS: dict[str, Callable[[dict[str, Any]], None]] = {
+ADDERS: dict[str, Callable[[dict[str, Any], Path], None]] = {
     "region": _add_region,
     "residency": _add_residency,
     "eu_regions": _add_eu_regions,
@@ -104,16 +108,18 @@ def test_a_removed_key_is_refused_by_name(key: str, tmp_path: Path) -> None:
     document = yaml.safe_load(SHIPPED_POLICY_PATH.read_text(encoding="utf-8"))
     for stale in REMOVED_KEYS:  # strip whatever the file still carries, then add back one
         _strip(document, stale)
+    folder = tmp_path / "providers"
+    shutil.copytree(SHIPPED_PROVIDERS_DIR, folder)
     clean = tmp_path / "clean.yaml"
     clean.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-    load_policy(clean)
+    load_policy(clean, folder)
 
-    ADDERS[key](document)
+    ADDERS[key](document, folder)
     dirty = tmp_path / "dirty.yaml"
     dirty.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
 
     with pytest.raises(PolicyInvalid, match=re.escape(key)):
-        load_policy(dirty)
+        load_policy(dirty, folder)
 
 
 def _strip(node: object, key: str) -> None:
@@ -175,7 +181,7 @@ def test_a_rule_holds_only_redact(tenant: str) -> None:
     `public` and `internal` do not, for every shipped tenant."""
     assert set(DataClassRule.model_fields) == {"redact"}
 
-    rules = load_policy(SHIPPED_POLICY_PATH).tenants[tenant].data_class_rules
+    rules = load_policy(SHIPPED_POLICY_PATH, SHIPPED_PROVIDERS_DIR).tenants[tenant].data_class_rules
 
     assert set(rules) == set(DataClass)
     for data_class, rule in rules.items():

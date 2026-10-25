@@ -1,0 +1,26 @@
+# The `vllm` provider for the one-off GPU measurement (option `gpu-vllm`).
+#
+# Not in `backend/config/providers/`: the live system never depends on a host that
+# exists for four hours. `infra/scripts/tradeoff_policy.py` adds this file to the
+# option's provider folder only when the option's policy names `vllm`.
+#
+# The measurement harness is a compose stack ON the GPU host, so the gateway's
+# container reaches the model server through the node's own NodePort. The port is
+# `infra/k8s/gpu/vllm.yaml`'s `vllm-node` Service, written out in both files so a
+# test can compare them, and `host.docker.internal` resolves
+# because `infra/tradeoff/compose.yml` gives the gateway `extra_hosts`.
+#
+# Self-hosted, so the price is zero: what it really costs is the instance hours,
+# which the run measures.
+
+provider: vllm
+kind: openai_compatible
+base_url: http://host.docker.internal:30800/v1
+enabled: true
+
+models:
+  qwen2.5-7b-instruct:
+    prices:
+      - effective_from: 2025-01-01
+        input_usd_per_1m: "0.0"
+        output_usd_per_1m: "0.0"

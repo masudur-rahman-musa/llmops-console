@@ -32,28 +32,13 @@ resources:
   - ../base
   - ../platform/qdrant.yaml
   - ../apps/gateway.yaml
-  - ../apps/llama.yaml
   - ../apps/llama-embed.yaml
   - backups-sa.yaml
 
 patches:
-  # The kind overlay's model fetch, reused by path so a fix there reaches this run.
-  # Read against EKS: it downloads from Hugging Face over the NAT gateway, verifies
-  # the sha256, and writes into the `models` volume, which is an emptyDir here.
-  - path: ../../../infra/k8s/kind/llama-model-init-patch.yaml
-    target:
-      kind: Deployment
-      name: llama
   - path: emptydir-patch.yaml
-  # The llama claims the emptyDir swaps leave unmounted. One inline patch each: kustomize
+  # The llama-embed claim the emptyDir swap leaves unmounted. An inline patch: kustomize
   # 5.5.0 panics on a patch file holding a delete followed by any other document.
-  - patch: |-
-      apiVersion: v1
-      kind: PersistentVolumeClaim
-      metadata:
-        name: llama-models
-        namespace: apps
-      $patch: delete
   - patch: |-
       apiVersion: v1
       kind: PersistentVolumeClaim

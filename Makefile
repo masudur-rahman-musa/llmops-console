@@ -249,7 +249,7 @@ k8s-check:  ## Build the kustomization and validate it against the schemas (no a
 	kustomize build infra/k8s | kubeconform -strict -summary -schema-location default -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
 # The AWS evidence overlay, with the same kubeconform flags as `k8s-check`. The
 # relaxed load restrictor is needed because the overlay reuses files outside its
-# own directory, the kind llama patch among them.
+# own directory.
 k8s-aws-check: ## Build the AWS evidence overlay and validate it (no apply)
 	kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/aws | kubeconform -strict -summary -schema-location default -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
 # the node's build, with the same kubeconform flags as

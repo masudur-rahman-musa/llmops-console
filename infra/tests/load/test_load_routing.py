@@ -16,30 +16,31 @@ from app.model_routing.policy import Policy, load_policy
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 LOAD_POLICY = REPO_ROOT / "infra" / "load" / "routing.load.yaml"
+LOAD_PROVIDERS = REPO_ROOT / "infra" / "load" / "providers"
 
 MOCK_BASE_URL = "http://mock-provider:8090/v1"
 
 
 @pytest.fixture(scope="module")
 def policy() -> Policy:
-    return load_policy(LOAD_POLICY)
+    return load_policy(LOAD_POLICY, LOAD_PROVIDERS)
 
 
 def test_the_load_policy_is_a_whole_document_that_loads() -> None:
     """Criterion 5: catches a partial overlay in the style of `routing.ci.yaml`,
     which `load_policy` refuses because `providers`, `aliases` or `tenants` is
     missing."""
-    load_policy(LOAD_POLICY)
+    load_policy(LOAD_POLICY, LOAD_PROVIDERS)
 
 
 def test_only_the_two_mock_backed_providers_are_enabled(policy: Policy) -> None:
     """Criterion 6: catches a real provider (anthropic, openai) left enabled, which
     would put paid or unreachable traffic in the load run."""
     enabled = {name for name, provider in policy.providers.items() if provider.enabled}
-    assert enabled == {"local", "local_embed"}
+    assert enabled == {"mock_chat", "local_embed"}
 
 
-@pytest.mark.parametrize("provider", ["local", "local_embed"])
+@pytest.mark.parametrize("provider", ["mock_chat", "local_embed"])
 def test_both_enabled_providers_point_at_the_mock(policy: Policy, provider: str) -> None:
     """Criterion 6: catches a provider still pointing at `llama` or `llama-embed`,
     which does not exist in the load stack."""

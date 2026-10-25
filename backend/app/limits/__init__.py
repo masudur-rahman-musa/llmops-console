@@ -2,11 +2,11 @@
 
 Two files, library only: nothing here reads a header, resolves an alias, writes
 a row or touches a route. `prices.py` is the versioned price table - the schema
-for `prices.yaml`, its strict loader, the effective-from selection and the
-snapshot the gateway holds. `cost.py` is the arithmetic over it, and the one
-decision that matters at runtime: a price the table does not carry costs zero
-and says `estimated` with the version `unpriced`, rather than raising on a
-request a provider already served.
+for one price, the effective-from selection and the snapshot the gateway holds;
+the prices themselves are read from the provider files. `cost.py` is the
+arithmetic over it, and the one decision that matters at runtime: a price the
+table does not carry costs zero and says `estimated` with the version
+`unpriced`, rather than raising on a request a provider already served.
 
 `budget.py` is the other half of that arithmetic: the running total of those
 same rows for the month in progress, and the two thresholds the design puts on it
@@ -37,7 +37,6 @@ from app.limits.prices import (
     PriceEntry,
     PriceStore,
     PriceTable,
-    load_prices,
     price_for,
     price_version,
 )
@@ -78,7 +77,6 @@ __all__ = [
     "bucket_key",
     "cost_for",
     "estimate_tokens",
-    "load_prices",
     "price_for",
     "price_version",
     "refill",

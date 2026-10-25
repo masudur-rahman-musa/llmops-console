@@ -192,7 +192,7 @@ ALIAS = "agent-default"
 EMBED_ALIAS = "embed"
 TENANT = "evals"
 REMOTE_PROVIDER = "anthropic"
-LOCAL_PROVIDER = "local"
+OPENAI_PROVIDER = "openai"
 EMBED_PROVIDER = "local_embed"
 """The `embed` alias's only candidate. Its own provider, not the chat one beside it:
 one llama.cpp process serves one model, so the two servers are two addresses."""
@@ -291,15 +291,15 @@ def family_names(collector_registry: CollectorRegistry) -> set[str]:
 
 
 @pytest.fixture(scope="module")
-def local_chat_stub() -> StubAdapter:
-    """A chat stub under `local`, the one provider a `confidential` request reaches."""
-    return StubAdapter(name=LOCAL_PROVIDER, response=stub_response())
+def openai_chat_stub() -> StubAdapter:
+    """A chat stub under `openai`, the one provider a `confidential` request reaches."""
+    return StubAdapter(name=OPENAI_PROVIDER, response=stub_response())
 
 
 @pytest.fixture(scope="module")
-def local_chat_client(settings: Settings, local_chat_stub: StubAdapter) -> Iterator[TestClient]:
+def openai_chat_client(settings: Settings, openai_chat_stub: StubAdapter) -> Iterator[TestClient]:
     """One app for the inline-redaction rows, built once."""
-    with build_chat_client(settings, {local_chat_stub.name: local_chat_stub}) as client:
+    with build_chat_client(settings, {openai_chat_stub.name: openai_chat_stub}) as client:
         yield client
 
 
@@ -702,7 +702,7 @@ InlineCall = Callable[[TestClient], HttpxResponse]
 INLINE_REDACTION_ROWS: list[tuple[str, str, InlineCall, dict[str, float]]] = [
     (
         "chat",
-        "local_chat_client",
+        "openai_chat_client",
         lambda client: post_chat(
             client,
             chat_body(model=ALIAS, messages=[{"role": "user", "content": TEXT_WITH_TWO_KINDS}]),

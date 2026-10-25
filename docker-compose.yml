@@ -6,9 +6,9 @@
 # compose network and is created by the same variables that connect to it.
 #
 # The backing services publish SHIFTED host ports - Postgres on 15432, Redis on
-# 16379, Qdrant on 16333, llama.cpp on 18082 - while the container side keeps the
+# 16379, Qdrant on 16333 - while the container side keeps the
 # stock number every client in here dials by service name. The companion Helpdesk
-# repository's own stack publishes 5432, 6379, 6333 and 8082, and the two are meant
+# repository's own stack publishes 5432, 6379 and 6333, and the two are meant
 # to run side by side: this stack is the gateway the Helpdesk calls, so a clash at
 # `up` would mean only ever having one of them. The gateway stays on 8080 because
 # that is the address the Helpdesk's `GATEWAY_URL` names.
@@ -113,38 +113,19 @@ services:
       timeout: 3s
       retries: 10
 
-  llama:
-    # The `local` provider in routing.yaml, which is the only region an EU
-    # tenant's `pii` traffic may reach. The model is a mount rather than a build
-    # argument: no weights are committed, and MODELS_DIR points at wherever the
-    # developer keeps them.
-    # Pinned to the same build `infra/k8s/apps/kustomization.yaml` pins, so a
-    # developer and the cluster run the same server. `server` floats.
-    # Off by default, as on the node: `docker compose --profile
-    # local-model up -d`, or `COMPOSE_PROFILES=local-model` in `.env`, brings
-    # both llama services back. Pinned by infra/tests/infra/test_compose_local_model.py.
-    profiles: [local-model]
-    image: ghcr.io/ggml-org/llama.cpp:server-b10902
-    command: ["-m", "/models/${LLAMA_MODEL_FILE:-qwen2.5-3b-instruct-q4_k_m.gguf}", "--host", "0.0.0.0", "--port", "8082", "--ctx-size", "8192"]
-    ports: ["18082:8082"]
-    volumes: ["${MODELS_DIR:-./.cache/models}:/models:ro"]
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:8082/health"]
-      interval: 10s
-      timeout: 5s
-      # A first load of the model off a cold disk is minutes, not seconds.
-      retries: 60
-      start_period: 60s
-
   llama-embed:
-    # The `local_embed` provider in routing.yaml: one llama.cpp process serves
-    # one model, so `/v1/embeddings` and the semantic cache probe need a second
-    # server at a second address. Same pinned build as the chat one, and the
-    # same flags `infra/k8s/apps/llama-embed.yaml` runs - BGE is a BERT encoder
+    # The `local_embed` provider (backend/config/providers/local_embed.yaml): the
+    # embedding server `/v1/embeddings` and the semantic cache probe call. Chat
+    # runs on Anthropic and OpenAI; there is no local chat model. The weights are
+    # a mount, never committed. Pinned to the same build
+    # `infra/k8s/apps/kustomization.yaml` pins, and the same flags
+    # `infra/k8s/apps/llama-embed.yaml` runs - BGE is a BERT encoder
     # trained at 512 tokens and llama.cpp needs `n_ubatch >= n_ctx` for a
     # non-causal model, and `--pooling cls` is written out because a mean-pooled
     # vector is a different vector space that still returns plausible numbers.
-    # Same `local-model` profile as `llama`, so one flag turns both on.
+    # Off by default, as on the node: `docker compose --profile
+    # local-model up -d`, or `COMPOSE_PROFILES=local-model` in `.env.demo`, brings
+    # it up. Pinned by infra/tests/infra/test_compose_local_model.py.
     profiles: [local-model]
     image: ghcr.io/ggml-org/llama.cpp:server-b10902
     command: ["-m", "/models/${LLAMA_EMBED_MODEL_FILE:-bge-small-en-v1.5-q8_0.gguf}", "--embedding", "--pooling", "cls", "--ctx-size", "512", "--ubatch-size", "512", "--host", "0.0.0.0", "--port", "8083"]
@@ -154,7 +135,7 @@ services:
       test: ["CMD", "curl", "-fsS", "http://localhost:8083/health"]
       interval: 10s
       timeout: 5s
-      # ~130 MB, not the chat model's several gigabytes.
+      # ~130 MB, so a cold load is seconds.
       retries: 24
       start_period: 20s
 

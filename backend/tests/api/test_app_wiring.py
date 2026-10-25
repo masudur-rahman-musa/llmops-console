@@ -38,6 +38,7 @@ from .conftest import API_KEYS, NO_PROVIDER_KEYS, SHIPPED_POLICY_PATH, TEST_KEYS
 # The variable the shipped `routing.yaml` names for the enabled US Anthropic
 # provider, and a value that is not a key: nothing here ever sends it anywhere.
 ANTHROPIC_KEY_ENV = "ANTHROPIC_API_KEY"
+OPENAI_KEY_ENV = "OPENAI_API_KEY"
 FAKE_KEY = "not-a-key-and-never-sent"
 
 
@@ -81,16 +82,15 @@ def test_create_app_builds_the_adapter_set() -> None:
     """Catches an app that leaves `app.state.adapters` unset or builds it per request:
     the chat route reads it for the resolver's health seam, so an unset one is a 500 on
     the first completion, and a per-request one mints a connection pool per call."""
-    app = create_app(wiring_settings(), {ANTHROPIC_KEY_ENV: FAKE_KEY})
+    app = create_app(wiring_settings(), {ANTHROPIC_KEY_ENV: FAKE_KEY, OPENAI_KEY_ENV: FAKE_KEY})
 
     adapters = app.state.adapters
-    # `local` and `local_embed` join `anthropic` from an earlier change on: the shipped
-    # policy's `openai_compatible` providers declare no `key_env`, so they are built
-    # from the policy alone and need nothing in the environment (06a decision B).
-    # There are two of them because one llama.cpp process serves one model.
-    assert set(adapters) == {"anthropic", "local", "local_embed"}
+    # `local_embed` declares no `key_env`, so it is built from its file alone and
+    # needs nothing in the environment (06a decision B). The two chat providers
+    # are built because both keys are set.
+    assert set(adapters) == {"anthropic", "openai", "local_embed"}
     assert isinstance(adapters["anthropic"], Adapter)
-    assert isinstance(adapters["local"], Adapter)
+    assert isinstance(adapters["openai"], Adapter)
     assert isinstance(adapters["local_embed"], Adapter)
     close_adapters(adapters)
 
@@ -101,11 +101,11 @@ def test_create_app_reads_keys_only_from_the_given_environ() -> None:
     provider, and a test that made a real billed call would pass locally and fail in CI."""
     app = create_app(wiring_settings(), NO_PROVIDER_KEYS)
 
-    # The two self-hosted providers survive an empty environment on purpose - neither
-    # holds a key to read. `anthropic` is the provider this test is about, and its
-    # absence is what proves nothing was read from `os.environ` behind the injected
-    # mapping.
-    assert set(app.state.adapters) == {"local", "local_embed"}
+    # The self-hosted embedding server survives an empty environment on purpose - it
+    # holds no key to read. `anthropic` and `openai` are the providers this test is
+    # about, and their absence is what proves nothing was read from `os.environ`
+    # behind the injected mapping.
+    assert set(app.state.adapters) == {"local_embed"}
     close_adapters(app.state.adapters)
 
 
@@ -294,10 +294,6 @@ def test_boot_refuses_a_policy_that_routes_to_an_unpriced_model(tmp_path: Path) 
     policy_yaml = tmp_path / "routing.yaml"
     policy_yaml.write_text(
         """\
-providers:
-  anthropic:
-    kind: anthropic
-    base_url: https://api.anthropic.com
 aliases:
   my-alias:
     candidates:

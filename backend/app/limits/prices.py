@@ -1,25 +1,26 @@
-"""The price table: its schema, its loader, the effective-from selection and the
-snapshot the gateway reads.
+"""The price table: its schema, the effective-from selection and the snapshot the
+gateway reads.
 
-`prices.yaml` is where a token's price lives, keyed by `provider/model` - the
+Each provider file in `backend/config/providers/` lists its models with their
+prices; `app.model_routing.provider_files` reads them and builds this table,
+keyed by `provider/model` - the
 key `Adapter.price_key` builds from the POLICY provider name, so two rows of the
 same provider kind priced differently stay apart. This schema is the boundary
 where an operator's YAML becomes typed data.
 
-Loading is deliberately strict, in the shape `app.model_routing.policy` set.
-`yaml.safe_load` is the only deserialiser used, unknown keys are rejected, a negative price, a
+Loading is deliberately strict. Unknown keys are rejected, and a negative price, a
 non-finite price and an `effective_from` that is not a date are refused before
-any caller holds a table, and every rejection is a `PriceTableInvalid` whose
-message names the field path.
+any caller holds a table; the provider-file loader turns each rejection into a
+`PolicyInvalid` naming the file and the field path.
 
-Prices are Decimals, and the shipped file QUOTES every one of them. Not because
+Prices are Decimals, and the shipped files QUOTE every one of them. Not because
 an unquoted number is corrupted - pydantic converts a parsed float to Decimal
 through its repr, so `0.0000015` written bare does survive exactly - but because
 a float carries about seventeen significant digits and silently truncates
 anything longer, and drops trailing zeros with it: bare `0.12345678901234567890`
 loads as `0.12345678901234568`, and bare `1.00` loads as `Decimal("1.0")`. The
 quoted form is the digits as written, every time, which is the property a price
-file wants. The schema accepts either. What
+wants. The schema accepts either. What
 would really break the arithmetic is a `float` field, or a `Decimal` built from
 the parsed float rather than from its repr.
 
@@ -42,10 +43,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Annotated
 
-import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
-
-from app.limits.errors import PriceTableInvalid
+from pydantic import BaseModel, ConfigDict, Field
 
 PriceAmount = Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
 """A price per 1,000,000 tokens. Non-negative and finite, refused at load
@@ -88,34 +86,6 @@ class PriceTable(_Frozen):
     )
 
 
-def load_prices(path: Path) -> PriceTable:
-    """Read, parse and validate one price table.
-
-    Every failure is a `PriceTableInvalid` carrying the path and the underlying
-    message, so an operator reading a failed load sees the field rather than a
-    traceback in three different exception types.
-    """
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise PriceTableInvalid(f"{path}: cannot be read: {exc}") from exc
-
-    try:
-        document = yaml.safe_load(text)
-    except yaml.YAMLError as exc:
-        raise PriceTableInvalid(f"{path}: not valid YAML: {exc}") from exc
-
-    if not isinstance(document, dict):
-        raise PriceTableInvalid(
-            f"{path}: the document must be a mapping, got {type(document).__name__}"
-        )
-
-    try:
-        return PriceTable.model_validate(document)
-    except ValidationError as exc:
-        raise PriceTableInvalid(f"{path}: {exc}") from exc
-
-
 def price_for(table: PriceTable, key: str, at: date | datetime) -> PriceEntry | None:
     """The entry in force for `key` at `at`, or `None` when there is not one.
 
@@ -154,14 +124,22 @@ class PriceStore:
     """Holds the price table the gateway costs against, and swaps it on reload.
 
     Mirrors `app.model_routing.policy.PolicyStore`, and for the same reason:
-    `reload` parses into a new `PriceTable` before it rebinds the attribute, so a
+    `reload` builds a new `PriceTable` before it rebinds the attribute, so a
     failed reload leaves the previous snapshot in place and a pricing already
     holding a snapshot keeps reading a consistent one.
+
+    The provider-file loader is imported inside the methods because it imports
+    this module for `PriceEntry`; the table itself never needs the files.
     """
 
-    def __init__(self, path: Path) -> None:
-        self._path = path
-        self._table = load_prices(path)
+    def __init__(self, providers_dir: Path) -> None:
+        self._providers_dir = providers_dir
+        self._table = self._build()
+
+    def _build(self) -> PriceTable:
+        from app.model_routing.provider_files import build_price_table, load_provider_files
+
+        return build_price_table(load_provider_files(self._providers_dir))
 
     @property
     def table(self) -> PriceTable:
@@ -169,5 +147,5 @@ class PriceStore:
         return self._table
 
     def reload(self) -> None:
-        """Re-read the file and swap the snapshot, or raise and keep the old one."""
-        self._table = load_prices(self._path)
+        """Re-read the folder and swap the snapshot, or raise and keep the old one."""
+        self._table = self._build()

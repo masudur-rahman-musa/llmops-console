@@ -14,7 +14,7 @@ sitting, and what it cost is recorded below.
 2. Writes a kubeconfig for the new cluster into a temporary directory that is
    removed on exit. Your own kubeconfig is never touched.
 3. Applies `infra/k8s/aws`: the namespaces and their quotas, Qdrant, the gateway,
-   the two llama.cpp servers and the `platform/backups` service account.
+   the llama.cpp embedding server and the `platform/backups` service account.
 4. Builds the gateway's Secret at run time from the RDS master credential in
    Secrets Manager and freshly generated keys, and pipes it to `kubectl`. No
    credential is written to disk or printed.
@@ -22,8 +22,7 @@ sitting, and what it cost is recorded below.
    sets its image to the given commit.
 6. Waits for the rollouts, creates the ledger tables, and runs the same smoke
    test as a production deploy: `/readyz` answers 200, then one chat turn as the
-   `evals` tenant with `X-Data-Class: pii`, which only the in-cluster model may
-   serve.
+   `evals` tenant with `X-Data-Class: pii`, redacted and served by Anthropic.
 7. Runs a one-shot Job as `platform/backups` that writes one object to the
    backups bucket, proving the pod assumed the bucket role.
 8. Captures the evidence into `docs/aws-evidence/<UTC date>/`, with every AWS
@@ -50,7 +49,9 @@ script says so and exits non-zero, and you run
   extended support costs more per hour than the whole budget.
 - The gateway image for the commit published to GHCR by the build workflow, and
   the package readable by the cluster.
-- About an hour, most of it EKS creation and the 2 GB model download.
+- `ANTHROPIC_API_KEY` exported in your shell. The smoke chat turn goes to
+  Anthropic, and the script stops before apply if the key is missing.
+- About an hour, most of it EKS creation.
 
 ## Screenshots to take while the stack is up
 

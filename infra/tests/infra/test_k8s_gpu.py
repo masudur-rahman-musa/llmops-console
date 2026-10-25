@@ -44,6 +44,8 @@ ROOT_KUSTOMIZATION = K8S / "kustomization.yaml"
 MONITORING_PROMETHEUS = K8S / "monitoring" / "prometheus.yaml"
 BASE_POLICIES = K8S / "base" / "networkpolicies.yaml"
 ROUTING = REPO_ROOT / "backend" / "config" / "routing.yaml"
+SHIPPED_PROVIDERS = REPO_ROOT / "backend" / "config" / "providers"
+TRADEOFF_VLLM = REPO_ROOT / "infra" / "tradeoff" / "providers" / "vllm.yaml"
 MAKEFILE = REPO_ROOT / "Makefile"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
@@ -97,8 +99,6 @@ VLLM_ARGS = [
 ]
 
 INIT_COMMAND = ["sh", "-c", f"until [ -f {MARKER} ]; do sleep 10; done"]
-
-VLLM_HOST = "vllm.gpu.svc.cluster.local"
 
 #: The node's own address range as `vllm-ingress` admits it: AWS's
 #: default VPC, which is where `infra/terraform/aws-gpu` puts the instance. Written out
@@ -482,22 +482,25 @@ def test_the_model_volume_claim_is_forty_gigabytes_on_the_default_class(
     assert "storageClassName" not in spec
 
 
-def test_the_service_is_where_routing_yaml_dials(
+def test_the_tradeoff_provider_file_dials_the_node_port(
     built_gpu: list[dict[str, Any]],
 ) -> None:
-    """Criteria 16 and 17. Catches `routing.yaml` left at the bare `vllm:8000`, which does not
-    resolve from the gateway's `apps` namespace, a Service on a port other than the one the URL
-    names, and a Service named or namespaced differently from the host the URL names. Both
-    halves are read from their files, never written down twice."""
-    providers = load_yaml(ROUTING)["providers"]
-    url = urlparse(str(providers["vllm"]["base_url"]))
-    service = the_one(built_gpu, "Service", "vllm", GPU)
-    ports = [entry.get("port") for entry in service["spec"].get("ports", [])]
+    """Criteria 16 and 17, since the `vllm` provider left the shipped folder: the
+    one file that names it is the GPU option's own `infra/tradeoff/providers/vllm.yaml`, read
+    by the harness on the GPU host through the node's own NodePort. Catches that file left at
+    the in-cluster `vllm.gpu.svc.cluster.local` (which does not resolve from compose), a port
+    other than the NodePort Service's, and the internal Service published on a port other
+    than the one vLLM serves on. Both halves are read from their files, never written down
+    twice."""
+    provider = load_yaml(TRADEOFF_VLLM)
+    url = urlparse(str(provider["base_url"]))
+    node = the_one(built_gpu, "Service", NODE_SERVICE, GPU)
+    internal = the_one(built_gpu, "Service", "vllm", GPU)
 
-    assert url.hostname == VLLM_HOST
-    assert url.hostname == f"{service['metadata']['name']}.{GPU}.svc.cluster.local"
-    assert url.port is not None
-    assert ports == [url.port]
+    assert provider["provider"] == "vllm"
+    assert url.hostname == "host.docker.internal"
+    assert url.port == int(node["spec"]["ports"][0]["nodePort"])
+    assert [entry.get("port") for entry in internal["spec"].get("ports", [])] == [VLLM_PORT]
 
 
 def resolved_target_port(
@@ -528,7 +531,7 @@ def test_the_node_port_service_publishes_vllm_on_the_port_the_harness_dials(
 ) -> None:
     """An earlier change criterion 56 and decision C. The measurement harness runs in compose on the GPU
     host and reaches the in-cluster model server through this Service, so its `nodePort` is the
-    port `infra/tradeoff/gpu-vllm.yaml`'s `base_url` names. Catches `type: NodePort`
+    port `infra/tradeoff/providers/vllm.yaml`'s `base_url` names. Catches `type: NodePort`
     with no `nodePort` (Kubernetes then allocates a random one in the 30000-32767 range and the
     overlay's URL is wrong on every apply), a `nodePort` that is not 30800, a selector that does
     not match the vLLM pod (the port then answers nothing), and a target port other than the
@@ -565,12 +568,18 @@ def test_the_cluster_internal_vllm_service_stays_the_only_one_without_a_node_por
     assert node_ports == [NODE_SERVICE], node_ports
 
 
-def test_routing_keeps_the_vllm_provider_disabled() -> None:
-    """Criterion 17. Catches `enabled: true` slipped in with the URL edit, which routes live
-    traffic to a host that exists only during a one-off measurement run and 502s otherwise."""
-    providers = load_yaml(ROUTING)["providers"]
+def test_the_shipped_config_has_no_vllm_provider() -> None:
+    """Criterion 17. Catches a `vllm.yaml` dropped into the shipped provider folder, or an
+    alias naming `vllm` in `routing.yaml`: live traffic would route to a host that exists
+    only during a one-off measurement run and 502 otherwise."""
+    names = {
+        str(candidate["provider"])
+        for alias in load_yaml(ROUTING)["aliases"].values()
+        for candidate in alias["candidates"]
+    }
 
-    assert providers["vllm"].get("enabled") is False
+    assert not (SHIPPED_PROVIDERS / "vllm.yaml").exists()
+    assert "vllm" not in names
 
 
 def test_the_hpa_scales_one_to_two_on_waiting_requests(

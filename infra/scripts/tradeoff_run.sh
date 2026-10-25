@@ -2,7 +2,7 @@
 # The self-hosted versus API measurement run, started by the owner from their own shell.
 #
 #   infra/scripts/tradeoff_run.sh option <option id> --target <eval target url>
-#     build that option's effective routing policy, bring the measurement harness up
+#     build that option's effective routing policy and provider folder, bring the measurement harness up
 #     against it, flush the response cache, migrate, play the conversation cases, tear the
 #     harness down. The option's two report files land under
 #     docs/tradeoff-run/reports/<option id>/.
@@ -51,7 +51,7 @@ GPU_OVERLAY="$REPO_ROOT/infra/k8s/gpu"
 POLICY_BUILDER="$REPO_ROOT/infra/scripts/tradeoff_policy.py"
 EVIDENCE_ROOT="${TRADEOFF_TEST_ROOT:-$REPO_ROOT}/docs/tradeoff-run"
 
-COMPOSE=(docker compose -f "$REPO_ROOT/docker-compose.yml" -f "$REPO_ROOT/infra/tradeoff/compose.yml" --profile tradeoff --profile local-model)
+COMPOSE=(docker compose -f "$REPO_ROOT/docker-compose.yml" -f "$REPO_ROOT/infra/tradeoff/compose.yml" --profile tradeoff)
 
 # The small conversation file this repo ships, played against the stub target. The help
 # desk's own 33 cases live in the companion repository, so waiting for it means no table.
@@ -143,17 +143,20 @@ run_option() {
   local reports_dir="$EVIDENCE_ROOT/reports/$option_id"
   mkdir -p "$reports_dir"
 
-  # The effective policy goes beside the kubeconfig, in a directory removed on exit: it is
-  # derived from two committed files and is evidence of nothing on its own.
+  # The effective policy and provider folder go beside the kubeconfig, in a directory
+  # removed on exit: they are derived from committed files and are evidence of nothing
+  # on their own.
   [ -n "$workdir" ] || workdir="$(mktemp -d)"
   local policy_file="$workdir/$option_id.yaml"
-  python3 "$POLICY_BUILDER" "$option_id" "$policy_file"
+  local providers_dir="$workdir/$option_id-providers"
+  python3 "$POLICY_BUILDER" "$option_id" "$policy_file" "$providers_dir"
 
   local key digest
   key="$(openssl rand -hex 32)"
   digest="$(printf '%s' "$key" | sha256_of_stdin)"
 
   export TRADEOFF_POLICY_FILE="$policy_file"
+  export TRADEOFF_PROVIDERS_DIR="$providers_dir"
   export OPSCONSOLE_API_KEYS="$TENANT:$digest"
   export GATEWAY_API_KEY="$key"
 

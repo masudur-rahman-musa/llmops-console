@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
-r"""Build one measurement option's effective routing policy.
+r"""Build one measurement option's effective routing policy and provider folder.
 
-    infra/scripts/tradeoff_policy.py <option-id> <output path>
+    infra/scripts/tradeoff_policy.py <option-id> <output path> <providers output dir>
 
 `backend/config/routing.yaml` deep-merged with `infra/tradeoff/<option-id>.yaml`, written
 to the output path. The shipped policy is read and never written: the merge works
-on a copy, and the only file this script opens for writing is the one named on the
+on a copy, and the only places this script writes are the two named on the
 command line (`test_routing_yaml_is_byte_identical_after_a_merge`,
 `test_the_merge_does_not_mutate_the_shipped_document`).
+
+The provider folder is the shipped `backend/config/providers/` plus any file in
+`infra/tradeoff/providers/` whose provider the effective policy names.
+That is how the GPU option brings its own `vllm` provider: the shipped folder has no
+vLLM file, so the live system never depends on a host that exists for four hours.
 
 Four partial overlays rather than four whole policies: a full
 copy drifts from the shipped file silently, and each partial then says only what
@@ -44,7 +49,9 @@ import yaml
 
 REPO_ROOT: Final[Path] = Path(__file__).resolve().parents[2]
 ROUTING: Final[Path] = REPO_ROOT / "backend" / "config" / "routing.yaml"
+SHIPPED_PROVIDERS: Final[Path] = REPO_ROOT / "backend" / "config" / "providers"
 OVERLAY_DIR: Final[Path] = REPO_ROOT / "infra" / "tradeoff"
+OPTION_PROVIDERS: Final[Path] = OVERLAY_DIR / "providers"
 
 OPTION_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"[a-z][a-z0-9-]{0,31}")
 """The option id, matched with `re.fullmatch` and never `.match`.
@@ -109,17 +116,45 @@ def effective_policy(option_id: str) -> dict[str, Any]:
     return deep_merge(load_mapping(ROUTING), load_mapping(OVERLAY_DIR / f"{option_id}.yaml"))
 
 
+def named_providers(policy: dict[str, Any]) -> set[str]:
+    """Every provider a candidate of `policy` names, through an alias or an override."""
+    names: set[str] = set()
+    for alias in (policy.get("aliases") or {}).values():
+        names.update(str(c["provider"]) for c in alias.get("candidates", []))
+    for tenant in (policy.get("tenants") or {}).values():
+        for candidates in (tenant.get("overrides") or {}).values():
+            names.update(str(c["provider"]) for c in candidates)
+    return names
+
+
+def provider_files(policy: dict[str, Any]) -> list[Path]:
+    """The shipped provider files, plus the option's own ones the policy names."""
+    shipped = sorted(SHIPPED_PROVIDERS.glob("*.yaml"))
+    taken = {path.stem for path in shipped}
+    names = named_providers(policy)
+    own = sorted(
+        path
+        for path in OPTION_PROVIDERS.glob("*.yaml")
+        if path.stem in names and path.stem not in taken
+    )
+    return shipped + own
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
+    if len(argv) != 3:
         print(
-            f"usage: {Path(sys.argv[0]).name} <option-id> <output path>",
+            f"usage: {Path(sys.argv[0]).name} <option-id> <output path> <providers output dir>",
             file=sys.stderr,
         )
         return EXIT_REFUSED
-    option_id, output = checked_option_id(argv[0]), Path(argv[1])
+    option_id, output, providers = checked_option_id(argv[0]), Path(argv[1]), Path(argv[2])
     policy = effective_policy(option_id)
+    files = provider_files(policy)
     output.write_text(yaml.safe_dump(policy, sort_keys=False), encoding="utf-8")
-    print(f"tradeoff-policy: wrote {output}", file=sys.stderr)
+    providers.mkdir(parents=True, exist_ok=True)
+    for path in files:
+        (providers / path.name).write_bytes(path.read_bytes())
+    print(f"tradeoff-policy: wrote {output} and {providers}", file=sys.stderr)
     return 0
 
 
