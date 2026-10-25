@@ -4,21 +4,23 @@
 so a page body can render the other source's fields when one is down.
 `_budgets` reads neither source - the counter is the budget store the chat route
 debits - and `_slos` is the two gateway-measured error budgets over the fixed
-`SLO_WINDOW`.
+`SLO_WINDOW`. `gate_scores` is the quality page's eval gate rows.
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from pathlib import Path
 from typing import Final
 
 import psycopg
 from fastapi import Request
 
+from app.evals.gate import Baseline, BaselineInvalid, load_baseline
 from app.limits.budget import budget_ratio, current_month, to_micro_usd, to_usd
 from app.model_routing.policy import PolicyStore
-from app.schemas.dashboard import Budget, Slo, SourceState
+from app.schemas.dashboard import Budget, EvalRunSummary, GateScore, Slo, SourceState
 from app.services.prometheus_reads import (
     AVAILABILITY_ALLOWED_BAD,
     AVAILABILITY_BUDGET_QUERY,
@@ -130,3 +132,43 @@ def slos(client: PrometheusClient) -> tuple[Slo, ...]:
             budget_remaining=None if under is None else 1 - (1 - under) / LATENCY_ALLOWED_SLOW,
         ),
     )
+
+
+GATE_SCORES: Final[tuple[tuple[str, str], ...]] = (
+    ("check_score", "Check score"),
+    ("judge_score", "Judge score"),
+)
+"""The scores the eval gate checks, in the order the quality page lists them."""
+
+JUDGE_NOTE: Final[str] = "Counts only while the judge agrees with people (kappa 0.7 or better)."
+"""Fixed, because a run row stores no kappa to say whether the judge counted."""
+
+
+def gate_scores(baseline_path: Path, runs: tuple[EvalRunSummary, ...]) -> tuple[GateScore, ...]:
+    """The newest run's gated scores beside the baseline's thresholds.
+
+    A baseline that cannot be read or is not valid never fails the page: its
+    thresholds are null. Pinned by tests/api/test_quality_gate.py.
+    """
+    try:
+        baseline: Baseline | None = load_baseline(baseline_path)
+    except BaselineInvalid as exc:
+        logger.warning("console quality: eval baseline %s", exc)
+        baseline = None
+    newest = max(runs, key=lambda run: run.started_at, default=None)
+    rows = []
+    for name, label in GATE_SCORES:
+        raw = None if newest is None else newest.metrics.get(name)
+        value = float(raw) if isinstance(raw, int | float) and not isinstance(raw, bool) else None
+        threshold = None if baseline is None else getattr(baseline, name)
+        rows.append(
+            GateScore(
+                name=name,
+                label=label,
+                value=value,
+                threshold=threshold,
+                passed=None if value is None or threshold is None else value >= threshold,
+                note=JUDGE_NOTE if name == "judge_score" else None,
+            )
+        )
+    return tuple(rows)

@@ -2,7 +2,7 @@
 
 The dashboard that tells you whether your AI is working, what it costs, and where your data went.
 
-Underneath: an OpenAI-compatible LLM gateway with per-tenant routing and EU data-residency enforcement, PII redaction, semantic caching, budgets and cost attribution, and an evaluation harness whose CI gate blocks any release that makes the agent worse. Deployed with Terraform and Kubernetes, operated with SLOs, alerts and a runbook.
+Underneath: an OpenAI-compatible LLM gateway with per-tenant routing, PII redaction, semantic caching, budgets and cost attribution, and an evaluation harness whose CI gate blocks any release that makes the agent worse. Deployed with Terraform and Kubernetes, operated with SLOs, alerts and a runbook.
 
 **Status: under active development.** Measured self-hosted-vs-API numbers and the
 walkthrough recording land as the remaining measurement runs complete.
@@ -15,9 +15,9 @@ License: Apache-2.0
 
 An LLM feature reaches production and three questions have no owner. Is it
 working, or has quality quietly drifted since the prompt changed last week? What
-does it cost, per tenant, per feature, this month against its budget? And where
-did the data go, given a customer whose contract says their text never leaves
-the EU?
+does it cost, per tenant, per feature, this month against its budget? And what
+personal data reached the provider, given a customer whose contract says names
+and emails never leave the company?
 
 Most teams answer the first question with a vibe, the second with a provider
 invoice that arrives a month late and attributes nothing, and the third with a
@@ -26,8 +26,8 @@ leave the application directly, so there is no place to enforce a rule, price a
 token, or notice a regression.
 
 This project puts a gateway in that place. Every call goes through one
-OpenAI-compatible endpoint that resolves a tenant's alias to a provider under
-its residency rules, redacts personal data on the way out, caches what repeats,
+OpenAI-compatible endpoint that resolves a tenant's alias to a provider,
+redacts personal data on the way out, caches what repeats,
 prices what it spends, refuses what exceeds the budget, and records the whole
 thing. The console reads that record back.
 
@@ -49,9 +49,8 @@ appears in one.
 
 A client speaks the OpenAI API and names an alias rather than a model. The
 gateway resolves that alias for the calling tenant and the request's data class,
-producing an ordered list of candidate providers whose regions the tenant's
-residency rule allows. Deny by default: an empty list is a 451, never a widened
-region set.
+producing an ordered list of candidate providers. Fallback stays inside that
+list: a failing provider hands over only to another one the alias names.
 
 Before a request leaves, personal data is replaced with stable placeholders when
 the tenant's rule says so, and the semantic cache is asked whether this prompt
@@ -60,7 +59,7 @@ against the committed table, the spend is booked to the tenant, and the budget
 and rate limits are updated. A trace carrying the session and the tenant, never
 a user identity, goes to Langfuse; the counters go to Prometheus.
 
-    client -> gateway -> [ auth | routing + residency | redaction | cache |
+    client -> gateway -> [ auth | routing | redaction | cache |
                            limits ] -> provider adapter -> provider
                                     -> ledger, traces, metrics -> console
 
@@ -233,10 +232,9 @@ four runs have been made and the GPU instance's bill has arrived.
 ### The local model
 
 A small quantised model is wired in as one of the providers the gateway routes
-to, and it runs on the project's own ARM server. It exists for residency, not
-for speed: a tenant whose data class allows only the box we run ourselves has no
-other route, so the alternative to the local model is not a faster provider but
-a refusal.
+to, and it runs on the project's own ARM server. It exists to show the
+self-hosted side of the cost and quality tradeoff, not for speed: it costs
+nothing per token, and the tradeoff table says what that saving gives up.
 
 It is slower than a hosted API, and by how much is not stated here yet. Nothing
 in CI can measure the machine it runs on, and a number produced anywhere else
@@ -246,10 +244,10 @@ cost per token land in the tradeoff table above.
 ### Embeddings
 
 `POST /v1/embeddings` speaks the OpenAI shape and answers from the same routing
-policy every other request goes through, so an embedding is subject to the same
-residency rules as a completion. In the shipped policy the `embed` alias has one
-candidate and it is the local model, so for the data classes that allow nothing
-else, the text being embedded never leaves the box we run.
+policy every other request goes through, so an embedding is resolved, limited and
+priced the same way as a completion. In the shipped policy the `embed` alias has
+one candidate and it is the local model, so the text being embedded never leaves
+the box we run.
 
 A bare string or a list of strings is accepted, up to 64 inputs of 8192
 characters each. The answer returns one vector per input, in the order given:
@@ -272,7 +270,6 @@ the project notes these are the ones that shape the system most.
 - Digests, not keys, are what the gateway stores
 - Embeddings go through the routed local provider rather than a second path
 - Circuit breaker state is in-process, not shared
-- The residency log write is off the request's critical path
 - Budget overrides are signed with their own scoped secret
 - Eval metrics are percentages with a null for no evidence
 - The eval gate runs the help desk on the mock, which replaces the gate shipping inert
@@ -289,8 +286,8 @@ the project notes
 ## SLOs
 
 Seven objectives, each with its indicator, target, window, error budget formula
-and alert: the project notes Three are measured from the
-gateway's own metrics (availability, latency, residency) and show their
+and alert: the project notes Two are measured from the
+gateway's own metrics (availability and latency) and show their
 remaining error budget on the Grafana overview dashboard and on the console's
 Reliability page. An error budget is never clamped at zero: how far past the
 allowance a month went is the information.
@@ -304,7 +301,7 @@ timeline, each linking its postmortem.
 One run of `make load`, which drives k6 against the real gateway at a constant
 50 requests a second for ten minutes. The providers behind it are a mock that
 answers in a fixed time, so every millisecond above that is the gateway's own
-work: auth, routing, residency, redaction, both caches, rate limits, budgets and
+work: auth, routing, redaction, both caches, rate limits, budgets and
 the ledger write. The traffic is 80% chat, 10% streamed chat and 10%
 embeddings, and one chat request in five repeats a prompt so the caches take
 part.

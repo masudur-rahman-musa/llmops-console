@@ -1,24 +1,64 @@
 {
-  "sources": { "postgres": "ok", "prometheus": "ok" },
+  "sources": {
+    "postgres": "ok",
+    "prometheus": "ok"
+  },
   "latency_p95": [
-    [1789545600.0, 0.41],
-    [1789549200.0, 0.44],
-    [1789552800.0, 0.39]
+    [
+      1789545600.0,
+      0.41
+    ],
+    [
+      1789549200.0,
+      0.44
+    ],
+    [
+      1789552800.0,
+      0.39
+    ]
   ],
   "error_rate": [
-    [1789545600.0, 0.004],
-    [1789549200.0, 0.006]
+    [
+      1789545600.0,
+      0.004
+    ],
+    [
+      1789549200.0,
+      0.006
+    ]
   ],
   "circuits": [
-    { "provider": "mistral", "state": "closed" },
-    { "provider": "local", "state": "half_open" }
+    {
+      "provider": "mistral",
+      "state": "closed"
+    },
+    {
+      "provider": "local",
+      "state": "half_open"
+    }
   ],
   "fallbacks": [
-    { "tenant": "acme-eu", "alias": "support-fast", "provider": "local", "count": 5.0 }
+    {
+      "tenant": "acme-eu",
+      "alias": "support-fast",
+      "provider": "local",
+      "count": 5.0
+    }
   ],
   "slos": [
-    { "name": "availability", "objective": 0.995, "window": "30d", "observed": 0.999, "budget_remaining": 0.8 },
-    { "name": "latency", "objective": 6.0, "window": "30d", "observed": 0.97, "budget_remaining": 0.4 },
-    { "name": "residency", "objective": 0.0, "window": "30d", "observed": 0.0, "budget_remaining": null }
+    {
+      "name": "availability",
+      "objective": 0.995,
+      "window": "30d",
+      "observed": 0.999,
+      "budget_remaining": 0.8
+    },
+    {
+      "name": "latency",
+      "objective": 6.0,
+      "window": "30d",
+      "observed": 0.97,
+      "budget_remaining": 0.4
+    }
   ]
 }

@@ -153,8 +153,23 @@ class BlockedItem(_Body):
     regressed: tuple[Regression, ...]
 
 
+class GateScore(_Body):
+    """One score the eval gate checks: the newest run's value beside its threshold.
+
+    `passed` is null when the value or the threshold is missing; a value exactly on
+    the threshold passes, as in `app.evals.gate`."""
+
+    name: str
+    label: str
+    value: float | None
+    threshold: float | None
+    passed: bool | None
+    note: str | None
+
+
 class QualityPage(_Body):
     sources: Sources
+    gate: tuple[GateScore, ...]
     runs: tuple[EvalRunSummary, ...]
     release_markers: tuple[ReleaseMarker, ...]
     categories: tuple[CategoryCount, ...]

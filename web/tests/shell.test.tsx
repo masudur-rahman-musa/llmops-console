@@ -50,7 +50,7 @@ describe("console shell", () => {
     expect(occurrences(fresh, "Sign-in failed.")).toBe(0);
   });
 
-  it("the nav carries seven links in order with their labels", () => {
+  it("the nav carries six links in order with their labels", () => {
     // Catches a nav with a missing, extra, reordered, mislabelled or wrongly addressed link, or nav rendered after the page content.
     const html = renderToStaticMarkup(
       <ConsoleLayout>
@@ -67,7 +67,6 @@ describe("console shell", () => {
       { href: "/", label: "Home" },
       { href: "/cost", label: "Cost" },
       { href: "/quality", label: "Quality" },
-      { href: "/residency", label: "Residency" },
       { href: "/reliability", label: "Reliability" },
       { href: "/incidents", label: "Incidents" },
       { href: "/releases", label: "Releases" },

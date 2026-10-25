@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { CONSOLE_PATHS, GUARDS, type PageName } from "@/lib/console-api";
 
-const PAGES: PageName[] = ["home", "cost", "quality", "residency", "reliability", "incidents", "releases"];
+const PAGES: PageName[] = ["home", "cost", "quality", "reliability", "incidents", "releases"];
 
 type Path = ReadonlyArray<string | number>;
 
@@ -54,7 +54,6 @@ const RENDERED: Record<PageName, Path[]> = {
     ["cost_usd_today"],
     ["p95_seconds"],
     ["error_rate"],
-    ["residency_violations_today"],
     ["last_eval"],
     ["open_incidents"],
     ["last_eval", "finished_at"],
@@ -111,19 +110,12 @@ const RENDERED: Record<PageName, Path[]> = {
     ["blocked", -1, "regressed", -1, "metric"],
     ["blocked", -1, "regressed", -1, "value"],
     ["blocked", -1, "regressed", -1, "previous"],
-  ],
-  residency: [
-    ["sources"],
-    ["by_region"],
-    ["violations"],
-    ["redactions"],
-    ["by_region", -1, "tenant"],
-    ["by_region", -1, "region"],
-    ["by_region", -1, "provider"],
-    ["by_region", -1, "requests"],
-    ["redactions", -1, "tenant"],
-    ["redactions", -1, "kind"],
-    ["redactions", -1, "count"],
+    ["gate"],
+    ["gate", -1, "name"],
+    ["gate", -1, "label"],
+    ["gate", -1, "value"],
+    ["gate", -1, "threshold"],
+    ["gate", -1, "passed"],
   ],
   reliability: [
     ["sources"],
@@ -178,7 +170,7 @@ describe("page body guards", () => {
     }
 
     const nullHome = fixture("home");
-    for (const field of ["requests_today", "cost_usd_today", "p95_seconds", "error_rate", "residency_violations_today", "last_eval", "open_incidents"]) {
+    for (const field of ["requests_today", "cost_usd_today", "p95_seconds", "error_rate", "last_eval", "open_incidents"]) {
       nullHome[field] = null;
     }
     expect(passes("home", nullHome), "home all null").toBe(true);
@@ -188,10 +180,14 @@ describe("page body guards", () => {
     expect(passes("quality", without("quality", ["runs", -1, "metrics", "check_score"])), "accuracy absent").toBe(true);
     expect(passes("quality", withValue("quality", ["blocked", -1, "regressed"], [])), "regressed empty").toBe(true);
 
+    // Catches a quality guard that refuses a gate row whose value, threshold and verdict are all null (no run, no baseline).
+    const nullGate = fixture("quality");
+    Object.assign((nullGate.gate as Array<Record<string, unknown>>)[0], { value: null, threshold: null, passed: null });
+    expect(passes("quality", nullGate), "gate nulls").toBe(true);
+
     const nullCost = withValue("cost", ["rollup_populated"], null);
     nullCost.savings_usd_total = null;
     expect(passes("cost", nullCost), "cost nulls").toBe(true);
-    expect(passes("residency", withValue("residency", ["violations"], null)), "violations null").toBe(true);
     // Catches a reliability guard that requires a number where a budget row answers null for no traffic.
     const noTraffic = withValue("reliability", ["slos", 0, "observed"], null);
     (noTraffic.slos as Array<Record<string, unknown>>)[0].budget_remaining = null;

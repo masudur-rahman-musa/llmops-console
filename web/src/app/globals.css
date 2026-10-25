@@ -164,6 +164,12 @@ svg {
   stroke: var(--muted);
 }
 
+/* The one line under a page title saying what question the page answers. */
+.question {
+  margin-top: 0;
+  color: var(--muted);
+}
+
 /* A quiet note: empty states, source notices, "n/a". */
 .note {
   color: var(--muted);

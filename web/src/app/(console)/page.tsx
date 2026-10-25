@@ -1,17 +1,12 @@
 import { consolePage } from "@/components/layout/console-page";
 import { NA, ms, percent, usd } from "@/lib/format";
+import { CHECK_SCORE_SENTENCE } from "@/lib/labels";
 
 import styles from "./home.module.css";
 
 export const dynamic = "force-dynamic";
 
-function residencyLine(violations: number | null): string {
-  if (violations === null) return "Residency status unknown.";
-  if (violations === 0) return "All EU data stayed in the EU: ✓";
-  return `${violations} residency violations today.`;
-}
-
-export default consolePage("home", "Home", (body) => (
+export default consolePage("home", "Home", "Is the gateway healthy today, and what has it cost?", (body) => (
   <>
     <p>
       Today the gateway handled <strong>{body.requests_today ?? NA}</strong> requests costing{" "}
@@ -28,14 +23,12 @@ export default consolePage("home", "Home", (body) => (
         <span className={styles.label}>Open incidents:</span>{" "}
         <strong className={styles.value}>{body.open_incidents ?? NA}</strong>
       </li>
-      <li className={styles.card}>
-        <span className={styles.value}>{residencyLine(body.residency_violations_today)}</span>
-      </li>
     </ul>
     <p className="note">
       {body.last_eval === null
         ? "No eval yet."
         : `Last eval: check score ${percent(body.last_eval.check_score)}, ${body.last_eval.passed ? "passed" : "failed"}`}
     </p>
+    <p className="note">{CHECK_SCORE_SENTENCE}</p>
   </>
 ));

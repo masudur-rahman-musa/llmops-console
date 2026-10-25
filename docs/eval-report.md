@@ -95,7 +95,7 @@ When the run is given a `calibration.json`, the report carries:
 | `check` | `tools_in_order`, and per turn `no_early_change` and `no_made_up_name`; `null` when the target failed |
 | `judged` | each graded reply, from every run: `turn`, `rubric`, `reply`, `verdict` (`pass`, `fail` or `null` when the judge was unusable) and `reason` |
 | `tags` | always empty |
-| `latency_ms`, `cost_usd`, `provider`, `region` | always `null`: a conversation answer carries none of them |
+| `latency_ms`, `cost_usd`, `provider` | always `null`: a conversation answer carries none of them |
 
 ## The judge
 
@@ -167,7 +167,7 @@ keeps its own exit code.
 | `run_id`, `case_id`, `category` | which run, which case |
 | `passed` | whether the case passed |
 | `tags` | always empty |
-| `latency_ms`, `cost_usd`, `provider`, `region` | `NULL` |
+| `latency_ms`, `cost_usd`, `provider` | `NULL` |
 | `details` | the checks, the judged replies and the error |
 
 ## Metrics for the dashboard

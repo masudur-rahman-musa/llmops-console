@@ -56,6 +56,5 @@ another version is itself a configuration change, through that third variable.
 
 ## What is not here
 
-No Azure region appears in the shipped residency policy beyond the `eu` region
-the row declares, and no live request has ever been made. Everything above is
+No live request has ever been made to an Azure resource. Everything above is
 what the code does; what an Azure resource does in production is untested here.

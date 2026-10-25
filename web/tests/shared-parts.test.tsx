@@ -13,7 +13,7 @@ const TABLE = join(SRC, "components", "ui", "table.tsx");
 const WRAPPER = join(SRC, "components", "layout", "console-page.tsx");
 const README = join(ROOT, "README.md");
 
-const PAGE_NAMES = ["", "cost", "quality", "residency", "reliability", "incidents", "releases"] as const;
+const PAGE_NAMES = ["", "cost", "quality", "reliability", "incidents", "releases"] as const;
 const PAGES = PAGE_NAMES.map((name) => join(SRC, "app", "(console)", name, "page.tsx"));
 
 function read(path: string): string {

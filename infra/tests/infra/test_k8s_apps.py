@@ -2207,6 +2207,25 @@ def test_the_image_carries_the_price_table_it_loads_at_startup() -> None:
         )
 
 
+def test_the_image_carries_the_eval_baseline() -> None:
+    """Catches an image that serves the quality page without the baseline file, so every
+    threshold reads "Threshold not set" in the cluster: the `COPY` missing, the `ENV` missing,
+    or the `ENV` pointing anywhere but the workdir path the file is copied to."""
+    text = read(DOCKERFILE)
+    copied = dockerfile_copied_files(text)
+    environment = dockerfile_environment(text)
+
+    assert any(
+        path == "evals/conversation-baseline.json"
+        or (path.endswith("/") and "evals/conversation-baseline.json".startswith(path))
+        for path in copied
+    ), f"the image copies {sorted(copied)}, not evals/conversation-baseline.json"
+    assert (
+        environment.get("OPSCONSOLE_EVAL_BASELINE_PATH")
+        == f"{IMAGE_WORKDIR}/evals/conversation-baseline.json"
+    )
+
+
 @pytest.mark.parametrize("ingress_name", sorted(INGRESS_MIDDLEWARES))
 def test_each_ingress_routes_its_own_path_to_its_own_backend_service(
     ingress_name: str, built: list[dict[str, Any]]

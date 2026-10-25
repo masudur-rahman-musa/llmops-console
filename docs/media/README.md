@@ -11,7 +11,6 @@ Expected files, named exactly:
 | `walkthrough.md` | a link to the recorded walkthrough, once it is made |
 | `console-overview.png` | the console's overview page: spend, latency, errors |
 | `console-reliability.png` | the Reliability page with remaining error budgets |
-| `console-residency.png` | the Residency page and its refusal log |
 | `console-evals.png` | the Evaluations page: the conversation cases against the baseline |
 | `grafana-gateway.png` | the gateway overview dashboard in Grafana |
 

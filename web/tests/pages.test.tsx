@@ -12,9 +12,9 @@ import IncidentsPage, { dynamic as incidentsDynamic } from "@/app/(console)/inci
 import QualityPage, { dynamic as qualityDynamic } from "@/app/(console)/quality/page";
 import ReleasesPage, { dynamic as releasesDynamic } from "@/app/(console)/releases/page";
 import ReliabilityPage, { dynamic as reliabilityDynamic } from "@/app/(console)/reliability/page";
-import ResidencyPage, { dynamic as residencyDynamic } from "@/app/(console)/residency/page";
+import { CHECK_SCORE_SENTENCE } from "@/lib/labels";
 
-type PageName = "home" | "cost" | "quality" | "residency" | "reliability" | "incidents" | "releases";
+type PageName = "home" | "cost" | "quality" | "reliability" | "incidents" | "releases";
 type Fixture = Record<string, unknown>;
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -26,7 +26,6 @@ const PAGES: Record<PageName, () => Promise<ReactElement>> = {
   home: HomePage,
   cost: CostPage,
   quality: QualityPage,
-  residency: ResidencyPage,
   reliability: ReliabilityPage,
   incidents: IncidentsPage,
   releases: ReleasesPage,
@@ -150,8 +149,8 @@ afterEach(() => {
 describe("console pages", () => {
   it("every page module exports force-dynamic", () => {
     // Catches a page left statically rendered, which would cache one request's data for every visitor.
-    const exported = [homeDynamic, costDynamic, qualityDynamic, residencyDynamic, reliabilityDynamic, incidentsDynamic, releasesDynamic];
-    expect(exported).toEqual(Array(7).fill("force-dynamic"));
+    const exported = [homeDynamic, costDynamic, qualityDynamic, reliabilityDynamic, incidentsDynamic, releasesDynamic];
+    expect(exported).toEqual(Array(6).fill("force-dynamic"));
   });
 
   it("each page renders its ok fixture", async () => {
@@ -169,7 +168,6 @@ describe("console pages", () => {
     expect(has(home, "Error rate: 0.50%")).toBe(true);
     expect(has(home, "Open incidents: 2")).toBe(true);
     expect(has(home, "Last eval: check score 93.12%, passed")).toBe(true);
-    expect(has(home, "All EU data stayed in the EU: ✓")).toBe(true);
     const failedEval = fixture("home");
     failedEval.last_eval = { ...(failedEval.last_eval as Fixture), passed: false };
     expect(has(await render("home", failedEval), "Last eval: check score 93.12%, failed")).toBe(true);
@@ -198,16 +196,16 @@ describe("console pages", () => {
     expect(occurrences(text(cost), "n/a")).toBeGreaterThan(occurrences(text(await render("cost", knownRatio)), "n/a"));
 
     const tables = cost.match(/<table\b[\s\S]*?<\/table>/g) ?? [];
-    const tradeoff = tables.filter((table) => table.includes("usd_per_1000_turns"));
+    const tradeoff = tables.filter((table) => table.includes("Cost per 1,000 turns"));
     expect(tradeoff).toHaveLength(1);
     const header = (tradeoff[0].match(/<tr\b[\s\S]*?<\/tr>/) ?? [""])[0];
     const columns = Array.from(header.matchAll(/<t[hd]\b[^>]*>([\s\S]*?)<\/t[hd]>/g), (match) => text(match[1]));
     expect(columns).toEqual([
       "Option",
       "Kind",
-      "check_score",
-      "judge_score",
-      "usd_per_1000_turns",
+      "Check score",
+      "Judge score",
+      "Cost per 1,000 turns",
     ]);
     expectInOrder(cost, [
       "Hosted small model",
@@ -229,19 +227,12 @@ describe("console pages", () => {
     expect(has(quality, "missed_refusal 2")).toBe(true);
     expect(has(quality, "3f9c2a7b1e4d")).toBe(true);
     expect(has(quality, "a1b2c3d4e5f6")).toBe(true);
-    expect(has(quality, "check_score: 0.88 (was 0.93)")).toBe(true);
-    expect(has(quality, "judge_score: 0.9 (was 0.95)")).toBe(true);
+    expect(has(quality, "Check score: 0.88 (was 0.93)")).toBe(true);
+    expect(has(quality, "Judge score: 0.9 (was 0.95)")).toBe(true);
     expect(has(quality, "javascript:alert(1)")).toBe(true);
     const prLinks = anchors(quality).filter((anchor) => anchor.label === "PR");
     expect(prLinks.map((anchor) => anchor.href)).toEqual(["https://github.com/example/helpdesk/pull/41"]);
     expect(quality).not.toContain("No regression recorded.");
-
-    const residency = await render("residency");
-    expect(has(residency, "acme-eu eu-west mistral 640")).toBe(true);
-    expect(has(residency, "globex-eu eu-central local 215")).toBe(true);
-    expect(has(residency, "Violations: 0")).toBe(true);
-    expect(has(residency, "acme-eu email 12")).toBe(true);
-    expect(has(residency, "globex-eu iban 3")).toBe(true);
 
     const reliability = await render("reliability");
     expect(has(reliability, "p95 latency")).toBe(true);
@@ -281,8 +272,10 @@ describe("console pages", () => {
     }
     expect(has(releases, "check score 93.00%")).toBe(true);
     expect(has(releases, "check score 88.00%")).toBe(true);
-    expect(words(releases, "passed")).toBe(1);
-    expect(words(releases, "failed")).toBe(1);
+    // The check score sentence says "passed" itself; only the eval column is counted.
+    const releaseRows = releases.replace(CHECK_SCORE_SENTENCE, "");
+    expect(words(releaseRows, "passed")).toBe(1);
+    expect(words(releaseRows, "failed")).toBe(1);
     expect(occurrences(text(releases), "no eval")).toBe(1);
     const releaseLinks = anchors(releases).filter((anchor) => anchor.label === "PR");
     expect(releaseLinks.map((anchor) => anchor.href)).toEqual(["https://github.com/example/helpdesk/pull/44"]);
@@ -321,25 +314,6 @@ describe("console pages", () => {
           expect(has(html, notice), `${name} ${JSON.stringify(sources)} ${notice}`).toBe(expected.includes(notice));
         }
       }
-    }
-  });
-
-  it("home residency line for 0, 3 and null", async () => {
-    // Catches a residency line that treats null as zero, shows the tick for a violation, or picks the wrong wording per count.
-    const lines = ["All EU data stayed in the EU: ✓", "3 residency violations today.", "Residency status unknown."];
-    const rows: Array<[number | null, string]> = [
-      [0, lines[0]],
-      [3, lines[1]],
-      [null, lines[2]],
-    ];
-    for (const [violations, expected] of rows) {
-      const body = fixture("home");
-      body.residency_violations_today = violations;
-      const html = await render("home", body);
-      for (const line of lines) {
-        expect(has(html, line), `${String(violations)} ${line}`).toBe(line === expected);
-      }
-      expect(html.includes("✓"), String(violations)).toBe(violations === 0);
     }
   });
 
@@ -389,7 +363,7 @@ describe("console pages", () => {
       const html = await render("cost");
       const label = String(path);
       expect(has(html, "Not measured yet."), label).toBe(true);
-      expect(html, label).not.toContain("usd_per_1000_turns");
+      expect(html, label).not.toContain("Cost per 1,000 turns");
       expect(has(html, "2026-09-15 acme-eu mistral 412 37 $18.25"), label).toBe(true);
       expect(has(html, "Estimated cache savings: $4.55"), label).toBe(true);
       expect(has(html, "support-fast: $0.0042"), label).toBe(true);
@@ -413,14 +387,14 @@ describe("console pages", () => {
     list(body, "blocked")[0].regressed = [];
     const html = await render("quality", body);
     expect(occurrences(text(html), "No regression recorded.")).toBe(1);
-    expect(html).not.toContain("check_score: 0.88");
-    expect(has(html, "judge_score: 0.9 (was 0.95)")).toBe(true);
+    expect(html).not.toContain("Check score: 0.88");
+    expect(has(html, "Judge score: 0.9 (was 0.95)")).toBe(true);
   });
 
   it("reliability renders the slo table above the charts", async () => {
     // Catches the SLO table left off the page, or placed below the latency and error-rate charts it summarises.
     const html = await render("reliability");
-    expectInOrder(html, ["availability", "residency", "p95 latency", "Error rate"]);
+    expectInOrder(html, ["availability", "p95 latency", "Error rate"]);
   });
 
   it("incidents render the open badge and a safe postmortem link only", async () => {
@@ -453,8 +427,8 @@ describe("console pages", () => {
     for (const release of list(body, "releases")) release.eval_passed = null;
     const html = await render("releases", body);
     expect(occurrences(text(html), "no eval")).toBe(3);
-    expect(words(html, "passed")).toBe(0);
-    expect(words(html, "failed")).toBe(0);
+    expect(words(html.replace(CHECK_SCORE_SENTENCE, ""), "passed")).toBe(0);
+    expect(words(html.replace(CHECK_SCORE_SENTENCE, ""), "failed")).toBe(0);
   });
 
   it("external links carry rel noopener noreferrer", async () => {

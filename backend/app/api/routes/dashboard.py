@@ -4,7 +4,7 @@ Six routes, all behind `app.api.deps.admin_key`:
 
     GET /console/home          today's traffic, spend, latency and the last eval
     GET /console/cost          the daily rollup, estimated cache savings, budgets
-    GET /console/quality       eval runs, categories, taxonomy, blocked releases
+    GET /console/quality       the eval gate, runs, categories, taxonomy, blocked releases
     GET /console/reliability   latency and error-rate series, breakers, fallbacks
     GET /console/incidents     the timeline
     GET /console/releases      deploys, each with its eval result
@@ -43,7 +43,7 @@ from app.schemas.dashboard import (
     Sources,
 )
 from app.schemas.dashboard import SourceState as SourceState
-from app.services.dashboard import budgets, first, postgres, prometheus, slos
+from app.services.dashboard import budgets, first, gate_scores, postgres, prometheus, slos
 from app.services.prometheus_reads import (
     CIRCUITS_QUERY,
     ERROR_RATE_QUERY,
@@ -139,12 +139,14 @@ def cost(
 
 @router.get(CONSOLE_QUALITY)
 def quality(request: Request, days: Days = DEFAULT_DAYS) -> QualityPage:
-    """Eval runs over the window, and what regressed behind each blocked release."""
+    """The eval gate, eval runs over the window, and what regressed behind each blocked release."""
     now = datetime.now(UTC)
     pg, read = postgres(request, "quality", lambda reader: reader.quality(days=days, now=now))
+    baseline_path = request.app.state.settings.eval_baseline_path
     if read is None:
         return QualityPage(
             sources=Sources(postgres=pg, prometheus=SourceState.UNCONFIGURED),
+            gate=gate_scores(baseline_path, ()),
             runs=(),
             release_markers=(),
             categories=(),
@@ -153,6 +155,7 @@ def quality(request: Request, days: Days = DEFAULT_DAYS) -> QualityPage:
         )
     return QualityPage(
         sources=Sources(postgres=pg, prometheus=SourceState.UNCONFIGURED),
+        gate=gate_scores(baseline_path, read.runs),
         runs=read.runs,
         release_markers=read.release_markers,
         categories=read.categories,

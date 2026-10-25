@@ -12,7 +12,7 @@ import {
 
 const BASE = "http://console-api.test";
 const KEY = "adminkey-sentinel-7c41e2d9f0";
-const PAGES: PageName[] = ["home", "cost", "quality", "residency", "reliability", "incidents", "releases"];
+const PAGES: PageName[] = ["home", "cost", "quality", "reliability", "incidents", "releases"];
 
 function fixture(name: PageName): unknown {
   return JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), "utf8"));
@@ -46,13 +46,12 @@ afterEach(() => {
 });
 
 describe("getConsolePage", () => {
-  it("the seven paths are pinned", async () => {
+  it("the six paths are pinned", async () => {
     // Catches a path map with a missing, extra or misspelt page, or a client that fetches a path other than the map's own.
     expect(CONSOLE_PATHS).toEqual({
       home: "/console/home",
       cost: "/console/cost",
       quality: "/console/quality",
-      residency: "/console/residency",
       reliability: "/console/reliability",
       incidents: "/console/incidents",
       releases: "/console/releases",

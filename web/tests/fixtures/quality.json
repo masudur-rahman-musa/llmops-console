@@ -1,5 +1,8 @@
 {
-  "sources": { "postgres": "ok", "prometheus": "ok" },
+  "sources": {
+    "postgres": "ok",
+    "prometheus": "ok"
+  },
   "runs": [
     {
       "id": "run-2026-09-14-nightly",
@@ -7,7 +10,10 @@
       "run_kind": "nightly",
       "git_sha": "5e2d8c1b9a7f6e5d4c3b2a19f8e7d6c5b4a39281",
       "passed": true,
-      "metrics": { "check_score": 0.93, "judge_score": 0.95 }
+      "metrics": {
+        "check_score": 0.93,
+        "judge_score": 0.95
+      }
     },
     {
       "id": "run-2026-09-12-nightly",
@@ -15,7 +21,10 @@
       "run_kind": "nightly",
       "git_sha": null,
       "passed": true,
-      "metrics": { "check_score": 0.91, "judge_score": 0.94 }
+      "metrics": {
+        "check_score": 0.91,
+        "judge_score": 0.94
+      }
     },
     {
       "id": "run-2026-09-15-pr",
@@ -23,20 +32,45 @@
       "run_kind": "pr",
       "git_sha": "3f9c2a7b1e4d5c6f7a8b9c0d1e2f3a4b5c6d7e8f",
       "passed": false,
-      "metrics": { "check_score": 0.88, "judge_score": 0.9 }
+      "metrics": {
+        "check_score": 0.88,
+        "judge_score": 0.9
+      }
     }
   ],
   "release_markers": [
-    { "git_sha": "5e2d8c1b9a7f6e5d4c3b2a19f8e7d6c5b4a39281", "deployed_at": "2026-09-13T10:00:00Z", "status": "deployed" },
-    { "git_sha": "3f9c2a7b1e4d5c6f7a8b9c0d1e2f3a4b5c6d7e8f", "deployed_at": "2026-09-15T09:00:00Z", "status": "blocked" }
+    {
+      "git_sha": "5e2d8c1b9a7f6e5d4c3b2a19f8e7d6c5b4a39281",
+      "deployed_at": "2026-09-13T10:00:00Z",
+      "status": "deployed"
+    },
+    {
+      "git_sha": "3f9c2a7b1e4d5c6f7a8b9c0d1e2f3a4b5c6d7e8f",
+      "deployed_at": "2026-09-15T09:00:00Z",
+      "status": "blocked"
+    }
   ],
   "categories": [
-    { "category": "refusal", "passed": 18, "total": 20 },
-    { "category": "citation", "passed": 9, "total": 12 }
+    {
+      "category": "refusal",
+      "passed": 18,
+      "total": 20
+    },
+    {
+      "category": "citation",
+      "passed": 9,
+      "total": 12
+    }
   ],
   "taxonomy": [
-    { "tag": "wrong_tool", "count": 4 },
-    { "tag": "missed_refusal", "count": 2 }
+    {
+      "tag": "wrong_tool",
+      "count": 4
+    },
+    {
+      "tag": "missed_refusal",
+      "count": 2
+    }
   ],
   "blocked": [
     {
@@ -44,14 +78,44 @@
       "deployed_at": "2026-09-15T09:00:00Z",
       "pr_url": "https://github.com/example/helpdesk/pull/41",
       "eval_run_id": "run-2026-09-15-pr",
-      "regressed": [{ "metric": "check_score", "value": 0.88, "previous": 0.93 }]
+      "regressed": [
+        {
+          "metric": "check_score",
+          "value": 0.88,
+          "previous": 0.93
+        }
+      ]
     },
     {
       "git_sha": "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678",
       "deployed_at": "2026-09-11T14:00:00Z",
       "pr_url": "javascript:alert(1)",
       "eval_run_id": null,
-      "regressed": [{ "metric": "judge_score", "value": 0.9, "previous": 0.95 }]
+      "regressed": [
+        {
+          "metric": "judge_score",
+          "value": 0.9,
+          "previous": 0.95
+        }
+      ]
+    }
+  ],
+  "gate": [
+    {
+      "name": "check_score",
+      "label": "Check score",
+      "value": 52.1,
+      "threshold": 48.5,
+      "passed": true,
+      "note": null
+    },
+    {
+      "name": "judge_score",
+      "label": "Judge score",
+      "value": 25.0,
+      "threshold": 27.4,
+      "passed": false,
+      "note": "Counts only while the judge agrees with people (kappa 0.7 or better)."
     }
   ]
 }

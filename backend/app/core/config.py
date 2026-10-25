@@ -16,6 +16,12 @@ DEFAULT_PRICES_PATH = Path(__file__).resolve().parents[2] / "config" / "prices.y
 """The shipped `prices.yaml`, found the same way and for the same reason, with
 `OPSCONSOLE_PRICES_PATH` as the escape hatch."""
 
+DEFAULT_EVAL_BASELINE_PATH = (
+    Path(__file__).resolve().parents[2] / "evals" / "conversation-baseline.json"
+)
+"""The committed eval baseline, found the same way, with
+`OPSCONSOLE_EVAL_BASELINE_PATH` as the escape hatch."""
+
 
 class Settings(BaseSettings):
     """Gateway settings.
@@ -46,6 +52,12 @@ class Settings(BaseSettings):
     it at startup, so a malformed file stops the process rather than surfacing on
     a request that then cannot be priced. Every served request is costed against
     that one snapshot."""
+
+    eval_baseline_path: Path = DEFAULT_EVAL_BASELINE_PATH
+    """Where the quality page reads the eval gate's thresholds from.
+
+    Read on every `/console/quality` request, never at startup: a missing or
+    invalid file leaves the thresholds null and the page still answers."""
 
     admin_key_sha256: str = ""
     """The sha256 digest of the one admin key, or empty for a gateway whose

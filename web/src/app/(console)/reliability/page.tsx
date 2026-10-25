@@ -17,12 +17,9 @@ function objective(slo: Slo): string {
   return String(slo.objective);
 }
 
-/** Shares as percentages; the residency count as a plain number. */
+/** The observed share as a percentage. */
 function observed(slo: Slo): string {
-  if (slo.observed === null) {
-    return NA;
-  }
-  return slo.name === "residency" ? String(slo.observed) : percent(slo.observed);
+  return slo.observed === null ? NA : percent(slo.observed);
 }
 
 /** Null is no traffic, never a full or an empty budget; a negative budget is overspent and shown unclamped. */
@@ -36,7 +33,7 @@ function budget(slo: Slo): string {
   return percent(slo.budget_remaining);
 }
 
-export default consolePage("reliability", "Reliability", (body) => (
+export default consolePage("reliability", "Reliability", "Is the gateway up and fast enough, and which providers are failing?", (body) => (
   <>
     <h2>Error budgets</h2>
     <Table
@@ -52,6 +49,7 @@ export default consolePage("reliability", "Reliability", (body) => (
 
     <h2>Circuit breakers</h2>
     <Table
+      columns={["Provider", "State"]}
       rows={body.circuits.map((circuit) => ({
         key: circuit.provider,
         cells: [circuit.provider, circuit.state],

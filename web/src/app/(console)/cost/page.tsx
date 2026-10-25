@@ -1,6 +1,7 @@
 import { consolePage } from "@/components/layout/console-page";
 import { Table } from "@/components/ui/table";
 import { NA, usd } from "@/lib/format";
+import { CHECK_SCORE_SENTENCE, scoreLabel } from "@/lib/labels";
 import { TRADEOFF_METRICS, readTradeoff, type Tradeoff } from "@/lib/tradeoff";
 
 export const dynamic = "force-dynamic";
@@ -19,7 +20,7 @@ function TradeoffTable({ table }: { table: Tradeoff | null }) {
   return (
     <>
       <Table
-        columns={["Option", "Kind", ...TRADEOFF_METRICS, "usd_per_1000_turns"]}
+        columns={["Option", "Kind", ...TRADEOFF_METRICS.map(scoreLabel), "Cost per 1,000 turns"]}
         rows={table.rows.map((row) => ({
           key: row.id,
           cells: [row.label, row.kind, ...row.metrics.map((value) => value ?? NA), row.usd_per_1000_turns ?? NA],
@@ -30,7 +31,7 @@ function TradeoffTable({ table }: { table: Tradeoff | null }) {
   );
 }
 
-export default consolePage("cost", "Cost", async (body) => {
+export default consolePage("cost", "Cost", "What does the AI cost, per day, per tenant and per model, and what did caching save?", async (body) => {
   const tradeoff = await readTradeoff(process.env.CONSOLE_TRADEOFF_PATH);
   return (
     <>
@@ -46,6 +47,7 @@ export default consolePage("cost", "Cost", async (body) => {
 
       <h2>Cache savings</h2>
       <Table
+        columns={["Day", "Tenant", "Saved"]}
         rows={body.savings.map((saving) => ({
           key: `${saving.day}/${saving.tenant}`,
           cells: [saving.day, saving.tenant, usd(saving.saved_usd)],
@@ -80,6 +82,7 @@ export default consolePage("cost", "Cost", async (body) => {
 
       <h2>Model tradeoff</h2>
       <TradeoffTable table={tradeoff} />
+      <p className="note">{CHECK_SCORE_SENTENCE}</p>
     </>
   );
 });

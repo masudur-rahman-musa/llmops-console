@@ -31,11 +31,13 @@ The contract these cases are written against, before it exists:
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -63,6 +65,7 @@ from app.schemas.dashboard import (
     Saving,
     TagCount,
 )
+from app.services.dashboard import JUDGE_NOTE
 from app.services.prometheus_reads import (
     AVAILABILITY_BUDGET_QUERY,
     CIRCUITS_QUERY,
@@ -109,6 +112,8 @@ POSTGRES_PATHS = [HOME, COST, QUALITY, INCIDENTS, RELEASES]
 PROMETHEUS_PATHS = [HOME, RELIABILITY]
 
 LOGGER = "app.services.dashboard"
+
+SHIPPED_BASELINE = Path(__file__).resolve().parents[2] / "evals" / "conversation-baseline.json"
 
 ADMIN_HEADERS = {"Authorization": f"Bearer {ADMIN_KEY}"}
 TENANT_KEY = TEST_KEYS["nordlicht"]
@@ -633,6 +638,23 @@ def unconfigured_body(path: str) -> dict[str, Any]:
     body: dict[str, Any] = {"sources": {"postgres": UNCONFIGURED, "prometheus": UNCONFIGURED}}
     body.update(POSTGRES_EMPTY[path])
     body.update(PROMETHEUS_EMPTY[path])
+    if path == QUALITY:
+        # The gate reads the committed baseline, not a source, so its thresholds stay set.
+        baseline = json.loads(SHIPPED_BASELINE.read_text(encoding="utf-8"))
+        body["gate"] = [
+            {
+                "name": name,
+                "label": label,
+                "value": None,
+                "threshold": baseline[name],
+                "passed": None,
+                "note": note,
+            }
+            for name, label, note in (
+                ("check_score", "Check score", None),
+                ("judge_score", "Judge score", JUDGE_NOTE),
+            )
+        ]
     if path == COST:
         body["estimated"] = True
         body["budgets"] = [
@@ -784,18 +806,40 @@ def test_the_cost_body_carries_the_reader_answer_and_is_estimated(wired: Wired) 
 
 
 def test_the_quality_body_carries_the_reader_answer(wired: Wired) -> None:
-    """Catches a quality route that drops or renames one of its five lists, reorders the
-    reader's rows, or reports Prometheus as anything but `unconfigured`."""
+    """Catches a quality route that drops or renames one of its five lists or the gate, reorders
+    the reader's rows, or reports Prometheus as anything but `unconfigured`."""
     response = wired.get(QUALITY)
 
     assert response.status_code == 200, response.text
-    assert response.json() == {
+    body = response.json()
+    # The note is a fixed sentence the gate tests pin; here only that the judge row has one.
+    notes = [row.pop("note") for row in body["gate"]]
+    assert notes[0] is None
+    assert "kappa 0.7" in notes[1]
+    baseline = json.loads(SHIPPED_BASELINE.read_text(encoding="utf-8"))
+    assert body == {
         "sources": {"postgres": OK, "prometheus": UNCONFIGURED},
         "runs": [row.model_dump(mode="json") for row in QUALITY_READ.runs],
         "release_markers": [row.model_dump(mode="json") for row in QUALITY_READ.release_markers],
         "categories": [row.model_dump(mode="json") for row in QUALITY_READ.categories],
         "taxonomy": [row.model_dump(mode="json") for row in QUALITY_READ.taxonomy],
         "blocked": [],
+        "gate": [
+            {
+                "name": "check_score",
+                "label": "Check score",
+                "value": 0.91,
+                "threshold": baseline["check_score"],
+                "passed": False,
+            },
+            {
+                "name": "judge_score",
+                "label": "Judge score",
+                "value": None,
+                "threshold": baseline["judge_score"],
+                "passed": None,
+            },
+        ],
     }
     assert wired.prom.calls == []
 

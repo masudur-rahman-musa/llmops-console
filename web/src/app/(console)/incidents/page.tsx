@@ -4,7 +4,7 @@ import { utcTime } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
-export default consolePage("incidents", "Incidents", (body) => (
+export default consolePage("incidents", "Incidents", "What went wrong, and what did we learn?", (body) => (
   <ul>
     {body.incidents.map((incident) => (
       <li key={incident.id}>

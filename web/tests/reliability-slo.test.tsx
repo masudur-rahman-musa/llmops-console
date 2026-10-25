@@ -84,7 +84,7 @@ describe("reliability slo guard", () => {
 });
 
 describe("reliability slo table", () => {
-  it("renders the three row names", async () => {
+  it("renders the two row names", async () => {
     // Catches a table that renders a fixed subset of rows, or none, instead of every row the body carries. Occurrences are
     // compared against the same body with no rows, because the chart title "p95 latency" already contains "latency".
     const html = await render(fixture());
@@ -92,7 +92,7 @@ describe("reliability slo table", () => {
     const noRows = fixture();
     noRows.slos = [];
     const bare = await render(noRows);
-    for (const name of ["availability", "latency", "residency"]) {
+    for (const name of ["availability", "latency"]) {
       expect(occurrences(html, name), name).toBeGreaterThan(occurrences(bare, name));
     }
   });
@@ -100,7 +100,7 @@ describe("reliability slo table", () => {
   it("shows no traffic for a null budget", async () => {
     // Catches a null budget rendered as 0, 0%, a blank cell or the text null, which reads as a spent budget.
     const body = fixture();
-    expect(slos(body)[2].budget_remaining).toBeNull();
+    slos(body)[1].budget_remaining = null;
     expect(await render(body)).toContain("no traffic");
   });
 

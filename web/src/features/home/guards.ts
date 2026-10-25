@@ -8,7 +8,6 @@ export type HomeBody = {
   cost_usd_today: number | null;
   p95_seconds: number | null;
   error_rate: number | null;
-  residency_violations_today: number | null;
   last_eval: { finished_at: string; passed: boolean; check_score: number | null } | null;
   open_incidents: number | null;
 };
@@ -19,7 +18,6 @@ const check = shape({
   cost_usd_today: nullable(num),
   p95_seconds: nullable(num),
   error_rate: nullable(num),
-  residency_violations_today: nullable(int),
   last_eval: nullable(shape({ finished_at: str, passed: bool, check_score: nullable(num) })),
   open_incidents: nullable(int),
 });

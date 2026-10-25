@@ -6,13 +6,15 @@ import { getConsolePage, type PageBodies, type PageName } from "@/lib/console-ap
 
 /**
  * The opening every console page shares: read the page body, show the
- * Unavailable notice when it fails, else print the `<h1>` and the SourceNotice
- * once. The page passes only its body builder, which may be async so the cost
- * page can still read the tradeoff file. Pinned by tests/shared-parts.test.tsx.
+ * Unavailable notice when it fails, else print the `<h1>`, the one-line
+ * question the page answers, and the SourceNotice once. The page passes only
+ * its body builder, which may be async so the cost page can still read the
+ * tradeoff file. Pinned by tests/shared-parts.test.tsx and tests/clarity.test.tsx.
  */
 export function consolePage<N extends PageName>(
   name: N,
   title: string,
+  question: string,
   render: (body: PageBodies[N]) => ReactNode | Promise<ReactNode>,
 ): () => Promise<ReactElement> {
   return async function Page(): Promise<ReactElement> {
@@ -23,6 +25,7 @@ export function consolePage<N extends PageName>(
     return (
       <>
         <h1>{title}</h1>
+        <p className="question">{question}</p>
         <SourceNotice sources={result.body.sources} />
         {await render(result.body)}
       </>

@@ -1,7 +1,7 @@
 # Customizing
 
 This repository is a GitHub template. Clone it, point it at your own providers,
-and you have a gateway that routes, enforces residency, redacts, caches, prices
+and you have a gateway that routes, redacts, caches, prices
 and measures your own traffic.
 
 To make it yours there are only two files you must edit: `backend/config/routing.yaml` and `backend/config/prices.yaml`.

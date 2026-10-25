@@ -1,10 +1,12 @@
 {
-  "sources": { "postgres": "ok", "prometheus": "ok" },
+  "sources": {
+    "postgres": "ok",
+    "prometheus": "ok"
+  },
   "requests_today": 842,
   "cost_usd_today": 1234.5,
   "p95_seconds": 0.4124,
   "error_rate": 0.005,
-  "residency_violations_today": 0,
   "last_eval": {
     "id": "run-2026-09-16-nightly",
     "finished_at": "2026-09-16T07:05:00Z",

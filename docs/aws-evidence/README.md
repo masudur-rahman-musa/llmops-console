@@ -81,7 +81,7 @@ Save them in the dated folder, with the account ID cropped or blurred.
 NetworkPolicies are applied but not enforced. The EKS VPC CNI enforces them only
 when its network policy agent is switched on, and the module leaves it off. The
 run proves the platform moves to managed Postgres, Redis and workload identity
-without an application change. The residency backstop, where a NetworkPolicy
+without an application change. The egress backstop, where a NetworkPolicy
 stops anything but the gateway from reaching a provider, is proven on the k3s
 cluster, which enforces it.
 
