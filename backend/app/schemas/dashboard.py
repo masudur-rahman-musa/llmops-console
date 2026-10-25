@@ -216,3 +216,29 @@ class IncidentsPage(_Body):
 class ReleasesPage(_Body):
     sources: Sources
     releases: tuple[Release, ...]
+
+
+class ModelCandidate(_Body):
+    provider: str
+    model: str
+
+
+class ModelAlias(_Body):
+    name: str
+    purpose: str | None
+    candidates: tuple[ModelCandidate, ...]
+
+
+class ProviderFileRow(_Body):
+    name: str
+    provider: str
+    kind: str
+    enabled: bool
+
+
+class ModelsPage(_Body):
+    """The live routing policy. It reads no Postgres or Prometheus, so it has no `sources`."""
+
+    loaded_at: datetime
+    aliases: tuple[ModelAlias, ...]
+    provider_files: tuple[ProviderFileRow, ...]

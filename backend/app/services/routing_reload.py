@@ -139,7 +139,7 @@ class RoutingRuntimeStore:
         price_store: PriceStore = self._state.prices
         # Parse OUTSIDE the lock: raises PolicyInvalid without changing state.
         # The price-coverage check runs here too, for the same reason.
-        new_policy, new_table = load_routing(policy_store._path, policy_store._providers_dir)
+        new_policy, new_table = load_routing(policy_store.path, policy_store.providers_dir)
         check_policy_models_priced(new_policy, new_table)
 
         to_close: Mapping[str, Adapter] | None = None
@@ -150,7 +150,7 @@ class RoutingRuntimeStore:
             old_key = id(old_adapters)
 
             # Swap all four atomically.
-            policy_store._policy = new_policy
+            policy_store.replace(new_policy)
             price_store._table = new_table
             self._state.adapters = new_adapters
             self._state.breaker = new_breaker

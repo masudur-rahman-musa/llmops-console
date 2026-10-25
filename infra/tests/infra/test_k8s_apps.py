@@ -3049,8 +3049,9 @@ CONSOLE_READ_PATHS = (
     "/console/reliability",
     "/console/incidents",
     "/console/releases",
+    "/console/models",
 )
-"""The six console read routes, written out rather than imported: importing the route
+"""The seven console read routes, written out rather than imported: importing the route
 module here would turn its absence into a collection error for every case in this file."""
 
 

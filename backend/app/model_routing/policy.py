@@ -16,7 +16,8 @@ instead of at the first request that happens to touch it. Every rejection is a
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Self
@@ -63,10 +64,15 @@ class Alias(_Frozen):
     right for a chat assistant and wrong for a judge or an extraction, so an
     alias reaches it only by saying so. An alias that omits the key is off, and what the shipped
     file turns on is fixed.
+
+    `purpose` is the one line the console's Models page shows beside the alias.
+    It is optional, and an alias without one reads "no purpose given" there.
+    Pinned by `tests/model_routing/test_alias_purpose.py`.
     """
 
     candidates: tuple[Candidate, ...]
     semantic_cache: bool = False
+    purpose: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class DataClassRule(_Frozen):
@@ -194,21 +200,52 @@ class PolicyStore:
     `reload` parses into a new `Policy` before it rebinds the attribute, so a
     failed reload leaves the previous snapshot in place and a resolution already
     holding a snapshot keeps reading a consistent one.
+
+    `loaded_at` is when the live snapshot went in, read from `clock` (UTC by
+    default). It moves only on a swap, so a failed reload keeps the old time.
+    Pinned by `tests/model_routing/test_policy_loaded_at.py`.
     """
 
-    def __init__(self, path: Path, providers_dir: Path) -> None:
+    def __init__(
+        self,
+        path: Path,
+        providers_dir: Path,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    ) -> None:
         self._path = path
         self._providers_dir = providers_dir
+        self._clock = clock
         self._policy = load_policy(path, providers_dir)
+        self._loaded_at = clock()
+
+    @property
+    def path(self) -> Path:
+        """The `routing.yaml` this store reads."""
+        return self._path
+
+    @property
+    def providers_dir(self) -> Path:
+        """The provider folder this store reads."""
+        return self._providers_dir
 
     @property
     def policy(self) -> Policy:
         """The current snapshot."""
         return self._policy
 
+    @property
+    def loaded_at(self) -> datetime:
+        """When the current snapshot was loaded or swapped in."""
+        return self._loaded_at
+
+    def replace(self, policy: Policy) -> None:
+        """Swap in a policy already parsed elsewhere, and stamp the time."""
+        self._policy = policy
+        self._loaded_at = self._clock()
+
     def reload(self) -> None:
         """Re-read the files and swap the snapshot, or raise and keep the old one."""
-        self._policy = load_policy(self._path, self._providers_dir)
+        self.replace(load_policy(self._path, self._providers_dir))
 
 
 def reachable_price_keys(policy: Policy) -> set[str]:

@@ -12,8 +12,9 @@ import IncidentsPage from "@/app/(console)/incidents/page";
 import QualityPage from "@/app/(console)/quality/page";
 import ReleasesPage from "@/app/(console)/releases/page";
 import ReliabilityPage from "@/app/(console)/reliability/page";
+import ModelsPage from "@/app/(console)/models/page";
 
-type PageName = "home" | "cost" | "quality" | "reliability" | "incidents" | "releases";
+type PageName = "home" | "cost" | "quality" | "reliability" | "incidents" | "releases" | "models";
 type Fixture = Record<string, unknown>;
 
 const SRC = fileURLToPath(new URL("../src", import.meta.url));
@@ -28,6 +29,7 @@ const PAGES: Record<PageName, () => Promise<ReactElement>> = {
   reliability: ReliabilityPage,
   incidents: IncidentsPage,
   releases: ReleasesPage,
+  models: ModelsPage,
 };
 const NAMES = Object.keys(PAGES) as PageName[];
 
@@ -38,6 +40,7 @@ const QUESTIONS: Record<PageName, string> = {
   reliability: "Is the gateway up and fast enough, and which providers are failing?",
   incidents: "What went wrong, and what did we learn?",
   releases: "What was deployed, when, and did it pass the eval gate?",
+  models: "Which models does each alias use, in what order, and what is loaded right now?",
 };
 
 const CHECK_SCORE_SENTENCE =

@@ -7,7 +7,8 @@ import { getConsolePage, type PageBodies, type PageName } from "@/lib/console-ap
 /**
  * The opening every console page shares: read the page body, show the
  * Unavailable notice when it fails, else print the `<h1>`, the one-line
- * question the page answers, and the SourceNotice once. The page passes only
+ * question the page answers, and the SourceNotice once when the body has
+ * sources (the models body reads the live policy and has none). The page passes only
  * its body builder, which may be async so the cost page can still read the
  * tradeoff file. Pinned by tests/shared-parts.test.tsx and tests/clarity.test.tsx.
  */
@@ -26,7 +27,7 @@ export function consolePage<N extends PageName>(
       <>
         <h1>{title}</h1>
         <p className="question">{question}</p>
-        <SourceNotice sources={result.body.sources} />
+        {"sources" in result.body && <SourceNotice sources={result.body.sources} />}
         {await render(result.body)}
       </>
     );

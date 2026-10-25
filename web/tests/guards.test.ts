@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { CONSOLE_PATHS, GUARDS, type PageName } from "@/lib/console-api";
 
-const PAGES: PageName[] = ["home", "cost", "quality", "reliability", "incidents", "releases"];
+const PAGES: PageName[] = ["home", "cost", "quality", "reliability", "incidents", "releases", "models"];
 
 type Path = ReadonlyArray<string | number>;
 
@@ -159,6 +159,19 @@ const RENDERED: Record<PageName, Path[]> = {
     ["releases", -1, "pr_url"],
     ["releases", -1, "eval_passed"],
   ],
+  models: [
+    ["loaded_at"],
+    ["aliases"],
+    ["provider_files"],
+    ["aliases", -1, "name"],
+    ["aliases", -1, "candidates"],
+    ["aliases", -1, "candidates", -1, "provider"],
+    ["aliases", -1, "candidates", -1, "model"],
+    ["provider_files", -1, "name"],
+    ["provider_files", -1, "provider"],
+    ["provider_files", -1, "kind"],
+    ["provider_files", -1, "enabled"],
+  ],
 };
 
 describe("page body guards", () => {
@@ -210,7 +223,8 @@ describe("page body guards", () => {
 
   it("a sources value outside ok unconfigured error fails the guard", () => {
     // Catches a guard that checks only that sources exists, only one of its two members, or only for the value ok.
-    for (const name of PAGES) {
+    // The models body reads no source, so it carries no `sources` to check.
+    for (const name of PAGES.filter((page) => page !== "models")) {
       for (const source of ["postgres", "prometheus"]) {
         for (const state of ["ok", "unconfigured", "error"]) {
           expect(passes(name, withValue(name, ["sources", source], state)), `${name} ${source} ${state}`).toBe(true);

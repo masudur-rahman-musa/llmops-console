@@ -9,6 +9,7 @@
 # `opsconsole.routing.policy`, and the file itself is a test case: it is loaded
 # and swept for every (tenant, alias, data class) triple by the routing tests.
 #
+# Each alias has a `purpose`, the one line the console's Models page shows.
 # Each alias lists its providers in order: the first is the default, the rest
 # are fallbacks. Chat runs on Anthropic, then OpenAI if Anthropic does not answer.
 
@@ -20,6 +21,7 @@ aliases:
   # this on anywhere is a deliberate line in this file.
   agent-default:
     semantic_cache: true
+    purpose: "Everyday help desk chat replies on the cheap model."
     candidates:
       # Haiku 5.5 is the cheap model the evals run on.
       - { provider: anthropic, model: claude-haiku-5-5 }
@@ -27,6 +29,7 @@ aliases:
   # A strong alias lists only strong models. Never add a candidate the alias does
   # not honestly describe.
   agent-strong:
+    purpose: "Harder chat turns that need the strong model."
     candidates:
       - { provider: anthropic, model: claude-sonnet-5-5 }
       - { provider: openai, model: gpt-5 }
@@ -34,12 +37,14 @@ aliases:
   # below that this line becomes Sonnet 5.5 and the judge is calibrated once more.
   # The judge is calibrated on Anthropic; OpenAI only answers when Anthropic is down.
   judge:
+    purpose: "Grades eval answers against the reference labels."
     candidates:
       - { provider: anthropic, model: claude-haiku-5-5 }
       - { provider: openai, model: gpt-5-mini }
   # Only the local embedding server: a second embedding model writes vectors in
   # a different space and breaks search over the stored ones.
   embed:
+    purpose: "Turns text into vectors for search and the semantic cache."
     candidates:
       - { provider: local_embed, model: bge-small-en-v1.5 }
 

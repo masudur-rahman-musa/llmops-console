@@ -1,6 +1,6 @@
 """The console's read surface: one route per page, every number a page shows.
 
-Six routes, all behind `app.api.deps.admin_key`:
+Seven routes, all behind `app.api.deps.admin_key`:
 
     GET /console/home          today's traffic, spend, latency and the last eval
     GET /console/cost          the daily rollup, estimated cache savings, budgets
@@ -8,9 +8,10 @@ Six routes, all behind `app.api.deps.admin_key`:
     GET /console/reliability   latency and error-rate series, breakers, fallbacks
     GET /console/incidents     the timeline
     GET /console/releases      deploys, each with its eval result
+    GET /console/models        each alias and its providers, from the live policy
 
 The console reads through here and never touches Postgres or Prometheus itself.
-A working tenant key is 401 on all six, as on `/admin/*`. The sums and source
+A working tenant key is 401 on all seven, as on `/admin/*`. The sums and source
 helpers are `app.services.dashboard`; the page shapes are `app.schemas.dashboard`.
 
 **Inputs.** `days` is an integer from `MIN_DAYS` to `MAX_DAYS`, refused as 422
@@ -29,7 +30,7 @@ from typing import Annotated, Final
 
 from fastapi import APIRouter, Query, Request
 
-from app.api.deps import PricesDep, SettingsDep, checked_tenant
+from app.api.deps import PolicyDep, PricesDep, SettingsDep, checked_tenant
 from app.schemas.dashboard import (
     BlockedItem,
     Circuit,
@@ -37,6 +38,10 @@ from app.schemas.dashboard import (
     FallbackCount,
     HomePage,
     IncidentsPage,
+    ModelAlias,
+    ModelCandidate,
+    ModelsPage,
+    ProviderFileRow,
     QualityPage,
     ReleasesPage,
     ReliabilityPage,
@@ -59,6 +64,7 @@ CONSOLE_QUALITY: Final[str] = "/console/quality"
 CONSOLE_RELIABILITY: Final[str] = "/console/reliability"
 CONSOLE_INCIDENTS: Final[str] = "/console/incidents"
 CONSOLE_RELEASES: Final[str] = "/console/releases"
+CONSOLE_MODELS: Final[str] = "/console/models"
 
 CONSOLE_PATHS: Final[tuple[str, ...]] = (
     CONSOLE_HOME,
@@ -67,6 +73,7 @@ CONSOLE_PATHS: Final[tuple[str, ...]] = (
     CONSOLE_RELIABILITY,
     CONSOLE_INCIDENTS,
     CONSOLE_RELEASES,
+    CONSOLE_MODELS,
 )
 """All seven, spelled as literals and kept off every public router."""
 
@@ -231,4 +238,29 @@ def releases(request: Request) -> ReleasesPage:
     return ReleasesPage(
         sources=Sources(postgres=pg, prometheus=SourceState.UNCONFIGURED),
         releases=() if read is None else read,
+    )
+
+
+@router.get(CONSOLE_MODELS)
+def models(store: PolicyDep) -> ModelsPage:
+    """Each alias in file order with its providers in fallback order, and the provider files."""
+    policy = store.policy
+    return ModelsPage(
+        loaded_at=store.loaded_at,
+        aliases=tuple(
+            ModelAlias(
+                name=name,
+                purpose=alias.purpose,
+                candidates=tuple(
+                    ModelCandidate(provider=c.provider, model=c.model) for c in alias.candidates
+                ),
+            )
+            for name, alias in policy.aliases.items()
+        ),
+        provider_files=tuple(
+            ProviderFileRow(
+                name=f"{name}.yaml", provider=name, kind=provider.kind, enabled=provider.enabled
+            )
+            for name, provider in sorted(policy.providers.items())
+        ),
     )

@@ -1,4 +1,4 @@
-/** The six console pages, in nav order. Also the whole `next` allowlist. */
+/** The seven console pages, in nav order. Also the whole `next` allowlist. */
 export const NAV: ReadonlyArray<{ href: string; label: string }> = [
   { href: "/", label: "Home" },
   { href: "/cost", label: "Cost" },
@@ -6,6 +6,7 @@ export const NAV: ReadonlyArray<{ href: string; label: string }> = [
   { href: "/reliability", label: "Reliability" },
   { href: "/incidents", label: "Incidents" },
   { href: "/releases", label: "Releases" },
+  { href: "/models", label: "Models" },
 ];
 
 /**
