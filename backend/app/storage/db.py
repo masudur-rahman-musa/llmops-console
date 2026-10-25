@@ -223,3 +223,46 @@ def apply_migrations(
             )
         applied.append(migration.version)
     return tuple(applied)
+
+
+MIGRATION_LOCK_KEY: Final[int] = 0x6F70736D6967
+"""The Postgres advisory lock key every start-up migrate takes (ASCII "opsmig").
+
+One fixed number for the whole database, not one per schema: two replicas
+migrating different schemas at once would wait for each other, which costs a
+second at start and nothing else."""
+
+
+def apply_migrations_locked(
+    conn: Connection[TupleRow], *, schema: str = DEFAULT_SCHEMA
+) -> tuple[str, ...]:
+    """`apply_migrations` under a session advisory lock, for the gateway's start-up.
+
+    Replicas that start together each call this. The first holds the lock and
+    applies the files; the rest wait, then find every version recorded and answer
+    `()`. So each file runs once (`test_two_locked_runners_at_once_apply_each_file_once`).
+
+    The pool's 2-second statement timeout is lifted for the call: waiting for the
+    lock, or a slow file, is not a stuck query. `RESET` puts the pool's own value
+    back, because that is the connection's start-up default. The lock is released
+    in `finally`, so a failed file does not leave the next replica waiting forever.
+
+    The work is committed BEFORE the lock is released. A pooled connection is not
+    in autocommit, so without it the next replica would take the lock, read a
+    `schema_migrations` that does not show the uncommitted rows yet, and run
+    every file again.
+    """
+    checked = checked_schema(schema)
+    conn.execute("SET statement_timeout = 0")
+    conn.execute("SELECT pg_advisory_lock(%s)", (MIGRATION_LOCK_KEY,))
+    try:
+        applied = apply_migrations(conn, schema=checked)
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.execute("SELECT pg_advisory_unlock(%s)", (MIGRATION_LOCK_KEY,))
+        conn.execute("RESET statement_timeout")
+        conn.commit()
+    return applied

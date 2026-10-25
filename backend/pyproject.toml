@@ -46,6 +46,9 @@ dependencies = [
 [project.scripts]
 ops-migrate = "app.cli.ledger:migrate"
 ops-refresh-rollup = "app.cli.ledger:refresh_rollup"
+# The two halves of `make numbers` that talk to the gateway.
+ops-send-traffic = "app.cli.numbers:send_traffic"
+ops-check-console = "app.cli.numbers:check_console"
 # The eval harness. `make eval` names this command, and so will the
 # CronJob that runs the nightly set, which is why it is a script and not a
 # `python -m` invocation nobody can spell inside the image.

@@ -333,8 +333,12 @@ Requires Docker, [uv](https://docs.astral.sh/uv/) and pnpm.
     git clone https://github.com/masudur-rahman-musa/ai-operations-console
     cd ai-operations-console
     cp backend/.env.example backend/.env   # fill in the provider keys you have
-    docker compose up -d                   # gateway, Redis, Postgres, Qdrant
+    docker compose up -d                   # gateway, Redis, Postgres, Qdrant, Prometheus
     uv sync --project backend
+
+To fill every console tab with real numbers, run `make numbers`. It runs the
+real eval, sends six real chat requests, records a release, then checks every
+tab. It needs `ANTHROPIC_API_KEY` and costs a real eval run plus a few cents.
 
 The local llama.cpp embedding server is off by default. To start it too:
 

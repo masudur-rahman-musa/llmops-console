@@ -1,11 +1,12 @@
 r"""The two commands that own the ledger's schema and its rollup.
 
 `make migrate` applies the SQL files; `make refresh-rollup` recomputes the materialised
-view the console's cost page reads. Neither runs on app start, deliberately: a
-gateway that migrated its own database would race every other replica coming up
-at the same time, and a deploy would have no step at which someone could look at
-the DDL before it ran. `create_app` therefore assumes the table is already there,
-and `/readyz`'s `postgres` probe is what says whether the server is reachable.
+view the console's cost page reads. The gateway can also migrate as it starts, when
+`OPSCONSOLE_MIGRATE_ON_START` is on: `app.main.migrate_at_start` runs
+the same files under a Postgres advisory lock, so replicas starting together
+apply each file once. This command stays for a deploy that wants to run the DDL
+as its own step, and with the switch off `/readyz`'s `postgres` probe is still
+the only thing that says whether the server is reachable.
 
 Both entry points read `OPSCONSOLE_DATABASE_URL` through `Settings` and
 answer a process exit code. An unconfigured database is a non-zero code with a message,

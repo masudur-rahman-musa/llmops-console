@@ -1,0 +1,11 @@
+# `make numbers` only, never `docker compose up` on its own.
+#
+# An override over `docker-compose.yml`, like `infra/evals/compose.yml`. It
+# hands the gateway the digests of the two throwaway keys `make numbers` makes
+# for one run: a tenant key for `nordlicht` and an admin key. The keys
+# themselves stay in the make shell and are never written to a file.
+services:
+  gateway:
+    environment:
+      OPSCONSOLE_API_KEYS: ${OPSCONSOLE_API_KEYS}
+      OPSCONSOLE_ADMIN_KEY_SHA256: ${OPSCONSOLE_ADMIN_KEY_SHA256}

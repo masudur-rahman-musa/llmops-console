@@ -43,6 +43,11 @@ services:
       OPSCONSOLE_REDIS_URL: redis://redis:6379/0
       OPSCONSOLE_DATABASE_URL: postgresql://opsconsole:${POSTGRES_PASSWORD:-opsconsole}@postgres:5432/opsconsole
       OPSCONSOLE_QDRANT_URL: http://qdrant:6333
+      # The local Prometheus below, so the console's metric fields fill.
+      OPSCONSOLE_PROMETHEUS_URL: http://prometheus:9090
+      # Apply pending ledger migrations at start, under an advisory lock
+      #, so a new column never leaves a console page failing.
+      OPSCONSOLE_MIGRATE_ON_START: "true"
     depends_on:
       redis: { condition: service_healthy }
       postgres: { condition: service_healthy }
@@ -100,6 +105,17 @@ services:
     # real, not a dependency any other service waits on.
     image: prom/pushgateway:v1.11.3
     ports: ["9091:9091"]
+
+  prometheus:
+    # Scrapes the gateway every 5 s (infra/local/prometheus.yml), so latency,
+    # error rate, tokens, redactions, cache hit rate and circuits show on the
+    # console locally. The same pin as infra/k8s/monitoring/prometheus.yaml.
+    # No volume: the local numbers are rebuilt by `make numbers`. No `depends_on`
+    # either way: a scrape that misses the gateway just retries.
+    image: prom/prometheus:v3.1.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    ports: ["9090:9090"]
+    volumes: ["./infra/local/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
 
   qdrant:
     image: qdrant/qdrant:v1.19.2

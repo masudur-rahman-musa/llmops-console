@@ -395,3 +395,96 @@ def test_readyz_probes_run_over_the_shared_clients(monkeypatch: pytest.MonkeyPat
 
         assert failed.status_code == 503
         assert failed.json()["checks"]["redis"] is False
+
+
+# --------------------------------------------------------------------------
+# migrating at start
+# --------------------------------------------------------------------------
+
+
+class MigrateSpy:
+    """Stands in for `main.migrate_at_start`: records the pool it got and when."""
+
+    def __init__(self, builders: Builders, error: Exception | None = None) -> None:
+        self.builders = builders
+        self.error = error
+        self.pools: list[object] = []
+        self.pools_built_before: list[int] = []
+
+    def __call__(self, pool: object, schema: str = "opsconsole") -> None:
+        self.pools.append(pool)
+        self.pools_built_before.append(len(self.builders.pool_calls))
+        if self.error is not None:
+            raise self.error
+
+
+def switch_on_settings() -> Settings:
+    """`all_urls_settings` with the start-up migrate switch on."""
+    return all_urls_settings().model_copy(update={"migrate_on_start": True})
+
+
+def test_the_switch_on_migrates_once_at_start(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Catches a lifespan that never migrates, migrates more than once, or migrates before
+    the pool exists: the seam must be called once, with the built pool, after `build_pool`."""
+    builders = Builders()
+    patch_builders(monkeypatch, builders)
+    spy = MigrateSpy(builders)
+    monkeypatch.setattr(main, "migrate_at_start", spy)
+
+    app = create_app(switch_on_settings(), {})
+    with TestClient(app):
+        assert spy.pools == [builders.pool]
+        assert spy.pools_built_before == [1]
+
+    assert len(spy.pools) == 1
+
+
+def test_the_switch_off_never_migrates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Catches a lifespan that migrates whatever the switch says: with default settings
+    (switch off) the seam must never be called, even with a pool present."""
+    builders = Builders()
+    patch_builders(monkeypatch, builders)
+    spy = MigrateSpy(builders)
+    monkeypatch.setattr(main, "migrate_at_start", spy)
+
+    app = create_app(all_urls_settings(), {})
+    with TestClient(app):
+        pass
+
+    assert builders.pool_calls != []
+    assert spy.pools == []
+
+
+def test_the_switch_on_without_a_database_never_migrates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catches a lifespan that calls the seam with no pool (switch on, no database URL),
+    which would crash a gateway that is meant to run without Postgres."""
+    builders = Builders()
+    patch_builders(monkeypatch, builders)
+    spy = MigrateSpy(builders)
+    monkeypatch.setattr(main, "migrate_at_start", spy)
+    settings = Settings(
+        api_keys=API_KEYS,
+        routing_policy_path=SHIPPED_POLICY_PATH,
+        migrate_on_start=True,
+    )
+
+    with TestClient(create_app(settings, {})):
+        pass
+
+    assert spy.pools == []
+
+
+def test_a_failed_migration_stops_the_start(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Catches a lifespan that swallows a migration error and serves on a half-migrated
+    schema: the lifespan must raise, and the pool it opened must still be closed."""
+    builders = Builders()
+    patch_builders(monkeypatch, builders)
+    monkeypatch.setattr(main, "migrate_at_start", MigrateSpy(builders, RuntimeError("bad sql")))
+
+    app = create_app(switch_on_settings(), {})
+    with pytest.raises(RuntimeError, match="bad sql"), TestClient(app):
+        pytest.fail("the app served after a failed migration")
+
+    assert builders.pool.closed == 1

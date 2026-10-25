@@ -19,6 +19,7 @@ trailing-newline rows).
 
 from __future__ import annotations
 
+import threading
 from typing import NoReturn, cast
 
 import pytest
@@ -34,6 +35,7 @@ from app.storage.db import (
     POOL_WAIT_TIMEOUT,
     SCHEMA_PATTERN,
     apply_migrations,
+    apply_migrations_locked,
     checked_schema,
     migrations,
 )
@@ -351,3 +353,54 @@ def test_the_ledger_and_eval_cases_have_no_region(pool: Pool, migrated_schema: s
         conn.execute(
             f'refresh materialized view concurrently "{migrated_schema}".cost_ledger_daily'
         )
+
+
+# --------------------------------------------------------------------------
+# the locked runner the gateway calls at start
+# --------------------------------------------------------------------------
+
+
+@requires_postgres
+def test_the_locked_runner_applied_twice_applies_nothing_the_second_time(
+    pool: Pool, schema: str
+) -> None:
+    """Catches a locked runner that skips the version bookkeeping or re-runs files, so a
+    gateway restarted on an up-to-date database would fail or change data."""
+    with pool.connection() as conn:
+        first = apply_migrations_locked(conn, schema=schema)
+    with pool.connection() as conn:
+        second = apply_migrations_locked(conn, schema=schema)
+
+    assert first == ALL_VERSIONS
+    assert second == ()
+
+
+@requires_postgres
+def test_two_locked_runners_at_once_apply_each_file_once(pool: Pool, schema: str) -> None:
+    """Catches a runner with no lock (or a lock that gives up instead of waiting): two
+    replicas starting together would both apply a file, or one would fail, so each version
+    must be recorded once and the two answers together must hold every version with no
+    overlap."""
+    start = threading.Barrier(2)
+    answers: list[tuple[str, ...]] = []
+    errors: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            with pool.connection() as conn:
+                start.wait(timeout=10)
+                answers.append(apply_migrations_locked(conn, schema=schema))
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=run) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+
+    assert errors == []
+    assert len(answers) == 2
+    together = [version for answer in answers for version in answer]
+    assert sorted(together) == sorted(ALL_VERSIONS)
+    assert sorted(applied_versions(pool, schema)) == sorted(ALL_VERSIONS)

@@ -1,4 +1,4 @@
-.PHONY: help setup run up down rebuild all gateway console test test-infra fast test-slowest lint typecheck format verify security eval infra-check k8s-check k8s-aws-check k8s-server-check server-secrets server-helpdesk-data k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate refresh-rollup secrets-encrypt secrets-decrypt secrets-check load
+.PHONY: help setup run up down rebuild all gateway console test test-infra fast test-slowest lint typecheck format verify security eval infra-check k8s-check k8s-aws-check k8s-server-check server-secrets server-helpdesk-data k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate refresh-rollup secrets-encrypt secrets-decrypt secrets-check load numbers
 
 # The console's checks run through pnpm, and are skipped only in a checkout that
 # has no web, so the intended gate stays visible in this file. The
@@ -171,6 +171,39 @@ eval:       ## The eval gate: the help desk's 33 conversations on the real cheap
 	  $(if $(wildcard $(EVAL_CALIBRATION)),--calibration $(EVAL_CALIBRATION)) \
 	  --comment $(EVAL_REPORTS)/comment.md || status=1; \
 	exit $$status
+# Real numbers on every console tab, filled through the real app and checked
+#. First the real eval (it stores its run, so the eval run reaches
+# Postgres through the host port), then the gateway is recreated on two
+# throwaway keys made for this run, a `nordlicht` tenant key and an admin key:
+# the digests go to the gateway, the keys stay in this shell, nothing is stored.
+# Then six real chat requests on the cheap model, one release for HEAD naming
+# the eval run, a rollup refresh, and a check of all eight console pages that
+# fails on a source in error or unconfigured, or a tab with nothing to show.
+# A gate that fails by chance does not stop the run: the eval still stored its
+# run, and `make eval` removes old reports first, so only a run that wrote no
+# report stops here. Costs a real eval run plus a few cents. No row is written
+# by hand.
+# The gateway is left on this run's keys, as after `make eval`; `make up`
+# restores it.
+NUMBERS_DATABASE_URL = postgresql://opsconsole:$${POSTGRES_PASSWORD:-opsconsole}@localhost:15432/opsconsole
+numbers:    ## Fill every console tab through the real app (eval, traffic, release), then check them
+	OPSCONSOLE_DATABASE_URL="$(NUMBERS_DATABASE_URL)" $(MAKE) eval || [ -f $(EVAL_REPORTS)/report.json ]
+	@tenant=$$(openssl rand -hex 32); admin=$$(openssl rand -hex 32); \
+	tenant_digest=$$(printf '%s' "$$tenant" | openssl dgst -sha256 -r | cut -d' ' -f1); \
+	admin_digest=$$(printf '%s' "$$admin" | openssl dgst -sha256 -r | cut -d' ' -f1); \
+	export OPSCONSOLE_API_KEYS="nordlicht:$$tenant_digest"; \
+	export OPSCONSOLE_ADMIN_KEY_SHA256="$$admin_digest"; \
+	export NUMBERS_TENANT_KEY="$$tenant" NUMBERS_ADMIN_KEY="$$admin"; \
+	stack="docker compose -f docker-compose.yml -f infra/local/numbers.compose.yml$${ANTHROPIC_API_KEY:+ -f infra/evals/compose.key.yml}"; \
+	$$stack up -d --build --wait gateway prometheus || exit $$?; \
+	$(UV_ROOT) ops-send-traffic || exit $$?; \
+	run_id=$$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' $(EVAL_REPORTS)/report.json) || exit $$?; \
+	curl -fsS -X POST http://localhost:8080/admin/releases \
+	  -H "Authorization: Bearer $$admin" -H 'Content-Type: application/json' \
+	  -d "{\"git_sha\": \"$$(git rev-parse HEAD)\", \"deployed_at\": \"$$(date -u +%Y-%m-%dT%H:%M:%SZ)\", \"status\": \"deployed\", \"eval_run_id\": \"$$run_id\"}" \
+	  >/dev/null || exit $$?; \
+	$$stack exec -T gateway ops-refresh-rollup || exit $$?; \
+	$(UV_ROOT) ops-check-console
 # The published comparison (the design). Pure: it reads a manifest and the
 # report.json each option names, so it needs no stack and no key. MANIFEST and
 # OUT are overridable because the measured run builds its table from its own

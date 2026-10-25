@@ -147,6 +147,15 @@ class Settings(BaseSettings):
     which is what lets the suite and a bare local run take the semantic path with
     no Qdrant anywhere."""
 
+    migrate_on_start: bool = False
+    """Whether the gateway applies pending ledger migrations as it starts.
+
+    Off by default, so the suite and a bare run never touch a database at start.
+    On in compose and `.env.demo`, so a new column never leaves a console page
+    failing. Read only by `app.main.lifespan`, which takes a Postgres advisory
+    lock first and stops the start if a file fails. `ops-migrate` still works
+    on its own."""
+
     prometheus_url: str | None = None
     """Where the console read routes send their PromQL, or `None` for none at all.
 

@@ -1,0 +1,14 @@
+# The local Prometheus: scrapes the compose gateway so the console's metric
+# fields (latency, error rate, tokens, redactions, cache hit rate, circuits)
+# show on a laptop. Mounted by the `prometheus` service in docker-compose.yml.
+# Every 5 s, so `make numbers` sees its own traffic within one check retry.
+# No rule files and no Alertmanager: alerts are the cluster's job
+# (infra/k8s/monitoring/).
+global:
+  scrape_interval: 5s
+scrape_configs:
+  - job_name: gateway
+    scrape_interval: 5s
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["gateway:8080"]

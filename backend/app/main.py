@@ -23,6 +23,9 @@ import httpx
 import uvicorn
 from fastapi import FastAPI
 from opentelemetry.context import Context
+from psycopg import Connection
+from psycopg.rows import TupleRow
+from psycopg_pool import ConnectionPool
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.api.deps import SettingsKeyStore, parsed_traceparent
@@ -77,6 +80,7 @@ from app.storage.dashboard_reads import (
     PostgresConsoleReader,
     UnconfiguredConsoleReader,
 )
+from app.storage.db import DEFAULT_SCHEMA, apply_migrations_locked
 
 
 class RoutingLeaseMiddleware:
@@ -121,6 +125,20 @@ def build_qdrant_data_client(base_url: str) -> httpx.Client:
     return httpx.Client(base_url=base_url, timeout=httpx.Timeout(PROBE_TIMEOUT_SECONDS))
 
 
+def migrate_at_start(
+    pool: ConnectionPool[Connection[TupleRow]], schema: str = DEFAULT_SCHEMA
+) -> None:
+    """Apply the pending ledger migrations before the gateway serves.
+
+    The seam the lifespan calls, so a test can stand in for Postgres. Prints what
+    it applied, the same words `ops-migrate` uses, so a start-up log shows it.
+    """
+    with pool.connection() as conn:
+        applied = apply_migrations_locked(conn, schema=schema)
+    if applied:
+        print(f"applied {len(applied)} migration(s): {', '.join(applied)}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Open the backing-service clients and the stores over them on startup, close on shutdown.
@@ -148,9 +166,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     The three Redis readers that never raise (the response cache, the budget store
     and the rate-limit store) and the semantic cache keep that contract: a Redis or
-    Qdrant outage is a miss, not a failed request. The migration is NOT applied
-    here (`make migrate` is a deploy step, so replicas coming up together do not
-    race the same DDL).
+    Qdrant outage is a miss, not a failed request. With `migrate_on_start` on,
+    the pending migrations are applied right after the pool is built, through
+    `migrate_at_start` under an advisory lock so replicas coming up together do
+    not race the same DDL. A failed migration stops the start.
 
     `register_probes` runs last, once the shared clients are on `app.state`, and
     the four clients all close on shutdown.
@@ -190,6 +209,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
 
     pool = build_pool(resolved.database_url) if resolved.database_url is not None else None
+    if pool is not None and resolved.migrate_on_start:
+        try:
+            migrate_at_start(pool)
+        except BaseException:
+            # A gateway serving on a half-migrated schema is the failure this
+            # switch exists to stop, so the start stops here instead.
+            pool.close()
+            raise
     app.state.db_pool = pool
     app.state.cost_ledger = (
         PostgresCostLedgerWriter(pool) if pool is not None else InMemoryCostLedgerWriter()

@@ -39,7 +39,9 @@ README = REPO_ROOT / "README.md"
 PROFILE = "local-model"
 
 #: The services that start with a plain `docker compose up -d`.
-DEFAULT_SERVICES = frozenset({"gateway", "redis", "postgres", "pushgateway", "qdrant"})
+DEFAULT_SERVICES = frozenset(
+    {"gateway", "redis", "postgres", "pushgateway", "qdrant", "prometheus"}
+)
 
 #: The local embedding server, with the host port mapping it must keep.
 LLAMA_PORTS = {"llama-embed": ["8083:8083"]}
@@ -103,7 +105,7 @@ def test_the_llama_services_sit_behind_the_local_model_profile() -> None:
 
 
 def test_every_other_base_service_starts_by_default() -> None:
-    """The services without `profiles` are exactly the five the default stack needs.
+    """The services without `profiles` are exactly the six the default stack needs.
 
     Catches a profile added to the gateway or a backing store, and a llama service whose
     profile was dropped, since either changes this set.
