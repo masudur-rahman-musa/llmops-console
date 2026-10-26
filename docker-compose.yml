@@ -119,6 +119,24 @@ services:
     volumes: ["./infra/local/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
     extra_hosts: ["host.docker.internal:host-gateway"]
 
+  grafana:
+    # The five dashboards of infra/k8s/monitoring/dashboards/, mounted read-only
+    # so there is one copy of each, over the local Prometheus above. Port 3002:
+    # 3000 is the help desk web app and 3001 the console. A viewer gets in with
+    # no login, so the console's Overview link opens the dashboard straight away;
+    # only this local service does that, the cluster Grafana keeps its login.
+    # The same pin as infra/k8s/monitoring/grafana.yaml. No volume: everything
+    # it shows is provisioned. `make grafana-check` checks it answers.
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    ports: ["3002:3000"]
+    volumes:
+      - ./infra/local/grafana-datasource.yml:/etc/grafana/provisioning/datasources/local.yml:ro
+      - ./infra/local/grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/local.yml:ro
+      - ./infra/k8s/monitoring/dashboards:/var/lib/grafana/dashboards:ro
+
   qdrant:
     image: qdrant/qdrant:v1.19.2
     ports: ["16333:6333"]

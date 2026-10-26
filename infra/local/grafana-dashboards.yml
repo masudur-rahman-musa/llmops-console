@@ -1,0 +1,10 @@
+# Loads the five dashboards compose mounts read-only from
+# infra/k8s/monitoring/dashboards/, so there is one copy of each.
+apiVersion: 1
+providers:
+  - name: dashboards
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

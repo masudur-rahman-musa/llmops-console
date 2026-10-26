@@ -1,8 +1,9 @@
 """An earlier change: the Overview's "Health details in Grafana" link.
 
 On the server the link is the gateway's own Grafana dashboard, built from the Grafana Ingress host
-and the dashboard `uid`; locally it is left empty so the page says "Grafana link not set".
-An earlier change: the build runs no Grafana, so its link is empty too.
+and the dashboard `uid`; locally it is the compose Grafana's gateway overview on port 3002.
+An earlier change: the build runs no Grafana, so its link is empty.
+An earlier change: the local stack runs Grafana, so `backend/.env.demo` holds the 3002 link.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from infra.test_k8s_gateway_prometheus import GATEWAY_CONFIG_MAP, gateway_config
 REPO_ROOT = Path(__file__).resolve().parents[3]
 INGRESS = REPO_ROOT / "infra" / "k8s" / "monitoring" / "ingress.yaml"
 DASHBOARD = REPO_ROOT / "infra" / "k8s" / "monitoring" / "dashboards" / "gateway-overview.json"
+COMPOSE = REPO_ROOT / "docker-compose.yml"
 ENV_DEMO = REPO_ROOT / "backend" / ".env.demo"
 KEY = "OPSCONSOLE_GRAFANA_URL"
 EXPECTED = "https://grafana.example.com/d/gateway-overview"
@@ -68,11 +70,17 @@ def test_the_server_server_runs_no_grafana(server_built: list[dict[str, Any]]) -
     assert workloads == [], f"the server now runs {workloads}: fill {KEY} in the server patch"
 
 
-def test_the_local_grafana_link_is_left_unset() -> None:
-    """Catches `backend/.env.demo` still pointing the link at a local port (the help desk answers
-    there, so the page links to the wrong app) instead of leaving it empty."""
+def test_the_local_grafana_link_points_at_the_gateway_overview() -> None:
+    """Catches `backend/.env.demo` with the link empty or missing (the page says "not set"
+    next to a running Grafana), repeated, on a port that is not the compose Grafana's (3000 and
+    3001 answer other apps), or on a dashboard uid that is not the gateway overview's."""
     if not ENV_DEMO.is_file():
         pytest.skip("backend/.env.demo is not present (CI)")
     lines = ENV_DEMO.read_text(encoding="utf-8").splitlines()
     values = [line.partition("=")[2] for line in lines if line.startswith(f"{KEY}=")]
-    assert values == [""], f"{KEY} in .env.demo is {values!r}"
+    uid = json.loads(DASHBOARD.read_text(encoding="utf-8"))["uid"]
+    grafana = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))["services"]["grafana"]
+    port = str(grafana["ports"][0]).split(":")[0]
+
+    assert values == [f"http://localhost:{port}/d/{uid}"], f"{KEY} in .env.demo is {values!r}"
+    assert values == ["http://localhost:3002/d/gateway-overview"]

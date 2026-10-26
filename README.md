@@ -333,7 +333,7 @@ Requires Docker, [uv](https://docs.astral.sh/uv/) and pnpm.
     git clone https://github.com/masudur-rahman-musa/ai-operations-console
     cd ai-operations-console
     cp backend/.env.example backend/.env   # fill in the provider keys you have
-    docker compose up -d                   # gateway, Redis, Postgres, Qdrant, Prometheus
+    docker compose up -d                   # gateway, Redis, Postgres, Qdrant, Prometheus, Grafana on 3002
     uv sync --project backend
 
 To fill every console tab with real numbers, run `make numbers`. It runs the

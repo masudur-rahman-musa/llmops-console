@@ -1,4 +1,4 @@
-.PHONY: help setup run up down rebuild all gateway console test test-infra fast test-slowest lint typecheck format verify security eval infra-check k8s-check k8s-aws-check k8s-server-check server-secrets server-helpdesk-data k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate refresh-rollup secrets-encrypt secrets-decrypt secrets-check load numbers
+.PHONY: help setup run up down rebuild all gateway console test test-infra fast test-slowest lint typecheck format verify security eval infra-check k8s-check k8s-aws-check k8s-server-check server-secrets server-helpdesk-data k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate refresh-rollup secrets-encrypt secrets-decrypt secrets-check load numbers grafana-check
 
 # The console's checks run through pnpm, and are skipped only in a checkout that
 # has no web, so the intended gate stays visible in this file. The
@@ -188,6 +188,10 @@ eval:       ## The eval gate: the help desk's 45 conversations on the real cheap
 # help desk back on their normal keys, as after `make eval`. A failed restore
 # fails the target; the run's own failure keeps its code.
 NUMBERS_DATABASE_URL = postgresql://opsconsole:$${POSTGRES_PASSWORD:-opsconsole}@localhost:15432/opsconsole
+grafana-check:    ## Check the local Grafana answers and holds the gateway dashboard (stack up)
+	curl -fsS http://localhost:3002/api/health
+	curl -fsS http://localhost:3002/api/dashboards/uid/gateway-overview > /dev/null
+
 numbers:    ## Fill every console tab through the real app (eval, traffic, release), then check them
 	OPSCONSOLE_DATABASE_URL="$(NUMBERS_DATABASE_URL)" $(MAKE) eval || [ -f $(EVAL_REPORTS)/report.json ]
 	@trap 'rc=$$?; infra/evals/restore_keys.sh $(EVAL_HELPDESK) || [ $$rc != 0 ] || rc=1; exit $$rc' EXIT; \

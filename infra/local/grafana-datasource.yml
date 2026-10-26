@@ -1,0 +1,10 @@
+# The local Prometheus, for the Grafana service in docker-compose.yml. The uid
+# is the one every panel in infra/k8s/monitoring/dashboards/ names.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true

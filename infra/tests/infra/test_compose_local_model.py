@@ -40,7 +40,7 @@ PROFILE = "local-model"
 
 #: The services that start with a plain `docker compose up -d`.
 DEFAULT_SERVICES = frozenset(
-    {"gateway", "redis", "postgres", "pushgateway", "qdrant", "prometheus"}
+    {"gateway", "redis", "postgres", "pushgateway", "qdrant", "prometheus", "grafana"}
 )
 
 #: The local embedding server, with the host port mapping it must keep.

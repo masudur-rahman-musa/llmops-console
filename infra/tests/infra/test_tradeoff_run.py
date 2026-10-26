@@ -105,7 +105,7 @@ CAPTURES = (
 #: companion Helpdesk stack can be up together; only the gateway's 8080 is stock, because that
 #: is the address the Helpdesk dials. The console's 3001 joined when it moved into compose; it
 #: clashes with no Helpdesk port.
-BASE_HOST_PORTS = frozenset({8080, 16379, 15432, 9091, 16333, 8083, 3001})
+BASE_HOST_PORTS = frozenset({8080, 16379, 15432, 9091, 16333, 8083, 3001, 9090, 3002})
 
 #: What the companion Helpdesk repository's own compose publishes. This stack may not hold any
 #: of them: one of the two would then fail at `up`, which is the whole reason for the shift.
