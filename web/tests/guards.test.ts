@@ -179,6 +179,13 @@ describe("page body guards", () => {
     expect(passes("cost", nullCost), "cost nulls").toBe(true);
   });
 
+  it("home guard takes a null verdict", () => {
+    // Catches a home guard that still demands a boolean `passed` (a null verdict, no baseline, would blank the page) or one that stops checking the type (a string passes).
+    expect(passes("home", withValue("home", ["last_eval", "passed"], null))).toBe(true);
+    expect(passes("home", withValue("home", ["last_eval", "passed"], false))).toBe(true);
+    expect(passes("home", withValue("home", ["last_eval", "passed"], "yes"))).toBe(false);
+  });
+
   it("a missing rendered field fails the guard", () => {
     // Catches a guard that skips a rendered field, accepts undefined where only null is allowed, or checks only the first element of a list.
     for (const name of PAGES) {

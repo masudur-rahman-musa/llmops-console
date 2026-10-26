@@ -255,9 +255,11 @@ spec:
         - protocol: TCP
           port: http
 
-# Prometheus scraping the help desk's own counters: the agent API on its `http`
-# port (8000) and the scheduler on its `metrics` port. Named ports, and
-# each pod carries only one of the two names, so this admits no other pairing.
+# Prometheus scraping the help desk's own counters: the agent API (8000) and
+# the MCP server (8081) on their `http` ports, the scheduler on its `metrics`
+# port. Named ports, and each pod carries only one of the two names, so this
+# admits no other pairing. The MCP server is here because it alone records
+# `helpdesk_sod_blocks_total`, the console's guardrail blocks.
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -271,6 +273,7 @@ spec:
         operator: In
         values:
           - helpdesk-agent-api
+          - helpdesk-mcp-server
           - helpdesk-scheduler
   policyTypes:
     - Ingress
@@ -608,8 +611,8 @@ spec:
         - protocol: TCP
           port: metrics
 
-# What Prometheus may open, and it is exactly the four things it scrapes that
-# are not itself. No `ipBlock` at all: nothing in the scrape config is off the
+# What Prometheus may open, and it is exactly the things it scrapes that are
+# not itself, plus Alertmanager. No `ipBlock` at all: nothing in the scrape config is off the
 # cluster, and this is the pod whose store would be worth exfiltrating.
 #
 # One rule per destination rather than one rule listing four peers and four
@@ -704,6 +707,40 @@ spec:
       ports:
         - protocol: TCP
           port: metrics
+    # The help desk's three metrics ports: the agent API, the MCP server (the
+    # only pod that counts guardrail blocks) and the scheduler. One rule each,
+    # by number, like the other cross-namespace rules; the pods' own side is
+    # `helpdesk-metrics-from-prometheus`.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: apps
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: helpdesk-agent-api
+      ports:
+        - protocol: TCP
+          port: 8000
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: apps
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: helpdesk-mcp-server
+      ports:
+        - protocol: TCP
+          port: 8081
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: apps
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: helpdesk-scheduler
+      ports:
+        - protocol: TCP
+          port: 8082
 
 # Grafana is the first pod in `monitoring` that the namespace-wide named-port
 # allow above does NOT cover. `metrics-ingress-from-monitoring` opens the port

@@ -126,7 +126,10 @@ DEPLOYED = datetime(2026, 9, 15, 9, 15, tzinfo=UTC)
 HOME_READ = HomeRead(
     requests_today=42,
     cost_usd_today=1.25,
-    last_eval=LastEval(id="run-a", finished_at=FINISHED, passed=True, check_score=0.91),
+    # The stored `passed` is the run's own "every stable case passed" and is false here; the
+    # route answers the eval gate verdict from `last_eval_metrics` instead.
+    last_eval=LastEval(id="run-a", finished_at=FINISHED, passed=False, check_score=57.14),
+    last_eval_metrics={"check_score": 57.14, "judge_score": 55.69},
 )
 
 COST_READ = CostRead(
@@ -181,6 +184,7 @@ class StubReader:
         self.error: Exception | None = None
         self.quality_read = QUALITY_READ
         self.month_spend_read: dict[str, float] = dict(MONTH_SPEND)
+        self.home_read = HOME_READ
 
     def _record(self, name: str, **kwargs: Any) -> None:  # noqa: ANN401
         self.calls.append((name, kwargs))
@@ -189,7 +193,7 @@ class StubReader:
 
     def home(self, *, now: datetime) -> HomeRead:
         self._record("home", now=now)
-        return HOME_READ
+        return self.home_read
 
     def cost(self, *, days: int, tenant: str | None, now: datetime, prices: PriceTable) -> CostRead:
         self._record("cost", days=days, tenant=tenant, now=now, prices=prices)
@@ -698,11 +702,91 @@ def test_the_home_body_reads_both_sources(wired: Wired) -> None:
             "id": "run-a",
             "finished_at": HOME_READ.model_dump(mode="json")["last_eval"]["finished_at"],
             "passed": True,
-            "check_score": 0.91,
+            "check_score": 57.14,
         },
     }
     assert sorted(wired.prom.queries(QUERY_PATH)) == sorted([P95_QUERY, ERROR_RATE_QUERY])
     assert wired.prom.queries(QUERY_RANGE_PATH) == []
+
+
+def home_passed(
+    admin_settings: Settings,
+    tmp_path: Path,
+    *,
+    metrics: dict[str, Any] | None,
+    baseline_text: str | None = None,
+) -> Any:  # noqa: ANN401
+    """The `last_eval.passed` the home route answers for one run's metrics and one baseline.
+
+    `baseline_text` None keeps the shipped baseline (check 48.48, judge 27.42); a string is
+    written to a file and read instead, so an unreadable baseline can be arranged."""
+    settings = admin_settings
+    if baseline_text is not None:
+        path = tmp_path / "baseline.json"
+        path.write_text(baseline_text, encoding="utf-8")
+        settings = admin_settings.model_copy(update={"eval_baseline_path": path})
+    app = create_app(settings, NO_PROVIDER_KEYS)
+    reader = StubReader()
+    reader.home_read = HOME_READ.model_copy(update={"last_eval_metrics": metrics})
+    with TestClient(app) as client:
+        app.state.console_reader = reader
+        response = client.get(HOME, headers=ADMIN_HEADERS)
+    assert response.status_code == 200, response.text
+    return response.json()["last_eval"]["passed"]
+
+
+def test_home_verdict_matches_the_eval_gate(wired: Wired) -> None:
+    """Catches a home route that echoes the run's stored `passed` (false here) instead of
+    the eval gate verdict: check 57.14 and judge 55.69 beat the baseline 48.48 and 27.42."""
+    assert HOME_READ.last_eval is not None
+    assert HOME_READ.last_eval.passed is False
+
+    body = wired.get(HOME).json()
+
+    assert body["last_eval"]["passed"] is True
+    assert body["last_eval"]["check_score"] == 57.14
+
+
+GATE_VERDICTS: list[tuple[str, dict[str, Any], bool | None]] = [
+    ("check one hundredth below", {"check_score": 48.47, "judge_score": 55.69}, False),
+    ("check exactly at the baseline", {"check_score": 48.48, "judge_score": 27.42}, True),
+    ("judge below with check above", {"check_score": 60.0, "judge_score": 27.41}, False),
+    ("no gated score in the run", {"other": 1}, None),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "metrics", "expected"), GATE_VERDICTS, ids=[r[0] for r in GATE_VERDICTS]
+)
+def test_home_verdict_fails_when_one_gate_score_is_below(
+    case: str,
+    metrics: dict[str, Any],
+    expected: bool | None,
+    admin_settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """Catches a verdict that uses `>` instead of `>=` (48.48 exactly must pass), one that
+    checks only the check score (judge 27.41 alone must fail), one that passes with
+    one gate score below, and one that says passed when no gated score exists to check."""
+    assert home_passed(admin_settings, tmp_path, metrics=metrics) is expected
+
+
+@pytest.mark.parametrize(
+    "baseline_text", ["not json", "{}", '{"check": 48.48}'], ids=["garbage", "empty", "wrong"]
+)
+def test_home_verdict_is_null_without_a_baseline(
+    baseline_text: str, admin_settings: Settings, tmp_path: Path
+) -> None:
+    """Catches a home route that 500s on an unreadable baseline, or that answers false or
+    true (the run's stored flag) when there is nothing to check the scores against."""
+    passed = home_passed(
+        admin_settings,
+        tmp_path,
+        metrics={"check_score": 57.14, "judge_score": 55.69},
+        baseline_text=baseline_text,
+    )
+
+    assert passed is None
 
 
 def test_an_empty_home_sample_is_null_and_still_ok(wired: Wired) -> None:

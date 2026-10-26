@@ -108,14 +108,16 @@ services:
 
   prometheus:
     # Scrapes the gateway every 5 s (infra/local/prometheus.yml), so latency,
-    # error rate, tokens, redactions, cache hit rate and circuits show on the
-    # console locally. The same pin as infra/k8s/monitoring/prometheus.yaml.
+    # error rate, tokens, redactions and circuits show on the console locally,
+    # and the help desk on the host (`host.docker.internal`, which Linux only
+    # resolves through `extra_hosts`) for refusals and guardrail blocks. The same pin as infra/k8s/monitoring/prometheus.yaml.
     # No volume: the local numbers are rebuilt by `make numbers`. No `depends_on`
     # either way: a scrape that misses the gateway just retries.
     image: prom/prometheus:v3.1.0
     command: ["--config.file=/etc/prometheus/prometheus.yml"]
     ports: ["9090:9090"]
     volumes: ["./infra/local/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
 
   qdrant:
     image: qdrant/qdrant:v1.19.2

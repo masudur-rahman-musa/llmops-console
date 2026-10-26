@@ -11,7 +11,9 @@ The contract these cases are written against, before it exists:
 * `app.api.routes.dashboard.CONSOLE_REQUESTS == "/console/requests"`, admin key, `days`
   1 to 90 with a default of 30;
 * `app.services.prometheus_reads`: `redactions_query(days)`, `tokens_query(days)`,
-  `cache_hit_rate_query(days)`, `refusals_query(days)`, `guardrail_blocks_query(days)`;
+  `refusals_query(days)`, `guardrail_blocks_query(days)`;
+* `ConsoleReader.cache_hit_rate(days, now) -> float | None`: cached ledger rows over all rows
+  in the window, None when the window has no rows;
 * `ConsoleReader.recent_requests() -> tuple[RequestRow, ...]`, newest first, with
   `trace_url` None: the route fills `trace_url` from `Settings.langfuse_project_url` and the
   row's `trace_id`, and only when the setting is set and the id is 32 lowercase hex.
@@ -34,7 +36,6 @@ from app.main import create_app
 from app.schemas.dashboard import RequestRow
 from app.services.prometheus_reads import (
     PrometheusClient,
-    cache_hit_rate_query,
     guardrail_blocks_query,
     redactions_query,
     refusals_query,
@@ -51,17 +52,13 @@ TRACE_ID = "0af7651916cd43dd8448eb211c80319c"
 OTHER_TRACE_ID = "b7ad6b7169203331b7ad6b7169203331"
 SAMPLE_TS = 1757980800
 
-# The five queries for a 7 day window, written out so no case reads its expectation from the
+# The four queries for a 7 day window, written out so no case reads its expectation from the
 # module under test.
 REDACTIONS_7D = "sum by (kind) (increase(gateway_redactions_total[7d]))"
 TOKENS_7D = "sum by (model, direction) (increase(gateway_tokens_total[7d]))"
-HIT_RATE_7D = (
-    'sum(increase(gateway_requests_total{cache=~"hit|semantic"}[7d]))'
-    " / sum(increase(gateway_requests_total[7d]))"
-)
 REFUSALS_7D = "sum by (reason) (increase(helpdesk_refusals_total[7d]))"
 BLOCKS_7D = "sum(increase(helpdesk_sod_blocks_total[7d]))"
-ALL_7D = {REDACTIONS_7D, TOKENS_7D, HIT_RATE_7D, REFUSALS_7D, BLOCKS_7D}
+ALL_7D = {REDACTIONS_7D, TOKENS_7D, REFUSALS_7D, BLOCKS_7D}
 
 
 def a_row(trace_id: str, **overrides: Any) -> RequestRow:  # noqa: ANN401
@@ -100,8 +97,9 @@ ROWS = (
 class StubReader:
     """A configured `ConsoleReader` that records calls and answers the rows above.
 
-    Only `recent_requests` is read by this route. `error`, when set, is raised instead,
-    which is how the Postgres failure case arranges a failing read without a database.
+    Only `recent_requests` and `cache_hit_rate` are read by this route. `error`, when set, is
+    raised instead, which is how the Postgres failure case arranges a failing read without a
+    database.
     """
 
     def __init__(self, rows: tuple[RequestRow, ...] = ROWS) -> None:
@@ -112,6 +110,15 @@ class StubReader:
         self.error: Exception | None = None
         self.answer_page = 1
         self.answer_pages = 1
+        self.hit_rate: float | None = 0.3125
+        self.hit_rate_asked: list[tuple[int, datetime]] = []
+
+    def cache_hit_rate(self, days: int, now: datetime) -> float | None:
+        self.calls.append("cache_hit_rate")
+        self.hit_rate_asked.append((days, now))
+        if self.error is not None:
+            raise self.error
+        return self.hit_rate
 
     def recent_requests(self, *, page: int) -> RequestsRead:
         self.calls.append("recent_requests")
@@ -133,7 +140,6 @@ ANSWERS: dict[str, list[dict[str, Any]]] = {
         series({"model": "gpt-5-mini", "direction": "in"}, "8800"),
         series({"model": "gpt-5-mini", "direction": "out"}, "2100"),
     ],
-    HIT_RATE_7D: [series({}, "0.3125")],
     REFUSALS_7D: [
         series({"reason": "out_of_scope"}, "12"),
         series({"reason": "needs_approval"}, "3"),
@@ -216,29 +222,27 @@ def wired(make_wired: Callable[[str | None], Wired]) -> Wired:
 
 
 def test_requests_queries_are_pinned(wired: Wired) -> None:
-    """Catches a changed metric name, a missing `sum by`, a hit rate that counts only `hit`
-    (or any cache label) instead of `hit|semantic`, a window that ignores `days`, and a route
-    that asks for more or fewer queries than the five: the sent set must equal the literals."""
+    """Catches a changed metric name, a missing `sum by`, a window that ignores `days`, and a
+    route that asks for more or fewer queries than the four: the sent set must equal the
+    literals (a hit-rate query still sent to Prometheus would be a fifth)."""
     assert console.CONSOLE_REQUESTS == REQUESTS
     assert redactions_query(7) == REDACTIONS_7D
     assert tokens_query(7) == TOKENS_7D
-    assert cache_hit_rate_query(7) == HIT_RATE_7D
     assert refusals_query(7) == REFUSALS_7D
     assert guardrail_blocks_query(7) == BLOCKS_7D
     for query in ALL_7D:
         assert "[7d]" in query
-    assert 'cache=~"hit|semantic"' in HIT_RATE_7D
 
     wired.body(days=7)
 
     assert set(wired.prom.queries) == ALL_7D
-    assert len(wired.prom.queries) == 5
+    assert len(wired.prom.queries) == 4
 
 
 def test_requests_body_maps_counts(wired: Wired) -> None:
     """Catches a body that swaps in and out, drops a model, a kind or a reason, reads the
-    help desk's two counters from each other's series, or turns the hit rate into a percent
-    (the page does that, the body carries the ratio)."""
+    help desk's two counters from each other's series, or turns the hit rate (read from the
+    reader) into a percent (the page does that, the body carries the ratio)."""
     body = wired.body(days=7)
 
     assert set(body) == {
@@ -271,14 +275,16 @@ def test_requests_body_maps_counts(wired: Wired) -> None:
         ("nordlicht", "9f2c4be07a1d"),
         ("cuan", None),
     ]
-    assert wired.reader.calls == ["recent_requests"]
+    assert sorted(wired.reader.calls) == ["cache_hit_rate", "recent_requests"]
     assert wired.reader.pages_asked == [1]
 
 
 def test_no_traffic_gives_null_rate_and_blocks(wired: Wired) -> None:
-    """Catches a body that answers 0 for a hit rate or a block count when Prometheus has no
-    series at all (no traffic is not a 0% hit rate), or fails on the empty result."""
+    """Catches a body that answers 0 for a hit rate (ledger with no rows) or a block count
+    (Prometheus with no series) - no traffic is not a 0% hit rate - or fails on the empty
+    results."""
     wired.prom.mode = "empty"
+    wired.reader.hit_rate = None
 
     body = wired.body()
 
@@ -292,17 +298,43 @@ def test_no_traffic_gives_null_rate_and_blocks(wired: Wired) -> None:
 
 def test_the_default_window_is_30_days(wired: Wired) -> None:
     """Catches a default other than 30 days: the queries sent with no `days` must be the 30
-    day forms of the five builders."""
+    day forms of the four builders, and the ledger hit rate must be asked for 30 days."""
     wired.body()
 
     assert set(wired.prom.queries) == {
         redactions_query(30),
         tokens_query(30),
-        cache_hit_rate_query(30),
         refusals_query(30),
         guardrail_blocks_query(30),
     }
     assert all("[30d]" in query for query in wired.prom.queries)
+    assert [days for days, _ in wired.reader.hit_rate_asked] == [30]
+
+
+def test_hit_rate_comes_from_the_ledger_not_prometheus(wired: Wired) -> None:
+    """Catches a route that still asks Prometheus for the hit rate (a counter series born at
+    1 reads as 0), or that ignores the reader: the reader says 1 cached of 4 (0.25), which
+    no Prometheus answer here carries, and no query may mention the cache label."""
+    wired.reader.hit_rate = 0.25
+
+    body = wired.body(days=7)
+
+    assert body["cache_hit_rate"] == 0.25
+    assert [days for days, _ in wired.reader.hit_rate_asked] == [7]
+    now = wired.reader.hit_rate_asked[0][1]
+    assert now.tzinfo is not None
+    assert not any("cache=" in query for query in wired.prom.queries)
+    assert not any("gateway_requests_total" in query for query in wired.prom.queries)
+
+
+def test_an_empty_window_gives_a_null_hit_rate(wired: Wired) -> None:
+    """Catches a route that turns a ledger with no rows (reader answers None) into 0, which
+    reads as a real 0% hit rate."""
+    wired.reader.hit_rate = None
+
+    body = wired.body(days=7)
+
+    assert body["cache_hit_rate"] is None
 
 
 def test_trace_url_is_built_from_the_project_url(wired: Wired) -> None:
@@ -355,8 +387,9 @@ def test_no_project_url_gets_no_link(make_wired: Callable[[str | None], Wired]) 
 
 
 def test_prometheus_down_keeps_the_request_list(wired: Wired) -> None:
-    """Catches a Prometheus failure that blanks the request list, fails the whole page with
-    a 500, reports `unconfigured` or `ok`, or leaves stale counts in the body."""
+    """Catches a Prometheus failure that blanks the request list or the ledger hit rate (the
+    rate no longer comes from Prometheus), fails the whole page with a 500, reports
+    `unconfigured` or `ok`, or leaves stale counts in the body."""
     wired.prom.mode = "500"
 
     body = wired.body()
@@ -366,13 +399,14 @@ def test_prometheus_down_keeps_the_request_list(wired: Wired) -> None:
     assert body["refusals"] == []
     assert body["tokens"] == []
     assert body["guardrail_blocks"] is None
-    assert body["cache_hit_rate"] is None
+    assert body["cache_hit_rate"] == 0.3125
     assert len(body["requests"]) == 2
 
 
 def test_postgres_down_keeps_the_counts(wired: Wired) -> None:
     """Catches the reverse failure: a dead ledger that blanks the Prometheus counts, 500s
-    the page, or reports the postgres source as `ok`."""
+    the page, reports the postgres source as `ok`, or keeps a hit rate the dead ledger
+    could not have answered."""
     wired.reader.error = psycopg.OperationalError("connection refused")
 
     body = wired.body(days=7)
@@ -380,7 +414,7 @@ def test_postgres_down_keeps_the_counts(wired: Wired) -> None:
     assert body["sources"] == {"postgres": "error", "prometheus": "ok"}
     assert body["requests"] == []
     assert body["guardrail_blocks"] == 5
-    assert body["cache_hit_rate"] == 0.3125
+    assert body["cache_hit_rate"] is None
     assert len(body["redactions"]) == 2
 
 

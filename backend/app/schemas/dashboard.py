@@ -31,9 +31,13 @@ class _Body(BaseModel):
 
 
 class LastEval(_Body):
+    """The newest eval run. `check_score` is in percent points, as stored (57.14).
+
+    `passed` is the eval gate verdict, `None` when there is no baseline to check against."""
+
     id: str
     finished_at: datetime
-    passed: bool
+    passed: bool | None
     check_score: float | None
 
 
@@ -220,9 +224,9 @@ class ModelTokens(_Body):
 class RequestsPage(_Body):
     """What the gateway hid, tokens per model, the cache hit rate and the newest requests.
 
-    `guardrail_blocks` and `cache_hit_rate` are null when Prometheus has no series:
-    no traffic is not a 0% hit rate. `requests` is one page of the ledger:
-    `requests_page` of `requests_pages`, newest first."""
+    `guardrail_blocks` is null when Prometheus has no series, `cache_hit_rate` when the
+    ledger has no rows in the window: no traffic is not a 0% hit rate. `requests` is one
+    page of the ledger: `requests_page` of `requests_pages`, newest first."""
 
     sources: Sources
     redactions: tuple[RedactionCount, ...]

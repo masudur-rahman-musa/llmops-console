@@ -130,6 +130,9 @@ GRAFANA_PORT_NAME = "http"
 #: unmanaged by this kustomize build, so this is the one target with no pod template here to
 #: check its port against; `infra/tests/infra/test_k8s_alerting.py` covers the egress side of it.
 #: `evals-pushgateway` joined with an earlier change, so `NightlyEvalRegression` reads a real series.
+#: An earlier change: the help desk MCP server, the only pod that records `helpdesk_sod_blocks_total`.
+MCP_TARGET = "helpdesk-mcp-server.apps.svc.cluster.local:8081"
+
 SCRAPE_TARGETS: frozenset[str] = frozenset(
     {
         "gateway.apps.svc.cluster.local:8080",
@@ -141,6 +144,7 @@ SCRAPE_TARGETS: frozenset[str] = frozenset(
         "pushgateway.evals.svc.cluster.local:9091",
         "helpdesk-agent-api.apps.svc.cluster.local:8000",
         "helpdesk-scheduler.apps.svc.cluster.local:8082",
+        MCP_TARGET,
     }
 )
 
@@ -195,6 +199,11 @@ CERT_MANAGER = "cert-manager"
 #: actually reachable and not merely configured.
 PUSHGATEWAY = "pushgateway"
 
+#: An earlier change: the three help desk pods Prometheus reaches, each on its own metrics port.
+HELPDESK_AGENT_API = "helpdesk-agent-api"
+HELPDESK_MCP_SERVER = "helpdesk-mcp-server"
+HELPDESK_SCHEDULER = "helpdesk-scheduler"
+
 #: Criterion 7: every destination `prometheus-egress` may reach, as `(workload, resolved port)`.
 #: The DNS allow is NOT here - it lives in `allow-dns`, which selects every pod in `monitoring`.
 PROMETHEUS_EGRESS_DESTINATIONS: frozenset[tuple[str, int]] = frozenset(
@@ -206,6 +215,9 @@ PROMETHEUS_EGRESS_DESTINATIONS: frozenset[tuple[str, int]] = frozenset(
         (ALERTMANAGER, 9093),
         (CERT_MANAGER, 9402),
         (PUSHGATEWAY, 9091),
+        (HELPDESK_AGENT_API, 8000),
+        (HELPDESK_MCP_SERVER, 8081),
+        (HELPDESK_SCHEDULER, 8082),
     }
 )
 
@@ -731,14 +743,14 @@ def test_every_scraped_container_port_is_named_metrics_on_its_agreed_number(
     )
 
 
-def test_the_scrape_config_carries_exactly_the_nine_static_targets(
+def test_the_scrape_config_carries_exactly_the_ten_static_targets(
     built: list[dict[str, Any]],
 ) -> None:
     """Criterion 3 and decision C, over the PARSED `prometheus.yml` the ConfigMap holds as a
-    string: nine jobs (an earlier change decision A adds `cert-manager`, an earlier change adds
-    `evals-pushgateway`, an earlier change adds the help desk agent API and scheduler), each with
-    exactly one `static_configs` entry, the targets by set equality, every `metrics_path`
-    `/metrics`, and no key ending `_sd_configs` anywhere in the document.
+    string: ten jobs (an earlier change adds the help desk MCP server; an earlier change decision A adds
+    `cert-manager`, an earlier change adds `evals-pushgateway`, an earlier change adds the help desk agent API and
+    scheduler), each with exactly one `static_configs` entry, the targets by set equality,
+    every `metrics_path` `/metrics`, and no key ending `_sd_configs` anywhere in the document.
 
     Catches a seventh job nobody agreed to and a sixth that never landed - a missing job is a
     dashboard panel that is empty forever with no error anywhere, since a scrape config
@@ -924,7 +936,7 @@ def test_kube_state_metrics_is_the_only_subject_with_rbac_and_reads_only(
     )
 
 
-def test_prometheus_egress_reaches_exactly_the_seven_agreed_destinations_and_nothing_off_cluster(
+def test_prometheus_egress_reaches_exactly_the_ten_agreed_destinations_and_nothing_off_cluster(
     built: list[dict[str, Any]],
 ) -> None:
     """Criterion 7, by EQUALITY of `(destination, resolved port)` pairs, plus the two absences it
@@ -1075,3 +1087,45 @@ def test_each_metrics_ingress_policy_admits_monitoring_on_exactly_its_own_scrape
     assert peers == expected_peers, (
         f"unexpected: {sorted(peers - expected_peers)}; missing: {sorted(expected_peers - peers)}"
     )
+
+
+def test_the_blocks_counter_has_a_scraped_path_on_the_server(
+    built: list[dict[str, Any]],
+) -> None:
+    """An earlier change: `helpdesk_sod_blocks_total` is recorded only by the MCP server, so the server
+    build needs all three links: a scrape job for it, an egress allow from Prometheus, and an
+    ingress allow on its pod. Each is asserted on its own, so dropping any one is red.
+
+    Catches a scrape job with no egress allow (the target reads DOWN and blocks stay n/a with
+    no error anywhere), an egress allow with no ingress admit on the MCP pod (same symptom from
+    the other side), and an ingress admit written for the `metrics` port name, which the MCP
+    pod does not publish (its port is `http`, 8081)."""
+    jobs = scrape_config(built).get("scrape_configs", [])
+    targets = {
+        str(target)
+        for job in jobs
+        for entry in job.get("static_configs", [])
+        for target in entry.get("targets", [])
+    }
+    assert MCP_TARGET in targets, f"scrape targets are {sorted(targets)}"
+
+    egress = egress_destinations(built, policy(built, MONITORING, "prometheus-egress"))
+    assert (HELPDESK_MCP_SERVER, 8081) in egress, f"prometheus-egress reaches {sorted(egress)}"
+
+    ingress = policy(built, APPS, "helpdesk-metrics-from-prometheus")
+    assert HELPDESK_MCP_SERVER in selected_workloads(built, ingress)
+    # The policy names `http` and `metrics` for three pods that each publish only one of them.
+    # Kubernetes skips a port name a pod does not publish, so only the MCP pod's own names count.
+    mcp_ports = container_ports(selected_workloads(built, ingress)[HELPDESK_MCP_SERVER])
+    reached: set[tuple[str, int]] = set()
+    for rule in rules_of(ingress, "ingress"):
+        peers: set[tuple[str, str]] = set()
+        for peer in peers_of(rule, "from"):
+            peers |= peer_targets(built, peer, APPS)
+        assert (MONITORING, PROMETHEUS) in peers, f"helpdesk metrics ingress admits {sorted(peers)}"
+        for protocol, port in declared_ports(rule, "apps/helpdesk-metrics-from-prometheus"):
+            if isinstance(port, int):
+                reached.add((protocol, port))
+            elif str(port) in mcp_ports:
+                reached.add((protocol, mcp_ports[str(port)]))
+    assert reached == {("TCP", 8081)}, f"the MCP pod admits {sorted(reached)} from monitoring"

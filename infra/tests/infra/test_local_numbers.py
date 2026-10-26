@@ -58,7 +58,7 @@ def test_prometheus_scrapes_the_gateway_every_five_seconds() -> None:
     """Catches a scrape config with the wrong job, target, path or interval, so the local
     numbers would be missing or take too long to land."""
     jobs = load_yaml(PROMETHEUS_CONFIG)["scrape_configs"]
-    assert len(jobs) == 1
+    assert len(jobs) == 3
     job = jobs[0]
     assert job["job_name"] == "gateway"
     assert job["metrics_path"] == "/metrics"
@@ -67,6 +67,25 @@ def test_prometheus_scrapes_the_gateway_every_five_seconds() -> None:
         job.get("scrape_interval") or load_yaml(PROMETHEUS_CONFIG)["global"]["scrape_interval"]
     )
     assert interval == "5s"
+
+
+def test_local_prometheus_scrapes_the_help_desk() -> None:
+    """Catches a local Prometheus that never dials the help desk (guardrail blocks stay n/a),
+    a job on the wrong host or port (the agent API is 8000, the MCP server 8081), a target
+    that is the compose-network name instead of the host, and a compose Prometheus that cannot
+    resolve `host.docker.internal` (Linux has no default for it)."""
+    jobs = {job["job_name"]: job for job in load_yaml(PROMETHEUS_CONFIG)["scrape_configs"]}
+    assert jobs["helpdesk-agent-api"]["static_configs"] == [
+        {"targets": ["host.docker.internal:8000"]}
+    ]
+    assert jobs["helpdesk-mcp-server"]["static_configs"] == [
+        {"targets": ["host.docker.internal:8081"]}
+    ]
+    for name in ("helpdesk-agent-api", "helpdesk-mcp-server"):
+        assert jobs[name].get("metrics_path", "/metrics") == "/metrics", name
+
+    extra_hosts = service("prometheus").get("extra_hosts")
+    assert "host.docker.internal:host-gateway" in (extra_hosts or [])
 
 
 def test_the_gateway_migrates_and_reads_prometheus_in_compose() -> None:

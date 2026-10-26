@@ -1,6 +1,7 @@
 # The local Prometheus: scrapes the compose gateway so the console's metric
-# fields (latency, error rate, tokens, redactions, cache hit rate, circuits)
-# show on a laptop. Mounted by the `prometheus` service in docker-compose.yml.
+# fields (latency, error rate, tokens, redactions, circuits) show on a laptop,
+# and the help desk on the host for refusals and guardrail blocks. When the
+# help desk is not running its targets are down and those fields read n/a. Mounted by the `prometheus` service in docker-compose.yml.
 # Every 5 s, so `make numbers` sees its own traffic within one check retry.
 # No rule files and no Alertmanager: alerts are the cluster's job
 # (infra/k8s/monitoring/).
@@ -12,3 +13,11 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets: ["gateway:8080"]
+  - job_name: helpdesk-agent-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8000"]
+  - job_name: helpdesk-mcp-server
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8081"]

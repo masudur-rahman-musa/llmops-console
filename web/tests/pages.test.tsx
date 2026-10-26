@@ -272,6 +272,29 @@ describe("console pages", () => {
     expect(has(html, "Prometheus")).toBe(false);
   });
 
+  it("home shows the stored score once and the gate verdict", async () => {
+    // Catches a score scaled by 100 a second time (57.14 shown as 5714.00%), a verdict word taken from anything but `passed`, and a null verdict drawn as failed or passed.
+    const home = fixture("home");
+    home.last_eval = { ...(home.last_eval as Fixture), check_score: 57.14, passed: true };
+    const html = await render("home", home);
+    expect(has(html, "Last eval: check score 57.14%, passed")).toBe(true);
+    expect(html).not.toContain("5714");
+
+    const noBaseline = fixture("home");
+    noBaseline.last_eval = { ...(noBaseline.last_eval as Fixture), check_score: 57.14, passed: null };
+    const nullHtml = await render("home", noBaseline);
+    expect(has(nullHtml, "Last eval: check score 57.14%, no baseline to check against")).toBe(true);
+    expect(nullHtml).not.toContain(", failed");
+    expect(nullHtml).not.toContain(", passed");
+  });
+
+  it("cost shows savings under a cent", async () => {
+    // Catches savings rounded to cents: a total of $0.0000257 must not read $0.00.
+    const body = fixture("cost");
+    body.savings_usd_total = 0.0000257;
+    expect(has(await render("cost", body), "Estimated cache savings: $0.000026")).toBe(true);
+  });
+
   it("home renders no eval yet when last_eval is null", async () => {
     // Catches a null last_eval rendered as a failed or n/a eval, or the notice shown when an eval exists.
     const body = fixture("home");

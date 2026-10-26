@@ -104,14 +104,6 @@ def tokens_query(days: int) -> str:
     return f"sum by (model, direction) (increase(gateway_tokens_total[{days}d]))"
 
 
-def cache_hit_rate_query(days: int) -> str:
-    """The share of requests a cache answered, either tier, over the window."""
-    return (
-        f'sum(increase(gateway_requests_total{{cache=~"hit|semantic"}}[{days}d]))'
-        f" / sum(increase(gateway_requests_total[{days}d]))"
-    )
-
-
 def refusals_query(days: int) -> str:
     """The help desk's refusals over the window, by reason. The gateway counts none of its own."""
     return f"sum by (reason) (increase(helpdesk_refusals_total[{days}d]))"

@@ -1,7 +1,7 @@
 import { consolePage } from "@/components/layout/console-page";
 import { Pager } from "@/components/ui/pager";
 import { Table } from "@/components/ui/table";
-import { NA, usd } from "@/lib/format";
+import { NA, smallUsd, usd } from "@/lib/format";
 import { CHECK_SCORE_SENTENCE, scoreLabel } from "@/lib/labels";
 import { PAGE_PARAMS, pageOf } from "@/lib/paging";
 import { TRADEOFF_METRICS, readTradeoff, type Tradeoff } from "@/lib/tradeoff";
@@ -56,11 +56,11 @@ export default consolePage("cost", "Cost", "What does the AI cost, per day, per 
         columns={["Day", "Tenant", "Saved"]}
         rows={savings.rows.map((saving) => ({
           key: `${saving.day}/${saving.tenant}`,
-          cells: [saving.day, saving.tenant, usd(saving.saved_usd)],
+          cells: [saving.day, saving.tenant, smallUsd(saving.saved_usd)],
         }))}
       />
       <Pager name={PAGE_PARAMS.savings} page={savings.page} pages={savings.pages} params={params} />
-      <p>Estimated cache savings: {usd(body.savings_usd_total)}</p>
+      <p>Estimated cache savings: {smallUsd(body.savings_usd_total)}</p>
 
       <h2>Budgets this month</h2>
       {body.budgets.map((budget) => (

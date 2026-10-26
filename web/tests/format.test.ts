@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { NA, ms, percent, safeHref, shortSha, usd, utcTime } from "@/lib/format";
+import { NA, ms, percent, points, safeHref, shortSha, smallUsd, usd, utcTime } from "@/lib/format";
 
 describe("format", () => {
   it("usd formats with two decimals and grouping", () => {
@@ -18,6 +18,25 @@ describe("format", () => {
     expect(percent(0.9312)).toBe("93.12%");
     expect(percent(1)).toBe("100.00%");
     expect(percent(0)).toBe("0.00%");
+  });
+
+  it("points shows percent points as they are", () => {
+    // Catches a points value multiplied by 100 a second time (57.14 shown as 5714.00%), rounded to other than two decimals, zero treated as missing, or null shown as a number.
+    expect(points(57.14)).toBe("57.14%");
+    expect(points(100)).toBe("100.00%");
+    expect(points(0)).toBe("0.00%");
+    expect(points(null)).toBe("n/a");
+    expect(points(undefined)).toBe("n/a");
+  });
+
+  it("small money shows six decimals under a cent", () => {
+    // Catches an amount between zero and one cent rounded to $0.00, six decimals used for amounts a cent or more, zero shown with six decimals, or null shown as a number.
+    expect(smallUsd(0.0000257)).toBe("$0.000026");
+    expect(smallUsd(0.01)).toBe("$0.01");
+    expect(smallUsd(0)).toBe("$0.00");
+    expect(smallUsd(4.55)).toBe("$4.55");
+    expect(smallUsd(1234.5)).toBe("$1,234.50");
+    expect(smallUsd(null)).toBe("n/a");
   });
 
   it("ms rounds seconds to whole milliseconds", () => {

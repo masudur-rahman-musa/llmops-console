@@ -87,9 +87,15 @@ class RequestsRead(_Read):
 
 
 class HomeRead(_Read):
+    """Today's ledger, the newest run, and that run's metrics for the gate verdict.
+
+    `last_eval.passed` here is the run's stored "every stable case passed"; the home route
+    replaces it with the verdict on `last_eval_metrics`."""
+
     requests_today: int
     cost_usd_today: float
     last_eval: LastEval | None
+    last_eval_metrics: dict[str, Any] | None = None
 
 
 class CostRead(_Read):
@@ -165,6 +171,8 @@ class ConsoleReader(Protocol):
 
     def recent_requests(self, *, page: int) -> RequestsRead: ...
 
+    def cache_hit_rate(self, days: int, now: datetime) -> float | None: ...
+
 
 class UnconfiguredConsoleReader:
     """What a gateway with no `database_url` holds. The routes never call it.
@@ -195,6 +203,9 @@ class UnconfiguredConsoleReader:
 
     def recent_requests(self, *, page: int) -> RequestsRead:
         return RequestsRead(rows=(), page=1, pages=1)
+
+    def cache_hit_rate(self, days: int, now: datetime) -> float | None:
+        return None
 
 
 def _accuracy(metrics: object) -> float | None:
@@ -255,7 +266,27 @@ class PostgresConsoleReader:
             else LastEval(
                 id=run[0], finished_at=run[1], passed=run[2], check_score=_accuracy(run[3])
             ),
+            last_eval_metrics=None if run is None or not isinstance(run[3], dict) else run[3],
         )
+
+    def cache_hit_rate(self, days: int, now: datetime) -> float | None:
+        """Cached ledger rows over all ledger rows in `[now - days, now]`; `None` with no rows.
+
+        Counted from the ledger, not Prometheus: `increase()` reads 0 for a counter series
+        born at 1, so one cached request showed a 0% rate. Pinned by
+        tests/storage/test_dashboard_reads_postgres.py::test_hit_rate_counts_cached_rows_inside_the_window.
+        """
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                sql.SQL(
+                    "SELECT count(*) FILTER (WHERE cached), count(*) FROM {} "
+                    "WHERE ts >= %s AND ts <= %s"
+                ).format(self._table("cost_ledger")),
+                (now - timedelta(days=days), now),
+            ).fetchone()
+        assert row is not None
+        cached, total = row
+        return None if total == 0 else cached / total
 
     def cost(self, *, days: int, tenant: str | None, now: datetime, prices: PriceTable) -> CostRead:
         since = now - timedelta(days=days)

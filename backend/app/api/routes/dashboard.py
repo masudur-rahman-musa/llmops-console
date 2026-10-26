@@ -43,12 +43,18 @@ from app.schemas.dashboard import (
     Sources,
 )
 from app.schemas.dashboard import SourceState as SourceState
-from app.services.dashboard import budgets, first, gate_scores, postgres, prometheus
+from app.services.dashboard import (
+    budgets,
+    first,
+    gate_scores,
+    gate_verdict,
+    postgres,
+    prometheus,
+)
 from app.services.prometheus_reads import (
     ERROR_RATE_QUERY,
     P95_QUERY,
     PrometheusClient,
-    cache_hit_rate_query,
     guardrail_blocks_query,
     redactions_query,
     refusals_query,
@@ -124,7 +130,11 @@ def home(request: Request, store: PolicyDep, settings: SettingsDep) -> HomePage:
         cost_usd_today=None if read is None else read.cost_usd_today,
         p95_seconds=p95,
         error_rate=error_rate,
-        last_eval=None if read is None else read.last_eval,
+        last_eval=None
+        if read is None or read.last_eval is None
+        else read.last_eval.model_copy(
+            update={"passed": gate_verdict(settings.eval_baseline_path, read.last_eval_metrics)}
+        ),
         routing=routing(store),
         grafana_url=settings.grafana_url,
     )
@@ -200,9 +210,8 @@ RequestCounts = tuple[
     tuple[RefusalCount, ...],
     float | None,
     tuple[ModelTokens, ...],
-    float | None,
 ]
-"""The Prometheus half of the requests page: redactions, refusals, blocks, tokens, hit rate."""
+"""The Prometheus half of the requests page: redactions, refusals, blocks, tokens."""
 
 
 def trace_url(project_url: str | None, trace_id: str) -> str | None:
@@ -234,7 +243,7 @@ def _tokens(samples: list[tuple[dict[str, str], float]]) -> tuple[ModelTokens, .
 def requests(
     request: Request, settings: SettingsDep, days: Days = DEFAULT_DAYS, page: Page = DEFAULT_PAGE
 ) -> RequestsPage:
-    """Counts over the window from Prometheus, one page of the ledger from Postgres.
+    """Counts over the window from Prometheus; a ledger page and the hit rate from Postgres.
 
     A dead or missing ledger is page 1 of 1 with no rows."""
 
@@ -250,13 +259,18 @@ def requests(
             ),
             first(client.instant_query(guardrail_blocks_query(days))),
             _tokens(client.instant_query(tokens_query(days))),
-            first(client.instant_query(cache_hit_rate_query(days))),
         )
 
     prom, counts = prometheus(request, "requests", read)
-    empty: RequestCounts = ((), (), None, (), None)
-    redactions, refusals, blocks, tokens, hit_rate = counts if counts is not None else empty
-    pg, ledger = postgres(request, "requests", lambda reader: reader.recent_requests(page=page))
+    empty: RequestCounts = ((), (), None, ())
+    redactions, refusals, blocks, tokens = counts if counts is not None else empty
+    now = datetime.now(UTC)
+    pg, ledger_read = postgres(
+        request,
+        "requests",
+        lambda reader: (reader.recent_requests(page=page), reader.cache_hit_rate(days, now)),
+    )
+    ledger, hit_rate = ledger_read if ledger_read is not None else (None, None)
     project_url = settings.langfuse_project_url
     return RequestsPage(
         sources=Sources(postgres=pg, prometheus=prom),

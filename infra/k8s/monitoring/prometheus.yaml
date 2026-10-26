@@ -42,15 +42,15 @@ metadata:
 data:
   # Held as a string, so a typo here is valid YAML inside a valid ConfigMap and
   # reaches the cluster unchallenged. `infra/tests/infra/test_k8s_monitoring.py`
-  # parses this value and asserts the seven targets by set equality, which is the
+  # parses this value and asserts the ten targets by set equality, which is the
   # only thing between a wrong Service name and a target that reads DOWN
   # forever with no error anywhere.
   #
-  # Every target is fully qualified: this pod is in `monitoring` and four of
-  # the seven services are not, so a bare `gateway` resolves to nothing.
+  # Every target is fully qualified: this pod is in `monitoring` and seven of
+  # the ten services are not, so a bare `gateway` resolves to nothing.
   prometheus.yml: |
     global:
-      # 30s over seven targets for 30 days, capped at 3GB, fits the 4Gi claim.
+      # 30s over ten targets for 30 days, capped at 3GB, fits the 4Gi claim.
       # Tightening it doubles every series' sample count against an unchanged
       # volume, and the disk fills silently.
       scrape_interval: 30s
@@ -96,11 +96,16 @@ data:
         static_configs:
           - targets: ["pushgateway.evals.svc.cluster.local:9091"]
       # The help desk's own counters: how turns end and how many chats wait
-      # on a question (agent API), and the stuck chat sweep (scheduler).
+      # on a question (agent API), guardrail blocks (MCP server), and the
+      # stuck chat sweep (scheduler).
       - job_name: helpdesk-agent-api
         metrics_path: /metrics
         static_configs:
           - targets: ["helpdesk-agent-api.apps.svc.cluster.local:8000"]
+      - job_name: helpdesk-mcp-server
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["helpdesk-mcp-server.apps.svc.cluster.local:8081"]
       - job_name: helpdesk-scheduler
         metrics_path: /metrics
         static_configs:

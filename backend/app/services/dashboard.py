@@ -3,7 +3,7 @@
 `_postgres` and `_prometheus` each turn one source into a `(state, value)` pair,
 so a page body can render the other source's fields when one is down.
 `budgets` sets each tenant's cap beside its ledger spend for the month.
-`gate_scores` is the quality page's eval gate rows.
+`gate_scores` is the quality page's eval gate rows, `gate_verdict` the home page's word.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import logging
 from collections.abc import Callable, Mapping
 from decimal import Decimal
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 import psycopg
 from fastapi import Request
@@ -114,15 +114,34 @@ def gate_scores(baseline_path: Path, runs: tuple[EvalRunSummary, ...]) -> tuple[
     A baseline that cannot be read or is not valid never fails the page: its
     thresholds are null. Pinned by tests/api/test_quality_gate.py.
     """
+    newest = max(runs, key=lambda run: run.started_at, default=None)
+    return _gate_rows(baseline_path, None if newest is None else newest.metrics)
+
+
+def gate_verdict(baseline_path: Path, metrics: Mapping[str, Any] | None) -> bool | None:
+    """The eval gate's verdict on one run's metrics, as the quality page's gate rows give it.
+
+    False when any gated score is below its threshold, true when none is and at least one
+    passed, `None` when nothing could be checked (no baseline, no gated score). The run's
+    stored `passed` means "every stable case passed", a different question. Pinned by
+    tests/api/test_console_routes.py::test_home_verdict_matches_the_eval_gate.
+    """
+    verdicts = [row.passed for row in _gate_rows(baseline_path, metrics) if row.passed is not None]
+    if not verdicts:
+        return None
+    return all(verdicts)
+
+
+def _gate_rows(baseline_path: Path, metrics: Mapping[str, Any] | None) -> tuple[GateScore, ...]:
+    """One gate row per gated score: the value from `metrics`, the threshold from the baseline."""
     try:
         baseline: Baseline | None = load_baseline(baseline_path)
     except BaselineInvalid as exc:
         logger.warning("console quality: eval baseline %s", exc)
         baseline = None
-    newest = max(runs, key=lambda run: run.started_at, default=None)
     rows = []
     for name, label in GATE_SCORES:
-        raw = None if newest is None else newest.metrics.get(name)
+        raw = None if metrics is None else metrics.get(name)
         value = float(raw) if isinstance(raw, int | float) and not isinstance(raw, bool) else None
         threshold = None if baseline is None else getattr(baseline, name)
         rows.append(

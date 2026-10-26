@@ -4,7 +4,7 @@ import { LineChart } from "@/components/ui/line-chart";
 import { Pager } from "@/components/ui/pager";
 import { Table } from "@/components/ui/table";
 import type { GateScore } from "@/features/quality/guards";
-import { NA, shortSha } from "@/lib/format";
+import { NA, points, shortSha } from "@/lib/format";
 import { CHECK_SCORE_SENTENCE, scoreLabel } from "@/lib/labels";
 import { PAGE_PARAMS, pageOf } from "@/lib/paging";
 
@@ -14,18 +14,13 @@ function seconds(iso: string): number {
   return Date.parse(iso) / 1000;
 }
 
-/** Gate scores and the baseline are already percent points (48.48 is 48.48%). */
-function score(value: number | null): string {
-  return value === null ? NA : `${value.toFixed(2)}%`;
-}
-
 /** No verdict without a baseline: the page cannot know pass or fail. */
 function gateCells(row: GateScore): string[] {
   if (row.threshold === null) {
-    return [row.label, score(row.value), "Baseline not set", ""];
+    return [row.label, points(row.value), "Baseline not set", ""];
   }
   const result = row.passed === null ? NA : row.passed ? "passed" : "failed";
-  return [row.label, score(row.value), score(row.threshold), result];
+  return [row.label, points(row.value), points(row.threshold), result];
 }
 
 export default consolePage("quality", "Quality", "Does the help desk still answer well enough to ship?", (body, params) => {

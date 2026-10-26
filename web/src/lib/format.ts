@@ -15,9 +15,27 @@ export function usd(value: number | null | undefined, decimals = 2): string {
   return `$${value.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
 }
 
+const SMALL_USD_DECIMALS = 6;
+
+/**
+ * Money that can be a fraction of a cent: an amount above zero and under one cent shows
+ * six decimals, so one cached request's saving does not read $0.00.
+ */
+export function smallUsd(value: number | null | undefined): string {
+  if (missing(value)) {
+    return NA;
+  }
+  return value !== 0 && Math.abs(value) < 0.01 ? usd(value, SMALL_USD_DECIMALS) : usd(value);
+}
+
 /** A rate from 0 to 1, shown as a percentage with two decimals. */
 export function percent(value: number | null | undefined): string {
   return missing(value) ? NA : `${(value * 100).toFixed(2)}%`;
+}
+
+/** Percent points as stored (57.14 is 57.14%), never scaled again. */
+export function points(value: number | null | undefined): string {
+  return missing(value) ? NA : `${value.toFixed(2)}%`;
 }
 
 /** Seconds, shown as whole milliseconds. */

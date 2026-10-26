@@ -1,12 +1,17 @@
 import { consolePage } from "@/components/layout/console-page";
 import { ExternalLink } from "@/components/ui/external-link";
 import { Table } from "@/components/ui/table";
-import { NA, ms, percent, usd, utcTime } from "@/lib/format";
+import { NA, ms, percent, points, usd, utcTime } from "@/lib/format";
 import { CHECK_SCORE_SENTENCE } from "@/lib/labels";
 
 import styles from "./home.module.css";
 
 export const dynamic = "force-dynamic";
+
+/** The eval gate verdict the quality tab shows; null means there is no baseline. */
+function verdict(passed: boolean | null): string {
+  return passed === null ? "no baseline to check against" : passed ? "passed" : "failed";
+}
 
 export default consolePage("home", "Overview", "Is the gateway healthy today, and what has it cost?", (body) => (
   <>
@@ -25,7 +30,7 @@ export default consolePage("home", "Overview", "Is the gateway healthy today, an
     <p className="note">
       {body.last_eval === null
         ? "No eval yet."
-        : `Last eval: check score ${percent(body.last_eval.check_score)}, ${body.last_eval.passed ? "passed" : "failed"}`}
+        : `Last eval: check score ${points(body.last_eval.check_score)}, ${verdict(body.last_eval.passed)}`}
     </p>
     <p className="note">{CHECK_SCORE_SENTENCE}</p>
     <h2>Model routing</h2>

@@ -257,6 +257,7 @@ def test_today_counts_only_the_current_utc_day(pool: Pool, migrated_schema: str)
             passed=False,
             check_score=0.91,
         ),
+        last_eval_metrics={"check_score": 0.91},
     )
 
 
@@ -272,6 +273,7 @@ def test_an_empty_ledger_answers_zeros_and_no_last_eval(pool: Pool, migrated_sch
         requests_today=0,
         cost_usd_today=0.0,
         last_eval=None,
+        last_eval_metrics=None,
     )
 
     insert_run(
@@ -280,6 +282,26 @@ def test_an_empty_ledger_answers_zeros_and_no_last_eval(pool: Pool, migrated_sch
     last = reader.home(now=NOW).last_eval
     assert last is not None
     assert last.check_score is None
+
+
+def test_hit_rate_counts_cached_rows_inside_the_window(pool: Pool, migrated_schema: str) -> None:
+    """Catches a hit rate that counts cached rows outside the window (two more cached rows sit a
+    second and three days before the start, which would make it 3 of 6), an exclusive lower
+    edge (the cached row exactly at the start is dropped), a rate over the cached rows only
+    or over the rows outside the window, and an empty window answered as 0 instead of None."""
+    schema = migrated_schema
+    reader = PostgresConsoleReader(pool, schema=schema)
+    assert reader.cache_hit_rate(7, NOW) is None
+
+    start = NOW - timedelta(days=7)
+    insert_cost(pool, schema, ts=start, cached=True, cost_usd="0")
+    insert_cost(pool, schema, ts=start + SECOND)
+    insert_cost(pool, schema, ts=NOW - timedelta(hours=1), tenant="cuan")
+    insert_cost(pool, schema, ts=NOW - timedelta(hours=2))
+    insert_cost(pool, schema, ts=start - SECOND, cached=True, cost_usd="0")
+    insert_cost(pool, schema, ts=start - timedelta(days=3), cached=True, cost_usd="0")
+
+    assert reader.cache_hit_rate(7, NOW) == 0.25
 
 
 # --- cost ------------------------------------------------------------------------
