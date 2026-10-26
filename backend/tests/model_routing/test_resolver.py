@@ -254,20 +254,37 @@ def test_judge_falls_back_to_openai_when_the_openai_key_is_set() -> None:
         {ANTHROPIC_KEY_ENV: FAKE_ANTHROPIC_KEY, OPENAI_KEY_ENV: FAKE_OPENAI_KEY}
     )
 
-    assert candidates == [("anthropic", "claude-haiku-5-5"), ("openai", "gpt-5-mini")]
+    assert candidates == [("anthropic", "claude-sonnet-5-5"), ("openai", "gpt-5-mini")]
 
 
 def test_judge_has_one_candidate_when_the_openai_key_is_not_set() -> None:
-    """Catches a judge pointed anywhere but the cheaper Anthropic model, and an OpenAI
+    """Catches a judge pointed anywhere but Sonnet on Anthropic, and an OpenAI
     adapter built with no key."""
     candidates = judge_candidates({ANTHROPIC_KEY_ENV: FAKE_ANTHROPIC_KEY})
 
-    assert candidates == [("anthropic", "claude-haiku-5-5")]
+    assert candidates == [("anthropic", "claude-sonnet-5-5")]
+
+
+def test_the_judge_falls_to_gpt_5_mini_when_anthropic_is_down() -> None:
+    """Catches a judge whose backup is not `gpt-5-mini`, or one that still answers from
+    Anthropic when only OpenAI is healthy."""
+    policy = load_policy(SHIPPED_POLICY_PATH, SHIPPED_PROVIDERS_DIR)
+
+    resolved = resolve(
+        policy,
+        JUDGE_TENANT,
+        JUDGE_ALIAS,
+        JUDGE_DATA_CLASS,
+        is_healthy=lambda provider: provider == "openai",
+    )
+
+    assert resolved
+    assert (resolved[0].provider, resolved[0].model) == ("openai", "gpt-5-mini")
 
 
 EVAL_FIRST_CHOICE = (
     ("agent-default", "claude-haiku-5-5"),
-    ("judge", "claude-haiku-5-5"),
+    ("judge", "claude-sonnet-5-5"),
     ("agent-strong", "claude-sonnet-5-5"),
 )
 
@@ -276,8 +293,8 @@ EVAL_FIRST_CHOICE = (
     ("alias", "model"), EVAL_FIRST_CHOICE, ids=[a for a, _ in EVAL_FIRST_CHOICE]
 )
 def test_eval_aliases_run_on_haiku_and_sonnet_5_5(alias: str, model: str) -> None:
-    """Catches a shipped policy that still sends the cheap alias or the judge to Haiku 4.5,
-    or the strong alias to anything but Sonnet 5.5: the eval baseline is set on these
+    """Catches a shipped policy that sends the cheap alias to anything but Haiku 5.5,
+    or the judge or the strong alias to anything but Sonnet 5.5: the eval baseline is set on these
     exact models, so a different first choice makes every later run incomparable."""
     policy = load_policy(SHIPPED_POLICY_PATH, SHIPPED_PROVIDERS_DIR)
 

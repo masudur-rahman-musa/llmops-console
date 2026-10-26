@@ -43,8 +43,8 @@ def test_chat_aliases_list_anthropic_then_openai(policy: Policy, alias: str) -> 
 
 
 def test_each_chat_alias_names_its_models(policy: Policy) -> None:
-    """Catches a swapped model: the cheap pair serves `agent-default` and `judge`,
-    the strong pair serves `agent-strong`."""
+    """Catches a swapped model: the cheap pair serves `agent-default`, the judge runs on
+    Sonnet with the cheap OpenAI model behind it, the strong pair serves `agent-strong`."""
     pairs = {
         alias: tuple((c.provider, c.model) for c in policy.aliases[alias].candidates)
         for alias in CHAT_ALIASES
@@ -52,7 +52,10 @@ def test_each_chat_alias_names_its_models(policy: Policy) -> None:
 
     cheap = (("anthropic", "claude-haiku-5-5"), ("openai", "gpt-5-mini"))
     assert pairs["agent-default"] == cheap
-    assert pairs["judge"] == cheap
+    assert pairs["judge"] == (
+        ("anthropic", "claude-sonnet-5-5"),
+        ("openai", "gpt-5-mini"),
+    )
     assert pairs["agent-strong"] == (
         ("anthropic", "claude-sonnet-5-5"),
         ("openai", "gpt-5"),

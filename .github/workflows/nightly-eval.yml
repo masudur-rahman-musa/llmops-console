@@ -1,7 +1,7 @@
 name: nightly-eval
 # The one nightly eval path. The in-cluster CronJob is gone: its cases
 # would have been a copy of the help desk's file baked into an image. This workflow
-# checks out the help desk repository and plays its 33 conversation cases against
+# checks out the help desk repository and plays its 45 conversation cases against
 # the target below, with the real models, and pushes the scores to the Pushgateway.
 #
 # Gated on the `EVAL_TARGET_URL` repository variable: there is no standing target to

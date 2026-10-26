@@ -119,9 +119,9 @@ migrate:    ## Apply the ledger migrations (safe to run twice)
 	$(UV_ROOT) ops-migrate
 refresh-rollup: ## Refresh the daily cost rollup the console reads
 	$(UV_ROOT) ops-refresh-rollup
-# The eval gate: the help desk's 33 conversation cases against the
-# real help desk agent, with this gateway beside it and the real cheap model
-# (`agent-default`) answering, so `ANTHROPIC_API_KEY` must be set (in the shell,
+# The eval gate: the help desk's 45 conversation cases, each played
+# EVAL_REPEATS times, against the real help desk agent, with this gateway beside
+# it and the real cheap model (`agent-default`) answering, so `ANTHROPIC_API_KEY` must be set (in the shell,
 # as CI does, or in `backend/.env`). One run, then one gate check against
 # `backend/evals/conversation-baseline.json`; either failing fails the target.
 # HELPDESK_DIR is the help desk checkout (CI checks it out to `helpdesk/`).
@@ -144,7 +144,7 @@ EVAL_CALIBRATION = backend/evals/labels/calibration.json
 # unstable and left out of check_score.
 EVAL_REPEATS ?= 3
 EVAL_HELPDESK_COMPOSE = docker compose --project-directory $(EVAL_HELPDESK) -f $(EVAL_HELPDESK)/docker-compose.yml -f infra/evals/helpdesk.compose.yml --profile app
-eval:       ## The eval gate: the help desk's 33 conversations on the real cheap model, then the gate
+eval:       ## The eval gate: the help desk's 45 conversations on the real cheap model, then the gate
 	@trap 'rc=$$?; infra/evals/restore_keys.sh $(EVAL_HELPDESK) || [ $$rc != 0 ] || rc=1; exit $$rc' EXIT; \
 	nord=$$(openssl rand -hex 32); cuan=$$(openssl rand -hex 32); judge=$$(openssl rand -hex 32); \
 	nord_digest=$$(printf '%s' "$$nord" | openssl dgst -sha256 -r | cut -d' ' -f1); \

@@ -1,8 +1,0 @@
-{
-  "judge_prompt_version": "7c38527f75be1fa6e2f69074371bca77475baec760c4c7392e8ab604261c76c1",
-  "labels_name": "conversation-labels.jsonl",
-  "labels_sha": "f7db270c0fe3e8931138ea500b441aefddb60041785e613056e90ea35f553169",
-  "pairs": 40,
-  "kappa": 0.89,
-  "trusted": true
-}

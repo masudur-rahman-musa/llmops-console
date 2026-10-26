@@ -113,7 +113,7 @@ desk checkout, `../ai-help-desk-governed-access` by default; the key can be in
 3. It resets and seeds the help desk's database and loads its policy text
    (`infra/evals/prepare_helpdesk.sh`), then starts its agent API and tool server with
    the eval routes switched on (`infra/evals/helpdesk.compose.yml`).
-4. It plays the help desk's 33 conversation cases three times each
+4. It plays the help desk's 45 conversation cases three times each
    (`EVAL_REPEATS ?= 3`) with `ops-eval conversations --repeats`,
    writes the reports to `backend/evals/reports/local/`, and runs `ops-eval gate`
    against the conversation baseline (with the calibration file when one exists).

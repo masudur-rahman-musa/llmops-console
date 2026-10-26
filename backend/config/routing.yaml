@@ -33,13 +33,13 @@ aliases:
     candidates:
       - { provider: anthropic, model: claude-sonnet-5-5 }
       - { provider: openai, model: gpt-5 }
-  # Haiku 5.5 while it agrees with the reference labels at 0.7 or better;
-  # below that this line becomes Sonnet 5.5 and the judge is calibrated once more.
+  # Sonnet 5.5 grades the evals. It counts in the gate only once it is
+  # calibrated against the reference labels at 0.7 or better.
   # The judge is calibrated on Anthropic; OpenAI only answers when Anthropic is down.
   judge:
     purpose: "Grades eval answers against the reference labels."
     candidates:
-      - { provider: anthropic, model: claude-haiku-5-5 }
+      - { provider: anthropic, model: claude-sonnet-5-5 }
       - { provider: openai, model: gpt-5-mini }
   # Only the local embedding server: a second embedding model writes vectors in
   # a different space and breaks search over the stored ones.
