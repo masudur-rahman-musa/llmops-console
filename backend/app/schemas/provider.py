@@ -14,7 +14,7 @@ reached it from there before this move; new code should import directly from
 from collections.abc import Mapping
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, StrictBool
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 
 class _Contract(BaseModel):
@@ -115,11 +115,18 @@ class ChatRequest(_Contract):
 
 
 class Usage(_Contract):
-    """What the call consumed. The ledger prices from these three numbers."""
+    """What the call consumed. The ledger prices from these numbers.
+
+    `prompt_tokens` is the input the provider charged at the plain input rate.
+    Tokens read from or written to a provider's prompt cache are counted apart in
+    `cache_read_tokens` and `cache_write_tokens`, because each has its own price. Both default to 0 for a provider that reports no cache.
+    """
 
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    cache_read_tokens: int = Field(default=0, ge=0)
+    cache_write_tokens: int = Field(default=0, ge=0)
 
 
 class ChatResponse(_Contract):

@@ -87,6 +87,7 @@ from app.providers.base import (
     EmbeddingResponse,
     StreamEvent,
 )
+from app.schemas.provider import Usage
 from app.services.chat_headers import CACHE_STATUS_HIT, CACHE_STATUS_MISS, CACHE_STATUS_SEMANTIC
 from app.storage import (
     CostLedgerRow,
@@ -162,7 +163,7 @@ FALLBACK_MODEL = "gpt-5-mini"
 must name this and not `claude-haiku-5-5`. This is a copy of what `routing.yaml`
 resolves to, so it moves when that file does."""
 
-CHAT_PRICE_VERSION = f"{PROVIDER}/{POLICY_MODEL}@2026-10-01"
+CHAT_PRICE_VERSION = f"{PROVIDER}/{POLICY_MODEL}@2026-10-26"
 EMBED_PRICE_VERSION = f"{EMBED_PROVIDER}/{EMBED_MODEL}@2025-01-01"
 FALLBACK_PRICE_VERSION = f"{OPENAI_PROVIDER}/{FALLBACK_MODEL}@2025-08-07"
 """The entries in force in the shipped provider files, spelled as the literals the
@@ -262,12 +263,14 @@ class CostChatStub:
         self.events: tuple[StreamEvent, ...] = ()
         self.stream_error: Exception | None = None
         self.stream_error_at = 0
+        self.usage = STUB_USAGE
         self.reset()
 
     def reset(self) -> None:
         """Forget every recorded call and every scripted failure."""
         self.requests = []
         self.chat_error = None
+        self.usage = STUB_USAGE
         self.events = stream_events()
         self.stream_error = None
         self.stream_error_at = 0
@@ -281,7 +284,7 @@ class CostChatStub:
         self.requests.append(request)
         if self.chat_error is not None:
             raise self.chat_error
-        return stub_response()
+        return stub_response(usage=self.usage)
 
     def stream_chat(self, request: ChatRequest) -> Iterator[StreamEvent]:
         """Yield the scripted events, raising the scripted error at its position."""
@@ -738,6 +741,48 @@ def test_the_booked_row_names_what_served(
     assert row.estimated is expected.estimated
     assert row.ts.tzinfo is not None
     assert row.provider == response.headers["x-gateway-provider"]
+
+
+def cached_prefix_usage() -> Usage:
+    """The stub reply's usage, plus 2048 tokens read from the cache and 512 written."""
+    return Usage(
+        prompt_tokens=137,
+        completion_tokens=29,
+        total_tokens=166,
+        cache_read_tokens=2048,
+        cache_write_tokens=512,
+    )
+
+
+CACHED_PREFIX_COST = Decimal("0.000113")
+"""(137 * 0.10 + 29 * 0.50 + 2048 * 0.01 + 512 * 0.125) / 1_000_000 = 112.68 millionths,
+rounded to six places. The shipped `anthropic/claude-haiku-5-5` row in force today reads
+at 0.1 times input (0.01) and writes at 1.25 times input (0.125). The same tokens at the
+input rate would be 0.000284, read and write swapped 0.000289, and cache tokens ignored
+0.000028, so each wrong pricing is a different number."""
+
+
+def test_a_cached_prefix_is_booked_with_its_cache_counts(
+    cost_client: TestClient, chat_stub: CostChatStub
+) -> None:
+    """Catches a booking that drops the provider's cache counts on the way to the ledger
+    (the row then reads 0 and the cost is the uncached 0.000028), and one that prices
+    them at the input rate or with the two rates swapped: the row must carry both counts
+    and a cost that used the shipped read and write rates, and the header must be that
+    same number."""
+    chat_stub.usage = cached_prefix_usage()
+    writer = InMemoryCostLedgerWriter()
+
+    response = send_chat(cost_client, writer)
+
+    assert response.status_code == 200, response.text
+    assert len(rows_of(writer)) == 1
+    row = rows_of(writer)[0]
+    assert row.cache_read_tokens == 2048
+    assert row.cache_write_tokens == 512
+    assert row.input_tokens == 137
+    assert row.cost_usd == CACHED_PREFIX_COST
+    assert response.headers[COST_HEADER] == "0.000113"
 
 
 def test_a_request_that_fell_back_books_one_row_against_the_serving_provider(

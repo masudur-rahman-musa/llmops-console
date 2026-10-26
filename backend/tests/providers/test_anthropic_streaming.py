@@ -638,3 +638,19 @@ def test_the_recorded_fixtures_are_the_shape_this_module_claims() -> None:
         raw = (FIXTURE_DIR / file_name).read_text(encoding="utf-8")
         assert "x-api-key" not in raw.lower(), f"{file_name}: a request header was recorded"
         assert "sk-ant-" not in raw, f"{file_name}: a provider key was recorded"
+
+
+def test_a_stream_reads_cache_counts_from_message_start() -> None:
+    """Catches a stream reader that takes the cache counts only from a whole reply (the
+    streamed path is most of the traffic, and it would book every cached prefix at zero),
+    that reads them from `message_delta`, which carries output tokens alone, or that swaps
+    the two fields. The prompt and completion counts are asserted too, so a reader that
+    folds the cached tokens into `prompt_tokens` is visible."""
+    events = list(from_anthropic_events(sse_lines("stream_cache")))
+
+    assert isinstance(events[-1], UsageTotal)
+    usage = events[-1].usage
+    assert usage.cache_read_tokens == 2048
+    assert usage.cache_write_tokens == 512
+    assert usage.prompt_tokens == 12
+    assert usage.completion_tokens == 23

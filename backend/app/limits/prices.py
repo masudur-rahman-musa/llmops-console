@@ -65,11 +65,17 @@ class PriceEntry(_Frozen):
     separately, and at USD per 1,000,000 tokens because that is the unit vendors
     publish - converting at the boundary would mean the file no longer reads
     like the price page it was copied from.
+
+    The two cache rates are optional. A row without them prices cache
+    tokens at its input rate, so a provider that reports none needs no made-up
+    numbers.
     """
 
     effective_from: date
     input_usd_per_1m: PriceAmount
     output_usd_per_1m: PriceAmount
+    cache_read_usd_per_1m: PriceAmount | None = None
+    cache_write_usd_per_1m: PriceAmount | None = None
 
 
 class PriceTable(_Frozen):

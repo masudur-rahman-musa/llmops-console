@@ -113,6 +113,8 @@ def cost_for(
             price_version=UNPRICED_VERSION,
         )
 
+    cache_read_tokens = 0
+    cache_write_tokens = 0
     if usage is None:
         prompt_tokens = estimate_tokens(prompt_chars)
         completion_tokens = estimate_tokens(completion_chars)
@@ -120,11 +122,26 @@ def cost_for(
     else:
         prompt_tokens = usage.prompt_tokens
         completion_tokens = usage.completion_tokens
+        cache_read_tokens = usage.cache_read_tokens
+        cache_write_tokens = usage.cache_write_tokens
         estimated = False
 
+    # A row without its own cache rates prices cache tokens at its input rate.
+    read_rate = (
+        entry.input_usd_per_1m
+        if entry.cache_read_usd_per_1m is None
+        else entry.cache_read_usd_per_1m
+    )
+    write_rate = (
+        entry.input_usd_per_1m
+        if entry.cache_write_usd_per_1m is None
+        else entry.cache_write_usd_per_1m
+    )
     total = (
         Decimal(prompt_tokens) * entry.input_usd_per_1m
         + Decimal(completion_tokens) * entry.output_usd_per_1m
+        + Decimal(cache_read_tokens) * read_rate
+        + Decimal(cache_write_tokens) * write_rate
     ) / PRICE_UNIT_TOKENS
 
     return Cost(

@@ -741,3 +741,87 @@ def test_a_self_hosted_provider_is_priced_at_exactly_zero(provider: str) -> None
         for entry in table.prices[key]:
             assert entry.input_usd_per_1m == Decimal("0")
             assert entry.output_usd_per_1m == Decimal("0")
+
+
+# --- cache rates ----------------------------------------------------
+
+CACHE_RATE_FIELDS = ["cache_read_usd_per_1m", "cache_write_usd_per_1m"]
+
+
+def cache_rate_document(**rates: str) -> str:
+    """A price document whose one row carries the given cache rates, quoted."""
+    lines = "".join(f'      {name}: "{value}"\n' for name, value in rates.items())
+    return f"""
+prices:
+  "{KEY}":
+    - effective_from: 2025-01-01
+      input_usd_per_1m: "3.00"
+      output_usd_per_1m: "15.00"
+{lines}"""
+
+
+@pytest.mark.parametrize("field", CACHE_RATE_FIELDS, ids=CACHE_RATE_FIELDS)
+def test_a_negative_cache_rate_is_refused(field: str, price_file: PriceWriter) -> None:
+    """Catches a cache rate declared without `ge=0`, which would credit the account on every
+    cached token, and one that is validated only in code and never reaches the loader. The
+    error names the file, the model and the field, so an operator can find the line. Both
+    rates have a row, because the constraint can be put on one and forgotten on the other."""
+    path = price_file(cache_rate_document(**{field: "-0.01"}))
+
+    with pytest.raises(PolicyInvalid) as excinfo:
+        load_prices(path)
+
+    message = str(excinfo.value)
+    for fragment in (PROVIDER_FILE, MODEL, field):
+        assert fragment in message
+
+
+def test_cache_rates_load_exactly_as_written(price_file: PriceWriter) -> None:
+    """Catches a cache rate typed as `float`, which would turn 0.30 into 0.299999...: the
+    rate is money, and it is read as a Decimal from the digits written in the file."""
+    path = price_file(
+        cache_rate_document(cache_read_usd_per_1m="0.30", cache_write_usd_per_1m="3.75")
+    )
+
+    entry = load_prices(path).prices[KEY][0]
+
+    assert entry.cache_read_usd_per_1m == Decimal("0.30")
+    assert entry.cache_write_usd_per_1m == Decimal("3.75")
+    assert str(entry.cache_read_usd_per_1m) == "0.30"
+
+
+def test_a_row_without_cache_rates_still_loads(price_file: PriceWriter) -> None:
+    """Catches cache rates made required: every other provider file, and every older row,
+    carries none and must stay valid as it is."""
+    path = price_file(valid_document())
+
+    table = load_prices(path)
+
+    assert table.prices[KEY][0].input_usd_per_1m == Decimal("3.00")
+
+
+SHIPPED_ANTHROPIC_MODELS = [
+    "claude-haiku-5-5",
+    "claude-haiku-4-5",
+    "claude-opus-5",
+    "claude-sonnet-5-5",
+]
+CACHE_PRICES_FROM = date(2026, 10, 26)
+
+
+def test_the_shipped_anthropic_rows_carry_cache_rates() -> None:
+    """Catches a shipped row with the wrong multiplier (read at the input rate, write at the
+    output rate, the two swapped), a model left without cache rates, and a price edited in
+    place: each model's newest row is dated 2026-10-26, carries read at 0.1 times and write
+    at 1.25 times its input, and keeps the input and output of the row before it, because
+    re-pricing appends a row and never edits one."""
+    table = shipped_table()
+
+    for model in SHIPPED_ANTHROPIC_MODELS:
+        entries = sorted(table.prices[f"anthropic/{model}"], key=lambda e: e.effective_from)
+        newest, before = entries[-1], entries[-2]
+        assert newest.effective_from == CACHE_PRICES_FROM, model
+        assert newest.cache_read_usd_per_1m == newest.input_usd_per_1m * Decimal("0.1"), model
+        assert newest.cache_write_usd_per_1m == newest.input_usd_per_1m * Decimal("1.25"), model
+        assert newest.input_usd_per_1m == before.input_usd_per_1m, model
+        assert newest.output_usd_per_1m == before.output_usd_per_1m, model

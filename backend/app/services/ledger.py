@@ -61,12 +61,16 @@ def record_cost(
         prompt_chars=prompt_chars,
         completion_chars=completion_chars,
     )
+    cache_read_tokens = 0
+    cache_write_tokens = 0
     if usage is None:
         input_tokens = estimate_tokens(prompt_chars)
         output_tokens = estimate_tokens(completion_chars)
     else:
         input_tokens = usage.prompt_tokens
         output_tokens = usage.completion_tokens
+        cache_read_tokens = usage.cache_read_tokens
+        cache_write_tokens = usage.cache_write_tokens
 
     row = CostLedgerRow(
         ts=at,
@@ -83,6 +87,8 @@ def record_cost(
         session=session,
         trace_id=trace_id,
         prompt_version=prompt_version,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_tokens=cache_write_tokens,
     )
     try:
         ledger.write(row)

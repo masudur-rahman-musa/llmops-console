@@ -25,19 +25,39 @@ models:
       - effective_from: 2026-10-01
         input_usd_per_1m: "0.10"
         output_usd_per_1m: "0.50"
+      - effective_from: 2026-10-26
+        input_usd_per_1m: "0.10"
+        output_usd_per_1m: "0.50"
+        cache_read_usd_per_1m: "0.010"
+        cache_write_usd_per_1m: "0.1250"
   claude-haiku-4-5:
     prices:
       - effective_from: 2025-10-15
         input_usd_per_1m: "1.00"
         output_usd_per_1m: "5.00"
+      - effective_from: 2026-10-26
+        input_usd_per_1m: "1.00"
+        output_usd_per_1m: "5.00"
+        cache_read_usd_per_1m: "0.100"
+        cache_write_usd_per_1m: "1.2500"
   claude-opus-5:
     prices:
       - effective_from: 2025-11-24
         input_usd_per_1m: "5.00"
         output_usd_per_1m: "25.00"
+      - effective_from: 2026-10-26
+        input_usd_per_1m: "5.00"
+        output_usd_per_1m: "25.00"
+        cache_read_usd_per_1m: "0.500"
+        cache_write_usd_per_1m: "6.2500"
   # The strong model `agent-strong` runs on.
   claude-sonnet-5-5:
     prices:
       - effective_from: 2026-10-21
         input_usd_per_1m: "2.00"
         output_usd_per_1m: "10.00"
+      - effective_from: 2026-10-26
+        input_usd_per_1m: "2.00"
+        output_usd_per_1m: "10.00"
+        cache_read_usd_per_1m: "0.200"
+        cache_write_usd_per_1m: "2.5000"

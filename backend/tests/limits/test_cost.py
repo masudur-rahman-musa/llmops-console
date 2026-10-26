@@ -245,3 +245,71 @@ def test_an_unpriced_key_is_warned_once_per_key(caplog: pytest.LogCaptureFixture
     assert len(warned) == 2
     assert [record.key for record in warned] == [first, second]  # type: ignore[attr-defined]
     assert set(_WARNED_KEYS) == {first, second}
+
+
+# --- cache tokens ---------------------------------------------------------------
+
+
+def cache_usage() -> Usage:
+    """Four different counts, so no two rates can trade places unseen."""
+    return Usage(
+        prompt_tokens=1000,
+        completion_tokens=500,
+        total_tokens=1500,
+        cache_read_tokens=10000,
+        cache_write_tokens=2000,
+    )
+
+
+def cache_entry(**cache_rates: Decimal) -> PriceEntry:
+    """Input 2.00 and output 10.00, with only the cache rates a case names."""
+    return PriceEntry(
+        effective_from=date(2025, 6, 1),
+        input_usd_per_1m=Decimal("2.00"),
+        output_usd_per_1m=Decimal("10.00"),
+        **cache_rates,
+    )
+
+
+def test_cache_tokens_are_priced_at_their_own_rates() -> None:
+    """Catches a cost that ignores cache tokens (0.007000), one that prices them at the
+    input rate (0.031000), one that swaps the read and write rates (0.032400), and one that
+    also bills them as input on top of their own rate (0.038000).
+    (1000 * 2.00 + 500 * 10.00 + 10000 * 0.20 + 2000 * 2.50) / 1M is 0.014000 and nothing
+    else here is."""
+
+    cost = cost_for(
+        table_with(
+            cache_entry(
+                cache_read_usd_per_1m=Decimal("0.20"), cache_write_usd_per_1m=Decimal("2.50")
+            )
+        ),
+        KEY,
+        AT,
+        usage=cache_usage(),
+    )
+
+    assert str(cost.usd) == "0.014000"
+    assert cost.estimated is False
+
+
+def test_cache_tokens_without_their_own_rate_are_priced_at_the_input_rate() -> None:
+    """Catches a cost that prices a row without cache rates at zero (the cache tokens would
+    be free) or raises on the absent field: a row with no cache rates, which is every row
+    in every other provider file, bills the cache tokens at its input rate.
+    (1000 + 10000 + 2000) * 2.00 + 500 * 10.00 is 31000 millionths, 0.031000."""
+    cost = cost_for(table_with(cache_entry()), KEY, AT, usage=cache_usage())
+
+    assert str(cost.usd) == "0.031000"
+
+
+def test_only_the_read_rate_present_leaves_the_write_rate_at_input() -> None:
+    """Catches a pricer that treats the two optional rates as one pair (both present or
+    both absent): the read rate here is set and the write rate is not, so the write tokens
+    must still fall back on their own to the input rate. (1000 * 2.00 + 500 * 10.00 +
+    10000 * 0.20 + 2000 * 2.00) / 1M is 0.013000."""
+    entry = cache_entry(cache_read_usd_per_1m=Decimal("0.20"))
+
+    cost = cost_for(table_with(entry), KEY, AT, usage=cache_usage())
+
+    assert str(cost.usd) == "0.013000"

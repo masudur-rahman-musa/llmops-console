@@ -483,7 +483,9 @@ def test_tool_result_turn_reaches_the_provider_in_order(settings: Settings) -> N
 
     assert scripted.request_count == 1
     sent = scripted.body()
-    assert sent["system"] == "You are terse."
+    assert sent["system"] == [
+        {"type": "text", "text": "You are terse.", "cache_control": {"type": "ephemeral"}}
+    ]
     assert sent["messages"] == [
         {"role": "user", "content": "Weather in Berlin?"},
         {

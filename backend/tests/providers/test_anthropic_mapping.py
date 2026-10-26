@@ -56,6 +56,25 @@ TICKET_SCHEMA: dict[str, Any] = {
 }
 
 
+CACHE_MARK: dict[str, str] = {"type": "ephemeral"}
+"""The marker Anthropic reads as "cache the request up to and including this block"."""
+
+TIME_TOOL = ToolSpec(
+    name="get_time",
+    description="Look up the local time in a city.",
+    parameters={
+        "type": "object",
+        "properties": {"city": {"type": "string"}},
+        "required": ["city"],
+    },
+)
+
+
+def marked_text(text: str) -> list[dict[str, Any]]:
+    """The `system` value the adapter sends: one text block carrying the cache marker."""
+    return [{"type": "text", "text": text, "cache_control": dict(CACHE_MARK)}]
+
+
 def request_with(overrides: Mapping[str, Any] | None = None) -> ChatRequest:
     """The baseline single-turn request, with the given fields changed per case."""
     fields: dict[str, Any] = {
@@ -80,7 +99,7 @@ def test_system_message_is_lifted_to_the_top_level() -> None:
 
     body = to_anthropic(request)
 
-    assert body["system"] == "Answer in one word."
+    assert body["system"] == marked_text("Answer in one word.")
     assert [message["role"] for message in body["messages"]] == ["user"]
 
 
@@ -174,6 +193,7 @@ def test_tools_render_in_the_anthropic_shape() -> None:
             "name": "get_weather",
             "description": "Look up the weather in a city.",
             "input_schema": dict(WEATHER_TOOL.parameters),
+            "cache_control": dict(CACHE_MARK),
         }
     ]
     assert "tool_choice" not in body, "plain tools must not force a tool"
@@ -283,6 +303,7 @@ def test_response_format_keeps_only_the_callers_tools() -> None:
             "name": "get_weather",
             "description": "Look up the weather in a city.",
             "input_schema": dict(WEATHER_TOOL.parameters),
+            "cache_control": dict(CACHE_MARK),
         }
     ]
     assert "tool_choice" not in body
@@ -531,7 +552,7 @@ def test_tool_result_turn_renders_as_a_user_turn_in_order() -> None:
     the assistant turn that asked for it, which breaks the pairing the model reads."""
     body = to_anthropic(request_with({"messages": TOOL_LOOP}))
 
-    assert body["system"] == "You are terse."
+    assert body["system"] == marked_text("You are terse.")
     assert body["messages"] == [
         {"role": "user", "content": "Weather in Berlin?"},
         {
@@ -839,3 +860,125 @@ def test_a_callers_tool_choice_passes_through_beside_response_format(
     assert body["tool_choice"] == expected, case
     assert [tool["name"] for tool in body["tools"]] == ["get_weather"], case
     assert body["output_config"] == NATIVE_OUTPUT_CONFIG, case
+
+
+# --- prompt caching ---------------------------------------------------
+#
+# `system` and the tool list are the long, repeated start of every agent turn.
+# Anthropic caches tools then system as one prefix, so two markers cover both: one
+# on the system block and one on the LAST tool.
+
+
+def cached_prefix_request() -> ChatRequest:
+    """The request `request_cached_prefix.json` was written for: a system turn, one user
+    turn and two tools."""
+    return request_with(
+        {
+            "messages": (
+                ChatMessage(role="system", content="You are terse."),
+                ChatMessage(role="user", content="Weather in Berlin?"),
+            ),
+            "tools": (WEATHER_TOOL, TIME_TOOL),
+        }
+    )
+
+
+def test_a_request_with_system_and_tools_matches_the_recorded_shape() -> None:
+    """Catches any drift of the whole body from the recorded expectation: a marker on every
+    tool, a marker missing from the system block, a `system` left as a string, or an extra
+    field. The fixture is the one place the wire shape is written down in full."""
+    body = to_anthropic(cached_prefix_request())
+
+    assert body == load_fixture("request_cached_prefix")
+
+
+def test_the_system_prompt_is_one_text_block_marked_for_caching() -> None:
+    """Catches an implementation that leaves `system` a plain string (nothing is cached),
+    or that puts the marker on a block of its own beside the text: the marker must sit on
+    the one text block that carries the prompt."""
+    body = to_anthropic(cached_prefix_request())
+
+    assert body["system"] == [
+        {"type": "text", "text": "You are terse.", "cache_control": {"type": "ephemeral"}}
+    ]
+
+
+def test_several_system_messages_still_make_one_marked_block() -> None:
+    """Catches an implementation that emits one marked block per system message: Anthropic
+    allows four markers in all, so a long list of system turns would pass the limit, and
+    the joined text of the existing mapping would be split."""
+    body = to_anthropic(
+        request_with(
+            {
+                "messages": (
+                    ChatMessage(role="system", content="First rule."),
+                    ChatMessage(role="system", content="Second rule."),
+                    ChatMessage(role="user", content="Go."),
+                )
+            }
+        )
+    )
+
+    assert body["system"] == marked_text("First rule.\n\nSecond rule.")
+
+
+def test_only_the_last_tool_is_marked_for_caching() -> None:
+    """Catches an implementation that marks every tool (four tools would already use all
+    four markers Anthropic allows) and one that marks the first tool, which would cache
+    only part of the list."""
+    body = to_anthropic(cached_prefix_request())
+
+    assert [tool["name"] for tool in body["tools"]] == ["get_weather", "get_time"]
+    assert "cache_control" not in body["tools"][0]
+    assert body["tools"][1]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_no_system_and_no_tools_sends_no_cache_marker() -> None:
+    """Catches an implementation that always emits `system` and `tools` with a marker, or
+    that sends a marker with nothing under it: Anthropic refuses an empty text block, so a
+    plain question with no system prompt would fail on every call."""
+    body = to_anthropic(request_with())
+
+    assert "system" not in body
+    assert "tools" not in body
+    assert "cache_control" not in json.dumps(body)
+
+
+def test_cache_counts_are_read_from_the_reply() -> None:
+    """Catches a reader that ignores `cache_read_input_tokens` (the ledger then prices a
+    cached prefix as nothing), one that adds the cached tokens into `prompt_tokens` (they
+    would be billed at the full input rate as well as their own), and one that swaps the
+    read and write fields."""
+    usage = from_anthropic(load_fixture("cache_hit")).usage
+
+    assert usage.cache_read_tokens == 2048
+    assert usage.cache_write_tokens == 0
+    assert usage.prompt_tokens == 12
+
+
+def test_a_reply_without_cache_fields_reads_zero() -> None:
+    """Catches a reader that requires the cache fields and raises on every reply that does
+    not carry them (most replies, and every older recording), or that fills them with
+    something other than zero."""
+    usage = from_anthropic(load_fixture("plain")).usage
+
+    assert usage.cache_read_tokens == 0
+    assert usage.cache_write_tokens == 0
+
+
+NEGATIVE_CACHE_FIELDS = ["cache_read_input_tokens", "cache_creation_input_tokens"]
+
+
+@pytest.mark.parametrize("field", NEGATIVE_CACHE_FIELDS, ids=NEGATIVE_CACHE_FIELDS)
+def test_a_negative_cache_count_is_unreadable(field: str) -> None:
+    """Catches a reader that passes a negative count on (the ledger would book a credit) or
+    clamps it to zero (a malformed body would book a real call without saying so), and one
+    that lets the schema's own error escape instead of the typed, non-retryable
+    `ProviderError`. Both fields have a row, so a check on only one is visible."""
+    payload = load_fixture("cache_hit")
+    payload["usage"][field] = -1
+
+    with pytest.raises(ProviderError) as raised:
+        from_anthropic(payload)
+
+    assert raised.value.retryable is False

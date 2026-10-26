@@ -80,6 +80,18 @@ is the whole reason the neutral contract keeps its own word for it. The `tool`
 mode is absent from the table because it carries a name and is built separately."""
 
 
+CACHE_MARKER: dict[str, str] = {"type": "ephemeral"}
+"""The `cache_control` value Anthropic caches a prefix on."""
+
+
+def _cache_count(usage: Mapping[str, Any], field: str) -> int:
+    """One cache token count from a `usage` object: absent reads 0, negative is unreadable."""
+    count = usage.get(field, 0)
+    if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+        raise ValueError(f"{field}: not a count of tokens")
+    return count
+
+
 def _tool_use_block(call: ToolCall, field: str) -> dict[str, Any]:
     """Render one tool call the model made, as the block Anthropic replays it as.
 
@@ -181,7 +193,9 @@ def to_anthropic(request: ChatRequest) -> dict[str, Any]:
         message.content for message in request.messages if message.role == "system"
     )
     if system:
-        body["system"] = system
+        # One text block carrying the cache marker. Anthropic caches tools, then
+        # system, as one prefix, so this marker and the last tool's cover both.
+        body["system"] = [{"type": "text", "text": system, "cache_control": dict(CACHE_MARKER)}]
 
     if request.temperature is not None:
         # `is not None`, not truthiness: an explicit temperature of 0 is the
@@ -219,6 +233,7 @@ def to_anthropic(request: ChatRequest) -> dict[str, Any]:
     if tools:
         # Omitted entirely rather than sent empty: an empty `tools` is a field
         # Anthropic validates, not one it ignores.
+        tools[-1]["cache_control"] = dict(CACHE_MARKER)
         body["tools"] = tools
 
     return body
@@ -264,6 +279,8 @@ def from_anthropic(payload: Mapping[str, Any]) -> ChatResponse:
         usage = payload["usage"]
         prompt_tokens = usage["input_tokens"]
         completion_tokens = usage["output_tokens"]
+        cache_read_tokens = _cache_count(usage, "cache_read_input_tokens")
+        cache_write_tokens = _cache_count(usage, "cache_creation_input_tokens")
 
         content = "".join(text)
         if not content and not calls:
@@ -288,6 +305,8 @@ def from_anthropic(payload: Mapping[str, Any]) -> ChatResponse:
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 total_tokens=prompt_tokens + completion_tokens,
+                cache_read_tokens=cache_read_tokens,
+                cache_write_tokens=cache_write_tokens,
             ),
         )
     except (KeyError, TypeError, ValueError) as exc:
@@ -355,6 +374,8 @@ def from_anthropic_events(lines: Iterable[str]) -> Iterator[StreamEvent]:
     """
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    cache_read_tokens = 0
+    cache_write_tokens = 0
     stop_reason: str | None = None
     open_tools: dict[int, _OpenToolBlock] = {}
     rendered = False
@@ -368,7 +389,10 @@ def from_anthropic_events(lines: Iterable[str]) -> Iterator[StreamEvent]:
             kind = payload.get("type")
 
             if kind == "message_start":
-                prompt_tokens = payload["message"]["usage"]["input_tokens"]
+                start_usage = payload["message"]["usage"]
+                prompt_tokens = start_usage["input_tokens"]
+                cache_read_tokens = _cache_count(start_usage, "cache_read_input_tokens")
+                cache_write_tokens = _cache_count(start_usage, "cache_creation_input_tokens")
                 yield StreamStart()
             elif kind == "content_block_start":
                 block = payload["content_block"]
@@ -442,6 +466,8 @@ def from_anthropic_events(lines: Iterable[str]) -> Iterator[StreamEvent]:
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=prompt_tokens + completion_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
         )
     )
 

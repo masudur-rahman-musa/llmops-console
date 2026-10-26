@@ -45,7 +45,7 @@ import psycopg
 from psycopg import Connection, sql
 from psycopg.rows import TupleRow
 from psycopg_pool import ConnectionPool
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.metrics import record_ledger_write
 from app.core.validation import IdentifierInvalid, checked_identifier
@@ -182,6 +182,8 @@ class CostLedgerRow(BaseModel):
     session: str | None
     trace_id: str
     prompt_version: str | None = None
+    cache_read_tokens: int = Field(default=0, ge=0)
+    cache_write_tokens: int = Field(default=0, ge=0)
 
 
 class CostLedgerWriter(Protocol):
@@ -401,8 +403,8 @@ class PostgresCostLedgerWriter:
                         "INSERT INTO {} ("
                         "ts, tenant, alias, provider, model, input_tokens, "
                         "output_tokens, cached, cost_usd, price_version, estimated, "
-                        "session, trace_id, prompt_version) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                        "session, trace_id, prompt_version, cache_read_tokens, cache_write_tokens) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
                     ).format(sql.Identifier(self._schema, COST_LEDGER)),
                     (
                         row.ts,
@@ -419,6 +421,8 @@ class PostgresCostLedgerWriter:
                         row.session,
                         row.trace_id,
                         row.prompt_version,
+                        row.cache_read_tokens,
+                        row.cache_write_tokens,
                     ),
                 )
                 stage = "commit"

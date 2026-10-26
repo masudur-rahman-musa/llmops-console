@@ -1,0 +1,31 @@
+{
+  "model": "claude-haiku-4-5",
+  "max_tokens": 4096,
+  "messages": [
+    { "role": "user", "content": "Weather in Berlin?" }
+  ],
+  "system": [
+    { "type": "text", "text": "You are terse.", "cache_control": { "type": "ephemeral" } }
+  ],
+  "tools": [
+    {
+      "name": "get_weather",
+      "description": "Look up the weather in a city.",
+      "input_schema": {
+        "type": "object",
+        "properties": { "city": { "type": "string" }, "units": { "type": "string" } },
+        "required": ["city"]
+      }
+    },
+    {
+      "name": "get_time",
+      "description": "Look up the local time in a city.",
+      "input_schema": {
+        "type": "object",
+        "properties": { "city": { "type": "string" } },
+        "required": ["city"]
+      },
+      "cache_control": { "type": "ephemeral" }
+    }
+  ]
+}

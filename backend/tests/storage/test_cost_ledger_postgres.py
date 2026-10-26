@@ -327,3 +327,43 @@ def test_the_first_refresh_populates_and_the_second_runs_concurrently(
     assert second_was_concurrent is True
     assert len(after_first) == 2
     assert after_second == after_first
+
+
+@requires_postgres
+@pytest.mark.db
+def test_cache_token_columns_round_trip(pool: Pool, migrated_schema: str) -> None:
+    """Catches a migration that never adds the columns, adds them nullable or without a
+    default of 0 (an older INSERT would then store null), and an INSERT that binds the two
+    counts into the wrong columns or into the input and output ones: the writer's row reads
+    back 2048 and 512, and a raw INSERT that names neither reads back 0 and 0."""
+    writer = PostgresCostLedgerWriter(pool, schema=migrated_schema)
+    writer.write(a_row(cache_read_tokens=2048, cache_write_tokens=512))
+    writer.flush()
+    with pool.connection() as conn:
+        conn.execute(
+            sql.SQL(
+                "INSERT INTO {} (ts, tenant, alias, provider, model, input_tokens, "
+                "output_tokens, cached, cost_usd, price_version, estimated, session, trace_id) "
+                "VALUES (%s, 'nordlicht', 'agent-default', 'anthropic', 'claude-haiku-5-5', "
+                "1, 1, false, 0, 'v', false, null, %s)"
+            ).format(sql.Identifier(migrated_schema, COST_LEDGER)),
+            (NEXT_DAY, TRACE_ID),
+        )
+        found = conn.execute(
+            sql.SQL(
+                "select cache_read_tokens, cache_write_tokens, input_tokens, output_tokens "
+                "from {} order by ts"
+            ).format(sql.Identifier(migrated_schema, COST_LEDGER))
+        ).fetchall()
+        nullable = conn.execute(
+            "select column_name, is_nullable, data_type from information_schema.columns "
+            "where table_schema = %s and table_name = %s "
+            "and column_name in ('cache_read_tokens', 'cache_write_tokens') order by column_name",
+            (migrated_schema, COST_LEDGER),
+        ).fetchall()
+
+    assert [tuple(row) for row in found] == [(2048, 512, 1000, 500), (0, 0, 1, 1)]
+    assert [tuple(row) for row in nullable] == [
+        ("cache_read_tokens", "NO", "integer"),
+        ("cache_write_tokens", "NO", "integer"),
+    ]

@@ -51,6 +51,7 @@ import pytest
 from psycopg import Connection
 from psycopg.rows import TupleRow
 from psycopg_pool import ConnectionPool
+from pydantic import ValidationError
 
 from app.core.validation import IDENTIFIER_PATTERN, MAX_IDENTIFIER_LENGTH, IdentifierInvalid
 from app.limits.cost import UNPRICED_VERSION
@@ -853,3 +854,71 @@ def test_record_cost_answers_the_row_even_when_the_write_failed() -> None:
     assert row.cost_usd == USAGE_COST
     assert row.price_version == PRICED_VERSION
     assert row.estimated is False
+
+
+# --------------------------------------------------------------------------
+# cache tokens
+# --------------------------------------------------------------------------
+
+
+def cached_usage() -> Usage:
+    """A reply that read 2048 tokens from the cache and wrote 512."""
+    return Usage(
+        prompt_tokens=1000,
+        completion_tokens=500,
+        total_tokens=1500,
+        cache_read_tokens=2048,
+        cache_write_tokens=512,
+    )
+
+
+def test_the_row_records_cache_read_and_write_tokens() -> None:
+    """Catches a `record_cost` that copies the input and output counts onto the row and
+    leaves the cache counts at their default (the ledger then shows a cached prefix as
+    nothing), and one that swaps the two. The writer holds the same row it answered."""
+    ledger = InMemoryCostLedgerWriter()
+
+    row = record(ledger, usage=cached_usage())
+
+    assert row.cache_read_tokens == 2048
+    assert row.cache_write_tokens == 512
+    assert ledger.rows == (row,)
+
+
+def test_a_row_without_cache_tokens_reads_zero() -> None:
+    """Catches cache counts made required on the row (every older caller builds one without
+    them) or defaulted to something other than zero."""
+    row = a_row()
+
+    assert row.cache_read_tokens == 0
+    assert row.cache_write_tokens == 0
+
+
+CACHE_COUNT_FIELDS = ["cache_read_tokens", "cache_write_tokens"]
+
+
+@pytest.mark.parametrize("field", CACHE_COUNT_FIELDS, ids=CACHE_COUNT_FIELDS)
+def test_a_row_with_a_negative_cache_count_is_refused(field: str) -> None:
+    """Catches a count with no lower bound, which would let a negative number into a column
+    that a month of rows is summed over. Zero is accepted in the same case, so a bound set
+    one too high (`gt=0`) also fails. Both fields have a row."""
+    accepted = a_row(**{field: 0})
+    assert getattr(accepted, field) == 0
+
+    with pytest.raises(ValidationError):
+        a_row(**{field: -1})
+
+
+def test_the_insert_names_both_cache_columns() -> None:
+    """Catches an INSERT whose column list was not extended with the row: the row model
+    would carry the counts and the table would never see them. The statement is read off
+    a recording pool, so no server is needed; the server-side proof is the `db` case."""
+    pool = RecordingPool()
+    writer = writer_over(pool)
+
+    writer.write(a_row(cache_read_tokens=2048, cache_write_tokens=512))
+    writer.flush()
+
+    (insert,) = pool.inserts()
+    assert "cache_read_tokens" in insert
+    assert "cache_write_tokens" in insert
