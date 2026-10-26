@@ -116,7 +116,10 @@ services:
     image: prom/prometheus:v3.1.0
     command: ["--config.file=/etc/prometheus/prometheus.yml"]
     ports: ["9090:9090"]
-    volumes: ["./infra/local/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    # The cluster's alert rules, one copy, so Grafana's alert list shows them.
+    volumes:
+      - ./infra/local/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/k8s/monitoring/alerts/rules.yml:/etc/prometheus/rules/rules.yml:ro
     extra_hosts: ["host.docker.internal:host-gateway"]
 
   grafana:
@@ -131,7 +134,8 @@ services:
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
-    ports: ["3002:3000"]
+    # Bound to 127.0.0.1: only this laptop reaches it, never the Wi-Fi.
+    ports: ["127.0.0.1:3002:3000"]
     volumes:
       - ./infra/local/grafana-datasource.yml:/etc/grafana/provisioning/datasources/local.yml:ro
       - ./infra/local/grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/local.yml:ro

@@ -80,7 +80,7 @@ def test_the_local_grafana_link_points_at_the_gateway_overview() -> None:
     values = [line.partition("=")[2] for line in lines if line.startswith(f"{KEY}=")]
     uid = json.loads(DASHBOARD.read_text(encoding="utf-8"))["uid"]
     grafana = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))["services"]["grafana"]
-    port = str(grafana["ports"][0]).split(":")[0]
+    port = str(grafana["ports"][0]).split(":")[-2]
 
     assert values == [f"http://localhost:{port}/d/{uid}"], f"{KEY} in .env.demo is {values!r}"
     assert values == ["http://localhost:3002/d/gateway-overview"]

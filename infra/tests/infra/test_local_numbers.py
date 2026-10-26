@@ -58,7 +58,7 @@ def test_prometheus_scrapes_the_gateway_every_five_seconds() -> None:
     """Catches a scrape config with the wrong job, target, path or interval, so the local
     numbers would be missing or take too long to land."""
     jobs = load_yaml(PROMETHEUS_CONFIG)["scrape_configs"]
-    assert len(jobs) == 3
+    assert len(jobs) == 4
     job = jobs[0]
     assert job["job_name"] == "gateway"
     assert job["metrics_path"] == "/metrics"

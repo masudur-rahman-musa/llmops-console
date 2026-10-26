@@ -20,6 +20,10 @@ DASHBOARDS = REPO_ROOT / "infra" / "k8s" / "monitoring" / "dashboards"
 DATASOURCE_FILE = REPO_ROOT / "infra" / "local" / "grafana-datasource.yml"
 PROVIDER_FILE = REPO_ROOT / "infra" / "local" / "grafana-dashboards.yml"
 CI_CD_DEPLOY = REPO_ROOT / "dev" / "docs" / "ci-cd-deploy.md"
+LOCAL_PROMETHEUS = REPO_ROOT / "infra" / "local" / "prometheus.yml"
+K8S_PROMETHEUS = REPO_ROOT / "infra" / "k8s" / "monitoring" / "prometheus.yaml"
+RULES_SOURCE = "./infra/k8s/monitoring/alerts/rules.yml"
+RULES_TARGET = "/etc/prometheus/rules/rules.yml"
 
 GRAFANA_IMAGE = "grafana/grafana:11.4.0"
 DATASOURCE_UID = "prometheus"
@@ -97,7 +101,7 @@ def test_grafana_runs_by_default_with_the_k8s_pin() -> None:
     assert k8s_images == [GRAFANA_IMAGE], "the cluster pin moved: change both"
     assert "profiles" not in body
     assert body.get("image") == k8s_images[0]
-    assert body.get("ports") == ["3002:3000"]
+    assert body.get("ports") == ["127.0.0.1:3002:3000"]
 
 
 def test_grafana_port_clashes_with_nothing() -> None:
@@ -201,3 +205,53 @@ def test_every_path_the_changed_files_name_exists() -> None:
             assert (REPO_ROOT / path.rstrip(".,")).exists(), f"{label}: {path}"
     for name in ("grafana-datasource.yml", "grafana-dashboards.yml"):
         assert (REPO_ROOT / "infra" / "local" / name).is_file(), name
+
+
+def mount_targets(body: dict[str, Any]) -> list[str]:
+    return [str(v).split(":")[1] for v in body.get("volumes", [])]
+
+
+def only_on_this_laptop(ports: list[object]) -> bool:
+    return bool(ports) and all(str(p).startswith("127.0.0.1:") for p in ports)
+
+
+def test_local_prometheus_loads_the_alert_rules() -> None:
+    """Catches rules not mounted, mounted writable, or not named in `rule_files`, so the
+    Grafana alert list stays empty."""
+    mounts = [str(v) for v in service("prometheus").get("volumes", [])]
+    assert f"{RULES_SOURCE}:{RULES_TARGET}:ro" in mounts, mounts
+    assert load_yaml(LOCAL_PROMETHEUS)["rule_files"] == [RULES_TARGET]
+
+
+def test_the_mounted_rules_file_holds_every_alert() -> None:
+    """Catches the mount pointing at a file that lost alerts or has a rule without `expr`."""
+    groups = load_yaml(REPO_ROOT / RULES_SOURCE)["groups"]
+    rules = [r for g in groups for r in g["rules"] if "alert" in r]
+    assert len(rules) == 12
+    assert all(r.get("expr") for r in rules)
+
+
+def test_local_prometheus_names_no_rule_file_it_cannot_see() -> None:
+    """Catches a rule path with no mount, which makes Prometheus refuse to start."""
+    targets = mount_targets(service("prometheus"))
+    missing = [f for f in load_yaml(LOCAL_PROMETHEUS)["rule_files"] if f not in targets]
+    assert missing == []
+
+
+def test_local_prometheus_scrapes_the_help_desk_scheduler() -> None:
+    """Catches a missing scheduler job, a wrong port or path, or a name that differs from
+    the cluster job, so the Chats waiting chart stays empty."""
+    jobs = {j["job_name"]: j for j in load_yaml(LOCAL_PROMETHEUS)["scrape_configs"]}
+    job = jobs["helpdesk-scheduler"]
+    assert job["static_configs"] == [{"targets": ["host.docker.internal:8082"]}]
+    assert job["metrics_path"] == "/metrics"
+    assert "job_name: helpdesk-scheduler" in read(K8S_PROMETHEUS)
+
+
+def test_local_grafana_listens_only_on_this_laptop() -> None:
+    """Catches Grafana published on every network card, where anyone on the Wi-Fi sees the
+    dashboards with no login."""
+    assert service("grafana")["ports"] == ["127.0.0.1:3002:3000"]
+    assert not only_on_this_laptop(["3002:3000"])
+    assert not only_on_this_laptop(["0.0.0.0:3002:3000"])
+    assert not only_on_this_laptop(["127.0.0.1:3002:3000", "3003:3000"])
