@@ -149,6 +149,32 @@ describe("console styles", () => {
   });
 });
 
+describe("chart tips", () => {
+  // Every plain rule in the sheet, comments stripped, as selector list and body.
+  function rules(): Array<{ selectors: string[]; body: string }> {
+    const css = stripCssComments(read(GLOBALS));
+    return Array.from(css.matchAll(/([^{}]+)\{([^{}]*)\}/g), (match) => ({
+      selectors: match[1].split(",").map((selector) => selector.trim()),
+      body: match[2],
+    }));
+  }
+
+  const HIDES = /opacity\s*:\s*0\s*(;|$)|display\s*:\s*none|visibility\s*:\s*hidden/;
+  const SHOWS = /opacity\s*:\s*1\s*(;|$)|display\s*:\s*(block|inline)\b|visibility\s*:\s*visible/;
+
+  it("chart tips show on hover and on focus", () => {
+    // Catches a tip that is never hidden (the label sits on top of the bars all the time), one shown on hover only (keyboard users get no value), and one shown on focus only (mouse users get none).
+    const all = rules();
+    const hidden = all.filter((rule) => rule.selectors.includes(".chart-tip") && HIDES.test(rule.body));
+    expect(hidden.length).toBeGreaterThan(0);
+
+    const shownBy = (state: RegExp) =>
+      all.filter((rule) => rule.selectors.some((selector) => state.test(selector)) && SHOWS.test(rule.body));
+    expect(shownBy(/:hover[^,]*\.chart-tip\b/).length, ":hover").toBeGreaterThan(0);
+    expect(shownBy(/:focus(?![\w-])[^,]*\.chart-tip\b/).length, ":focus").toBeGreaterThan(0);
+  });
+});
+
 describe("NavLinks", () => {
   type Link = { href: string; label: string; current: boolean };
 

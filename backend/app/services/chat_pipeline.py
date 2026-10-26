@@ -294,6 +294,21 @@ def generation_usage(usage: Usage, cost: str) -> GenerationAttributes:
     )
 
 
+def traced_conversation(
+    policy: Policy, tenant: str, outbound: ChatCompletionRequest
+) -> list[tuple[str, str]] | None:
+    """The role and redacted text of each outbound message, or `None` for the note.
+
+    `None` unless the tenant's `trace_content` is on. Tool call
+    details are not sent; a turn that is only a tool call goes as empty text.
+    Pinned by `test_a_switched_off_tenant_sends_only_the_note`.
+    """
+    regime = policy.tenants.get(tenant)
+    if regime is None or not regime.trace_content:
+        return None
+    return [(message.role, message.content or "") for message in outbound.messages]
+
+
 def prompt_characters(body: ChatCompletionRequest) -> int:
     """How many characters of prompt this request sent, for the estimate above.
 
@@ -555,6 +570,7 @@ def _serve(
             model=chosen.model,
             alias=body.model,
             messages=len(outbound.messages),
+            conversation=traced_conversation(clients.policy, context.tenant, outbound),
         )
 
         def note_finish(reason: str) -> None:
@@ -586,6 +602,7 @@ def _serve(
                     ),
                     on_close=generation.end,
                     on_finish=note_finish,
+                    on_text=generation.add_text,
                 )
             except BaseException:
                 generation.end()
@@ -631,6 +648,7 @@ def _serve(
         generation.report(generation_usage(answer.usage, headers[COST_HEADER]))
         note_finish(answer.finish_reason)
         generation.note_output(tokens_out=answer.usage.completion_tokens)
+        generation.note_answer(answer.content)
         generation.end()
         store_answer(
             clients.response_cache,

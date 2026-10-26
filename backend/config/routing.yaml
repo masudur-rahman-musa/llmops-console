@@ -57,6 +57,7 @@ tenants:
       pii: { redact: true }
     budget_usd_month: "15.00"
     rate_limit: { rpm: 60, tpm: 60000 }
+    trace_content: true
   cuan:
     data_class_rules:
       public: { redact: false }
@@ -65,6 +66,7 @@ tenants:
       pii: { redact: true }
     budget_usd_month: "60.00"
     rate_limit: { rpm: 6000, tpm: 6000000 }
+    trace_content: true
   # The eval harness: our own traffic.
   evals:
     data_class_rules:
@@ -74,3 +76,4 @@ tenants:
       pii: { redact: true }
     budget_usd_month: "10.00"
     rate_limit: { rpm: 120, tpm: 120000 }
+    trace_content: true

@@ -88,6 +88,7 @@ def sse_frames(
     on_unreported_usage: Callable[[int], None] | None = None,
     on_close: Callable[[], None] | None = None,
     on_finish: Callable[[str], None] | None = None,
+    on_text: Callable[[str], None] | None = None,
 ) -> Generator[str, None, None]:
     """Render the neutral events as SSE frames, ending with `[DONE]` if they finish.
 
@@ -155,6 +156,10 @@ def sse_frames(
     the trace's Output note
     (`test_a_streamed_provider_note_has_finish_reason_and_tokens`).
 
+    `on_text` gets each provider text piece BEFORE placeholders are put back,
+    which is what a tenant with `trace_content` on sends to Langfuse as the
+    answer (`test_a_streamed_answer_is_gathered_into_the_output`).
+
     The wrap runs INSIDE this generator rather than around the iterator it is
     handed: the `finally` below closes `events` by name, and closing
     a wrapper instead would leave the provider's stream to the garbage collector
@@ -188,6 +193,8 @@ def sse_frames(
     try:
         for event in chain((first,), events):
             if isinstance(event, TextDelta):
+                if on_text is not None:
+                    on_text(event.text)
                 emitted = rehydrator.feed(event.text)
                 if not emitted and event.text:
                     # Everything the provider sent is still held: no frame at all
@@ -251,6 +258,7 @@ def streamed(
     on_unreported_usage: Callable[[int], None] | None = None,
     on_close: Callable[[], None] | None = None,
     on_finish: Callable[[str], None] | None = None,
+    on_text: Callable[[str], None] | None = None,
 ) -> StreamPlan:
     """Open the stream, pull its first event, and return the plan for the route.
 
@@ -287,6 +295,7 @@ def streamed(
             on_unreported_usage=on_unreported_usage,
             on_close=on_close,
             on_finish=on_finish,
+            on_text=on_text,
         ),
         media_type=SSE_MEDIA_TYPE,
         headers={**headers, **SSE_HEADERS},

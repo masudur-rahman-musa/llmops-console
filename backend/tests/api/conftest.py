@@ -41,10 +41,12 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Annotated, Any
 
 import pytest
+import yaml
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from httpx import Response
@@ -61,7 +63,7 @@ from app.core.tracing import tracer_provider
 from app.core.validation import MAX_IDENTIFIER_LENGTH
 from app.main import create_app
 from app.model_routing.errors import RoutingError
-from app.model_routing.policy import DataClass, Policy, load_policy
+from app.model_routing.policy import DataClass, Policy, PolicyStore, load_policy
 from app.model_routing.resolver import resolve
 from app.providers.base import (
     Adapter,
@@ -1083,3 +1085,32 @@ def fallback_breaker(fallback_client: TestClient) -> CircuitBreaker:
     breaker = app_of(fallback_client).state.breaker
     assert isinstance(breaker, CircuitBreaker)
     return breaker
+
+
+# --- tenant switch ------------------------------------------------
+
+
+def policy_store_with_evals_off(directory: Path) -> PolicyStore:
+    """A store over a copy of the shipped policy where `evals` has `trace_content: false`.
+
+    The copy is written under `directory` (a test's `tmp_path`), so no shared file changes.
+    """
+    document = yaml.safe_load(SHIPPED_POLICY_PATH.read_text(encoding="utf-8"))
+    document["tenants"]["evals"]["trace_content"] = False
+    copy = directory / "routing-evals-off.yaml"
+    copy.write_text(yaml.safe_dump(document), encoding="utf-8")
+    return PolicyStore(copy, SHIPPED_PROVIDERS_DIR)
+
+
+@contextmanager
+def evals_switched_off(directory: Path, *clients: TestClient) -> Iterator[None]:
+    """Run the block with `evals` switched off on each client's app, then put the policy back."""
+    store = policy_store_with_evals_off(directory)
+    originals = [(client, app_of(client).state.policy) for client in clients]
+    for client in clients:
+        app_of(client).state.policy = store
+    try:
+        yield
+    finally:
+        for client, original in originals:
+            app_of(client).state.policy = original

@@ -7,9 +7,12 @@ edit that breaks the order of providers fails here and not in production.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
+import yaml
 
+from app.model_routing.errors import PolicyInvalid
 from app.model_routing.policy import DataClass, Policy, load_policy, reachable_price_keys
 from app.model_routing.provider_files import build_price_table, load_provider_files
 from app.model_routing.resolver import resolve
@@ -83,3 +86,49 @@ def test_every_routed_model_has_a_price_in_its_file(policy: Policy) -> None:
 
     assert {"anthropic/claude-haiku-5-5", "openai/gpt-5-mini", "openai/gpt-5"} <= reachable
     assert reachable <= set(table.prices)
+
+
+DEMO_TENANTS = ("nordlicht", "cuan", "evals")
+
+
+def policy_with_trace_content(directory: Path, value: object, *, omit: bool = False) -> Policy:
+    """Load a copy of the shipped policy where `evals` has the given `trace_content`.
+
+    `omit` leaves the line out of the copy altogether.
+    """
+    document: dict[str, Any] = yaml.safe_load(SHIPPED_POLICY_PATH.read_text(encoding="utf-8"))
+    if omit:
+        document["tenants"]["evals"].pop("trace_content", None)
+    else:
+        document["tenants"]["evals"]["trace_content"] = value
+    copy = directory / "routing-copy.yaml"
+    copy.write_text(yaml.safe_dump(document), encoding="utf-8")
+    return load_policy(copy, SHIPPED_PROVIDERS_DIR)
+
+
+@pytest.mark.parametrize("tenant", DEMO_TENANTS)
+def test_the_demo_tenants_send_trace_content(policy: Policy, tenant: str) -> None:
+    """Catches a demo tenant left off in the shipped file (the Langfuse conversation view
+    would stay empty for it), and a default of on, which would not show here."""
+    assert policy.tenants[tenant].trace_content is True
+
+
+def test_a_tenant_without_the_switch_is_off(tmp_path: Path) -> None:
+    """Catches a default of on: a new tenant would send its conversations to Langfuse
+    without anyone choosing it. A written `false` is loaded as false too."""
+    assert (
+        policy_with_trace_content(tmp_path, None, omit=True).tenants["evals"].trace_content is False
+    )
+    assert policy_with_trace_content(tmp_path, False).tenants["evals"].trace_content is False
+    assert policy_with_trace_content(tmp_path, True).tenants["evals"].trace_content is True
+
+
+@pytest.mark.parametrize("value", ["maybe", "yes", "true", 1, None], ids=repr)
+def test_a_switch_that_is_not_a_bool_is_refused(tmp_path: Path, value: object) -> None:
+    """Catches a switch that coerces text or numbers (`"yes"` or `1` turning a tenant on by
+    typo), or a null read as off. A real bool on the same file loads first, so the refusal
+    is the switch's own and not some other part of the copy being broken."""
+    assert policy_with_trace_content(tmp_path, False).tenants["evals"].trace_content is False
+
+    with pytest.raises(PolicyInvalid):
+        policy_with_trace_content(tmp_path, value)

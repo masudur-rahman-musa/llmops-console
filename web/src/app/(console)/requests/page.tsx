@@ -85,11 +85,12 @@ export default consolePage(
       {body.slow_ms !== null && <p className="note">Slow means above {latency(body.slow_ms)}.</p>}
       <ExternalLink url={body.langfuse_url} label="Open these in Langfuse" />
       <Table
-        columns={["Time", "Tenant", "Model", "Status", "Latency", "Tokens in / out", "Cost", "Cache", "Prompt version", "Trace"]}
+        columns={["Time", "Trace", "Tenant", "Model", "Status", "Latency", "Tokens in / out", "Cost", "Cache", "Prompt version"]}
         rows={body.requests.map((row, index) => ({
           key: `${row.ts}/${index}`,
           cells: [
             utcTime(row.ts),
+            <ExternalLink key="trace" url={row.trace_url} label="Open trace" />,
             row.tenant,
             row.model,
             String(row.status),
@@ -98,7 +99,6 @@ export default consolePage(
             usd(row.cost_usd, 6),
             row.cached ? "answered from cache" : "sent to the model",
             row.prompt_version === null ? "none sent" : <code key="pv">{shortSha(row.prompt_version)}</code>,
-            <ExternalLink key="trace" url={row.trace_url} label="Open trace" />,
           ],
         }))}
       />

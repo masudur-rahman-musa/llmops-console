@@ -5,14 +5,32 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { BarChart } from "@/components/ui/bar-chart";
+import { usd } from "@/lib/format";
 
 type Day = { label: string; parts: Array<{ series: string; value: number }> };
 
 const GLOBALS = fileURLToPath(new URL("../src/app/globals.css", import.meta.url));
 const BAR = /<g\b[^>]*class="bar-stack"[^>]*>([\s\S]*?)<\/g>/g;
 
-function render(days: Day[], series: string[], title = "Requests per day"): string {
-  return renderToStaticMarkup(<BarChart title={title} days={days} series={series} />);
+function render(
+  days: Day[],
+  series: string[],
+  title = "Requests per day",
+  yFormat?: (value: number) => string,
+): string {
+  return renderToStaticMarkup(<BarChart title={title} days={days} series={series} yFormat={yFormat} />);
+}
+
+/** Every focusable group of the chart: its raw markup and the words of its tip label. */
+function focusable(html: string): Array<{ markup: string; tip: string }> {
+  return Array.from(html.matchAll(/<g\b([^>]*)>([\s\S]*?)<\/g>/g))
+    .filter((match) => /\btabindex="0"/.test(match[1]))
+    .map((match) => ({
+      markup: match[2],
+      tip: Array.from(match[2].matchAll(/<text\b[^>]*class="chart-tip"[^>]*>([\s\S]*?)<\/text>/g), (tip) =>
+        tip[1].replace(/<!--[\s\S]*?-->/g, "").replace(/<[^>]*>/g, ""),
+      ).join("|"),
+    }));
 }
 
 /** The inside of every bar, in order. */
@@ -118,5 +136,47 @@ describe("BarChart", () => {
       expect(dark, `--series-${n} dark`).toMatch(new RegExp(`--series-${n}\\s*:`));
       expect(css, `.series-${n}`).toMatch(new RegExp(`\\.series-${n}\\b[^{]*\\{[^}]*var\\(--series-${n}\\)`));
     }
+  });
+
+  it("every part is focusable and says day, series and value", () => {
+    // Catches parts that only show a value (no day or series), a label in the chart's own number format missing (a raw 1.25 instead of $1.25), a part a keyboard cannot reach (no tabindex), and a label that is not inside its own part's group.
+    const cost = render(
+      [
+        { label: "Oct 21", parts: [{ series: "cuan", value: 1.25 }, { series: "nordlicht", value: 3 }] },
+        { label: "Oct 22", parts: [{ series: "cuan", value: 2 }] },
+      ],
+      ["cuan", "nordlicht"],
+      "Cost per day",
+      (value) => usd(value),
+    );
+    const groups = focusable(cost);
+
+    expect(groups.map((group) => group.tip)).toEqual([
+      "Oct 21 \u00b7 cuan: $1.25",
+      "Oct 21 \u00b7 nordlicht: $3.00",
+      "Oct 22 \u00b7 cuan: $2.00",
+    ]);
+    for (const group of groups) expect(group.markup).toMatch(/<rect\b/);
+
+    // Catches a label that only works with a yFormat: the default format is plain String.
+    const plain = render(
+      [{ label: "Oct 24", parts: [{ series: "Answered", value: 30 }, { series: "Failed", value: 20 }] }],
+      ["Answered", "Failed"],
+    );
+    expect(focusable(plain).map((group) => group.tip)).toEqual([
+      "Oct 24 \u00b7 Answered: 30",
+      "Oct 24 \u00b7 Failed: 20",
+    ]);
+  });
+
+  it("a zero part has no label", () => {
+    // Catches a zero part drawn as an empty focusable group, which a keyboard user would tab to and hear "Failed: 0" for a bar that is not there.
+    const html = render(
+      [{ label: "Oct 25", parts: [{ series: "Answered", value: 50 }, { series: "Failed", value: 0 }] }],
+      ["Answered", "Failed"],
+    );
+
+    expect(focusable(html).map((group) => group.tip)).toEqual(["Oct 25 \u00b7 Answered: 50"]);
+    expect(html).not.toContain("Failed:");
   });
 });

@@ -132,6 +132,19 @@ describe("requests page", () => {
     expect(text(bare)).not.toContain("Open trace");
   });
 
+  it("trace column comes right after time", async () => {
+    // Catches a Trace column still at the far right (cut off on a narrow page), a header moved without its cells (the link under the Tenant heading), and a link column placed before Time.
+    const html = await render();
+    const heads = Array.from(html.matchAll(/<th\b[^>]*>([\s\S]*?)<\/th>/g), (match) => text(match[1]));
+    const time = heads.indexOf("Time");
+    expect(time).toBeGreaterThan(-1);
+    expect(heads.slice(time, time + 3)).toEqual(["Time", "Trace", "Tenant"]);
+
+    const cells = Array.from(rowWith(html, "nordlicht").matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g), (match) => match[1]);
+    expect(text(cells[1])).toBe("Open trace");
+    expect(text(cells[2])).toBe("nordlicht");
+  });
+
   it("requests guard refuses a body missing requests", async () => {
     // Catches a guard that does not require the request list, so a body without it renders a half page instead of the Unavailable notice.
     const body = fixture();

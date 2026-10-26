@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Self
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, model_validator
 
 from app.core.context import DataClass as DataClass
 from app.limits.prices import PriceTable
@@ -100,13 +100,16 @@ class RateLimit(_Frozen):
 class Tenant(_Frozen):
     """One tenant's routing regime.
 
-    A data class with no rule is not redacted.
+    A data class with no rule is not redacted. `trace_content` sends the redacted
+    conversation and the answer to Langfuse; a tenant without the line
+    sends only the note (`test_a_tenant_without_the_switch_is_off`).
     """
 
     data_class_rules: Mapping[DataClass, DataClassRule]
     budget_usd_month: Decimal
     rate_limit: RateLimit
     overrides: Mapping[str, tuple[Candidate, ...]] = {}
+    trace_content: StrictBool = False
 
 
 class Policy(_Frozen):

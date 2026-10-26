@@ -31,8 +31,9 @@ of one request.
 
 from __future__ import annotations
 
+import json
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 
@@ -183,8 +184,8 @@ class GenerationAttributes(BaseModel):
 
     Closed for the same reason `SpanAttributes` is: a prompt or an answer on a
     generation would be text on a trace backend outside this system's redaction,
-    so an unknown key is a `ValidationError`. Langfuse's Input and Output stay
-    empty because nothing here can fill them. Pinned by
+    so an unknown key is a `ValidationError`. The Input and Output are set by
+    `Generation`, never through this class. Pinned by
     `test_the_generation_label_set_is_closed`.
     """
 
@@ -207,7 +208,16 @@ class GenerationAttributes(BaseModel):
 INPUT_NOTE_KEY = "langfuse.observation.input"
 OUTPUT_NOTE_KEY = "langfuse.observation.output"
 """The labels Langfuse shows as a step's Input and Output. They carry a
-`PreviewNote`, never the prompt or the answer."""
+`PreviewNote`, or, for a tenant with `trace_content` on, the redacted
+conversation and the answer."""
+
+FINISH_REASON_KEY = "langfuse.observation.metadata.finish_reason"
+"""Where the finish reason goes when the Output is the answer itself."""
+
+CONTENT_LIMIT = 8000
+CUT_MARK = " [cut]"
+"""Each message sent to Langfuse keeps at most `CONTENT_LIMIT` characters; a
+longer one ends in `CUT_MARK` (`test_a_message_at_8001_characters_is_cut`)."""
 
 TAGS_KEY = "langfuse.trace.tags"
 """The root span label Langfuse reads a trace's tags from."""
@@ -225,9 +235,10 @@ OTHER_FINISH_REASON = "other"
 class PreviewNote(BaseModel):
     """The short note Langfuse shows as a step's Input or Output, in place of the text.
 
-    Left empty, Langfuse shows `undefined`, which reads as a bug. The real text
-    must not go there, because Langfuse sits outside this system's redaction. So
-    a step says the text was not sent, plus a few safe facts. Closed like
+    Left empty, Langfuse shows `undefined`, which reads as a bug. A step whose
+    text is not sent says so, plus a few safe facts, as ONE plain line: the
+    Formatted view shows a plain string whole, but only the first field of JSON
+    (`test_the_input_note_is_one_plain_line`). Closed like
     `SpanAttributes`: a `prompt` or a `user` key is a `ValidationError`. Pinned by
     `test_the_preview_note_field_set_is_closed`.
 
@@ -262,16 +273,40 @@ class PreviewNote(BaseModel):
         """An Output note: not sent, with what is known about the answer."""
         return cls(text=OUTPUT_NOT_SENT, finish_reason=finish_reason, tokens_out=tokens_out)
 
-    def as_json(self) -> str:
-        """Compact JSON of the set fields only; an unknown fact is left out, never null."""
-        return self.model_dump_json(exclude_none=True)
+    def as_text(self) -> str:
+        """One line: the text, then the known facts in brackets; an unknown fact is left out."""
+        facts: list[str] = []
+        if self.alias is not None:
+            facts.append(f"alias {self.alias}")
+        if self.messages is not None:
+            facts.append(f"{self.messages} message{'' if self.messages == 1 else 's'}")
+        if self.finish_reason is not None:
+            facts.append(f"finish reason {self.finish_reason}")
+        if self.tokens_out is not None:
+            facts.append(f"{self.tokens_out} tokens out")
+        return f"{self.text} ({', '.join(facts)})" if facts else self.text
+
+
+def cut(text: str) -> str:
+    """The text as sent to Langfuse: whole up to `CONTENT_LIMIT`, else cut and marked."""
+    return text if len(text) <= CONTENT_LIMIT else text[:CONTENT_LIMIT] + CUT_MARK
+
+
+def conversation_json(messages: Sequence[tuple[str, str]]) -> str:
+    """The Input of a step that sends content: a list of role and (cut) text."""
+    return json.dumps([{"role": role, "content": cut(content)} for role, content in messages])
+
+
+def answer_json(text: str) -> str:
+    """The Output of a step that sends content: the answer as one assistant message."""
+    return json.dumps({"role": "assistant", "content": cut(text)})
 
 
 def plain_notes() -> dict[str, str]:
     """The Input and Output every step starts with."""
     return {
-        INPUT_NOTE_KEY: PreviewNote.input().as_json(),
-        OUTPUT_NOTE_KEY: PreviewNote.output().as_json(),
+        INPUT_NOTE_KEY: PreviewNote.input().as_text(),
+        OUTPUT_NOTE_KEY: PreviewNote.output().as_text(),
     }
 
 
@@ -286,12 +321,29 @@ class Generation:
 
     `root` is the request's root span, which carries the Output note of the call
     that answered (`test_the_root_step_carries_the_provider_notes`).
+
+    With `content` on, the Output is the answer rather than a note, and the
+    finish reason goes as metadata instead. A stream hands its text
+    pieces to `add_text`, and `end` writes them joined
+    (`test_a_streamed_answer_is_gathered_into_the_output`).
     """
 
-    def __init__(self, span: Span | None, root: Span | None = None) -> None:
+    def __init__(
+        self, span: Span | None, root: Span | None = None, *, content: bool = False
+    ) -> None:
         self._span = span
         self._root = root
+        self._content = content
         self._output = PreviewNote.output()
+        self._pieces: list[str] | None = None
+
+    def _set(self, key: str, value: str) -> None:
+        """Set one label on this step and on the root."""
+        if self._span is None or not self._span.is_recording():
+            return
+        self._span.set_attribute(key, value)
+        if self._root is not None and self._root.is_recording():
+            self._root.set_attribute(key, value)
 
     def report(self, attributes: GenerationAttributes) -> None:
         """Add what is now known to the open span."""
@@ -304,36 +356,63 @@ class Generation:
         """Add a fact about the answer to the Output note, here and on the root.
 
         A stream learns the finish reason and the tokens from two events, so each
-        call keeps what an earlier one set.
+        call keeps what an earlier one set. With content on, only the finish
+        reason is sent, as metadata.
         """
-        if self._span is None or not self._span.is_recording():
-            return
         self._output = PreviewNote.output(
             finish_reason=finish_reason
             if finish_reason is not None
             else self._output.finish_reason,
             tokens_out=tokens_out if tokens_out is not None else self._output.tokens_out,
         )
-        note = self._output.as_json()
-        self._span.set_attribute(OUTPUT_NOTE_KEY, note)
-        if self._root is not None and self._root.is_recording():
-            self._root.set_attribute(OUTPUT_NOTE_KEY, note)
+        if not self._content:
+            self._set(OUTPUT_NOTE_KEY, self._output.as_text())
+        elif self._output.finish_reason is not None:
+            self._set(FINISH_REASON_KEY, self._output.finish_reason)
+
+    def note_input(self, conversation: Sequence[tuple[str, str]]) -> None:
+        """Send the redacted conversation as the Input, here and on the root."""
+        self._set(INPUT_NOTE_KEY, conversation_json(conversation))
+
+    def note_answer(self, text: str) -> None:
+        """Send the answer as the Output, when content is on."""
+        if self._content:
+            self._set(OUTPUT_NOTE_KEY, answer_json(text))
+
+    def add_text(self, piece: str) -> None:
+        """Keep one streamed text piece, for `end` to send joined."""
+        if self._pieces is None:
+            self._pieces = []
+        self._pieces.append(piece)
 
     def end(self) -> None:
         """Close the span; later calls do nothing."""
+        if self._pieces is not None:
+            pieces, self._pieces = self._pieces, None
+            self.note_answer("".join(pieces))
         if self._span is not None:
             span, self._span = self._span, None
             span.end()
 
 
 def start_generation(
-    scope: Scope, name: str, *, model: str, alias: str, messages: int | None = None
+    scope: Scope,
+    name: str,
+    *,
+    model: str,
+    alias: str,
+    messages: int | None = None,
+    conversation: Sequence[tuple[str, str]] | None = None,
 ) -> Generation:
     """Open a provider span as a Langfuse generation, labelled with the model now.
 
     Parented on the root span from the scope, like `stage_span`, and with the
     same exception defaults off, so no provider message reaches the span. Its
     Input note names the alias and, for a chat, how many messages went out.
+
+    `conversation` is the redacted role and text of each message, given only
+    when the tenant's `trace_content` is on: it then becomes the Input here and
+    on the root (`test_the_root_input_is_the_redacted_conversation`).
     """
     record = request_trace(scope)
     if record is None:
@@ -342,8 +421,13 @@ def start_generation(
         name, context=record.context, record_exception=False, set_status_on_exception=False
     )
     span.set_attributes(plain_notes())
-    span.set_attribute(INPUT_NOTE_KEY, PreviewNote.input(alias=alias, messages=messages).as_json())
-    generation = Generation(span, record.span)
+    generation = Generation(span, record.span, content=conversation is not None)
+    if conversation is None:
+        span.set_attribute(
+            INPUT_NOTE_KEY, PreviewNote.input(alias=alias, messages=messages).as_text()
+        )
+    else:
+        generation.note_input(conversation)
     generation.report(GenerationAttributes(model=model))
     return generation
 
@@ -462,7 +546,7 @@ def note_request(scope: Scope, *, alias: str, messages: int | None = None) -> No
     record = request_trace(scope)
     if record is not None:
         record.span.set_attribute(
-            INPUT_NOTE_KEY, PreviewNote.input(alias=alias, messages=messages).as_json()
+            INPUT_NOTE_KEY, PreviewNote.input(alias=alias, messages=messages).as_text()
         )
 
 

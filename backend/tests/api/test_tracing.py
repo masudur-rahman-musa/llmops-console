@@ -29,9 +29,9 @@ too" and pinned by `test_the_redact_route_emits_a_trace_without_a_header`.
 
 from __future__ import annotations
 
-import json
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -97,6 +97,7 @@ from .conftest import (
     build_chat_client,
     chat_body,
     embeddings_body,
+    evals_switched_off,
     post_chat,
     post_embeddings,
     retryable_error,
@@ -203,15 +204,18 @@ GENERATION_FIELDS = frozenset({"model", "input_tokens", "output_tokens", "cost_u
 INPUT_NOTE_KEY = "langfuse.observation.input"
 OUTPUT_NOTE_KEY = "langfuse.observation.output"
 TAGS_KEY = "langfuse.trace.tags"
+FINISH_REASON_KEY = "langfuse.observation.metadata.finish_reason"
 PREVIEW_WIRE_KEYS = frozenset({INPUT_NOTE_KEY, OUTPUT_NOTE_KEY, TAGS_KEY})
 ALLOWED_WIRE_KEYS = (
     (ALLOWED_ATTRIBUTE_KEYS - {"session"})
     | {SESSION_WIRE_KEY}
     | GENERATION_WIRE_KEYS
     | PREVIEW_WIRE_KEYS
+    | {FINISH_REASON_KEY}
 )
 """Every key a span may carry on the wire: the `SpanAttributes` keys with the session
-renamed, plus the generation keys and the three preview keys."""
+renamed, plus the generation keys, the three preview keys and the finish
+reason metadata."""
 
 # A string that appears nowhere else in this repository, so finding it on a span
 # can only mean the request's own message body was copied there.
@@ -832,18 +836,21 @@ def test_the_attribute_key_set_is_exactly_the_allowlist(
 
 
 def test_no_message_content_reaches_a_span(
-    chat_client: TestClient, chat_stub: StubAdapter, spans: InMemorySpanExporter
+    chat_client: TestClient, chat_stub: StubAdapter, spans: InMemorySpanExporter, tmp_path: Path
 ) -> None:
     """Catches an implementation that puts the prompt, the answer or a header value on a
-    span "to make debugging easier": the trace backend is outside this system's
-    redaction guarantees, so a message body on a span is the exact leak an earlier change exists
-    to prevent. The bearer key row catches a middleware that records request headers
-    wholesale."""
-    response = chat_client.post(
-        CHAT,
-        json=chat_body(model=ALIAS, messages=[{"role": "user", "content": CONTENT_SENTINEL}]),
-        headers=auth_headers(key=EVALS_KEY, tenant=TENANT, data_class=PLAIN_CLASS, session=SESSION),
-    )
+    span for a tenant whose `trace_content` switch is off (an earlier change turned `evals` on, so
+    this runs on a copy with it off): the trace backend is outside this system's
+    redaction guarantees. The bearer key row catches a middleware that records request
+    headers wholesale, which no switch allows."""
+    with evals_switched_off(tmp_path, chat_client):
+        response = chat_client.post(
+            CHAT,
+            json=chat_body(model=ALIAS, messages=[{"role": "user", "content": CONTENT_SENTINEL}]),
+            headers=auth_headers(
+                key=EVALS_KEY, tenant=TENANT, data_class=PLAIN_CLASS, session=SESSION
+            ),
+        )
     assert response.status_code == 200, response.text
     assert chat_stub.requests[-1].messages[0].content == CONTENT_SENTINEL, (
         "the sentinel never reached the adapter, so its absence from the spans proves nothing"
@@ -1474,20 +1481,19 @@ def test_a_real_request_after_a_probe_is_still_traced(
 
 INPUT_TEXT = "not sent: prompts stay inside the gateway"
 OUTPUT_TEXT = "not sent"
-PLAIN_INPUT = {"text": INPUT_TEXT}
-PLAIN_OUTPUT = {"text": OUTPUT_TEXT}
+PLAIN_INPUT = INPUT_TEXT
+PLAIN_OUTPUT = OUTPUT_TEXT
 PREVIEW_FIELDS = frozenset({"text", "alias", "messages", "finish_reason", "tokens_out"})
 OPENAI_FINISH_REASON = "stop"
 """What the stub's `end_turn` becomes on the wire (`FINISH_REASON_BY_STOP_REASON`)."""
 
 
-def note_of(span: ReadableSpan, key: str) -> dict[str, object]:
-    """The span's Input or Output note, parsed; fails when the key is missing or not JSON."""
+def note_of(span: ReadableSpan, key: str) -> str:
+    """The span's Input or Output note, a plain line; fails when the key is missing."""
     raw = attributes_of(span).get(key)
     assert isinstance(raw, str), f"{span.name} has no {key} text, got {raw!r}"
-    parsed = json.loads(raw)
-    assert isinstance(parsed, dict), f"{span.name} {key} is not a JSON object"
-    return parsed
+    assert not raw.startswith("{"), f"{span.name} {key} is JSON, not a plain line"
+    return raw
 
 
 def note_text(recorded: Sequence[ReadableSpan]) -> str:
@@ -1530,24 +1536,26 @@ def bare_stream_client(settings: Settings, bare_stream_stub: StubAdapter) -> Ite
 
 
 def test_every_step_has_an_input_and_output_note(
-    openai_chat_client: TestClient, spans: InMemorySpanExporter
+    openai_chat_client: TestClient, spans: InMemorySpanExporter, tmp_path: Path
 ) -> None:
     """Catches an implementation that adds the notes to the root and the provider only:
     Langfuse would still show `undefined` on every other step. Redaction is on so the
-    `redact` step is among the spans checked."""
-    response = post_chat(
-        openai_chat_client,
-        chat_body(model=ALIAS, messages=[{"role": "user", "content": TEXT_WITH_PII}]),
-        data_class=REDACT_CLASS,
-    )
+    `redact` step is among the spans checked; `evals` is switched off so the provider
+    step shows its note and not the conversation."""
+    with evals_switched_off(tmp_path, openai_chat_client):
+        response = post_chat(
+            openai_chat_client,
+            chat_body(model=ALIAS, messages=[{"role": "user", "content": TEXT_WITH_PII}]),
+            data_class=REDACT_CLASS,
+        )
     assert response.status_code == 200, response.text
 
     recorded = finished(spans)
 
     assert REDACT_SPAN in {span.name for span in recorded}, "the redact step must be in play"
     for span in recorded:
-        assert note_of(span, INPUT_NOTE_KEY)["text"], span.name
-        assert note_of(span, OUTPUT_NOTE_KEY)["text"], span.name
+        assert note_of(span, INPUT_NOTE_KEY).startswith("not sent"), span.name
+        assert note_of(span, OUTPUT_NOTE_KEY).startswith("not sent"), span.name
 
 
 def test_a_stage_step_carries_only_the_plain_notes(
@@ -1555,7 +1563,7 @@ def test_a_stage_step_carries_only_the_plain_notes(
 ) -> None:
     """Catches the alias, a message count or a finish reason leaking onto a stage step
     that knows none of them yet (or copying the provider's facts onto every step), and
-    any text other than the two fixed sentences."""
+    any text other than the two bare lines."""
     response = post_chat(
         openai_chat_client,
         chat_body(model=ALIAS, messages=[{"role": "user", "content": TEXT_WITH_PII}]),
@@ -1572,7 +1580,7 @@ def test_a_stage_step_carries_only_the_plain_notes(
 
 
 def test_the_provider_step_notes_say_alias_messages_finish_and_tokens(
-    chat_client: TestClient, spans: InMemorySpanExporter
+    chat_client: TestClient, spans: InMemorySpanExporter, tmp_path: Path
 ) -> None:
     """Catches a provider note that counts the messages after redaction or from the
     wrong list, reports the stub's raw `end_turn` instead of the OpenAI word, or
@@ -1582,25 +1590,28 @@ def test_the_provider_step_notes_say_alias_messages_finish_and_tokens(
         {"role": "user", "content": "Which city?"},
         {"role": "user", "content": "Really?"},
     ]
-    response = post_chat(chat_client, chat_body(model=ALIAS, messages=messages))
+    with evals_switched_off(tmp_path, chat_client):
+        response = post_chat(chat_client, chat_body(model=ALIAS, messages=messages))
     assert response.status_code == 200, response.text
 
     provider = span_named(finished(spans), PROVIDER_SPAN)
 
-    assert note_of(provider, INPUT_NOTE_KEY) == {"text": INPUT_TEXT, "alias": ALIAS, "messages": 3}
-    assert note_of(provider, OUTPUT_NOTE_KEY) == {
-        "text": OUTPUT_TEXT,
-        "finish_reason": OPENAI_FINISH_REASON,
-        "tokens_out": STUB_USAGE.completion_tokens,
-    }
+    assert note_of(provider, INPUT_NOTE_KEY) == (
+        "not sent: prompts stay inside the gateway (alias agent-default, 3 messages)"
+    )
+    assert note_of(provider, OUTPUT_NOTE_KEY) == (
+        f"not sent (finish reason {OPENAI_FINISH_REASON}, "
+        f"{STUB_USAGE.completion_tokens} tokens out)"
+    )
 
 
 def test_the_root_step_carries_the_provider_notes(
-    chat_client: TestClient, spans: InMemorySpanExporter
+    chat_client: TestClient, spans: InMemorySpanExporter, tmp_path: Path
 ) -> None:
     """Catches a root that keeps its starting plain notes: Langfuse reads the trace's
     own Input and Output from the root, so the trace list would still show bare text."""
-    response = send_chat(chat_client, None)
+    with evals_switched_off(tmp_path, chat_client):
+        response = send_chat(chat_client, None)
     assert response.status_code == 200, response.text
 
     recorded = finished(spans)
@@ -1609,42 +1620,41 @@ def test_the_root_step_carries_the_provider_notes(
 
     assert note_of(root, INPUT_NOTE_KEY) == note_of(provider, INPUT_NOTE_KEY)
     assert note_of(root, OUTPUT_NOTE_KEY) == note_of(provider, OUTPUT_NOTE_KEY)
-    assert "alias" in note_of(root, INPUT_NOTE_KEY), "the equality must not be plain == plain"
-    assert "tokens_out" in note_of(root, OUTPUT_NOTE_KEY)
+    assert "alias agent-default" in note_of(root, INPUT_NOTE_KEY), "must not be plain == plain"
+    assert "tokens out" in note_of(root, OUTPUT_NOTE_KEY)
 
 
 def test_a_streamed_provider_note_has_finish_reason_and_tokens(
-    finished_stream_client: TestClient, spans: InMemorySpanExporter
+    finished_stream_client: TestClient, spans: InMemorySpanExporter, tmp_path: Path
 ) -> None:
     """Catches a streamed note filled from the plain-chat numbers (29, not 52), left
     without the finish reason, or carrying the stub's raw `end_turn`."""
-    response = post_chat(finished_stream_client, chat_body(model=ALIAS, stream=True))
+    with evals_switched_off(tmp_path, finished_stream_client):
+        response = post_chat(finished_stream_client, chat_body(model=ALIAS, stream=True))
     assert response.status_code == 200, response.text
 
     recorded = finished(spans)
-    expected = {
-        "text": OUTPUT_TEXT,
-        "finish_reason": OPENAI_FINISH_REASON,
-        "tokens_out": STREAM_USAGE.completion_tokens,
-    }
+    expected = (
+        f"not sent (finish reason {OPENAI_FINISH_REASON}, "
+        f"{STREAM_USAGE.completion_tokens} tokens out)"
+    )
 
     assert note_of(span_named(recorded, PROVIDER_SPAN), OUTPUT_NOTE_KEY) == expected
     assert note_of(root_of(recorded), OUTPUT_NOTE_KEY) == expected
 
 
 def test_a_stream_without_finish_or_usage_ends_with_text_only(
-    bare_stream_client: TestClient, spans: InMemorySpanExporter
+    bare_stream_client: TestClient, spans: InMemorySpanExporter, tmp_path: Path
 ) -> None:
-    """Catches a stream that makes up a finish reason or a token count, or sends them as
-    null, when the provider reported neither."""
-    response = post_chat(bare_stream_client, chat_body(model=ALIAS, stream=True))
+    """Catches a stream that makes up a finish reason or a token count, or leaves empty
+    brackets, when the provider reported neither: the line is the bare `not sent`."""
+    with evals_switched_off(tmp_path, bare_stream_client):
+        response = post_chat(bare_stream_client, chat_body(model=ALIAS, stream=True))
     assert response.status_code == 200, response.text
 
     recorded = finished(spans)
 
-    assert attributes_of(span_named(recorded, PROVIDER_SPAN))[OUTPUT_NOTE_KEY] == (
-        '{"text":"not sent"}'
-    )
+    assert attributes_of(span_named(recorded, PROVIDER_SPAN))[OUTPUT_NOTE_KEY] == "not sent"
     assert note_of(span_named(recorded, PROVIDER_SPAN), OUTPUT_NOTE_KEY) == PLAIN_OUTPUT
     assert note_of(root_of(recorded), OUTPUT_NOTE_KEY) == PLAIN_OUTPUT
 
@@ -1667,7 +1677,7 @@ def test_a_cache_hit_root_says_not_sent(
 
     root = root_of(finished(spans))
 
-    assert note_of(root, INPUT_NOTE_KEY) == {"text": INPUT_TEXT, "alias": ALIAS, "messages": 1}
+    assert note_of(root, INPUT_NOTE_KEY) == f"{INPUT_TEXT} (alias {ALIAS}, 1 message)"
     assert note_of(root, OUTPUT_NOTE_KEY) == PLAIN_OUTPUT
 
 
@@ -1681,7 +1691,7 @@ def test_an_embeddings_provider_note_has_the_alias(
 
     provider = span_named(finished(spans), f"provider:{EMBED_PROVIDER}")
 
-    assert note_of(provider, INPUT_NOTE_KEY) == {"text": INPUT_TEXT, "alias": EMBED_ALIAS}
+    assert note_of(provider, INPUT_NOTE_KEY) == f"{INPUT_TEXT} (alias {EMBED_ALIAS})"
 
 
 def test_no_note_carries_message_content(
@@ -1689,17 +1699,22 @@ def test_no_note_carries_message_content(
     finished_stream_client: TestClient,
     embeddings_client: TestClient,
     spans: InMemorySpanExporter,
+    tmp_path: Path,
 ) -> None:
     """Catches a note built from the request or the answer (the last message, the answer
-    text, the embeddings input) instead of from the fixed sentences and counts."""
+    text, the embeddings input) instead of from the fixed sentences and counts. Runs with
+    `evals` switched off on the chat apps, because a switched-on tenant sends text on
+    purpose; the embeddings input stays out whatever the switch says."""
     sentinel_messages = [{"role": "user", "content": CONTENT_SENTINEL}]
-    sent = [
-        post_chat(chat_client, chat_body(model=ALIAS, messages=sentinel_messages)),
-        post_chat(
-            finished_stream_client, chat_body(model=ALIAS, messages=sentinel_messages, stream=True)
-        ),
-        post_embeddings(embeddings_client, embeddings_body(input=CONTENT_SENTINEL)),
-    ]
+    with evals_switched_off(tmp_path, chat_client, finished_stream_client):
+        sent = [
+            post_chat(chat_client, chat_body(model=ALIAS, messages=sentinel_messages)),
+            post_chat(
+                finished_stream_client,
+                chat_body(model=ALIAS, messages=sentinel_messages, stream=True),
+            ),
+            post_embeddings(embeddings_client, embeddings_body(input=CONTENT_SENTINEL)),
+        ]
     forbidden = (CONTENT_SENTINEL, STUB_CONTENT, *STREAM_FRAGMENTS)
 
     for response in sent:
@@ -1713,8 +1728,8 @@ def test_no_note_carries_message_content(
 
 
 def test_the_preview_note_field_set_is_closed() -> None:
-    """Catches a free-form field (a `prompt`, a `user`) on the note model, a null sent for
-    a fact that is not known, and a wire text that is not compact JSON."""
+    """Catches a free-form field (a `prompt`, a `user`) on the note model, a fact that
+    is not known written as `None`, and a wire text that is JSON instead of one plain line."""
     from app.core.tracing import PreviewNote
 
     assert set(PreviewNote.model_fields) == PREVIEW_FIELDS
@@ -1722,18 +1737,14 @@ def test_the_preview_note_field_set_is_closed() -> None:
     with pytest.raises(ValidationError):
         PreviewNote.model_validate({"text": "x", "prompt": "x"})
 
-    assert PreviewNote.output().as_json() == '{"text":"not sent"}'
-    assert json.loads(PreviewNote.input().as_json()) == PLAIN_INPUT
-    assert json.loads(PreviewNote.input(alias="a", messages=2).as_json()) == {
-        "text": INPUT_TEXT,
-        "alias": "a",
-        "messages": 2,
-    }
-    assert json.loads(PreviewNote.output(finish_reason="stop", tokens_out=0).as_json()) == {
-        "text": OUTPUT_TEXT,
-        "finish_reason": "stop",
-        "tokens_out": 0,
-    }
+    assert PreviewNote.output().as_text() == "not sent"
+    assert PreviewNote.input().as_text() == PLAIN_INPUT
+    assert PreviewNote.input(alias="a", messages=2).as_text() == (
+        f"{INPUT_TEXT} (alias a, 2 messages)"
+    )
+    assert PreviewNote.output(finish_reason="stop", tokens_out=0).as_text() == (
+        "not sent (finish reason stop, 0 tokens out)"
+    )
 
 
 FINISH_REASON_KEPT_ROWS: list[tuple[str, str]] = [

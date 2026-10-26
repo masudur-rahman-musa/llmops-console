@@ -7,6 +7,7 @@ const BOTTOM = 24;
 const LABEL_GAP = 48;
 const BAR_SHARE = 0.7;
 const SERIES_COLOURS = 4;
+const TIP_GAP = 4;
 
 export type BarDay = { label: string; parts: ReadonlyArray<{ series: string; value: number }> };
 
@@ -26,7 +27,10 @@ function colour(series: ReadonlyArray<string>, name: string): string {
  * bar's parts add up to its total. A zero or negative part draws nothing. Colours
  * come from the `series-N` classes and keep each series' place, even when an earlier
  * series has nothing that day. No bars or only zeros renders `No data.`. A day label
- * closer than 48 px to the last one shown is skipped. Pinned by tests/bar-chart.test.tsx.
+ * closer than 48 px to the last one shown is skipped. Each part also gets a focusable
+ * group over it, drawn after every bar so no bar covers its tip: hover or keyboard focus
+ * shows `<day> · <series>: <value>` above the bar, by CSS alone. Pinned by
+ * tests/bar-chart.test.tsx.
  */
 export function BarChart({
   title,
@@ -53,6 +57,20 @@ export function BarChart({
   const barWidth = round(slot * BAR_SHARE);
   const plot = HEIGHT - TOP - BOTTOM;
   let lastLabel = Number.NEGATIVE_INFINITY;
+  const bars = days.map((day, index) => {
+    const x = round(LEFT + index * slot + (slot - barWidth) / 2);
+    let base = HEIGHT - BOTTOM;
+    const rects = series.flatMap((name) => {
+      const value = day.parts
+        .filter((part) => part.series === name)
+        .reduce((sum, part) => sum + Math.max(part.value, 0), 0);
+      if (value <= 0) return [];
+      const height = round((value / max) * plot);
+      base -= height;
+      return [{ name, value, y: round(base), height }];
+    });
+    return { day, x, centre: round(x + barWidth / 2), top: round(base), rects };
+  });
   return (
     <figure>
       <figcaption>{title}</figcaption>
@@ -63,19 +81,7 @@ export function BarChart({
           </text>
         ))}
         <path d={`M${LEFT} ${TOP} V${HEIGHT - BOTTOM} H${WIDTH - PAD}`} fill="none" className="chart-axis" />
-        {days.map((day, index) => {
-          const x = round(LEFT + index * slot + (slot - barWidth) / 2);
-          const centre = round(x + barWidth / 2);
-          let base = HEIGHT - BOTTOM;
-          const rects = series.flatMap((name) => {
-            const value = day.parts
-              .filter((part) => part.series === name)
-              .reduce((sum, part) => sum + Math.max(part.value, 0), 0);
-            if (value <= 0) return [];
-            const height = round((value / max) * plot);
-            base -= height;
-            return [{ name, value, y: round(base), height }];
-          });
+        {bars.map(({ day, x, centre, rects }, index) => {
           const showLabel = centre - lastLabel >= LABEL_GAP;
           if (showLabel) lastLabel = centre;
           return (
@@ -93,6 +99,16 @@ export function BarChart({
             </g>
           );
         })}
+        {bars.flatMap(({ day, x, centre, top, rects }, index) =>
+          rects.map((rect) => (
+            <g key={`t${index}-${rect.name}`} className="chart-part" tabIndex={0}>
+              <rect x={x} y={rect.y} width={barWidth} height={rect.height} className="chart-hit" />
+              <text x={centre} y={Math.max(top - TIP_GAP, TOP)} textAnchor="middle" className="chart-tip">
+                {`${day.label} · ${rect.name}: ${yFormat(rect.value)}`}
+              </text>
+            </g>
+          )),
+        )}
       </svg>
       <ul className="legend">
         {series.map((name) => (
