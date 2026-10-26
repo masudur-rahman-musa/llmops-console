@@ -27,6 +27,7 @@ function TradeoffTable({ table }: { table: Tradeoff | null }) {
         }))}
       />
       <p>{table.conclusion}</p>
+      <p className="note">{CHECK_SCORE_SENTENCE}</p>
     </>
   );
 }
@@ -82,7 +83,6 @@ export default consolePage("cost", "Cost", "What does the AI cost, per day, per 
 
       <h2>Model tradeoff</h2>
       <TradeoffTable table={tradeoff} />
-      <p className="note">{CHECK_SCORE_SENTENCE}</p>
     </>
   );
 });

@@ -734,3 +734,29 @@ def test_a_tenant_filter_narrows_cost(
     assert cost.savings_usd_total == pytest.approx(everyone.savings_usd_total / 2)
     assert [row.alias for row in cost.cost_per_request] == ["agent-default"]
     assert cost.cost_per_request[0].cost_usd == pytest.approx(0.1)
+
+
+# --- the month spend ---------------------------------------------------------------
+
+
+def test_month_spend_sums_this_utc_month_not_cached(pool: Pool, migrated_schema: str) -> None:
+    """Catches a month taken as the last 30 days (the row at 31 August 23:59:59 falls inside
+    it), an exclusive lower edge (the row at 00:00:00 on the 1st is dropped), cached rows
+    summed in (the cached row carries a cost on purpose), a `tenant` filter that is ignored
+    (the `cuan` rows leak into `nordlicht`) or applied to the wrong side, and a tenant with
+    no rows this month being invented instead of left out."""
+    schema = migrated_schema
+    month_start = datetime(2026, 9, 1, tzinfo=UTC)
+    insert_cost(pool, schema, ts=month_start, cost_usd="1.500000")
+    insert_cost(pool, schema, ts=NOW - timedelta(hours=1), cost_usd="0.250000")
+    insert_cost(pool, schema, ts=month_start - SECOND, cost_usd="40.000000")
+    insert_cost(pool, schema, ts=NOW - timedelta(hours=2), cached=True, cost_usd="7.000000")
+    insert_cost(pool, schema, ts=NOW - timedelta(hours=1), tenant="cuan", cost_usd="3.000000")
+    insert_cost(pool, schema, ts=month_start - SECOND, tenant="evals", cost_usd="9.000000")
+    reader = PostgresConsoleReader(pool, schema=schema)
+
+    assert reader.month_spend(tenant=None, now=NOW) == pytest.approx(
+        {"nordlicht": 1.75, "cuan": 3.0}
+    )
+    assert reader.month_spend(tenant="nordlicht", now=NOW) == pytest.approx({"nordlicht": 1.75})
+    assert reader.month_spend(tenant="evals", now=NOW) == {}

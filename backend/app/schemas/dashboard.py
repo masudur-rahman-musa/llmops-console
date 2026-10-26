@@ -1,7 +1,8 @@
 """The console's page and body models: one shape per `/console/*` page.
 
 **Sources are flags, never errors**. Every page body carries
-`sources: {postgres, prometheus}`, each `ok`, `unconfigured` or `error`, so a
+`sources: {postgres, prometheus}`, each `ok`, `unconfigured` or `error`
+(`prometheus` is null on a page that never reads it), so a
 source that is down empties its own fields while the route stays 200 and the
 other source still renders. The read models each page composes are defined here;
 `app.storage.dashboard_reads` imports them from here.
@@ -133,8 +134,10 @@ class Routing(_Body):
 
 
 class Sources(_Body):
+    """`prometheus` is null on a page that reads no Prometheus at all (Cost, Quality)."""
+
     postgres: SourceState
-    prometheus: SourceState
+    prometheus: SourceState | None
 
 
 class HomePage(_Body):

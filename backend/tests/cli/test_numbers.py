@@ -71,6 +71,25 @@ def test_traffic_sends_six_requests_on_agent_default_with_one_email_and_one_repe
     assert sorted(counts.values()) == [1, 1, 1, 1, 2]
 
 
+def test_traffic_opts_every_request_into_the_cache() -> None:
+    """Catches a sender whose six requests never reach the cache, so the repeated question is
+    not a hit and the hit rate stays empty: each must carry `X-Gateway-Cache: allow`. Catches
+    one that sends `temperature` instead, which the cheap model refuses with a 400 (`make
+    numbers` then fails on a 502), so no body may carry it."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return ok_chat(request)
+
+    assert run_traffic(handler) == 0
+
+    assert len(seen) == 6
+    for request in seen:
+        assert request.headers["X-Gateway-Cache"] == "allow"
+        assert "temperature" not in json.loads(request.content)
+
+
 def test_traffic_sends_the_tenant_headers_and_defaults_to_the_local_gateway() -> None:
     """Catches a sender that drops the bearer key, the tenant or the session header, or that
     defaults to some address other than http://localhost:8080."""
@@ -335,6 +354,19 @@ def test_check_fails_on_a_source_unconfigured(capsys: pytest.CaptureFixture[str]
     assert run_check(Console([pages_with(home=home)])) == 1
 
     assert "home sources.postgres: unconfigured" in capsys.readouterr().out
+
+
+def test_check_skips_a_null_source(capsys: pytest.CaptureFixture[str]) -> None:
+    """Catches a check that reads a null `prometheus` (Cost and Quality have no Prometheus
+    source) as a failing state, or that skips every non-`ok` source: Cost with
+    `prometheus: null` and full fields must pass, while Home with `prometheus: unconfigured`
+    must still fail and name it."""
+    cost = {"sources": {"postgres": "ok", "prometheus": None}}
+    assert run_check(Console([pages_with(cost=cost)])) == 0
+
+    home = {"sources": {"postgres": "ok", "prometheus": "unconfigured"}}
+    assert run_check(Console([pages_with(home=home)])) == 1
+    assert "home sources.prometheus: unconfigured" in capsys.readouterr().out
 
 
 EMPTY_CASES: list[tuple[str, str, object]] = [

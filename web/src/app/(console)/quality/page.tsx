@@ -12,14 +12,15 @@ function seconds(iso: string): number {
   return Date.parse(iso) / 1000;
 }
 
+/** Gate scores and the baseline are already percent points (48.48 is 48.48%). */
 function score(value: number | null): string {
-  return value === null ? NA : value.toFixed(1);
+  return value === null ? NA : `${value.toFixed(2)}%`;
 }
 
-/** No verdict without a threshold: the page cannot know pass or fail. */
+/** No verdict without a baseline: the page cannot know pass or fail. */
 function gateCells(row: GateScore): string[] {
   if (row.threshold === null) {
-    return [row.label, score(row.value), "Threshold not set", ""];
+    return [row.label, score(row.value), "Baseline not set", ""];
   }
   const result = row.passed === null ? NA : row.passed ? "passed" : "failed";
   return [row.label, score(row.value), score(row.threshold), result];
@@ -34,9 +35,9 @@ export default consolePage("quality", "Quality", "Does the help desk still answe
   return (
     <>
       <h2>Eval gate</h2>
-      <p>Each score the eval gate checks, from the newest run, beside the threshold it must reach.</p>
+      <p>Each score the eval gate checks, from the newest run, beside the baseline it must reach.</p>
       <Table
-        columns={["Score", "Newest run", "Threshold", "Result"]}
+        columns={["Score", "Newest run", "Baseline", "Result"]}
         rows={body.gate.map((row) => ({ key: row.name, cells: gateCells(row) }))}
       />
       {body.gate

@@ -145,7 +145,8 @@ EVAL_CALIBRATION = backend/evals/labels/calibration.json
 EVAL_REPEATS ?= 3
 EVAL_HELPDESK_COMPOSE = docker compose --project-directory $(EVAL_HELPDESK) -f $(EVAL_HELPDESK)/docker-compose.yml -f infra/evals/helpdesk.compose.yml --profile app
 eval:       ## The eval gate: the help desk's 33 conversations on the real cheap model, then the gate
-	@nord=$$(openssl rand -hex 32); cuan=$$(openssl rand -hex 32); judge=$$(openssl rand -hex 32); \
+	@trap 'rc=$$?; infra/evals/restore_keys.sh $(EVAL_HELPDESK) || [ $$rc != 0 ] || rc=1; exit $$rc' EXIT; \
+	nord=$$(openssl rand -hex 32); cuan=$$(openssl rand -hex 32); judge=$$(openssl rand -hex 32); \
 	nord_digest=$$(printf '%s' "$$nord" | openssl dgst -sha256 -r | cut -d' ' -f1); \
 	cuan_digest=$$(printf '%s' "$$cuan" | openssl dgst -sha256 -r | cut -d' ' -f1); \
 	judge_digest=$$(printf '%s' "$$judge" | openssl dgst -sha256 -r | cut -d' ' -f1); \
@@ -183,12 +184,14 @@ eval:       ## The eval gate: the help desk's 33 conversations on the real cheap
 # run, and `make eval` removes old reports first, so only a run that wrote no
 # report stops here. Costs a real eval run plus a few cents. No row is written
 # by hand.
-# The gateway is left on this run's keys, as after `make eval`; `make up`
-# restores it.
+# On exit, pass or fail, `infra/evals/restore_keys.sh` puts the gateway and the
+# help desk back on their normal keys, as after `make eval`. A failed restore
+# fails the target; the run's own failure keeps its code.
 NUMBERS_DATABASE_URL = postgresql://opsconsole:$${POSTGRES_PASSWORD:-opsconsole}@localhost:15432/opsconsole
 numbers:    ## Fill every console tab through the real app (eval, traffic, release), then check them
 	OPSCONSOLE_DATABASE_URL="$(NUMBERS_DATABASE_URL)" $(MAKE) eval || [ -f $(EVAL_REPORTS)/report.json ]
-	@tenant=$$(openssl rand -hex 32); admin=$$(openssl rand -hex 32); \
+	@trap 'rc=$$?; infra/evals/restore_keys.sh $(EVAL_HELPDESK) || [ $$rc != 0 ] || rc=1; exit $$rc' EXIT; \
+	tenant=$$(openssl rand -hex 32); admin=$$(openssl rand -hex 32); \
 	tenant_digest=$$(printf '%s' "$$tenant" | openssl dgst -sha256 -r | cut -d' ' -f1); \
 	admin_digest=$$(printf '%s' "$$admin" | openssl dgst -sha256 -r | cut -d' ' -f1); \
 	export OPSCONSOLE_API_KEYS="nordlicht:$$tenant_digest"; \

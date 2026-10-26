@@ -2,14 +2,15 @@
 
 `_postgres` and `_prometheus` each turn one source into a `(state, value)` pair,
 so a page body can render the other source's fields when one is down.
-`_budgets` reads neither source - the counter is the budget store the chat route
-debits. `gate_scores` is the quality page's eval gate rows.
+`budgets` sets each tenant's cap beside its ledger spend for the month.
+`gate_scores` is the quality page's eval gate rows.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from decimal import Decimal
 from pathlib import Path
 from typing import Final
 
@@ -17,7 +18,7 @@ import psycopg
 from fastapi import Request
 
 from app.evals.gate import Baseline, BaselineInvalid, load_baseline
-from app.limits.budget import budget_ratio, current_month, to_micro_usd, to_usd
+from app.limits.budget import budget_ratio, to_micro_usd
 from app.model_routing.policy import PolicyStore
 from app.schemas.dashboard import Budget, EvalRunSummary, GateScore, SourceState
 from app.services.prometheus_reads import PrometheusClient, PrometheusError
@@ -62,30 +63,36 @@ def first(samples: list[tuple[dict[str, str], float]]) -> float | None:
     return samples[0][1] if samples else None
 
 
-def budgets(request: Request, tenant: str | None) -> tuple[Budget, ...]:
-    """Each tenant's cap from the policy against its spend counter for this UTC month.
+def budgets(
+    request: Request, tenant: str | None, spend: Mapping[str, float] | None
+) -> tuple[Budget, ...]:
+    """Each tenant's cap from the policy against its not-cached ledger spend this UTC month.
 
-    Read from neither source: the counter is the budget store the chat route
-    debits, so this answers even with Postgres down. An unknown spend (a Redis
-    outage) is `null` rather than zero.
+    `spend` is the cost page's Postgres read, not the Redis counter: the
+    counter still enforces the cap but starts at zero after a Redis restart. A tenant
+    missing from it spent nothing; `spend` itself null (Postgres down or unconfigured)
+    is an unknown spend, `null` rather than zero. Pinned by
+    `test_budgets_show_the_ledger_month_spend` and
+    `test_budgets_are_null_when_postgres_is_down`.
     """
     store: PolicyStore = request.app.state.policy
-    policy = store.policy
-    month = current_month()
     budgets: list[Budget] = []
-    for name, tenant_policy in policy.tenants.items():
+    for name, tenant_policy in store.policy.tenants.items():
         if tenant is not None and name != tenant:
             continue
         cap = tenant_policy.budget_usd_month
-        spend = request.app.state.budget_store.spend(name, month)
+        spent = None if spend is None else spend.get(name, 0.0)
         budgets.append(
             Budget(
                 tenant=name,
                 cap_usd=float(cap),
-                spent_usd=None if spend is None else float(to_usd(spend)),
+                spent_usd=spent,
                 ratio=None
-                if spend is None
-                else budget_ratio(spend_micro_usd=spend, cap_micro_usd=to_micro_usd(cap)),
+                if spent is None
+                else budget_ratio(
+                    spend_micro_usd=to_micro_usd(Decimal(str(spent))),
+                    cap_micro_usd=to_micro_usd(cap),
+                ),
             )
         )
     return tuple(budgets)

@@ -199,10 +199,21 @@ describe("page body guards", () => {
         for (const state of ["ok", "unconfigured", "error"]) {
           expect(passes(name, withValue(name, ["sources", source], state)), `${name} ${source} ${state}`).toBe(true);
         }
-        for (const bad of ["down", "OK", "", null, 1]) {
-          expect(passes(name, withValue(name, ["sources", source], bad)), `${name} ${source} ${String(bad)}`).toBe(false);
+        // A null prometheus is a source the page does not have, so it is not a bad value there; postgres has no such case.
+        const bad = source === "prometheus" ? ["down", "OK", "", 1] : ["down", "OK", "", null, 1];
+        for (const value of bad) {
+          expect(passes(name, withValue(name, ["sources", source], value)), `${name} ${source} ${String(value)}`).toBe(false);
         }
       }
+    }
+  });
+
+  it("a null prometheus passes the guard and a null postgres fails it", () => {
+    // Catches a guard that still refuses the null Cost and Quality now send, one that lets null through for postgres too, and one that lets null through by dropping the check on sources altogether.
+    for (const name of PAGES) {
+      expect(passes(name, withValue(name, ["sources", "prometheus"], null)), `${name} prometheus null`).toBe(true);
+      expect(passes(name, withValue(name, ["sources", "postgres"], null)), `${name} postgres null`).toBe(false);
+      expect(passes(name, withValue(name, ["sources", "prometheus"], "down")), `${name} prometheus down`).toBe(false);
     }
   });
 });

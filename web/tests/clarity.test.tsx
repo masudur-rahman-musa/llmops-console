@@ -138,6 +138,19 @@ describe("console pages are clear to a new reader", () => {
     }
   });
 
+  it("cost shows the check score note only beside a measured table", async () => {
+    // Catches a note printed under "Not measured yet." where no check score shows (a note about nothing), and one dropped or doubled beside a table that does show it.
+    vi.stubEnv("CONSOLE_TRADEOFF_PATH", fileURLToPath(new URL("./fixtures/no-such-tradeoff.json", import.meta.url)));
+    const missing = await render("cost");
+    expect(has(missing, "Not measured yet.")).toBe(true);
+    expect(occurrences(text(missing), text(CHECK_SCORE_SENTENCE))).toBe(0);
+
+    vi.stubEnv("CONSOLE_TRADEOFF_PATH", TRADEOFF);
+    const measured = await render("cost");
+    expect(has(measured, "Not measured yet.")).toBe(false);
+    expect(occurrences(text(measured), text(CHECK_SCORE_SENTENCE))).toBe(1);
+  });
+
   it("no table header is a raw key, and every table has a thead", async () => {
     // Catches a column named by its code key (usd_per_1000_turns) or a table drawn with no header row.
     let seen = 0;
@@ -160,31 +173,34 @@ describe("console pages are clear to a new reader", () => {
     expect(rows(table)).toHaveLength(4);
   });
 
-  it("quality shows each gate score beside its threshold", async () => {
-    // Catches a gate table that drops a score, swaps value and threshold, flips a verdict, or loses the judge note.
+  it("quality shows gate scores as percentages beside the baseline", async () => {
+    // Catches a gate table that drops a score, swaps value and baseline, flips a verdict, loses the judge note, prints the scores as bare numbers with one decimal, or still calls the baseline a threshold.
     const html = await render("quality");
-    expect(has(html, "Check score 52.1 48.5 passed")).toBe(true);
-    expect(has(html, "Judge score 25.0 27.4 failed")).toBe(true);
+    expect(has(html, "Check score 52.10% 48.48% passed")).toBe(true);
+    expect(has(html, "Judge score 25.00% 27.40% failed")).toBe(true);
     expect(has(html, "kappa 0.7")).toBe(true);
     const flat = text(html);
-    expect(flat.indexOf("Check score 52.1")).toBeLessThan(flat.indexOf("Judge score 25.0"));
+    expect(flat.indexOf("Check score 52.10%")).toBeLessThan(flat.indexOf("Judge score 25.00%"));
+    expect(headers(tableWith(html, ["Score", "Newest run", "Baseline", "Result"]))).toContain("Baseline");
+    expect(flat).not.toMatch(/threshold/i);
   });
 
-  it("a missing threshold says threshold not set", async () => {
-    // Catches a null threshold shown as 0, as n/a, or with a pass or fail word the page cannot know.
+  it("a missing baseline says baseline not set", async () => {
+    // Catches a null baseline shown as 0%, as n/a, or with a pass or fail word the page cannot know, and one that still says Threshold not set.
     const body = fixture("quality");
     const gate = body.gate as Array<Record<string, unknown>>;
     Object.assign(gate[0], { threshold: null, passed: null });
     const html = await render("quality", body);
-    expect(has(html, "Threshold not set")).toBe(true);
+    expect(has(html, "Baseline not set")).toBe(true);
     const row = tables(html)
       .flatMap(rows)
-      .find((line) => line.startsWith("Check score 52.1"));
+      .find((line) => line.startsWith("Check score 52.10%"));
     expect(row).toBeDefined();
-    expect(row).toContain("Threshold not set");
+    expect(row).toContain("Baseline not set");
     expect(row).not.toMatch(/passed|failed/);
-    // The judge row still has its threshold, so the notice belongs to the check row alone.
-    expect(occurrences(text(html), "Threshold not set")).toBe(1);
+    // The judge row still has its baseline, so the notice belongs to the check row alone.
+    expect(occurrences(text(html), "Baseline not set")).toBe(1);
+    expect(text(html)).not.toMatch(/threshold/i);
   });
 
   it("categories and taxonomy say what they hold", async () => {

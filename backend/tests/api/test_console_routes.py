@@ -48,7 +48,6 @@ from fastapi.testclient import TestClient
 from app.api.routes import dashboard as console
 from app.core.config import Settings
 from app.core.validation import MAX_IDENTIFIER_LENGTH
-from app.limits.budget import current_month
 from app.limits.prices import PriceTable
 from app.main import create_app
 from app.schemas.dashboard import (
@@ -147,6 +146,10 @@ COST_READ = CostRead(
     cost_per_request=(AliasCost(alias="agent-default", cost_usd=0.0125),),
 )
 
+# What the ledger holds for the current UTC month, USD per tenant. A tenant with no
+# rows is absent: the route turns that into 0.0.
+MONTH_SPEND = {"nordlicht": 12.0, "evals": 2.5}
+
 QUALITY_READ = QualityRead(
     runs=(
         EvalRunSummary(
@@ -177,6 +180,7 @@ class StubReader:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.error: Exception | None = None
         self.quality_read = QUALITY_READ
+        self.month_spend_read: dict[str, float] = dict(MONTH_SPEND)
 
     def _record(self, name: str, **kwargs: Any) -> None:  # noqa: ANN401
         self.calls.append((name, kwargs))
@@ -190,6 +194,10 @@ class StubReader:
     def cost(self, *, days: int, tenant: str | None, now: datetime, prices: PriceTable) -> CostRead:
         self._record("cost", days=days, tenant=tenant, now=now, prices=prices)
         return COST_READ
+
+    def month_spend(self, *, tenant: str | None, now: datetime) -> dict[str, float]:
+        self._record("month_spend", tenant=tenant, now=now)
+        return dict(self.month_spend_read)
 
     def quality(self, *, days: int, now: datetime) -> QualityRead:
         self._record("quality", days=days, now=now)
@@ -430,7 +438,7 @@ def test_every_console_route_is_401_with_a_tenant_key(
 
 def days_sent(wired: Wired, path: str) -> list[int]:
     """The `days` each source was asked for on one route, read off the stubs."""
-    return [int(kwargs["days"]) for _, kwargs in wired.reader.calls]
+    return [int(kwargs["days"]) for _, kwargs in wired.reader.calls if "days" in kwargs]
 
 
 DAYS_ROWS: list[tuple[str, int | None, int]] = [
@@ -496,7 +504,9 @@ def test_the_tenant_length_boundary_is_inclusive(path: str, wired: Wired) -> Non
 
     at_cap = wired.get(path, tenant=MAX_TENANT)
     assert at_cap.status_code == 200, at_cap.text
-    assert [kwargs["tenant"] for _, kwargs in wired.reader.calls] == [MAX_TENANT]
+    assert [kwargs["tenant"] for name, kwargs in wired.reader.calls if name == "cost"] == [
+        MAX_TENANT
+    ]
 
     wired.reader.calls.clear()
     wired.prom.calls.clear()
@@ -547,7 +557,9 @@ def test_the_tenant_filter_reaches_the_reader(wired: Wired) -> None:
 
 def unconfigured_body(path: str) -> dict[str, Any]:
     """What a route answers with neither source configured and a fresh budget store."""
-    body: dict[str, Any] = {"sources": {"postgres": UNCONFIGURED, "prometheus": UNCONFIGURED}}
+    # Cost and Quality read no Prometheus, so they carry no source for it (null).
+    prometheus = UNCONFIGURED if path == HOME else None
+    body: dict[str, Any] = {"sources": {"postgres": UNCONFIGURED, "prometheus": prometheus}}
     body.update(POSTGRES_EMPTY[path])
     body.update(PROMETHEUS_EMPTY[path])
     if path == QUALITY:
@@ -570,9 +582,9 @@ def unconfigured_body(path: str) -> dict[str, Any]:
     if path == COST:
         body["estimated"] = True
         body["budgets"] = [
-            {"tenant": "nordlicht", "cap_usd": 15.0, "spent_usd": 0.0, "ratio": 0.0},
-            {"tenant": "cuan", "cap_usd": 60.0, "spent_usd": 0.0, "ratio": 0.0},
-            {"tenant": "evals", "cap_usd": 10.0, "spent_usd": 0.0, "ratio": 0.0},
+            {"tenant": "nordlicht", "cap_usd": 15.0, "spent_usd": None, "ratio": None},
+            {"tenant": "cuan", "cap_usd": 60.0, "spent_usd": None, "ratio": None},
+            {"tenant": "evals", "cap_usd": 10.0, "spent_usd": None, "ratio": None},
         ]
     return body
 
@@ -583,9 +595,10 @@ def test_with_nothing_configured_every_route_is_200_and_both_sources_unconfigure
 ) -> None:
     """Catches a route that reads an unconfigured source anyway and reports `ok` with zeros
     (the unconfigured reader answers empty reads, so only the flag and the nulls tell them
-    apart), a route that 500s without a database or a Prometheus, a pool opened for the
-    reader when no `database_url` was given, and a body that omits a field instead of
-    answering it empty."""
+    apart), Cost and Quality still reporting a Prometheus they never read as `unconfigured`,
+    Cost budgets showing 0.0 spend when the unknown spend must be null, a route that 500s
+    without a database or a Prometheus, a pool opened for the reader when no `database_url`
+    was given, and a body that omits a field instead of answering it empty."""
     app = bare.app
     assert isinstance(app, FastAPI)
     assert app.state.db_pool is None
@@ -646,7 +659,7 @@ def test_a_failing_reader_is_200_with_postgres_error_and_an_error_log(
 
     assert response.status_code == 200, response.text
     body = response.json()
-    prometheus_state = OK if path in PROMETHEUS_PATHS else UNCONFIGURED
+    prometheus_state = OK if path in PROMETHEUS_PATHS else None
     assert body["sources"] == {"postgres": ERROR, "prometheus": prometheus_state}
     assert subset(body, POSTGRES_EMPTY[path]) == POSTGRES_EMPTY[path]
     assert error_records(caplog) != []
@@ -657,6 +670,7 @@ def test_a_failing_reader_is_200_with_postgres_error_and_an_error_log(
     if path == COST:
         assert body["estimated"] is True
         assert [row["tenant"] for row in body["budgets"]] == ["nordlicht", "cuan", "evals"]
+        assert [row["spent_usd"] for row in body["budgets"]] == [None, None, None]
 
 
 # --- the bodies ------------------------------------------------------------------
@@ -709,12 +723,12 @@ def test_an_empty_home_sample_is_null_and_still_ok(wired: Wired) -> None:
 def test_the_cost_body_carries_the_reader_answer_and_is_estimated(wired: Wired) -> None:
     """Catches a cost route that drops or renames a reader field, labels savings as measured
     (`estimated` is always true, decision D), reports Prometheus as anything but
-    `unconfigured`, or asks Prometheus anything at all."""
+    `null` (it reads no Prometheus), or asks Prometheus anything at all."""
     response = wired.get(COST, days=14)
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["sources"] == {"postgres": OK, "prometheus": UNCONFIGURED}
+    assert body["sources"] == {"postgres": OK, "prometheus": None}
     assert body["rollup_populated"] is True
     assert body["days"] == [row.model_dump(mode="json") for row in COST_READ.days]
     assert body["savings"] == [row.model_dump(mode="json") for row in COST_READ.savings]
@@ -728,7 +742,7 @@ def test_the_cost_body_carries_the_reader_answer_and_is_estimated(wired: Wired) 
 
 def test_the_quality_body_carries_the_reader_answer(wired: Wired) -> None:
     """Catches a quality route that drops or renames one of its five lists or the gate, reorders
-    the reader's rows, or reports Prometheus as anything but `unconfigured`."""
+    the reader's rows, or reports Prometheus as anything but `null`."""
     response = wired.get(QUALITY)
 
     assert response.status_code == 200, response.text
@@ -739,7 +753,7 @@ def test_the_quality_body_carries_the_reader_answer(wired: Wired) -> None:
     assert "kappa 0.7" in notes[1]
     baseline = json.loads(SHIPPED_BASELINE.read_text(encoding="utf-8"))
     assert body == {
-        "sources": {"postgres": OK, "prometheus": UNCONFIGURED},
+        "sources": {"postgres": OK, "prometheus": None},
         "runs": [row.model_dump(mode="json") for row in QUALITY_READ.runs],
         "release_markers": [row.model_dump(mode="json") for row in QUALITY_READ.release_markers],
         "categories": [row.model_dump(mode="json") for row in QUALITY_READ.categories],
@@ -768,27 +782,49 @@ def test_the_quality_body_carries_the_reader_answer(wired: Wired) -> None:
 # --- budgets ---------------------------------------------------------------------
 
 
-def test_budgets_read_the_policy_cap_and_the_store_spend(wired: Wired) -> None:
-    """Catches a cap read from anywhere but the tenant's `budget_usd_month`, a spend treated
-    as dollars rather than micro-USD (12 000 000 would read as twelve million), an unknown
-    spend (`None`, Redis down) rendered as 0 instead of null, a month key other than the
-    current UTC month, a ratio not spend over cap, a `?tenant=` the budgets ignore, and an
-    unknown tenant answering someone else's budget."""
-    store = SpendStore({"nordlicht": 12_000_000, "cuan": None, "evals": 2_500_000})
+def test_cost_and_quality_report_no_prometheus_source(wired: Wired) -> None:
+    """Catches Cost or Quality reporting `unconfigured` (or `ok`) for a Prometheus they never
+    read, in any Postgres state, and a route that quietly asks Prometheus anyway: the stub
+    Prometheus is configured and records every request, so only a route that skips it
+    leaves `calls` empty."""
+    for path in (COST, QUALITY):
+        wired.reader.error = None
+        ok = wired.get(path)
+        assert ok.status_code == 200, ok.text
+        assert ok.json()["sources"] == {"postgres": OK, "prometheus": None}
+
+        wired.reader.error = psycopg.OperationalError("connection refused")
+        failing = wired.get(path)
+        assert failing.status_code == 200, failing.text
+        assert failing.json()["sources"] == {"postgres": ERROR, "prometheus": None}
+
+    wired.app.state.console_reader = UnconfiguredConsoleReader()
+    for path in (COST, QUALITY):
+        unconfigured = wired.get(path)
+        assert unconfigured.status_code == 200, unconfigured.text
+        assert unconfigured.json()["sources"] == {"postgres": UNCONFIGURED, "prometheus": None}
+
+    assert wired.prom.calls == []
+
+
+def test_budgets_show_the_ledger_month_spend(wired: Wired) -> None:
+    """Catches budget bars still read from the Redis counter (the store here would answer
+    99 000 000 micro-USD and records every ask), a spend taken as micro-USD instead of the
+    ledger's USD, a tenant with no ledger rows shown as null instead of 0.0, a cap read from
+    anywhere but the tenant's `budget_usd_month`, a ratio not spend over cap, a `?tenant=`
+    the budgets ignore, and an unknown tenant answering someone else's budget."""
+    store = SpendStore({"nordlicht": 99_000_000, "cuan": 99_000_000, "evals": 99_000_000})
     wired.app.state.budget_store = store
-    months = {current_month()}
 
     response = wired.get(COST)
-    months.add(current_month())
 
     assert response.status_code == 200, response.text
     assert response.json()["budgets"] == [
         {"tenant": "nordlicht", "cap_usd": 15.0, "spent_usd": 12.0, "ratio": 0.8},
-        {"tenant": "cuan", "cap_usd": 60.0, "spent_usd": None, "ratio": None},
+        {"tenant": "cuan", "cap_usd": 60.0, "spent_usd": 0.0, "ratio": 0.0},
         {"tenant": "evals", "cap_usd": 10.0, "spent_usd": 2.5, "ratio": 0.25},
     ]
-    assert {tenant for tenant, _ in store.asked} == {"nordlicht", "cuan", "evals"}
-    assert {month for _, month in store.asked} <= months
+    assert store.asked == []
 
     one = wired.get(COST, tenant="evals")
     assert one.status_code == 200, one.text
@@ -799,10 +835,26 @@ def test_budgets_read_the_policy_cap_and_the_store_spend(wired: Wired) -> None:
     unknown = wired.get(COST, tenant="nobody")
     assert unknown.status_code == 200, unknown.text
     assert unknown.json()["budgets"] == []
+    assert store.asked == []
 
+
+def test_budgets_are_null_when_postgres_is_down(wired: Wired) -> None:
+    """Catches a failing ledger read shown as 0.0 spend (a full budget that looks empty), or
+    the caps dropped with it: every tenant keeps its cap, in policy order, and spend and ratio
+    are null. The Redis store here holds a spend, so a fallback to it is caught too."""
+    store = SpendStore({"nordlicht": 12_000_000, "cuan": 1_000_000, "evals": 2_500_000})
+    wired.app.state.budget_store = store
     wired.reader.error = psycopg.OperationalError("connection refused")
-    down = wired.get(COST, tenant="evals")
-    assert down.json()["budgets"] == one.json()["budgets"]
+
+    response = wired.get(COST)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["budgets"] == [
+        {"tenant": "nordlicht", "cap_usd": 15.0, "spent_usd": None, "ratio": None},
+        {"tenant": "cuan", "cap_usd": 60.0, "spent_usd": None, "ratio": None},
+        {"tenant": "evals", "cap_usd": 10.0, "spent_usd": None, "ratio": None},
+    ]
+    assert store.asked == []
 
 
 # --- regressions -------------------------------------------------------------------

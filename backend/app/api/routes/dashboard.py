@@ -131,19 +131,23 @@ def cost(
     if tenant is not None:
         checked_tenant(tenant)
     now = datetime.now(UTC)
-    pg, read = postgres(
+    pg, both = postgres(
         request,
         "cost",
-        lambda reader: reader.cost(days=days, tenant=tenant, now=now, prices=prices.table),
+        lambda reader: (
+            reader.cost(days=days, tenant=tenant, now=now, prices=prices.table),
+            reader.month_spend(tenant=tenant, now=now),
+        ),
     )
+    read, spend = (None, None) if both is None else both
     return CostPage(
-        sources=Sources(postgres=pg, prometheus=SourceState.UNCONFIGURED),
+        sources=Sources(postgres=pg, prometheus=None),
         rollup_populated=None if read is None else read.rollup_populated,
         days=() if read is None else read.days,
         savings=() if read is None else read.savings,
         savings_usd_total=None if read is None else read.savings_usd_total,
         estimated=True,
-        budgets=budgets(request, tenant),
+        budgets=budgets(request, tenant, spend),
         cost_per_request=() if read is None else read.cost_per_request,
     )
 
@@ -156,7 +160,7 @@ def quality(request: Request, settings: SettingsDep, days: Days = DEFAULT_DAYS) 
     baseline_path = settings.eval_baseline_path
     if read is None:
         return QualityPage(
-            sources=Sources(postgres=pg, prometheus=SourceState.UNCONFIGURED),
+            sources=Sources(postgres=pg, prometheus=None),
             gate=gate_scores(baseline_path, ()),
             runs=(),
             release_markers=(),
@@ -165,7 +169,7 @@ def quality(request: Request, settings: SettingsDep, days: Days = DEFAULT_DAYS) 
             blocked=(),
         )
     return QualityPage(
-        sources=Sources(postgres=pg, prometheus=SourceState.UNCONFIGURED),
+        sources=Sources(postgres=pg, prometheus=None),
         gate=gate_scores(baseline_path, read.runs),
         runs=read.runs,
         release_markers=read.release_markers,

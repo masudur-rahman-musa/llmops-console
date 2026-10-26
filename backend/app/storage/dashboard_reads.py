@@ -148,6 +148,8 @@ class ConsoleReader(Protocol):
         self, *, days: int, tenant: str | None, now: datetime, prices: PriceTable
     ) -> CostRead: ...
 
+    def month_spend(self, *, tenant: str | None, now: datetime) -> dict[str, float]: ...
+
     def quality(self, *, days: int, now: datetime) -> QualityRead: ...
 
     def recent_requests(self) -> tuple[RequestRow, ...]: ...
@@ -173,6 +175,9 @@ class UnconfiguredConsoleReader:
         return CostRead(
             rollup_populated=False, days=(), savings=(), savings_usd_total=0.0, cost_per_request=()
         )
+
+    def month_spend(self, *, tenant: str | None, now: datetime) -> dict[str, float]:
+        return {}
 
     def quality(self, *, days: int, now: datetime) -> QualityRead:
         return QualityRead(runs=(), release_markers=(), categories=(), taxonomy=(), blocked=())
@@ -310,6 +315,25 @@ class PostgresConsoleReader:
                 AliasCost(alias=row[0], cost_usd=float(row[1])) for row in alias_rows
             ),
         )
+
+    def month_spend(self, *, tenant: str | None, now: datetime) -> dict[str, float]:
+        """USD per tenant from the not-cached ledger rows since the start of this UTC month.
+
+        The budget bars' spend. A tenant with no rows is left out, so the
+        caller tells "spent nothing" from "unknown". Pinned by
+        `test_month_spend_sums_this_utc_month_not_cached`.
+        """
+        month_start = now.astimezone(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        where_tenant, tenant_params = _tenant_clause(tenant)
+        with self._pool.connection() as conn:
+            rows = conn.execute(
+                sql.SQL(
+                    "SELECT tenant, sum(cost_usd) FROM {} "
+                    "WHERE NOT cached AND ts >= %s{} GROUP BY tenant"
+                ).format(self._table("cost_ledger"), where_tenant),
+                (month_start, *tenant_params),
+            ).fetchall()
+        return {row[0]: float(row[1]) for row in rows}
 
     def quality(self, *, days: int, now: datetime) -> QualityRead:
         since = now - timedelta(days=days)

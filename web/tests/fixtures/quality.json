@@ -1,7 +1,7 @@
 {
   "sources": {
     "postgres": "ok",
-    "prometheus": "ok"
+    "prometheus": null
   },
   "runs": [
     {
@@ -105,7 +105,7 @@
       "name": "check_score",
       "label": "Check score",
       "value": 52.1,
-      "threshold": 48.5,
+      "threshold": 48.48,
       "passed": true,
       "note": null
     },

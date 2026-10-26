@@ -259,6 +259,19 @@ describe("console pages", () => {
     }
   });
 
+  it("a null prometheus source shows no notice", async () => {
+    // Catches a notice line for a source the page does not have (null read as unconfigured or error, or as "Prometheus not configured."), and a null that also hides the Postgres notice.
+    const clean = fixture("cost");
+    clean.sources = { postgres: "ok", prometheus: null };
+    expect(has(await render("cost", clean), "Prometheus")).toBe(false);
+
+    const down = fixture("cost");
+    down.sources = { postgres: "error", prometheus: null };
+    const html = await render("cost", down);
+    expect(has(html, "Postgres unavailable.")).toBe(true);
+    expect(has(html, "Prometheus")).toBe(false);
+  });
+
   it("home renders no eval yet when last_eval is null", async () => {
     // Catches a null last_eval rendered as a failed or n/a eval, or the notice shown when an eval exists.
     const body = fixture("home");

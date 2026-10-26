@@ -5,7 +5,8 @@
  */
 
 export type SourceState = "ok" | "unconfigured" | "error";
-export type Sources = { postgres: SourceState; prometheus: SourceState };
+/** `prometheus` is null on a page that reads no Prometheus at all (Cost, Quality). */
+export type Sources = { postgres: SourceState; prometheus: SourceState | null };
 
 export type Check = (value: unknown) => boolean;
 
@@ -38,5 +39,5 @@ export const pair: Check = (value) => Array.isArray(value) && value.length === 2
 
 export const sources = shape({
   postgres: (value) => SOURCE_STATES.includes(value),
-  prometheus: (value) => SOURCE_STATES.includes(value),
+  prometheus: (value) => value === null || SOURCE_STATES.includes(value),
 });

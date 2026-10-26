@@ -2,7 +2,7 @@ import type { Sources } from "@/lib/shapes";
 
 const NAMES = { postgres: "Postgres", prometheus: "Prometheus" } as const;
 
-/** console-api's per-source flags as one line each; `ok` shows nothing. */
+/** console-api's per-source flags as one line each; `ok` and null (a page that reads no such source) show nothing. */
 export function SourceNotice({ sources }: { sources: Sources }) {
   const lines = (Object.keys(NAMES) as Array<keyof typeof NAMES>).flatMap((source) => {
     const state = sources[source];

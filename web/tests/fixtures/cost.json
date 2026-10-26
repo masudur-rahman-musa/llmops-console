@@ -1,5 +1,5 @@
 {
-  "sources": { "postgres": "ok", "prometheus": "ok" },
+  "sources": { "postgres": "ok", "prometheus": null },
   "rollup_populated": true,
   "days": [
     { "day": "2026-09-15", "tenant": "acme-eu", "provider": "mistral", "requests": 412, "cached_requests": 37, "cost_usd": 18.25 },

@@ -32,6 +32,8 @@ from typing import Any, Final
 
 import httpx
 
+from app.cache import CACHE_ALLOW, CACHE_HEADER
+
 NO_KEY = 2
 """The exit code for a missing key, distinct from 1 (a real failure)."""
 
@@ -54,7 +56,10 @@ PROMPTS: Final[tuple[str, ...]] = (
     "Say hello in German.",
 )
 """Six requests: the first two are equal (a cache hit on the second), the third
-carries an email address (a redaction). Short on purpose: a few cents in all."""
+carries an email address (a redaction). Short on purpose: a few cents in all.
+Each carries `X-Gateway-Cache: allow`, the cache's opt-in, and no `temperature`:
+the cheap model refuses that field with a 400. Pinned by
+`test_traffic_opts_every_request_into_the_cache`."""
 
 PAGES: Final[tuple[str, ...]] = ("home", "requests", "cost", "quality")
 """The four console tabs, in nav order."""
@@ -126,7 +131,11 @@ def send_traffic(
         for prompt in PROMPTS:
             response = client.post(
                 "/v1/chat/completions",
-                headers={"X-Tenant": TENANT, "X-Session": session},
+                headers={
+                    "X-Tenant": TENANT,
+                    "X-Session": session,
+                    CACHE_HEADER: CACHE_ALLOW,
+                },
                 json={"model": ALIAS, "messages": [{"role": "user", "content": prompt}]},
             )
             if response.status_code != httpx.codes.OK:
@@ -140,7 +149,9 @@ def page_failures(page: str, body: Mapping[str, Any]) -> list[str]:
     """One line per reason this page would show nothing; empty when it is full."""
     failures: list[str] = []
     for source, state in (body.get("sources") or {}).items():
-        if state != SOURCE_OK:
+        # Null means the page reads no such source (Cost and Quality never ask
+        # Prometheus), so there is nothing to be down.
+        if state is not None and state != SOURCE_OK:
             failures.append(f"{page} sources.{source}: {state}")
     for field in REQUIRED[page]:
         value = body.get(field)
