@@ -46,6 +46,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.api.deps import emitted_trace_id
 from app.api.routes.redact import REDACT
+from app.cache import InProcessResponseCache
 from app.core.config import Settings
 from app.core.errors import ProviderError
 from app.core.tracing import (
@@ -83,9 +84,13 @@ from .conftest import (
     STREAM_FRAGMENTS,
     STREAM_USAGE,
     STUB_CONTENT,
+    STUB_EMBEDDING_USAGE,
+    STUB_USAGE,
     TEST_KEYS,
+    EmbeddingStubAdapter,
     FallbackStubAdapter,
     StubAdapter,
+    app_of,
     assert_error_body,
     auth_headers,
     build_chat_client,
@@ -94,6 +99,7 @@ from .conftest import (
     post_chat,
     post_embeddings,
     retryable_error,
+    stream_events,
     stub_response,
 )
 
@@ -178,6 +184,26 @@ ALLOWED_ATTRIBUTE_KEYS = frozenset(
         "fallback_count",
     }
 )
+
+SESSION_WIRE_KEY = "langfuse.session.id"
+"""The key Langfuse reads a session from; the bare `session` key is no longer sent."""
+
+OBSERVATION_TYPE_KEY = "langfuse.observation.type"
+GENERATION_WIRE_KEYS = frozenset(
+    {
+        OBSERVATION_TYPE_KEY,
+        "gen_ai.request.model",
+        "gen_ai.usage.input_tokens",
+        "gen_ai.usage.output_tokens",
+        "gen_ai.usage.cost",
+    }
+)
+GENERATION_FIELDS = frozenset({"model", "input_tokens", "output_tokens", "cost_usd"})
+ALLOWED_WIRE_KEYS = (
+    (ALLOWED_ATTRIBUTE_KEYS - {"session"}) | {SESSION_WIRE_KEY} | GENERATION_WIRE_KEYS
+)
+"""Every key a span may carry on the wire: the `SpanAttributes` keys with the session
+renamed, plus the generation keys."""
 
 # A string that appears nowhere else in this repository, so finding it on a span
 # can only mean the request's own message body was copied there.
@@ -793,8 +819,8 @@ def test_the_attribute_key_set_is_exactly_the_allowlist(
 
     keys = attribute_keys(finished(spans))
 
-    assert keys <= ALLOWED_ATTRIBUTE_KEYS, sorted(keys - ALLOWED_ATTRIBUTE_KEYS)
-    assert {"tenant", "session", "provider"} <= keys
+    assert keys <= ALLOWED_WIRE_KEYS, sorted(keys - ALLOWED_WIRE_KEYS)
+    assert {"tenant", SESSION_WIRE_KEY, "provider"} <= keys
 
 
 def test_no_message_content_reaches_a_span(
@@ -869,7 +895,7 @@ def test_a_refusal_records_the_code_on_the_span(
     assert root.status.status_code is StatusCode.ERROR
     assert root.status.description == "ALIAS_UNKNOWN"
     assert "no-such-alias" not in trace_text(recorded)
-    assert attribute_keys(recorded) <= ALLOWED_ATTRIBUTE_KEYS
+    assert attribute_keys(recorded) <= ALLOWED_WIRE_KEYS
 
 
 def test_a_provider_failure_records_the_code_on_the_span(
@@ -1127,3 +1153,308 @@ def test_a_fallback_is_recorded_on_the_trace_as_a_count(
     ]
 
     assert carriers == [1]
+
+
+# --------------------------------------------------------------------------
+# an earlier change: the provider call is a Langfuse generation
+# --------------------------------------------------------------------------
+
+GENERATION = "generation"
+COST_HEADER = "x-gateway-cost-usd"
+PROVIDER_SPAN = f"provider:{REMOTE_PROVIDER}"
+MODEL_KEY = "gen_ai.request.model"
+INPUT_TOKENS_KEY = "gen_ai.usage.input_tokens"
+OUTPUT_TOKENS_KEY = "gen_ai.usage.output_tokens"
+COST_KEY = "gen_ai.usage.cost"
+
+
+def span_named(recorded: Sequence[ReadableSpan], name: str) -> ReadableSpan:
+    """The one span with this name."""
+    matches = [span for span in recorded if span.name == name]
+    assert len(matches) == 1, f"expected one {name!r} span, got {[s.name for s in recorded]}"
+    return matches[0]
+
+
+def is_labelled(span: ReadableSpan) -> bool:
+    """True when the span carries any generation label."""
+    return any(
+        key.startswith("gen_ai.") or key == OBSERVATION_TYPE_KEY for key in attributes_of(span)
+    )
+
+
+@pytest.fixture(scope="module")
+def cached_chat_stub() -> StubAdapter:
+    """The adapter behind `cached_chat_client`."""
+    return StubAdapter(name=REMOTE_PROVIDER, response=stub_response())
+
+
+@pytest.fixture(scope="module")
+def cached_chat_client(settings: Settings, cached_chat_stub: StubAdapter) -> Iterator[TestClient]:
+    """One app for the cache-hit row, built once."""
+    with build_chat_client(settings, {cached_chat_stub.name: cached_chat_stub}) as client:
+        yield client
+
+
+@pytest.fixture(scope="module")
+def no_usage_stub() -> StubAdapter:
+    """A streaming stub whose stream ends without a usage event."""
+    return StubAdapter(name=REMOTE_PROVIDER, events=stream_events(usage=None))
+
+
+@pytest.fixture(scope="module")
+def no_usage_client(settings: Settings, no_usage_stub: StubAdapter) -> Iterator[TestClient]:
+    """One app for the stream-without-usage row, built once."""
+    with build_chat_client(settings, {no_usage_stub.name: no_usage_stub}) as client:
+        yield client
+
+
+def test_the_provider_span_is_a_generation_with_model_tokens_and_cost(
+    chat_client: TestClient, chat_stub: StubAdapter, spans: InMemorySpanExporter
+) -> None:
+    """Catches an implementation that leaves the provider call a plain span, labels it with
+    the alias instead of the provider's model, or books a second price instead of the
+    one `X-Gateway-Cost-USD` carries, so Langfuse's Model, Tokens and Cost stay empty or wrong."""
+    response = send_chat(chat_client, None)
+    assert response.status_code == 200, response.text
+
+    provider = span_named(finished(spans), PROVIDER_SPAN)
+    attributes = attributes_of(provider)
+
+    assert attributes[OBSERVATION_TYPE_KEY] == GENERATION
+    assert attributes[MODEL_KEY] == chat_stub.requests[-1].model
+    assert attributes[MODEL_KEY] != ALIAS
+    assert attributes[INPUT_TOKENS_KEY] == STUB_USAGE.prompt_tokens
+    assert attributes[OUTPUT_TOKENS_KEY] == STUB_USAGE.completion_tokens
+    assert attributes[COST_KEY] == float(response.headers[COST_HEADER])
+
+
+def test_only_the_provider_span_is_a_generation(
+    openai_chat_client: TestClient, spans: InMemorySpanExporter
+) -> None:
+    """Catches a label applied to every stage span (or to the root), which would make
+    Langfuse count auth, route and cache steps as model calls and double every token total."""
+    response = post_chat(
+        openai_chat_client,
+        chat_body(model=ALIAS, messages=[{"role": "user", "content": TEXT_WITH_PII}]),
+        data_class=REDACT_CLASS,
+    )
+    assert response.status_code == 200, response.text
+
+    recorded = finished(spans)
+    others = [span for span in recorded if span.name != f"provider:{OPENAI_PROVIDER}"]
+
+    assert OBSERVATION_TYPE_KEY in attributes_of(
+        span_named(recorded, f"provider:{OPENAI_PROVIDER}")
+    ), "the check below is only meaningful if the provider span is the generation"
+    assert {AUTH_SPAN, ROUTE_SPAN, CACHE_SPAN, REDACT_SPAN} <= {span.name for span in others}
+    for span in others:
+        assert not is_labelled(span), f"{span.name} carries generation labels"
+
+
+def test_a_streamed_generation_carries_the_streams_usage(
+    slow_stream_client: TestClient,
+    slow_stream_adapter: SlowStreamAdapter,
+    spans: InMemorySpanExporter,
+) -> None:
+    """Catches a streamed generation closed when the route returns (it would end before the
+    last frame and cannot know the usage) and one filled from the plain-chat numbers, so a
+    streamed call would show no tokens or the wrong ones."""
+    delay = SlowStreamAdapter.FRAME_DELAY_SECONDS * slow_stream_adapter.delayed_frames
+
+    response = post_chat(slow_stream_client, chat_body(model=ALIAS, stream=True))
+    assert response.status_code == 200, response.text
+
+    provider = span_named(finished(spans), PROVIDER_SPAN)
+    attributes = attributes_of(provider)
+
+    assert duration_seconds(provider) >= delay
+    assert attributes[OBSERVATION_TYPE_KEY] == GENERATION
+    assert attributes[MODEL_KEY] == slow_stream_adapter.requests[-1].model
+    assert attributes[INPUT_TOKENS_KEY] == STREAM_USAGE.prompt_tokens
+    assert attributes[OUTPUT_TOKENS_KEY] == STREAM_USAGE.completion_tokens
+
+
+def test_a_stream_without_usage_ends_with_the_model_only(
+    no_usage_client: TestClient, no_usage_stub: StubAdapter, spans: InMemorySpanExporter
+) -> None:
+    """Catches a stream that makes up zero tokens when the provider reported none: Langfuse
+    would show a call that cost nothing and used nothing, instead of one with unknown usage."""
+    response = post_chat(no_usage_client, chat_body(model=ALIAS, stream=True))
+    assert response.status_code == 200, response.text
+
+    attributes = attributes_of(span_named(finished(spans), PROVIDER_SPAN))
+
+    assert attributes[OBSERVATION_TYPE_KEY] == GENERATION
+    assert attributes[MODEL_KEY] == no_usage_stub.requests[-1].model
+    assert not [key for key in attributes if key.startswith("gen_ai.usage.")]
+
+
+def test_an_embeddings_call_is_a_generation_with_input_tokens(
+    embeddings_client: TestClient,
+    embedding_stub: EmbeddingStubAdapter,
+    spans: InMemorySpanExporter,
+) -> None:
+    """Catches an embeddings call left a plain span, or given output tokens it does not
+    have: Langfuse would leave embedding usage out of Tokens and Dashboards."""
+    response = send_embeddings(embeddings_client, None)
+    assert response.status_code == 200, response.text
+
+    attributes = attributes_of(span_named(finished(spans), f"provider:{EMBED_PROVIDER}"))
+
+    assert attributes[OBSERVATION_TYPE_KEY] == GENERATION
+    assert attributes[MODEL_KEY] == embedding_stub.requests[-1].model
+    assert attributes[INPUT_TOKENS_KEY] == STUB_EMBEDDING_USAGE.prompt_tokens
+    assert OUTPUT_TOKENS_KEY not in attributes
+
+
+def test_a_cache_hit_has_no_generation(
+    cached_chat_client: TestClient, spans: InMemorySpanExporter
+) -> None:
+    """Catches a generation recorded for a cache hit: no provider was called, so Langfuse
+    would count tokens and cost that were never spent. The first, missing call is the
+    guard that the label exists at all."""
+    app_of(cached_chat_client).state.response_cache = InProcessResponseCache()
+    body = chat_body(model=ALIAS, temperature=0)
+
+    first = post_chat(cached_chat_client, body)
+    assert first.headers["x-gateway-cache"] == "miss"
+    assert [s for s in finished(spans) if OBSERVATION_TYPE_KEY in attributes_of(s)]
+
+    spans.clear()
+    second = post_chat(cached_chat_client, body)
+    assert second.headers["x-gateway-cache"] == "hit"
+
+    recorded = finished(spans)
+    assert [span for span in recorded if OBSERVATION_TYPE_KEY in attributes_of(span)] == []
+    assert not [span for span in recorded if span.name.startswith("provider:")]
+
+
+def test_the_generation_label_set_is_closed() -> None:
+    """Catches a free-form field (a `prompt`, a `user`) on the generation model, and a
+    wrong wire key: the field set and the emitted keys are pinned whole."""
+    from app.core.tracing import GenerationAttributes
+
+    assert set(GenerationAttributes.model_fields) == GENERATION_FIELDS
+
+    with pytest.raises(ValidationError):
+        GenerationAttributes.model_validate({"prompt": "x"})
+
+    assert GenerationAttributes().as_attributes() == {OBSERVATION_TYPE_KEY: GENERATION}
+    assert GenerationAttributes(
+        model="m", input_tokens=3, output_tokens=4, cost_usd=0.5
+    ).as_attributes() == {
+        OBSERVATION_TYPE_KEY: GENERATION,
+        MODEL_KEY: "m",
+        INPUT_TOKENS_KEY: 3,
+        OUTPUT_TOKENS_KEY: 4,
+        COST_KEY: 0.5,
+    }
+
+
+def test_the_session_goes_out_as_langfuse_session_id(
+    chat_client: TestClient, spans: InMemorySpanExporter
+) -> None:
+    """Catches a session still sent under the bare `session` key (Langfuse's Sessions page
+    stays empty) and one sent under both keys, which leaves a stale duplicate."""
+    response = chat_client.post(
+        CHAT,
+        json=chat_body(model=ALIAS),
+        headers=auth_headers(key=EVALS_KEY, tenant=TENANT, data_class=PLAIN_CLASS, session="s-1"),
+    )
+    assert response.status_code == 200, response.text
+
+    recorded = finished(spans)
+
+    assert attributes_of(root_of(recorded))[SESSION_WIRE_KEY] == "s-1"
+    assert "session" not in attribute_keys(recorded)
+    assert SpanAttributes(session="s-1").as_attributes()[SESSION_WIRE_KEY] == "s-1"
+
+
+ROOT_NAME_ROWS: list[tuple[str, str, Callable[[TestClient], Response], str]] = [
+    ("chat", "chat_client", lambda client: send_chat(client, None), "POST /v1/chat/completions"),
+    (
+        "embeddings",
+        "embeddings_client",
+        lambda client: send_embeddings(client, None),
+        "POST /v1/embeddings",
+    ),
+    ("redact", "gateway_client", lambda client: post_redact(client), "POST /v1/redact"),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "client_fixture", "send", "expected"),
+    ROOT_NAME_ROWS,
+    ids=[row[0] for row in ROOT_NAME_ROWS],
+)
+def test_the_trace_is_named_from_the_matched_route(
+    case: str,
+    client_fixture: str,
+    send: Callable[[TestClient], Response],
+    expected: str,
+    request: pytest.FixtureRequest,
+    spans: InMemorySpanExporter,
+) -> None:
+    """Catches the root span keeping the name `http.request` for every request, or being
+    named from the raw path: Langfuse's trace list could not tell a chat from an embedding."""
+    client: TestClient = request.getfixturevalue(client_fixture)
+
+    assert send(client).status_code == 200
+
+    name = root_of(finished(spans)).name
+    assert name == expected
+    assert name != "http.request"
+
+
+def test_an_unmatched_path_is_named_unmatched(
+    gateway_client: TestClient, spans: InMemorySpanExporter
+) -> None:
+    """Catches a trace named from the raw URL: a junk path of any length would become a
+    trace name (and a long one a very large one) in the trace store."""
+    junk = "x" * 500
+    response = gateway_client.get("/v1/" + junk)
+    assert response.status_code == 404
+
+    recorded = finished(spans)
+
+    assert root_of(recorded).name == "GET unmatched"
+    assert junk not in trace_text(recorded)
+
+
+PROBE_ROWS: list[tuple[str, str, int]] = [
+    ("healthz", "/healthz", 200),
+    ("readyz", "/readyz", 200),
+    ("metrics", "/metrics", 200),
+]
+
+
+@pytest.mark.parametrize(("case", "path", "status"), PROBE_ROWS, ids=[row[0] for row in PROBE_ROWS])
+def test_probes_and_scrapes_are_not_traced(
+    case: str,
+    path: str,
+    status: int,
+    gateway_client: TestClient,
+    spans: InMemorySpanExporter,
+) -> None:
+    """Catches a probe or scrape still starting a span: thousands a day would bury real
+    requests and use up the free Langfuse plan. The status check catches a probe that
+    stops answering as the way of not tracing it."""
+    response = gateway_client.get(path)
+
+    assert response.status_code == status
+    assert spans.get_finished_spans() == ()
+
+
+def test_a_real_request_after_a_probe_is_still_traced(
+    chat_client: TestClient, spans: InMemorySpanExporter
+) -> None:
+    """Catches the untraced-start state leaking into the next request (a flag left set, or
+    a shared context): the chat after a probe would lose its trace, or the probe's would
+    be exported with it."""
+    assert chat_client.get("/healthz").status_code == 200
+    assert send_chat(chat_client, None).status_code == 200
+
+    recorded = finished(spans)
+
+    assert root_of(recorded).name == "POST /v1/chat/completions"
+    assert len({trace_id_of(span) for span in recorded}) == 1

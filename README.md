@@ -58,6 +58,7 @@ has been answered already for this tenant. After it returns, tokens are priced
 against the committed table, the spend is booked to the tenant, and the budget
 and rate limits are updated. A trace carrying the session and the tenant, never
 a user identity, goes to Langfuse; the counters go to Prometheus.
+Langfuse is used for tracing only. Prompts and evals live in git with a CI check, on purpose ([what Langfuse shows](docs/tracing.md)).
 
     client -> gateway -> [ auth | routing | redaction | cache |
                            limits ] -> provider adapter -> provider

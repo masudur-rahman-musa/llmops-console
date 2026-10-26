@@ -66,11 +66,8 @@ with whatever else a deployment mounts and would make a name collision someone
 else's bug."""
 
 ROOT_SPAN_NAME = "http.request"
-"""What the root span is called. Deliberately not pinned by a test: only the four STAGE names are
-fixed,
-so the tests identify
-the root structurally (the one span with no local parent) and stay true if it is
-renamed."""
+"""What the root span is called until the request ends and `root_span_name` renames
+it after the matched route."""
 
 SAMPLED_PARENT_FLAGS = TraceFlags(TraceFlags.SAMPLED)
 """A continued trace is treated as sampled. The gateway samples everything in
@@ -149,8 +146,103 @@ class SpanAttributes(BaseModel):
     fallback_count: int | None = None
 
     def as_attributes(self) -> dict[str, str | float | bool | int]:
-        """The set fields only, as the primitive types OpenTelemetry accepts."""
-        return {key: value for key, value in self.model_dump().items() if value is not None}
+        """The set fields only, as the primitive types OpenTelemetry accepts.
+
+        `session` goes out as `langfuse.session.id`, the key Langfuse groups its
+        Sessions page by; the field keeps its name so no call site changes.
+        Pinned by `test_the_session_goes_out_as_langfuse_session_id`.
+        """
+        return {
+            WIRE_KEYS.get(key, key): value
+            for key, value in self.model_dump().items()
+            if value is not None
+        }
+
+
+WIRE_KEYS: dict[str, str] = {"session": "langfuse.session.id"}
+"""A `SpanAttributes` field whose key on the wire differs from its name."""
+
+
+GENERATION_TYPE_KEY = "langfuse.observation.type"
+"""The label that makes Langfuse show a span as a generation. Sent on purpose
+rather than left to Langfuse to guess from the model label, which it does not do
+reliably."""
+
+GENERATION_KEYS: dict[str, str] = {
+    "model": "gen_ai.request.model",
+    "input_tokens": "gen_ai.usage.input_tokens",
+    "output_tokens": "gen_ai.usage.output_tokens",
+    "cost_usd": "gen_ai.usage.cost",
+}
+"""The standard `gen_ai.*` key each `GenerationAttributes` field goes out under."""
+
+
+class GenerationAttributes(BaseModel):
+    """What the provider span may say beyond its name: model, tokens, cost.
+
+    Closed for the same reason `SpanAttributes` is: a prompt or an answer on a
+    generation would be text on a trace backend outside this system's redaction,
+    so an unknown key is a `ValidationError`. Langfuse's Input and Output stay
+    empty because nothing here can fill them. Pinned by
+    `test_the_generation_label_set_is_closed`.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    model: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cost_usd: float | None = None
+
+    def as_attributes(self) -> dict[str, str | float | bool | int]:
+        """The type label, then the set fields under their `gen_ai.*` keys."""
+        attributes: dict[str, str | float | bool | int] = {GENERATION_TYPE_KEY: "generation"}
+        for field, value in self.model_dump().items():
+            if value is not None:
+                attributes[GENERATION_KEYS[field]] = value
+        return attributes
+
+
+class Generation:
+    """One provider call's span, opened by hand so it can outlive a `with` block.
+
+    A plain call's cost is known only after `book_cost`, and a stream's usage only
+    after its last frame, so the span cannot close where the call returns. The
+    caller reports what it learns and ends it once; a second `end` is ignored, so
+    an error path and a finished path can both end it safely. Holds `None` when
+    the request is not traced, so call sites stay unconditional.
+    """
+
+    def __init__(self, span: Span | None) -> None:
+        self._span = span
+
+    def report(self, attributes: GenerationAttributes) -> None:
+        """Add what is now known to the open span."""
+        if self._span is not None and self._span.is_recording():
+            self._span.set_attributes(attributes.as_attributes())
+
+    def end(self) -> None:
+        """Close the span; later calls do nothing."""
+        if self._span is not None:
+            span, self._span = self._span, None
+            span.end()
+
+
+def start_generation(scope: Scope, name: str, *, model: str) -> Generation:
+    """Open a provider span as a Langfuse generation, labelled with the model now.
+
+    Parented on the root span from the scope, like `stage_span`, and with the
+    same exception defaults off, so no provider message reaches the span.
+    """
+    record = request_trace(scope)
+    if record is None:
+        return Generation(None)
+    span = tracer().start_span(
+        name, context=record.context, record_exception=False, set_status_on_exception=False
+    )
+    generation = Generation(span)
+    generation.report(GenerationAttributes(model=model))
+    return generation
 
 
 @dataclass
@@ -200,14 +292,42 @@ def start_root_span(parent: Context | None) -> RequestTrace:
     return RequestTrace(span=span, context=set_span_in_context(span))
 
 
-def end_root_span(record: RequestTrace, *, failed: bool) -> None:
+UNMATCHED_ROUTE = "unmatched"
+"""What a trace is named after when no route matched, in place of the path."""
+
+UNTRACED_PATHS = frozenset({"/metrics", "/healthz", "/readyz"})
+"""Scrapes and probes: answered, never traced. Thousands a day would bury the
+real requests and use up a trace backend's free plan."""
+
+
+def root_span_name(scope: Scope) -> str:
+    """The method and the matched route's template, e.g. `POST /v1/chat/completions`.
+
+    The TEMPLATE, never the raw path: a path carries ids and whatever junk a
+    caller sends, and a trace name is shown and grouped on. Pinned by
+    `test_the_trace_is_named_from_the_matched_route` and
+    `test_an_unmatched_path_is_named_unmatched`.
+    """
+    route = scope.get("route")
+    template = getattr(route, "path", None)
+    return (
+        f"{scope.get('method', 'GET')} {template if isinstance(template, str) else UNMATCHED_ROUTE}"
+    )
+
+
+def end_root_span(record: RequestTrace, *, failed: bool, name: str | None = None) -> None:
     """Close the root span, recording the typed code when the request failed.
+
+    `name` replaces the start name, because the route is only known once routing
+    has run.
 
     The status DESCRIPTION carries the code and nothing else. An operator filters
     a trace store on "which requests failed and why" and gets the same closed
     `ErrorCode` set the wire contract uses, with no message, no provider payload
     and no exception text alongside it.
     """
+    if name is not None:
+        record.span.update_name(name)
     if failed:
         record.span.set_status(Status(StatusCode.ERROR, record.error_code))
     record.span.end()

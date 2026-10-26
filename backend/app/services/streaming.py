@@ -86,6 +86,7 @@ def sse_frames(
     *,
     mapping: Mapping[str, str] | None = None,
     on_unreported_usage: Callable[[int], None] | None = None,
+    on_close: Callable[[], None] | None = None,
 ) -> Generator[str, None, None]:
     """Render the neutral events as SSE frames, ending with `[DONE]` if they finish.
 
@@ -144,6 +145,10 @@ def sse_frames(
     The held text is flushed before EVERY non-text event, before the error frame
     and before `[DONE]` (decisions E and F), so a `finish_reason` can never
     overtake the last of the answer and nothing the provider produced is dropped.
+
+    `on_close` runs last in the `finally`, after every frame this generator
+    sends, which is what ends a stream's generation span with the stream itself
+    (`test_a_streamed_generation_carries_the_streams_usage`).
 
     The wrap runs INSIDE this generator rather than around the iterator it is
     handed: the `finally` below closes `events` by name, and closing
@@ -223,6 +228,8 @@ def sse_frames(
             events.close()
         if on_unreported_usage is not None and not usage_reported:
             on_unreported_usage(sent_chars)
+        if on_close is not None:
+            on_close()
     yield _frame(DONE_SENTINEL)
 
 
@@ -235,6 +242,7 @@ def streamed(
     *,
     mapping: Mapping[str, str] | None = None,
     on_unreported_usage: Callable[[int], None] | None = None,
+    on_close: Callable[[], None] | None = None,
 ) -> StreamPlan:
     """Open the stream, pull its first event, and return the plan for the route.
 
@@ -269,6 +277,7 @@ def streamed(
             on_usage=on_usage,
             mapping=mapping,
             on_unreported_usage=on_unreported_usage,
+            on_close=on_close,
         ),
         media_type=SSE_MEDIA_TYPE,
         headers={**headers, **SSE_HEADERS},

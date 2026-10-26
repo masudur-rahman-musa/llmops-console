@@ -11,7 +11,14 @@ from starlette.types import Scope
 
 from app.core.context import RequestContext
 from app.core.metrics import record_redactions, record_tokens
-from app.core.tracing import SpanAttributes, annotate, stage_span
+from app.core.tracing import (
+    Generation,
+    GenerationAttributes,
+    SpanAttributes,
+    annotate,
+    stage_span,
+    start_generation,
+)
 from app.model_routing.resolver import Resolved, resolve
 from app.providers.base import (
     EmbeddingAdapter,
@@ -109,16 +116,22 @@ def embed_texts(
 
     def provider_call(
         chosen: Resolved,
-    ) -> tuple[EmbeddingResponse, Resolved, int]:
+    ) -> tuple[EmbeddingResponse, Resolved, int, Generation]:
         failed_so_far = _call_count[0]
         _call_count[0] += 1
         label_candidate(scope, body.model, chosen)
         adapter = cast(EmbeddingAdapter, clients.adapters[chosen.provider])
-        with stage_span(scope, provider_span_name(chosen.provider)):
+        generation = start_generation(
+            scope, provider_span_name(chosen.provider), model=chosen.model
+        )
+        try:
             answer = adapter.embed(EmbeddingRequest(model=chosen.model, input=texts))
-        return answer, chosen, failed_so_far
+        except BaseException:
+            generation.end()
+            raise
+        return answer, chosen, failed_so_far, generation
 
-    answer, chosen, failed = walk_candidates(candidates, clients.breaker, provider_call)
+    answer, chosen, failed, generation = walk_candidates(candidates, clients.breaker, provider_call)
 
     record_served(
         scope,
@@ -147,6 +160,12 @@ def embed_texts(
         ),
         cached=False,
     )
+    generation.report(
+        GenerationAttributes(
+            input_tokens=answer.usage.prompt_tokens, cost_usd=float(headers[COST_HEADER])
+        )
+    )
+    generation.end()
     return EmbeddingsResult(
         body=EmbeddingsResponse(
             data=tuple(

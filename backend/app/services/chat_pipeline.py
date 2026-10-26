@@ -22,7 +22,14 @@ from app.core.metrics import (
     record_redactions,
     record_tokens,
 )
-from app.core.tracing import SpanAttributes, annotate, stage_span
+from app.core.tracing import (
+    Generation,
+    GenerationAttributes,
+    SpanAttributes,
+    annotate,
+    stage_span,
+    start_generation,
+)
 from app.model_routing.errors import AllProvidersUnavailable
 from app.model_routing.policy import Policy
 from app.model_routing.resolver import Resolved, resolve
@@ -171,7 +178,12 @@ def record_served(
 
 
 def _token_sink(
-    clients: Clients, context: RequestContext, *, alias: str, chosen: Resolved
+    clients: Clients,
+    context: RequestContext,
+    *,
+    alias: str,
+    chosen: Resolved,
+    generation: Generation,
 ) -> Callable[[Usage], None]:
     """The callback a stream books its tokens AND its cost through when the usage arrives.
 
@@ -188,6 +200,9 @@ def _token_sink(
     discarded here rather than never built: the six headers of a stream were on
     the wire before this event existed, which is the whole of why
     `X-Gateway-Cost-USD` is absent on a stream.
+
+    The same header value is what the stream's generation reports as its cost,
+    so the trace and the ledger carry one number; the stream ends the span.
     """
 
     def sink(usage: Usage) -> None:
@@ -198,7 +213,8 @@ def _token_sink(
             prompt_tokens=usage.prompt_tokens,
             completion_tokens=usage.completion_tokens,
         )
-        _book_cost(clients, context, alias=alias, chosen=chosen, usage=usage, cached=False)
+        cost = _book_cost(clients, context, alias=alias, chosen=chosen, usage=usage, cached=False)
+        generation.report(generation_usage(usage, cost))
 
     return sink
 
@@ -238,6 +254,19 @@ def _estimated_cost_sink(
         )
 
     return sink
+
+
+def generation_usage(usage: Usage, cost: str) -> GenerationAttributes:
+    """The tokens a provider reported and the cost `book_cost` answered, for the trace.
+
+    `cost` is the `X-Gateway-Cost-USD` string itself, so the generation never
+    prices anything a second time.
+    """
+    return GenerationAttributes(
+        input_tokens=usage.prompt_tokens,
+        output_tokens=usage.completion_tokens,
+        cost_usd=float(cost),
+    )
 
 
 def prompt_characters(body: ChatCompletionRequest) -> int:
@@ -450,14 +479,19 @@ def complete_chat(
         _call_count[0] += 1
         label_candidate(scope, body.model, chosen)
         headers = _gateway_headers(chosen, context.trace_id, redacted=redacted)
+        generation = start_generation(
+            scope, provider_span_name(chosen.provider), model=chosen.model
+        )
         if body.stream:
-            with stage_span(scope, provider_span_name(chosen.provider)):
+            try:
                 plan = streamed(
                     clients.adapters[chosen.provider],
                     outbound,
                     chosen,
                     headers,
-                    _token_sink(clients, context, alias=body.model, chosen=chosen),
+                    _token_sink(
+                        clients, context, alias=body.model, chosen=chosen, generation=generation
+                    ),
                     mapping=mapping,
                     on_unreported_usage=_estimated_cost_sink(
                         clients,
@@ -466,7 +500,11 @@ def complete_chat(
                         chosen=chosen,
                         prompt_chars=prompt_characters(outbound),
                     ),
+                    on_close=generation.end,
                 )
+            except BaseException:
+                generation.end()
+                raise
             record_served(
                 scope,
                 clients.breaker,
@@ -476,8 +514,11 @@ def complete_chat(
                 failed=failed_so_far,
             )
             return plan
-        with stage_span(scope, provider_span_name(chosen.provider)):
+        try:
             answer = clients.adapters[chosen.provider].chat(to_neutral(outbound, chosen.model))
+        except BaseException:
+            generation.end()
+            raise
         record_served(
             scope,
             clients.breaker,
@@ -493,6 +534,16 @@ def complete_chat(
             prompt_tokens=answer.usage.prompt_tokens,
             completion_tokens=answer.usage.completion_tokens,
         )
+        headers[COST_HEADER] = _book_cost(
+            clients,
+            context,
+            alias=body.model,
+            chosen=chosen,
+            usage=answer.usage,
+            cached=False,
+        )
+        generation.report(generation_usage(answer.usage, headers[COST_HEADER]))
+        generation.end()
         store_answer(
             clients.response_cache,
             context.tenant,
@@ -515,14 +566,6 @@ def complete_chat(
             tools_hash=tools_hash(outbound),
             provider=chosen.provider,
             data_class=context.data_class.value,
-        )
-        headers[COST_HEADER] = _book_cost(
-            clients,
-            context,
-            alias=body.model,
-            chosen=chosen,
-            usage=answer.usage,
-            cached=False,
         )
         return ChatResult(body=to_wire(rehydrated(answer, mapping), body.model), headers=headers)
 

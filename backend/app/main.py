@@ -45,10 +45,12 @@ from app.core.metrics import observe_request, start_request
 from app.core.tracing import (
     ERROR_STATUS_FLOOR,
     TRACE_SCOPE_KEY,
+    UNTRACED_PATHS,
     end_root_span,
     flush_tracing,
     install_exporter,
     parent_context,
+    root_span_name,
     start_root_span,
 )
 from app.limits.budget import InProcessBudgetStore, RedisBudgetStore
@@ -294,7 +296,8 @@ class TracingMiddleware:
     500 rather than 200.
 
     Not every request gets a metrics record: `start_request` opens one for the
-    counted paths only, so a probe and a scrape pass through traced and uncounted.
+    counted paths only. A probe or a scrape (`UNTRACED_PATHS`) is passed straight
+    through, neither traced nor counted.
 
     The clock is `perf_counter`, which is monotonic: a wall clock stepped by NTP
     mid-request would otherwise book a negative or a wildly long duration into a
@@ -309,6 +312,10 @@ class TracingMiddleware:
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Trace and count one HTTP request; pass lifespan and websocket scopes through."""
         if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        if scope.get("path") in UNTRACED_PATHS:
             await self.app(scope, receive, send)
             return
 
@@ -327,10 +334,10 @@ class TracingMiddleware:
         try:
             await self.app(scope, receive, send_wrapper)
         except BaseException:
-            end_root_span(record, failed=True)
+            end_root_span(record, failed=True, name=root_span_name(scope))
             observe_request(scope, status=status, seconds=time.perf_counter() - started)
             raise
-        end_root_span(record, failed=status >= ERROR_STATUS_FLOOR)
+        end_root_span(record, failed=status >= ERROR_STATUS_FLOOR, name=root_span_name(scope))
         observe_request(scope, status=status, seconds=time.perf_counter() - started)
 
 
