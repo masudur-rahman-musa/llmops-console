@@ -4,8 +4,9 @@ import { qualityGuard, type QualityBody } from "@/features/quality/guards";
 import { requestsGuard, type RequestsBody } from "@/features/requests/guards";
 
 /**
- * The console's only read client: server-side, one fixed path per page, never a
- * query string. A failure is a reason, never a throw, so a page
+ * The console's only read client: server-side, one fixed path per page. The one
+ * query string is `?page=N` on the requests call, built from a whole number,
+ * never from URL text. A failure is a reason, never a throw, so a page
  * degrades to a notice. The admin key is sent and never
  * logged. The four per-page guards (one feature folder each) are assembled
  * here into PageBodies and GUARDS.
@@ -71,9 +72,22 @@ export function apiIsConfigured(env: Record<string, string | undefined> = proces
   return baseUrl(env.CONSOLE_API_URL) !== null && Boolean(env.CONSOLE_ADMIN_KEY);
 }
 
+/** The requests page's one query value: which page of the ledger to read. */
+export type PageQuery = { page: number };
+
+/** `?page=N` for the requests call when asked, else nothing; a page that is not a whole number above 0 reads as 1. */
+function queryString(name: PageName, query: PageQuery | undefined): string {
+  if (name !== "requests" || query === undefined) {
+    return "";
+  }
+  const page = Number.isSafeInteger(query.page) && query.page >= 1 ? query.page : 1;
+  return `?page=${page}`;
+}
+
 export async function getConsolePage<N extends PageName>(
   name: N,
   deps: ConsoleDeps = {},
+  query?: PageQuery,
 ): Promise<ConsoleResult<PageBodies[N]>> {
   const env = deps.env ?? process.env;
   const logger = deps.logger ?? console;
@@ -91,7 +105,7 @@ export async function getConsolePage<N extends PageName>(
 
   let response: Response;
   try {
-    response = await doFetch(`${base}${CONSOLE_PATHS[name]}`, {
+    response = await doFetch(`${base}${CONSOLE_PATHS[name]}${queryString(name, query)}`, {
       method: "GET",
       headers: { Authorization: `Bearer ${key}` },
       cache: "no-store",

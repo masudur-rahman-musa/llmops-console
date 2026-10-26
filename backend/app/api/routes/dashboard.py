@@ -11,8 +11,9 @@ The console reads through here and never touches Postgres or Prometheus itself.
 A working tenant key is 401 on all four, as on `/admin/*`. The sums and source
 helpers are `app.services.dashboard`; the page shapes are `app.schemas.dashboard`.
 
-**Inputs.** `days` is an integer from `MIN_DAYS` to `MAX_DAYS`, refused as 422
-`VALIDATION` naming `days` by the request validation handler before the route body
+**Inputs.** `days` is an integer from `MIN_DAYS` to `MAX_DAYS`, and the requests
+route's `page` one from `MIN_PAGE` to `MAX_PAGE`; either is refused as 422
+`VALIDATION` naming itself by the request validation handler before the route body
 runs. `tenant` is pre-checked by
 `app.api.deps.checked_tenant` before any query, because it is interpolated into a
 PromQL label matcher.
@@ -75,6 +76,12 @@ MAX_DAYS: Final[int] = 90
 DEFAULT_DAYS: Final[int] = 30
 
 Days = Annotated[int, Query(ge=MIN_DAYS, le=MAX_DAYS)]
+
+MIN_PAGE: Final[int] = 1
+MAX_PAGE: Final[int] = 10000
+DEFAULT_PAGE: Final[int] = 1
+
+Page = Annotated[int, Query(ge=MIN_PAGE, le=MAX_PAGE)]
 
 
 router = APIRouter()
@@ -224,8 +231,12 @@ def _tokens(samples: list[tuple[dict[str, str], float]]) -> tuple[ModelTokens, .
 
 
 @router.get(CONSOLE_REQUESTS)
-def requests(request: Request, settings: SettingsDep, days: Days = DEFAULT_DAYS) -> RequestsPage:
-    """Counts over the window from Prometheus, the newest ledger rows from Postgres."""
+def requests(
+    request: Request, settings: SettingsDep, days: Days = DEFAULT_DAYS, page: Page = DEFAULT_PAGE
+) -> RequestsPage:
+    """Counts over the window from Prometheus, one page of the ledger from Postgres.
+
+    A dead or missing ledger is page 1 of 1 with no rows."""
 
     def read(client: PrometheusClient) -> RequestCounts:
         return (
@@ -245,7 +256,7 @@ def requests(request: Request, settings: SettingsDep, days: Days = DEFAULT_DAYS)
     prom, counts = prometheus(request, "requests", read)
     empty: RequestCounts = ((), (), None, (), None)
     redactions, refusals, blocks, tokens, hit_rate = counts if counts is not None else empty
-    pg, rows = postgres(request, "requests", lambda reader: reader.recent_requests())
+    pg, ledger = postgres(request, "requests", lambda reader: reader.recent_requests(page=page))
     project_url = settings.langfuse_project_url
     return RequestsPage(
         sources=Sources(postgres=pg, prometheus=prom),
@@ -256,6 +267,8 @@ def requests(request: Request, settings: SettingsDep, days: Days = DEFAULT_DAYS)
         cache_hit_rate=hit_rate,
         requests=tuple(
             row.model_copy(update={"trace_url": trace_url(project_url, row.trace_id)})
-            for row in rows or ()
+            for row in (() if ledger is None else ledger.rows)
         ),
+        requests_page=1 if ledger is None else ledger.page,
+        requests_pages=1 if ledger is None else ledger.pages,
     )

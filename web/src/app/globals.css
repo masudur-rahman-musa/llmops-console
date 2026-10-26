@@ -201,6 +201,14 @@ svg {
   padding: var(--space-1) var(--space-4);
 }
 
+/* The pager under a paged panel: Prev, "Page X of Y", Next on one line. */
+.pager {
+  display: flex;
+  gap: var(--space-3);
+  align-items: baseline;
+  margin: 0 0 var(--space-4);
+}
+
 /* Tables scroll inside their wrapper, so the page itself never scrolls sideways. */
 .table-wrap {
   overflow-x: auto;

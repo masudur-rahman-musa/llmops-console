@@ -11,7 +11,7 @@ without calling it at all.
 are UTC dates. "Today" on the home page is `[UTC midnight, +1 day)` over the live
 ledger rather than the rollup: the rollup refreshes only on
 `make refresh-rollup`. Every query is bounded
-by its window or by `ROW_LIMIT`.
+by its window, by `ROW_LIMIT`, or by `PAGE_SIZE` for the paged request list.
 
 **The rollup may be unpopulated.** PostgreSQL refuses a SELECT from a materialised
 view that was never refreshed, so `cost` asks `pg_matviews.ispopulated` first and
@@ -59,7 +59,10 @@ from app.schemas.provider import Usage
 from app.storage.db import DEFAULT_SCHEMA, checked_schema
 
 ROW_LIMIT: Final[int] = 100
-"""The most rows any list on a page carries."""
+"""The most rows any unpaged list on a page carries."""
+
+PAGE_SIZE: Final[int] = 20
+"""The rows one page of the request list carries."""
 
 COST_ROLLUP: Final[str] = "cost_ledger_daily"
 """The materialised view `migrations/002_cost_ledger.sql` creates."""
@@ -73,6 +76,14 @@ lower than last time" would list a run with fewer cases as a regression."""
 
 class _Read(BaseModel):
     model_config = ConfigDict(frozen=True)
+
+
+class RequestsRead(_Read):
+    """One page of the request list, its number and how many pages there are (at least 1)."""
+
+    rows: tuple[RequestRow, ...]
+    page: int
+    pages: int
 
 
 class HomeRead(_Read):
@@ -152,7 +163,7 @@ class ConsoleReader(Protocol):
 
     def quality(self, *, days: int, now: datetime) -> QualityRead: ...
 
-    def recent_requests(self) -> tuple[RequestRow, ...]: ...
+    def recent_requests(self, *, page: int) -> RequestsRead: ...
 
 
 class UnconfiguredConsoleReader:
@@ -182,8 +193,8 @@ class UnconfiguredConsoleReader:
     def quality(self, *, days: int, now: datetime) -> QualityRead:
         return QualityRead(runs=(), release_markers=(), categories=(), taxonomy=(), blocked=())
 
-    def recent_requests(self) -> tuple[RequestRow, ...]:
-        return ()
+    def recent_requests(self, *, page: int) -> RequestsRead:
+        return RequestsRead(rows=(), page=1, pages=1)
 
 
 def _accuracy(metrics: object) -> float | None:
@@ -420,31 +431,46 @@ class PostgresConsoleReader:
             ),
         )
 
-    def recent_requests(self) -> tuple[RequestRow, ...]:
-        """The newest `ROW_LIMIT` ledger rows, newest first, each with `trace_url` null."""
+    def recent_requests(self, *, page: int) -> RequestsRead:
+        """One page of the ledger, newest first, each row with `trace_url` null.
+
+        OFFSET paging with a `count(*)` on the same connection, since the console shows
+        "Page X of Y" and jumps by page number. `trace_id` breaks a tie on `ts`, so no row
+        shows on two pages. A page past the last serves the last,
+        and an empty ledger is page 1 of 1. Pinned by
+        tests/storage/test_requests_ledger_postgres.py."""
+        table = self._table("cost_ledger")
         with self._pool.connection() as conn:
+            counted = conn.execute(sql.SQL("SELECT count(*) FROM {}").format(table)).fetchone()
+            total = 0 if counted is None else int(counted[0])
+            pages = max(1, -(-total // PAGE_SIZE))
+            page = min(max(page, 1), pages)
             rows = conn.execute(
                 sql.SQL(
                     "SELECT ts, tenant, alias, provider, model, input_tokens, output_tokens, "
                     "cached, cost_usd, prompt_version, trace_id "
-                    "FROM {} ORDER BY ts DESC LIMIT %s"
-                ).format(self._table("cost_ledger")),
-                (ROW_LIMIT,),
+                    "FROM {} ORDER BY ts DESC, trace_id DESC LIMIT %s OFFSET %s"
+                ).format(table),
+                (PAGE_SIZE, (page - 1) * PAGE_SIZE),
             ).fetchall()
-        return tuple(
-            RequestRow(
-                ts=row[0],
-                tenant=row[1],
-                alias=row[2],
-                provider=row[3],
-                model=row[4],
-                input_tokens=row[5],
-                output_tokens=row[6],
-                cached=row[7],
-                cost_usd=float(row[8]),
-                prompt_version=row[9],
-                trace_id=row[10],
-                trace_url=None,
-            )
-            for row in rows
+        return RequestsRead(
+            page=page,
+            pages=pages,
+            rows=tuple(
+                RequestRow(
+                    ts=row[0],
+                    tenant=row[1],
+                    alias=row[2],
+                    provider=row[3],
+                    model=row[4],
+                    input_tokens=row[5],
+                    output_tokens=row[6],
+                    cached=row[7],
+                    cost_usd=float(row[8]),
+                    prompt_version=row[9],
+                    trace_id=row[10],
+                    trace_url=None,
+                )
+                for row in rows
+            ),
         )

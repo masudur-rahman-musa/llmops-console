@@ -20,6 +20,8 @@ export type RequestsBody = {
     prompt_version: string | null;
     trace_url: string | null;
   }>;
+  requests_page: number;
+  requests_pages: number;
 };
 
 const check = shape({
@@ -42,6 +44,8 @@ const check = shape({
       trace_url: nullable(str),
     }),
   ),
+  requests_page: num,
+  requests_pages: num,
 });
 
 export function requestsGuard(value: unknown): value is RequestsBody {

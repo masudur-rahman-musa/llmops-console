@@ -1,6 +1,6 @@
 """The `prompt_version` ledger column and the newest-requests read, against a real server.
 
-The `db` file of an earlier change: the column, the INSERT that fills it and the newest-first capped
+The `db` file of an earlier change: the column, the INSERT that fills it and the newest-first paged
 read are things only PostgreSQL can show. Every case runs the SHIPPED migrations into a
 throwaway schema (the fixtures in tests/storage/conftest.py, unchanged), so a column added
 to the SQL file and not to the writer's INSERT, or the reverse, is a failure here.
@@ -11,8 +11,8 @@ The contract these cases are written against, before it exists:
   `cost_ledger.prompt_version`;
 * `CostLedgerRow.prompt_version: str | None` (default None) is written by
   `PostgresCostLedgerWriter`;
-* `PostgresConsoleReader.recent_requests() -> tuple[RequestRow, ...]` answers the newest
-  `ROW_LIMIT` ledger rows, newest first, with `trace_url` None (the route builds the link).
+* `PostgresConsoleReader.recent_requests(*, page) -> RequestsRead` answers one page of
+  `PAGE_SIZE` ledger rows, newest first, with `trace_url` None (the route builds the link).
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from psycopg import sql
 from app.schemas.dashboard import RequestRow
 from app.storage import CostLedgerRow, PostgresCostLedgerWriter
 from app.storage.cost_ledger import COST_LEDGER
-from app.storage.dashboard_reads import ROW_LIMIT, PostgresConsoleReader
+from app.storage.dashboard_reads import PAGE_SIZE, PostgresConsoleReader
 
 from .conftest import Pool, requires_postgres
 
@@ -113,14 +113,10 @@ def test_writer_stores_prompt_version(pool: Pool, migrated_schema: str) -> None:
     assert (tenant, model) == ("nordlicht", "claude-haiku-5-5")
 
 
-def test_recent_requests_are_newest_first_and_capped(pool: Pool, migrated_schema: str) -> None:
-    """Catches a read in insertion order (the rows go in oldest first), one without the
-    LIMIT (101 rows are stored), one that keeps the oldest 100 instead of the newest, and
-    one that drops a column on the way out. `input_tokens` carries the row's age in
-    minutes, so the order is read off the rows themselves."""
-    assert ROW_LIMIT == 100
-    writer = PostgresCostLedgerWriter(pool, schema=migrated_schema)
-    for minutes in range(100, -1, -1):
+def write_rows(pool: Pool, schema: str, count: int) -> None:
+    """Store `count` rows; `input_tokens` carries the row's age in minutes (0 is newest)."""
+    writer = PostgresCostLedgerWriter(pool, schema=schema)
+    for minutes in range(count - 1, -1, -1):
         writer.write(
             a_row(
                 ts=NEWEST - timedelta(minutes=minutes),
@@ -132,12 +128,26 @@ def test_recent_requests_are_newest_first_and_capped(pool: Pool, migrated_schema
         )
     writer.flush()
 
-    read = PostgresConsoleReader(pool, schema=migrated_schema).recent_requests()
 
-    assert len(read) == 100
-    assert [row.input_tokens for row in read] == list(range(100))
-    assert 100 not in [row.input_tokens for row in read]
-    assert read[0] == RequestRow(
+def test_requests_are_paged_newest_first(pool: Pool, migrated_schema: str) -> None:
+    """Catches a read in insertion order, one with no OFFSET (every page the same), one that
+    pages by the wrong size, one that miscounts the pages, a repeat across pages, and one
+    that drops a column on the way out."""
+    assert PAGE_SIZE == 20
+    write_rows(pool, migrated_schema, 121)
+    reader = PostgresConsoleReader(pool, schema=migrated_schema)
+
+    reads = [reader.recent_requests(page=page) for page in range(1, 8)]
+
+    assert [read.page for read in reads] == list(range(1, 8))
+    assert {read.pages for read in reads} == {7}
+    ages = [[row.input_tokens for row in read.rows] for read in reads]
+    assert ages[0] == list(range(20))
+    assert ages[6] == [120]
+    assert [len(a) for a in ages] == [20, 20, 20, 20, 20, 20, 1]
+    flat = [age for page in ages for age in page]
+    assert flat == list(range(121))
+    assert reads[0].rows[0] == RequestRow(
         ts=NEWEST,
         tenant="nordlicht",
         alias="agent-default",
@@ -151,5 +161,23 @@ def test_recent_requests_are_newest_first_and_capped(pool: Pool, migrated_schema
         trace_id=TRACE_ID,
         trace_url=None,
     )
-    assert read[1].cached is True
-    assert read[1].prompt_version is None
+    assert reads[0].rows[1].cached is True
+    assert reads[0].rows[1].prompt_version is None
+
+
+def test_a_page_past_the_last_serves_the_last(pool: Pool, migrated_schema: str) -> None:
+    """Catches a read that answers an empty page (or fails) when the page is past the end,
+    or that reports the asked page number instead of the page it served."""
+    write_rows(pool, migrated_schema, 121)
+
+    read = PostgresConsoleReader(pool, schema=migrated_schema).recent_requests(page=99)
+
+    assert (read.page, read.pages) == (7, 7)
+    assert [row.input_tokens for row in read.rows] == [120]
+
+
+def test_an_empty_ledger_is_one_empty_page(pool: Pool, migrated_schema: str) -> None:
+    """Catches a read that answers 0 pages (page X of 0) or a page 0 for an empty ledger."""
+    read = PostgresConsoleReader(pool, schema=migrated_schema).recent_requests(page=1)
+
+    assert (read.page, read.pages, read.rows) == (1, 1, ())

@@ -221,7 +221,8 @@ class RequestsPage(_Body):
     """What the gateway hid, tokens per model, the cache hit rate and the newest requests.
 
     `guardrail_blocks` and `cache_hit_rate` are null when Prometheus has no series:
-    no traffic is not a 0% hit rate."""
+    no traffic is not a 0% hit rate. `requests` is one page of the ledger:
+    `requests_page` of `requests_pages`, newest first."""
 
     sources: Sources
     redactions: tuple[RedactionCount, ...]
@@ -230,3 +231,5 @@ class RequestsPage(_Body):
     tokens: tuple[ModelTokens, ...]
     cache_hit_rate: float | None
     requests: tuple[RequestRow, ...]
+    requests_page: int
+    requests_pages: int

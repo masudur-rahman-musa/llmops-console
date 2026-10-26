@@ -1,10 +1,12 @@
 import { consolePage } from "@/components/layout/console-page";
 import { ExternalLink } from "@/components/ui/external-link";
 import { LineChart } from "@/components/ui/line-chart";
+import { Pager } from "@/components/ui/pager";
 import { Table } from "@/components/ui/table";
 import type { GateScore } from "@/features/quality/guards";
 import { NA, shortSha } from "@/lib/format";
 import { CHECK_SCORE_SENTENCE, scoreLabel } from "@/lib/labels";
+import { PAGE_PARAMS, pageOf } from "@/lib/paging";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +28,9 @@ function gateCells(row: GateScore): string[] {
   return [row.label, score(row.value), score(row.threshold), result];
 }
 
-export default consolePage("quality", "Quality", "Does the help desk still answer well enough to ship?", (body) => {
+export default consolePage("quality", "Quality", "Does the help desk still answer well enough to ship?", (body, params) => {
+  const taxonomy = pageOf(body.taxonomy, params, PAGE_PARAMS.taxonomy);
+  const blocked = pageOf(body.blocked, params, PAGE_PARAMS.blocked);
   // The chart drops a run whose score is absent or null, and sorts by time itself.
   const scores = body.runs.map((run): [number, number] => {
     const value = run.metrics.check_score;
@@ -74,15 +78,16 @@ export default consolePage("quality", "Quality", "Does the help desk still answe
       <p>Why cases failed: each failure tag and how many cases carry it.</p>
       <Table
         columns={["Failure tag", "Cases"]}
-        rows={body.taxonomy.map((tag) => ({
+        rows={taxonomy.rows.map((tag) => ({
           key: tag.tag,
           cells: [tag.tag, tag.count],
         }))}
       />
+      <Pager name={PAGE_PARAMS.taxonomy} page={taxonomy.page} pages={taxonomy.pages} params={params} />
 
       <h2>Blocked releases</h2>
       <ul>
-        {body.blocked.map((item) => (
+        {blocked.rows.map((item) => (
           <li key={`${item.git_sha}/${item.deployed_at}`}>
             <code>{shortSha(item.git_sha)}</code> <ExternalLink url={item.pr_url} label="PR" />
             {item.regressed.length === 0 ? (
@@ -99,6 +104,7 @@ export default consolePage("quality", "Quality", "Does the help desk still answe
           </li>
         ))}
       </ul>
+      <Pager name={PAGE_PARAMS.blocked} page={blocked.page} pages={blocked.pages} params={params} />
     </>
   );
 });

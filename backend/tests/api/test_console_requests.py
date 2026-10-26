@@ -40,6 +40,7 @@ from app.services.prometheus_reads import (
     refusals_query,
     tokens_query,
 )
+from app.storage.dashboard_reads import RequestsRead
 
 from .conftest import ADMIN_KEY, NO_PROVIDER_KEYS, TEST_KEYS, assert_error_body
 
@@ -107,13 +108,17 @@ class StubReader:
         self.configured = True
         self.rows = rows
         self.calls: list[str] = []
+        self.pages_asked: list[int] = []
         self.error: Exception | None = None
+        self.answer_page = 1
+        self.answer_pages = 1
 
-    def recent_requests(self) -> tuple[RequestRow, ...]:
+    def recent_requests(self, *, page: int) -> RequestsRead:
         self.calls.append("recent_requests")
+        self.pages_asked.append(page)
         if self.error is not None:
             raise self.error
-        return self.rows
+        return RequestsRead(rows=self.rows, page=self.answer_page, pages=self.answer_pages)
 
 
 def series(labels: dict[str, str], value: str) -> dict[str, Any]:
@@ -244,6 +249,8 @@ def test_requests_body_maps_counts(wired: Wired) -> None:
         "tokens",
         "cache_hit_rate",
         "requests",
+        "requests_page",
+        "requests_pages",
     }
     assert body["sources"] == {"postgres": "ok", "prometheus": "ok"}
     assert sorted(body["redactions"], key=lambda r: r["kind"]) == [
@@ -265,6 +272,7 @@ def test_requests_body_maps_counts(wired: Wired) -> None:
         ("cuan", None),
     ]
     assert wired.reader.calls == ["recent_requests"]
+    assert wired.reader.pages_asked == [1]
 
 
 def test_no_traffic_gives_null_rate_and_blocks(wired: Wired) -> None:
@@ -391,6 +399,8 @@ def test_nothing_configured_is_200_with_both_sources_unconfigured(admin_settings
         "tokens": [],
         "cache_hit_rate": None,
         "requests": [],
+        "requests_page": 1,
+        "requests_pages": 1,
     }
 
 
@@ -434,3 +444,58 @@ def test_days_0_is_refused(wired: Wired) -> None:
     assert wired.prom.queries == []
 
     assert wired.get(days=1).status_code == 200
+
+
+def test_the_page_reaches_the_reader(wired: Wired) -> None:
+    """Catches a route that drops `page` (the reader always gets 1), passes it positionally
+    or as text, or fills the body's page numbers from the query instead of from the read."""
+    wired.reader.answer_page = 2
+    wired.reader.answer_pages = 7
+
+    body = wired.body(page=3)
+
+    assert wired.reader.pages_asked == [3]
+    assert (body["requests_page"], body["requests_pages"]) == (2, 7)
+
+
+def test_the_default_page_is_1(wired: Wired) -> None:
+    """Catches a missing default (422 with no `page`) or a default other than 1."""
+    wired.body()
+
+    assert wired.reader.pages_asked == [1]
+
+
+def test_page_10000_is_accepted_and_10001_refused(wired: Wired) -> None:
+    """Catches an upper bound of 9999 or 10001 or none at all: 10000 is served, 10001 is a
+    422 VALIDATION naming `page`, and the reader is never called for it."""
+    wired.body(page=10000)
+    assert wired.reader.pages_asked == [10000]
+
+    response = wired.get(page=10001)
+
+    assert_error_body(response, status=422, code="VALIDATION")
+    assert response.json()["error"]["param"] == "page"
+    assert wired.reader.pages_asked == [10000]
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "abc"], ids=["zero", "negative", "text"])
+def test_page_0_and_abc_are_refused(value: str, wired: Wired) -> None:
+    """Catches a lower bound of 0 (or none) and a page read as text: each is a 422
+    VALIDATION naming `page`, and nothing is read."""
+    response = wired.get(page=value)
+
+    assert_error_body(response, status=422, code="VALIDATION")
+    assert response.json()["error"]["param"] == "page"
+    assert wired.reader.calls == []
+
+
+def test_postgres_down_is_one_empty_page(wired: Wired) -> None:
+    """Catches a dead ledger that leaves the page numbers at 0 or at the asked page, or
+    drops the two fields from the body: it must read page 1 of 1 with no rows."""
+    wired.reader.error = psycopg.OperationalError("connection refused")
+
+    body = wired.body(page=4)
+
+    assert body["sources"]["postgres"] == "error"
+    assert (body["requests_page"], body["requests_pages"]) == (1, 1)
+    assert body["requests"] == []

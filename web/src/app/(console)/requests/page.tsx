@@ -1,7 +1,9 @@
 import { consolePage } from "@/components/layout/console-page";
 import { ExternalLink } from "@/components/ui/external-link";
+import { Pager } from "@/components/ui/pager";
 import { Table } from "@/components/ui/table";
 import { NA, percent, shortSha, usd, utcTime } from "@/lib/format";
+import { PAGE_PARAMS } from "@/lib/paging";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +15,7 @@ export default consolePage(
   "requests",
   "Requests",
   "What did the gateway hide, how many tokens went in and out, how often did the cache answer, and where is each request's trace?",
-  (body) => (
+  (body, params) => (
     <>
       <p>Cache hit rate: {percent(body.cache_hit_rate)}</p>
       <p>Guardrail blocks (one person asking for and approving the same thing): {count(body.guardrail_blocks)}</p>
@@ -49,6 +51,7 @@ export default consolePage(
           ],
         }))}
       />
+      <Pager name={PAGE_PARAMS.requests} page={body.requests_page} pages={body.requests_pages} params={params} />
     </>
   ),
 );

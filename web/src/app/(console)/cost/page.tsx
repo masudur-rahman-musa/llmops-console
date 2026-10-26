@@ -1,7 +1,9 @@
 import { consolePage } from "@/components/layout/console-page";
+import { Pager } from "@/components/ui/pager";
 import { Table } from "@/components/ui/table";
 import { NA, usd } from "@/lib/format";
 import { CHECK_SCORE_SENTENCE, scoreLabel } from "@/lib/labels";
+import { PAGE_PARAMS, pageOf } from "@/lib/paging";
 import { TRADEOFF_METRICS, readTradeoff, type Tradeoff } from "@/lib/tradeoff";
 
 export const dynamic = "force-dynamic";
@@ -32,28 +34,32 @@ function TradeoffTable({ table }: { table: Tradeoff | null }) {
   );
 }
 
-export default consolePage("cost", "Cost", "What does the AI cost, per day, per tenant and per model, and what did caching save?", async (body) => {
+export default consolePage("cost", "Cost", "What does the AI cost, per day, per tenant and per model, and what did caching save?", async (body, params) => {
   const tradeoff = await readTradeoff(process.env.CONSOLE_TRADEOFF_PATH);
+  const days = pageOf(body.days, params, PAGE_PARAMS.days);
+  const savings = pageOf(body.savings, params, PAGE_PARAMS.savings);
   return (
     <>
       <h2>Daily cost</h2>
       {body.rollup_populated === false && <p className="note">Daily rollup not yet populated.</p>}
       <Table
         columns={["Day", "Tenant", "Provider", "Requests", "Cached requests", "Cost"]}
-        rows={body.days.map((day) => ({
+        rows={days.rows.map((day) => ({
           key: `${day.day}/${day.tenant}/${day.provider}`,
           cells: [day.day, day.tenant, day.provider, day.requests, day.cached_requests, usd(day.cost_usd)],
         }))}
       />
+      <Pager name={PAGE_PARAMS.days} page={days.page} pages={days.pages} params={params} />
 
       <h2>Cache savings</h2>
       <Table
         columns={["Day", "Tenant", "Saved"]}
-        rows={body.savings.map((saving) => ({
+        rows={savings.rows.map((saving) => ({
           key: `${saving.day}/${saving.tenant}`,
           cells: [saving.day, saving.tenant, usd(saving.saved_usd)],
         }))}
       />
+      <Pager name={PAGE_PARAMS.savings} page={savings.page} pages={savings.pages} params={params} />
       <p>Estimated cache savings: {usd(body.savings_usd_total)}</p>
 
       <h2>Budgets this month</h2>

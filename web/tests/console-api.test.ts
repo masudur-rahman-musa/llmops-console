@@ -99,6 +99,22 @@ describe("getConsolePage", () => {
     }
   });
 
+  it("the requests call carries only its page", async () => {
+    // Catches a client that drops the page from the requests call, adds a query string to the other calls, or builds the query from anything but the whole number it was given.
+    const { deps, fetch } = harness(okResponse(fixture("requests")));
+    const result = await getConsolePage("requests", deps, { page: 4 });
+    expect(result.ok).toBe(true);
+    expect(fetchedUrl(fetch)).toBe(`${BASE}/console/requests?page=4`);
+
+    const plain = harness(okResponse(fixture("requests")));
+    await getConsolePage("requests", plain.deps);
+    expect(fetchedUrl(plain.fetch)).toBe(`${BASE}/console/requests`);
+
+    const cost = harness(okResponse(fixture("cost")));
+    await getConsolePage("cost", cost.deps);
+    expect(fetchedUrl(cost.fetch)).toBe(`${BASE}/console/cost`);
+  });
+
   it("an unset url or key makes no fetch and is unconfigured with an error log", async () => {
     // Catches a client that fetches, or answers anything but unconfigured, or stays silent, when either variable is unset or empty.
     const envs: Array<Record<string, string | undefined>> = [
