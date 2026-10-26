@@ -106,6 +106,7 @@ const RENDERED: Record<PageName, Path[]> = {
     ["release_markers", -1, "git_sha"],
     ["release_markers", -1, "deployed_at"],
     ["release_markers", -1, "status"],
+    ["release_markers", -1, "eval_run_id"],
     ["categories", -1, "category"],
     ["categories", -1, "passed"],
     ["categories", -1, "total"],
@@ -177,6 +178,14 @@ describe("page body guards", () => {
     const nullCost = withValue("cost", ["rollup_populated"], null);
     nullCost.savings_usd_total = null;
     expect(passes("cost", nullCost), "cost nulls").toBe(true);
+  });
+
+  it("quality guard takes a marker eval_run_id", () => {
+    // Catches a quality guard that refuses a marker with no run (null), or one that lets a non-string run id through.
+    const path: Path = ["release_markers", -1, "eval_run_id"];
+    expect(passes("quality", withValue("quality", path, null))).toBe(true);
+    expect(passes("quality", withValue("quality", path, "run-2026-09-14-nightly"))).toBe(true);
+    expect(passes("quality", withValue("quality", path, 7))).toBe(false);
   });
 
   it("home guard takes a null verdict", () => {

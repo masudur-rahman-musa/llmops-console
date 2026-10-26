@@ -181,8 +181,9 @@ class Settings(BaseSettings):
 
     Read only by `GET /console/home`. It must be an `http` or `https` URL with a
     host, checked here so a `javascript:` value never reaches a link; the console
-    checks it again before it draws one. Empty counts as unset. Unset on the
-    cluster until Grafana has a public address. Pinned by
+    checks it again before it draws one. Empty counts as unset, which is the local
+    value: no Grafana runs locally. On the cluster `gateway-config` points it at the
+    `gateway-overview` dashboard (infra/tests/infra/test_grafana_link.py). Pinned by
     tests/core/test_config.py::test_grafana_url_accepts_http_and_https_only."""
 
     @field_validator("grafana_url")

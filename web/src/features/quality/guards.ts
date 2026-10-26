@@ -15,7 +15,7 @@ export type QualityBody = {
   sources: Sources;
   gate: Array<GateScore>;
   runs: Array<{ id: string; started_at: string; passed: boolean; metrics: Record<string, unknown> }>;
-  release_markers: Array<{ git_sha: string; deployed_at: string; status: string }>;
+  release_markers: Array<{ git_sha: string; deployed_at: string; status: string; eval_run_id: string | null }>;
   categories: Array<{ category: string; passed: number; total: number }>;
   taxonomy: Array<{ tag: string; count: number }>;
   blocked: Array<{
@@ -39,7 +39,7 @@ const check = shape({
     }),
   ),
   runs: listOf(shape({ id: str, started_at: str, passed: bool, metrics: isRecord })),
-  release_markers: listOf(shape({ git_sha: str, deployed_at: str, status: str })),
+  release_markers: listOf(shape({ git_sha: str, deployed_at: str, status: str, eval_run_id: nullable(str) })),
   categories: listOf(shape({ category: str, passed: int, total: int })),
   taxonomy: listOf(shape({ tag: str, count: int })),
   blocked: listOf(

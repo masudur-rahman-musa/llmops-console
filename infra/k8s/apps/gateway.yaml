@@ -53,6 +53,11 @@ data:
   # `gateway-egress` and `prometheus-ingress-from-gateway` open the path.
   OPSCONSOLE_PROMETHEUS_URL: http://prometheus.monitoring.svc.cluster.local:9090
   OPSCONSOLE_ENV: production
+  # The Grafana page the Overview tab links for health details: the Grafana
+  # Ingress host in `monitoring/ingress.yaml` plus the `uid` of
+  # `monitoring/dashboards/gateway-overview.json`. `test_grafana_link.py` keeps
+  # the three in step.
+  OPSCONSOLE_GRAFANA_URL: https://grafana.example.com/d/gateway-overview
   # What this process is called in a trace viewer. One trace carries spans from
   # the Helpdesk and from the gateway, so the two need different names.
   OPSCONSOLE_OTEL_SERVICE_NAME: opsconsole-gateway

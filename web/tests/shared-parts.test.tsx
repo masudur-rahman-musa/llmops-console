@@ -42,6 +42,19 @@ function headers(html: string): string[] {
 }
 
 describe("Table part", () => {
+  it("table with no rows says none in this window", () => {
+    // Catches a Table that draws only its header for an empty list, or one that shows the line beside real rows.
+    const empty = renderToStaticMarkup(<Table columns={["Reason", "Refusals"]} rows={[]} />);
+    expect(empty).toContain("None in this window.");
+    expect(empty).not.toContain("<table");
+
+    const full = renderToStaticMarkup(
+      <Table columns={["Reason", "Refusals"]} rows={[{ key: "a", cells: ["no_source", "3"] }]} />,
+    );
+    expect(full).toContain("<table");
+    expect(full).not.toContain("None in this window.");
+  });
+
   it("table with columns renders the table-wrap thead tbody shape", () => {
     // Catches a Table that drops the wrap, skips the header row, loses a column, or reorders cells within a row.
     const html = renderToStaticMarkup(

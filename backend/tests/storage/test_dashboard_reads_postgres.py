@@ -628,6 +628,35 @@ def test_quality_runs_categories_taxonomy_and_markers(pool: Pool, migrated_schem
     )
 
 
+def test_a_release_marker_names_its_eval_run(pool: Pool, migrated_schema: str) -> None:
+    """Catches a markers select that leaves `eval_run_id` out (every marker reads back with no
+    run), one that reads it from the wrong column, and a missing link turned into an empty
+    string instead of `None`."""
+    schema = migrated_schema
+    insert_run(pool, schema, run_id="linked", started_at=NOW - timedelta(days=3), metrics={})
+    insert_release(
+        pool, schema, git_sha="with-run", deployed_at=NOW - timedelta(days=1), eval_run_id="linked"
+    )
+    insert_release(pool, schema, git_sha="no-run", deployed_at=NOW - timedelta(days=2))
+
+    read = PostgresConsoleReader(pool, schema=schema).quality(days=30, now=NOW)
+
+    assert read.release_markers == (
+        ReleaseMarker(
+            git_sha="with-run",
+            deployed_at=NOW - timedelta(days=1),
+            status="deployed",
+            eval_run_id="linked",
+        ),
+        ReleaseMarker(
+            git_sha="no-run",
+            deployed_at=NOW - timedelta(days=2),
+            status="deployed",
+            eval_run_id=None,
+        ),
+    )
+
+
 def insert_accuracy_run(
     pool: Pool,
     schema: str,

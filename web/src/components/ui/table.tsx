@@ -1,7 +1,15 @@
 import type { ReactNode } from "react";
 
-/** One `table-wrap` > table > [thead] > tbody. With `columns` it draws a header row; without, none. */
+export const NONE_IN_WINDOW = "None in this window.";
+
+/**
+ * One `table-wrap` > table > [thead] > tbody. With `columns` it draws a header row; without, none.
+ * No rows draws only the `None in this window.` line, never a bare header. Pinned by tests/shared-parts.test.tsx.
+ */
 export function Table({ columns, rows }: { columns?: string[]; rows: Array<{ key: string; cells: ReactNode[] }> }) {
+  if (rows.length === 0) {
+    return <p className="note">{NONE_IN_WINDOW}</p>;
+  }
   return (
     <div className="table-wrap">
       <table>

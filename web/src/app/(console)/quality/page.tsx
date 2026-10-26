@@ -2,7 +2,7 @@ import { consolePage } from "@/components/layout/console-page";
 import { ExternalLink } from "@/components/ui/external-link";
 import { LineChart } from "@/components/ui/line-chart";
 import { Pager } from "@/components/ui/pager";
-import { Table } from "@/components/ui/table";
+import { NONE_IN_WINDOW, Table } from "@/components/ui/table";
 import type { GateScore } from "@/features/quality/guards";
 import { NA, points, shortSha } from "@/lib/format";
 import { CHECK_SCORE_SENTENCE, scoreLabel } from "@/lib/labels";
@@ -31,6 +31,13 @@ export default consolePage("quality", "Quality", "Does the help desk still answe
     const value = run.metrics.check_score;
     return [seconds(run.started_at), typeof value === "number" ? value : Number.NaN];
   });
+  // Each marker sits at the run that let its release through, so the time axis spans the runs only.
+  // A release with no run, or whose run is outside the window, draws no marker.
+  const runTimes = new Map(body.runs.map((run) => [run.id, seconds(run.started_at)]));
+  const markers = body.release_markers.flatMap((marker) => {
+    const at = marker.eval_run_id === null ? undefined : runTimes.get(marker.eval_run_id);
+    return at === undefined ? [] : [at];
+  });
   return (
     <>
       <h2>Eval gate</h2>
@@ -51,7 +58,7 @@ export default consolePage("quality", "Quality", "Does the help desk still answe
       <LineChart
         title="Check score"
         points={scores}
-        markers={body.release_markers.map((marker) => seconds(marker.deployed_at))}
+        markers={markers}
       />
 
       <h2>Categories</h2>
@@ -81,6 +88,7 @@ export default consolePage("quality", "Quality", "Does the help desk still answe
       <Pager name={PAGE_PARAMS.taxonomy} page={taxonomy.page} pages={taxonomy.pages} params={params} />
 
       <h2>Blocked releases</h2>
+      {blocked.rows.length === 0 && <p className="note">{NONE_IN_WINDOW}</p>}
       <ul>
         {blocked.rows.map((item) => (
           <li key={`${item.git_sha}/${item.deployed_at}`}>

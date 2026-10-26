@@ -25,3 +25,13 @@ def test_env_example_lists_the_tracing_names(name: str) -> None:
 
     assert len(commented) == 1, f"{name} must appear once as a commented line"
     assert live == []
+
+
+def test_env_example_lists_the_grafana_link() -> None:
+    """Catches a file that leaves `OPSCONSOLE_GRAFANA_URL` out, writes it only as a comment, or
+    ships a value in it: the list to fill when going live must carry the name with no value."""
+    lines = ENV_EXAMPLE.read_text(encoding="utf-8").splitlines()
+
+    assert [line for line in lines if line.startswith("OPSCONSOLE_GRAFANA_URL")] == [
+        "OPSCONSOLE_GRAFANA_URL="
+    ]

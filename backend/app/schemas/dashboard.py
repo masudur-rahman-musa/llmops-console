@@ -74,6 +74,10 @@ class ReleaseMarker(_Body):
     git_sha: str
     deployed_at: datetime
     status: str
+    eval_run_id: str | None = None
+    """The eval run that let this release through, so the Quality chart draws the marker
+    at that run. `None` when no run was recorded. Pinned by
+    tests/storage/test_dashboard_reads_postgres.py::test_a_release_marker_names_its_eval_run."""
 
 
 class CategoryCount(_Body):

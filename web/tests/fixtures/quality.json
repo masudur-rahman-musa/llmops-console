@@ -42,12 +42,14 @@
     {
       "git_sha": "5e2d8c1b9a7f6e5d4c3b2a19f8e7d6c5b4a39281",
       "deployed_at": "2026-09-13T10:00:00Z",
-      "status": "deployed"
+      "status": "deployed",
+      "eval_run_id": "run-2026-09-14-nightly"
     },
     {
       "git_sha": "3f9c2a7b1e4d5c6f7a8b9c0d1e2f3a4b5c6d7e8f",
       "deployed_at": "2026-09-15T09:00:00Z",
-      "status": "blocked"
+      "status": "blocked",
+      "eval_run_id": "run-2026-09-15-pr"
     }
   ],
   "categories": [

@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock, type MockIn
 import HomePage, { dynamic as homeDynamic } from "@/app/(console)/page";
 import CostPage, { dynamic as costDynamic } from "@/app/(console)/cost/page";
 import QualityPage, { dynamic as qualityDynamic } from "@/app/(console)/quality/page";
+import RequestsPage from "@/app/(console)/requests/page";
 
 type PageName = "home" | "cost" | "quality";
 type Fixture = Record<string, unknown>;
@@ -351,6 +352,54 @@ describe("console pages", () => {
     expect(has(over, "$75.00 of $50.00")).toBe(true);
     expect(over).not.toMatch(/width:\s*150%/);
     expect(count(over, /width:\s*100%/g) - count(ok, /width:\s*100%/g)).toBe(1);
+  });
+
+  it("quality markers sit at their own runs", async () => {
+    // Catches a marker drawn at its deploy time (stretching the axis past the runs) instead of at the run that let the release through.
+    const html = await render("quality");
+    const chart = svgs(html).filter((svg) => count(svg, /<circle\b/g) > 0)[0];
+    const circles = Array.from(chart.matchAll(/<circle\b[^>]*\bcx="([^"]*)"/g), (m) => Number(m[1]));
+    const lines = Array.from(chart.matchAll(/<line\b[^>]*\bx1="([^"]*)"/g), (m) => Number(m[1]));
+    // Runs by time: 09-12, 09-14, 09-15. Markers name the 09-14 and 09-15 runs.
+    expect(circles).toHaveLength(3);
+    expect(circles[0]).toBe(8);
+    expect(circles[2]).toBe(592);
+    expect(lines).toEqual([circles[1], circles[2]]);
+  });
+
+  it("quality drops a marker whose run is not in the window", async () => {
+    // Catches a marker still drawn at its deploy time when it names no run or a run the window does not hold.
+    const body = fixture("quality");
+    const markers = list(body, "release_markers");
+    markers[0].eval_run_id = null;
+    markers[1].eval_run_id = "run-not-in-window";
+    const html = await render("quality", body);
+    const chart = svgs(html).filter((svg) => count(svg, /<circle\b/g) > 0)[0];
+    expect(count(chart, /<line[\s/>]/g)).toBe(0);
+    expect(count(chart, /<circle\b/g)).toBe(3);
+  });
+
+  it("empty panels say none in this window", async () => {
+    // Catches an empty refusals or taxonomy table drawn as a bare header, and an empty Blocked releases drawn as a bare heading.
+    const section = (html: string, heading: string): string => {
+      const start = html.indexOf(`<h2>${heading}</h2>`);
+      expect(start, heading).toBeGreaterThan(-1);
+      const next = html.indexOf("<h2", start + 1);
+      return text(html.slice(start, next === -1 ? undefined : next));
+    };
+    const reqBody = JSON.parse(readFileSync(new URL("./fixtures/requests.json", import.meta.url), "utf8")) as Fixture;
+    reqBody.refusals = [];
+    serveBody(reqBody);
+    const requestsHtml = renderToStaticMarkup(await RequestsPage());
+    expect(section(requestsHtml, "Help desk refusals by reason")).toContain("None in this window.");
+
+    const body = fixture("quality");
+    body.taxonomy = [];
+    body.blocked = [];
+    const html = await render("quality", body);
+    expect(section(html, "Taxonomy")).toContain("None in this window.");
+    expect(section(html, "Blocked releases")).toContain("None in this window.");
+    expect(section(html, "Categories")).not.toContain("None in this window.");
   });
 
   it("blocked with empty regressed renders no regression recorded", async () => {

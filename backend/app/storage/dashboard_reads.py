@@ -392,7 +392,7 @@ class PostgresConsoleReader:
             ).fetchall()
             markers = conn.execute(
                 sql.SQL(
-                    "SELECT git_sha, deployed_at, status FROM {} "
+                    "SELECT git_sha, deployed_at, status, eval_run_id FROM {} "
                     "WHERE deployed_at >= %s ORDER BY deployed_at DESC LIMIT %s"
                 ).format(releases_table),
                 (since, ROW_LIMIT),
@@ -443,7 +443,8 @@ class PostgresConsoleReader:
                 for row in runs
             ),
             release_markers=tuple(
-                ReleaseMarker(git_sha=row[0], deployed_at=row[1], status=row[2]) for row in markers
+                ReleaseMarker(git_sha=row[0], deployed_at=row[1], status=row[2], eval_run_id=row[3])
+                for row in markers
             ),
             categories=tuple(
                 CategoryCount(category=row[0], passed=row[1], total=row[2]) for row in categories
