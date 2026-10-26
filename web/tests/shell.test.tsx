@@ -50,7 +50,7 @@ describe("console shell", () => {
     expect(occurrences(fresh, "Sign-in failed.")).toBe(0);
   });
 
-  it("the nav carries eight links in order with their labels", () => {
+  it("the nav carries four links in order with their labels", () => {
     // Catches a nav with a missing, extra, reordered, mislabelled or wrongly addressed link, or nav rendered after the page content.
     const html = renderToStaticMarkup(
       <ConsoleLayout>
@@ -64,14 +64,10 @@ describe("console shell", () => {
       label: match[2].replace(/<[^>]*>/g, "").trim(),
     }));
     expect(links).toEqual([
-      { href: "/", label: "Home" },
+      { href: "/", label: "Overview" },
+      { href: "/requests", label: "Requests" },
       { href: "/cost", label: "Cost" },
       { href: "/quality", label: "Quality" },
-      { href: "/reliability", label: "Reliability" },
-      { href: "/incidents", label: "Incidents" },
-      { href: "/releases", label: "Releases" },
-      { href: "/models", label: "Models" },
-      { href: "/requests", label: "Requests" },
     ]);
     expect(html.indexOf('id="child"')).toBeGreaterThan(html.indexOf("</nav>"));
   });

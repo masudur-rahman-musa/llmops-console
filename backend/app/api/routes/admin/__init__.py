@@ -1,1 +1,1 @@
-"""The operator surface: routing view and reload, incidents, releases, directory."""
+"""The operator surface: routing view and reload, releases, directory."""

@@ -138,7 +138,7 @@ def test_the_admin_routes_are_split() -> None:
     app_dir = Path(app.__file__).parent
     admin_dir = app_dir / "api" / "routes" / "admin"
     assert admin_dir.is_dir(), f"expected admin route package at {admin_dir}"
-    for leaf in ("routing.py", "incidents.py", "releases.py", "directory.py"):
+    for leaf in ("routing.py", "releases.py", "directory.py"):
         assert (admin_dir / leaf).is_file(), f"expected admin route file {admin_dir / leaf}"
     routes_dir = app_dir / "api" / "routes"
     for leaf in ("dashboard.py", "health.py", "model_list.py"):
@@ -230,8 +230,6 @@ _DASHBOARD_MODEL_NAMES = (
     "CategoryCount",
     "TagCount",
     "Regression",
-    "Incident",
-    "Release",
 )
 
 

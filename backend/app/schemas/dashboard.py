@@ -88,17 +88,6 @@ class Regression(_Body):
     previous: float
 
 
-class Incident(_Body):
-    id: str
-    started_at: datetime
-    resolved_at: datetime | None
-    severity: str
-    title: str
-    summary: str
-    postmortem_url: str | None
-    open: bool
-
-
 class RequestRow(_Body):
     """One ledger row as the Requests page lists it.
 
@@ -119,14 +108,25 @@ class RequestRow(_Body):
     trace_url: str | None
 
 
-class Release(_Body):
-    git_sha: str
-    deployed_at: datetime
-    status: str
-    pr_url: str | None
-    eval_run_id: str | None
-    eval_passed: bool | None
-    check_score: float | None
+class ModelCandidate(_Body):
+    provider: str
+    model: str
+
+
+class ModelAlias(_Body):
+    name: str
+    purpose: str | None
+    candidates: tuple[ModelCandidate, ...]
+
+
+class Routing(_Body):
+    """The live routing policy: each alias in file order, its providers in fallback order.
+
+    Read from the policy store, not from Postgres or Prometheus, so no source flag
+    covers it."""
+
+    loaded_at: datetime
+    aliases: tuple[ModelAlias, ...]
 
 
 # --- page bodies ---
@@ -144,7 +144,8 @@ class HomePage(_Body):
     p95_seconds: float | None
     error_rate: float | None
     last_eval: LastEval | None
-    open_incidents: int | None
+    routing: Routing
+    grafana_url: str | None
 
 
 class Budget(_Body):
@@ -195,73 +196,6 @@ class QualityPage(_Body):
     categories: tuple[CategoryCount, ...]
     taxonomy: tuple[TagCount, ...]
     blocked: tuple[BlockedItem, ...]
-
-
-class Circuit(_Body):
-    provider: str
-    state: str
-
-
-class FallbackCount(_Body):
-    tenant: str
-    alias: str
-    provider: str
-    count: float
-
-
-class Slo(_Body):
-    """One SLO's error budget. `budget_remaining` is negative when overspent, never clamped."""
-
-    name: str
-    objective: float
-    window: str
-    observed: float | None
-    budget_remaining: float | None
-
-
-class ReliabilityPage(_Body):
-    sources: Sources
-    slos: tuple[Slo, ...]
-    latency_p95: tuple[tuple[float, float], ...]
-    error_rate: tuple[tuple[float, float], ...]
-    circuits: tuple[Circuit, ...]
-    fallbacks: tuple[FallbackCount, ...]
-
-
-class IncidentsPage(_Body):
-    sources: Sources
-    incidents: tuple[Incident, ...]
-
-
-class ReleasesPage(_Body):
-    sources: Sources
-    releases: tuple[Release, ...]
-
-
-class ModelCandidate(_Body):
-    provider: str
-    model: str
-
-
-class ModelAlias(_Body):
-    name: str
-    purpose: str | None
-    candidates: tuple[ModelCandidate, ...]
-
-
-class ProviderFileRow(_Body):
-    name: str
-    provider: str
-    kind: str
-    enabled: bool
-
-
-class ModelsPage(_Body):
-    """The live routing policy. It reads no Postgres or Prometheus, so it has no `sources`."""
-
-    loaded_at: datetime
-    aliases: tuple[ModelAlias, ...]
-    provider_files: tuple[ProviderFileRow, ...]
 
 
 class RedactionCount(_Body):

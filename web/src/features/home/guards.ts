@@ -1,6 +1,12 @@
-import { bool, int, nullable, num, shape, sources, str, type Sources } from "@/lib/shapes";
+import { bool, int, listOf, nullable, num, shape, sources, str, type Sources } from "@/lib/shapes";
 
-/** The home page body and its guard, checking only the fields the page renders. */
+/** The Overview page body and its guard, checking only the fields the page renders. */
+
+export type RoutingAlias = {
+  name: string;
+  purpose: string | null;
+  candidates: ReadonlyArray<{ provider: string; model: string }>;
+};
 
 export type HomeBody = {
   sources: Sources;
@@ -9,7 +15,8 @@ export type HomeBody = {
   p95_seconds: number | null;
   error_rate: number | null;
   last_eval: { finished_at: string; passed: boolean; check_score: number | null } | null;
-  open_incidents: number | null;
+  routing: { loaded_at: string; aliases: ReadonlyArray<RoutingAlias> };
+  grafana_url: string | null;
 };
 
 const check = shape({
@@ -19,7 +26,13 @@ const check = shape({
   p95_seconds: nullable(num),
   error_rate: nullable(num),
   last_eval: nullable(shape({ finished_at: str, passed: bool, check_score: nullable(num) })),
-  open_incidents: nullable(int),
+  routing: shape({
+    loaded_at: str,
+    aliases: listOf(
+      shape({ name: str, purpose: nullable(str), candidates: listOf(shape({ provider: str, model: str })) }),
+    ),
+  }),
+  grafana_url: nullable(str),
 });
 
 export function homeGuard(value: unknown): value is HomeBody {

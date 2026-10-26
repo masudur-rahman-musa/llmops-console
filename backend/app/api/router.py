@@ -23,7 +23,6 @@ from fastapi import APIRouter, Depends, FastAPI
 
 from app.api.deps import admin_key, request_context
 from app.api.routes.admin.directory import router as directory_router
-from app.api.routes.admin.incidents import router as incidents_router
 from app.api.routes.admin.releases import router as releases_router
 from app.api.routes.admin.routing import router as routing_router
 from app.api.routes.chat import router as chat_router
@@ -73,7 +72,6 @@ def include_routers(app: FastAPI) -> None:
     # Every /admin and /console route behind the admin key.
     _operator = APIRouter(dependencies=list(operator_router.dependencies))
     _operator.include_router(routing_router)
-    _operator.include_router(incidents_router)
     _operator.include_router(releases_router)
     _operator.include_router(dashboard_router)
     _operator.include_router(directory_router)

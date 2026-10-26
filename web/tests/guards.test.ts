@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { CONSOLE_PATHS, GUARDS, type PageName } from "@/lib/console-api";
 
-const PAGES: PageName[] = ["home", "cost", "quality", "reliability", "incidents", "releases", "models", "requests"];
+const PAGES: PageName[] = ["home", "requests", "cost", "quality"];
 
 type Path = ReadonlyArray<string | number>;
 
@@ -55,10 +55,18 @@ const RENDERED: Record<PageName, Path[]> = {
     ["p95_seconds"],
     ["error_rate"],
     ["last_eval"],
-    ["open_incidents"],
+    ["routing"],
+    ["grafana_url"],
     ["last_eval", "finished_at"],
     ["last_eval", "passed"],
     ["last_eval", "check_score"],
+    ["routing", "loaded_at"],
+    ["routing", "aliases"],
+    ["routing", "aliases", -1, "name"],
+    ["routing", "aliases", -1, "purpose"],
+    ["routing", "aliases", -1, "candidates"],
+    ["routing", "aliases", -1, "candidates", -1, "provider"],
+    ["routing", "aliases", -1, "candidates", -1, "model"],
   ],
   cost: [
     ["sources"],
@@ -117,61 +125,6 @@ const RENDERED: Record<PageName, Path[]> = {
     ["gate", -1, "threshold"],
     ["gate", -1, "passed"],
   ],
-  reliability: [
-    ["sources"],
-    ["latency_p95"],
-    ["error_rate"],
-    ["circuits"],
-    ["fallbacks"],
-    ["latency_p95", -1, 1],
-    ["error_rate", -1, 1],
-    ["circuits", -1, "provider"],
-    ["circuits", -1, "state"],
-    ["fallbacks", -1, "tenant"],
-    ["fallbacks", -1, "alias"],
-    ["fallbacks", -1, "provider"],
-    ["fallbacks", -1, "count"],
-    ["slos"],
-    ["slos", -1, "name"],
-    ["slos", -1, "objective"],
-    ["slos", -1, "window"],
-    ["slos", -1, "observed"],
-    ["slos", -1, "budget_remaining"],
-  ],
-  incidents: [
-    ["sources"],
-    ["incidents"],
-    ["incidents", -1, "id"],
-    ["incidents", -1, "started_at"],
-    ["incidents", -1, "resolved_at"],
-    ["incidents", -1, "severity"],
-    ["incidents", -1, "title"],
-    ["incidents", -1, "summary"],
-    ["incidents", -1, "postmortem_url"],
-    ["incidents", -1, "open"],
-  ],
-  releases: [
-    ["sources"],
-    ["releases"],
-    ["releases", -1, "git_sha"],
-    ["releases", -1, "deployed_at"],
-    ["releases", -1, "status"],
-    ["releases", -1, "pr_url"],
-    ["releases", -1, "eval_passed"],
-  ],
-  models: [
-    ["loaded_at"],
-    ["aliases"],
-    ["provider_files"],
-    ["aliases", -1, "name"],
-    ["aliases", -1, "candidates"],
-    ["aliases", -1, "candidates", -1, "provider"],
-    ["aliases", -1, "candidates", -1, "model"],
-    ["provider_files", -1, "name"],
-    ["provider_files", -1, "provider"],
-    ["provider_files", -1, "kind"],
-    ["provider_files", -1, "enabled"],
-  ],
   requests: [
     ["sources"],
     ["redactions"],
@@ -206,7 +159,7 @@ describe("page body guards", () => {
     }
 
     const nullHome = fixture("home");
-    for (const field of ["requests_today", "cost_usd_today", "p95_seconds", "error_rate", "last_eval", "open_incidents"]) {
+    for (const field of ["requests_today", "cost_usd_today", "p95_seconds", "error_rate", "last_eval", "grafana_url"]) {
       nullHome[field] = null;
     }
     expect(passes("home", nullHome), "home all null").toBe(true);
@@ -224,11 +177,6 @@ describe("page body guards", () => {
     const nullCost = withValue("cost", ["rollup_populated"], null);
     nullCost.savings_usd_total = null;
     expect(passes("cost", nullCost), "cost nulls").toBe(true);
-    // Catches a reliability guard that requires a number where a budget row answers null for no traffic.
-    const noTraffic = withValue("reliability", ["slos", 0, "observed"], null);
-    (noTraffic.slos as Array<Record<string, unknown>>)[0].budget_remaining = null;
-    expect(passes("reliability", noTraffic), "slo observed and budget null").toBe(true);
-    expect(passes("reliability", withValue("reliability", ["slos"], [])), "slos empty").toBe(true);
   });
 
   it("a missing rendered field fails the guard", () => {
@@ -246,8 +194,7 @@ describe("page body guards", () => {
 
   it("a sources value outside ok unconfigured error fails the guard", () => {
     // Catches a guard that checks only that sources exists, only one of its two members, or only for the value ok.
-    // The models body reads no source, so it carries no `sources` to check.
-    for (const name of PAGES.filter((page) => page !== "models")) {
+    for (const name of PAGES) {
       for (const source of ["postgres", "prometheus"]) {
         for (const state of ["ok", "unconfigured", "error"]) {
           expect(passes(name, withValue(name, ["sources", source], state)), `${name} ${source} ${state}`).toBe(true);

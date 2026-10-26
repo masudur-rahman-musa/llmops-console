@@ -20,7 +20,7 @@ const SECRET = "0123456789abcdef0123456789abcdef";
 const PASSWORD = "Pw-marker-7f3a9c-correct-horse";
 const NOW_MS = Date.UTC(2026, 8, 16, 12, 0, 0);
 const NOW = Math.floor(NOW_MS / 1000);
-const NAV_PATHS = ["/", "/cost", "/quality", "/reliability", "/incidents", "/releases", "/models", "/requests"];
+const NAV_PATHS = ["/", "/requests", "/cost", "/quality"];
 
 function sha256(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
@@ -172,8 +172,8 @@ describe("POST /api/login", () => {
     }
   });
 
-  it("next accepts each of the eight nav paths", async () => {
-    // Catches an allowlist missing one of the eight nav paths, or a handler that always redirects to root.
+  it("next accepts each of the four nav paths", async () => {
+    // Catches an allowlist missing one of the four nav paths, or a handler that always redirects to root.
     for (const path of NAV_PATHS) {
       expect(safeNext(path)).toBe(path);
       expectSignedIn(await login(post({ password: PASSWORD, next: path })), path);
@@ -181,7 +181,7 @@ describe("POST /api/login", () => {
   });
 
   it("the next rejection table falls back to root", async () => {
-    // Catches an open redirect: a prefix, normalising or URL-parsing check that lets any value other than the eight exact paths through.
+    // Catches an open redirect: a prefix, normalising or URL-parsing check that lets any value other than the four exact paths through.
     const rows = [
       "//evil.example",
       "https://evil.example",

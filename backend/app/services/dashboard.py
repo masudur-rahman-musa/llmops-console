@@ -1,10 +1,9 @@
-"""The console's reads: the two source helpers, the budgets, and the SLO budgets.
+"""The console's reads: the two source helpers and the budgets.
 
 `_postgres` and `_prometheus` each turn one source into a `(state, value)` pair,
 so a page body can render the other source's fields when one is down.
 `_budgets` reads neither source - the counter is the budget store the chat route
-debits - and `_slos` is the two gateway-measured error budgets over the fixed
-`SLO_WINDOW`. `gate_scores` is the quality page's eval gate rows.
+debits. `gate_scores` is the quality page's eval gate rows.
 """
 
 from __future__ import annotations
@@ -20,24 +19,11 @@ from fastapi import Request
 from app.evals.gate import Baseline, BaselineInvalid, load_baseline
 from app.limits.budget import budget_ratio, current_month, to_micro_usd, to_usd
 from app.model_routing.policy import PolicyStore
-from app.schemas.dashboard import Budget, EvalRunSummary, GateScore, Slo, SourceState
-from app.services.prometheus_reads import (
-    AVAILABILITY_ALLOWED_BAD,
-    AVAILABILITY_BUDGET_QUERY,
-    AVAILABILITY_OBJECTIVE,
-    LATENCY_ALLOWED_SLOW,
-    LATENCY_BUDGET_QUERY,
-    LATENCY_THRESHOLD_SECONDS,
-    PrometheusClient,
-    PrometheusError,
-)
+from app.schemas.dashboard import Budget, EvalRunSummary, GateScore, SourceState
+from app.services.prometheus_reads import PrometheusClient, PrometheusError
 from app.storage.dashboard_reads import ConsoleReader
 
 logger = logging.getLogger(__name__)
-
-SLO_WINDOW: Final[str] = "30d"
-"""The window every SLO row reports, matching the `[30d]` in each budget query; it
-never follows `days`."""
 
 
 def postgres[T](
@@ -103,35 +89,6 @@ def budgets(request: Request, tenant: str | None) -> tuple[Budget, ...]:
             )
         )
     return tuple(budgets)
-
-
-def slos(client: PrometheusClient) -> tuple[Slo, ...]:
-    """The two gateway-measured SLO budgets over the fixed `SLO_WINDOW`.
-
-    No traffic makes both ratios `0 / 0`, which Prometheus answers `NaN` and the
-    client drops, so an empty result is `null` rather than a full budget. An overspent budget stays
-    negative. A failure raises
-    `PrometheusError` into the page's one `_prometheus` read, which empties `slos`
-    with everything else.
-    """
-    bad = first(client.instant_query(AVAILABILITY_BUDGET_QUERY))
-    under = first(client.instant_query(LATENCY_BUDGET_QUERY))
-    return (
-        Slo(
-            name="availability",
-            objective=AVAILABILITY_OBJECTIVE,
-            window=SLO_WINDOW,
-            observed=None if bad is None else 1 - bad,
-            budget_remaining=None if bad is None else 1 - bad / AVAILABILITY_ALLOWED_BAD,
-        ),
-        Slo(
-            name="latency",
-            objective=LATENCY_THRESHOLD_SECONDS,
-            window=SLO_WINDOW,
-            observed=under,
-            budget_remaining=None if under is None else 1 - (1 - under) / LATENCY_ALLOWED_SLOW,
-        ),
-    )
 
 
 GATE_SCORES: Final[tuple[tuple[str, str], ...]] = (

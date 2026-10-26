@@ -12,7 +12,7 @@ import {
 
 const BASE = "http://console-api.test";
 const KEY = "adminkey-sentinel-7c41e2d9f0";
-const PAGES: PageName[] = ["home", "cost", "quality", "reliability", "incidents", "releases", "models", "requests"];
+const PAGES: PageName[] = ["home", "requests", "cost", "quality"];
 
 function fixture(name: PageName): unknown {
   return JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), "utf8"));
@@ -46,17 +46,13 @@ afterEach(() => {
 });
 
 describe("getConsolePage", () => {
-  it("the eight paths are pinned", async () => {
+  it("the four paths are pinned", async () => {
     // Catches a path map with a missing, extra or misspelt page, or a client that fetches a path other than the map's own.
     expect(CONSOLE_PATHS).toEqual({
       home: "/console/home",
+      requests: "/console/requests",
       cost: "/console/cost",
       quality: "/console/quality",
-      reliability: "/console/reliability",
-      incidents: "/console/incidents",
-      releases: "/console/releases",
-      models: "/console/models",
-      requests: "/console/requests",
     });
     for (const name of PAGES) {
       const { deps, fetch } = harness(okResponse(fixture(name)));
@@ -165,7 +161,7 @@ describe("getConsolePage", () => {
     const bodies: Array<[string, () => Response]> = [
       ["not json", () => new Response("not json", { status: 200 })],
       ["guard", okResponse(withoutField)],
-      ["other page", okResponse(fixture("releases"))],
+      ["other page", okResponse(fixture("cost"))],
     ];
     for (const [label, respond] of bodies) {
       const { deps, error } = harness(respond);

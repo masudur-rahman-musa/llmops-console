@@ -16,9 +16,8 @@ tests/storage/conftest.py, unchanged.
 
 The contract these cases are written against, before it exists:
 
-* `PostgresConsoleReader(pool, *, schema)` with `home`, `cost`, `quality`,
-  `incidents` and `releases`, answering the frozen read models of
-  `app.storage.dashboard_reads`;
+* `PostgresConsoleReader(pool, *, schema)` with `home`, `cost` and `quality`,
+  answering the frozen read models of `app.storage.dashboard_reads`;
 * a window of `now - timedelta(days=days)`, compared with `>=` on timestamps and
   with `day >= since.date()` on the rollup; "today" is `[UTC midnight, +1 day)`.
 """
@@ -41,15 +40,12 @@ from app.schemas.dashboard import (
     CategoryCount,
     CostDay,
     EvalRunSummary,
-    Incident,
     LastEval,
-    Release,
     ReleaseMarker,
     Saving,
     TagCount,
 )
 from app.storage.dashboard_reads import (
-    ROW_LIMIT,
     BlockedRelease,
     HomeRead,
     PostgresConsoleReader,
@@ -188,30 +184,6 @@ def insert_case(
         )
 
 
-def insert_incident(
-    pool: Pool,
-    schema: str,
-    /,
-    *,
-    incident_id: str,
-    started_at: datetime,
-    resolved_at: datetime | None,
-    severity: str = "sev2",
-    title: str = "gateway 5xx on the eu pool",
-    summary: str = "the eu pool answered 503 for eleven minutes",
-    postmortem_url: str | None = None,
-) -> None:
-    """One `incidents` row."""
-    with pool.connection() as conn:
-        conn.execute(
-            sql.SQL(
-                "INSERT INTO {} (id, started_at, resolved_at, severity, title, summary, "
-                "postmortem_url) VALUES (%s, %s, %s, %s, %s, %s, %s)"
-            ).format(sql.Identifier(schema, "incidents")),
-            (incident_id, started_at, resolved_at, severity, title, summary, postmortem_url),
-        )
-
-
 def insert_release(
     pool: Pool,
     schema: str,
@@ -234,11 +206,6 @@ def insert_release(
         )
 
 
-def hex_id(number: int) -> str:
-    """A distinct 32-hex id per number."""
-    return f"{number:032x}"
-
-
 @pytest.fixture(scope="module")
 def shipped_prices() -> PriceTable:
     """The shipped price table, read once."""
@@ -252,8 +219,8 @@ def test_today_counts_only_the_current_utc_day(pool: Pool, migrated_schema: str)
     """Catches "today" computed as a rolling 24 hours (the 23:59:59 rows yesterday fall
     inside it), an exclusive lower bound at UTC midnight, an unbounded upper edge (a row at
     tomorrow's midnight), the last eval chosen by
-    `finished_at` instead of `started_at`, and open incidents counted without
-    `resolved_at IS NULL`."""
+    `finished_at` instead of `started_at`, and a home read that still carries an open-incident
+    count (the `incidents` table is gone, so the read would fail on the migrated schema)."""
     schema = migrated_schema
     insert_cost(pool, schema, ts=MIDNIGHT, cost_usd="0.500000")
     insert_cost(pool, schema, ts=NOW - timedelta(hours=1), cost_usd="0.250000")
@@ -279,18 +246,6 @@ def test_today_counts_only_the_current_utc_day(pool: Pool, migrated_schema: str)
         metrics={"check_score": 0.5},
     )
 
-    insert_incident(pool, schema, incident_id=hex_id(1), started_at=NOW, resolved_at=None)
-    insert_incident(
-        pool, schema, incident_id=hex_id(2), started_at=NOW - timedelta(days=40), resolved_at=None
-    )
-    insert_incident(
-        pool,
-        schema,
-        incident_id=hex_id(3),
-        started_at=NOW - timedelta(hours=3),
-        resolved_at=NOW - timedelta(hours=2),
-    )
-
     read = PostgresConsoleReader(pool, schema=schema).home(now=NOW)
 
     assert read == HomeRead(
@@ -302,7 +257,6 @@ def test_today_counts_only_the_current_utc_day(pool: Pool, migrated_schema: str)
             passed=False,
             check_score=0.91,
         ),
-        open_incidents=2,
     )
 
 
@@ -318,7 +272,6 @@ def test_an_empty_ledger_answers_zeros_and_no_last_eval(pool: Pool, migrated_sch
         requests_today=0,
         cost_usd_today=0.0,
         last_eval=None,
-        open_incidents=0,
     )
 
     insert_run(
@@ -743,126 +696,6 @@ def test_blocked_releases_carry_their_regressions(pool: Pool, migrated_schema: s
             previous_metrics=None,
         ),
     )
-
-
-# --- incidents and releases --------------------------------------------------------
-
-
-def test_incidents_are_newest_first_and_capped_at_100(pool: Pool, migrated_schema: str) -> None:
-    """Catches a timeline read in insertion order (rows go in oldest first), without the
-    `LIMIT` (101 rows are stored), with `open` not derived from `resolved_at IS NULL`, or
-    with a column dropped on the way out."""
-    assert ROW_LIMIT == 100
-    schema = migrated_schema
-    for minutes in range(100, -1, -1):
-        insert_incident(
-            pool,
-            schema,
-            incident_id=hex_id(minutes),
-            started_at=NOW - timedelta(minutes=minutes),
-            resolved_at=NOW if minutes % 2 else None,
-            postmortem_url=f"https://example.test/pm/{minutes}" if minutes == 1 else None,
-        )
-
-    read = PostgresConsoleReader(pool, schema=schema).incidents()
-
-    assert len(read) == 100
-    assert [row.id for row in read] == [hex_id(minutes) for minutes in range(100)]
-    assert read[0] == Incident(
-        id=hex_id(0),
-        started_at=NOW,
-        resolved_at=None,
-        severity="sev2",
-        title="gateway 5xx on the eu pool",
-        summary="the eu pool answered 503 for eleven minutes",
-        postmortem_url=None,
-        open=True,
-    )
-    assert read[1] == Incident(
-        id=hex_id(1),
-        started_at=NOW - timedelta(minutes=1),
-        resolved_at=NOW,
-        severity="sev2",
-        title="gateway 5xx on the eu pool",
-        summary="the eu pool answered 503 for eleven minutes",
-        postmortem_url="https://example.test/pm/1",
-        open=False,
-    )
-
-
-def test_releases_left_join_eval_runs_and_cap_at_100(pool: Pool, migrated_schema: str) -> None:
-    """Catches an INNER join (the unlinked release vanishes), eval fields filled for an
-    unlinked release, `check_score` raising when a linked run lacks it, a read in
-    insertion order, and a missing `LIMIT` (103 releases are stored)."""
-    schema = migrated_schema
-    for hours in range(100, 0, -1):
-        insert_release(
-            pool,
-            schema,
-            git_sha=f"old{hours:04d}",
-            deployed_at=NOW - timedelta(days=1, hours=hours),
-        )
-    ran_at = NOW - timedelta(hours=3)
-    insert_run(pool, schema, run_id="run-scored", started_at=ran_at, metrics={"check_score": 0.88})
-    insert_run(pool, schema, run_id="run-unscored", started_at=ran_at, metrics={}, passed=False)
-    pr_url = "https://github.com/example/repo/pull/9"
-    insert_release(
-        pool,
-        schema,
-        git_sha="scored",
-        deployed_at=NOW - timedelta(minutes=1),
-        eval_run_id="run-scored",
-        pr_url=pr_url,
-    )
-    insert_release(
-        pool,
-        schema,
-        git_sha="unlinked",
-        deployed_at=NOW - timedelta(minutes=2),
-        status="rolled_back",
-    )
-    insert_release(
-        pool,
-        schema,
-        git_sha="unscored",
-        deployed_at=NOW - timedelta(minutes=3),
-        eval_run_id="run-unscored",
-        status="blocked",
-    )
-
-    read = PostgresConsoleReader(pool, schema=schema).releases()
-
-    assert len(read) == 100
-    assert read[:3] == (
-        Release(
-            git_sha="scored",
-            deployed_at=NOW - timedelta(minutes=1),
-            status="deployed",
-            pr_url=pr_url,
-            eval_run_id="run-scored",
-            eval_passed=True,
-            check_score=0.88,
-        ),
-        Release(
-            git_sha="unlinked",
-            deployed_at=NOW - timedelta(minutes=2),
-            status="rolled_back",
-            pr_url=None,
-            eval_run_id=None,
-            eval_passed=None,
-            check_score=None,
-        ),
-        Release(
-            git_sha="unscored",
-            deployed_at=NOW - timedelta(minutes=3),
-            status="blocked",
-            pr_url=None,
-            eval_run_id="run-unscored",
-            eval_passed=False,
-            check_score=None,
-        ),
-    )
-    assert [row.git_sha for row in read[3:]] == [f"old{hours:04d}" for hours in range(1, 98)]
 
 
 # --- the tenant filter -------------------------------------------------------------

@@ -347,14 +347,13 @@ ROUTE_FILES = (
     "admin/routing.py",
     "admin/directory.py",
     "admin/releases.py",
-    "admin/incidents.py",
 )
 
 
 def test_routes_do_not_read_app_state_by_hand() -> None:
     """Catches a route reaching into `request.app.state` instead of taking a typed
     dependency: that is the pattern an earlier change removes so startup can own where state is
-    built, and the source text of all nine route files is scanned so a single leftover
+    built, and the source text of all eight route files is scanned so a single leftover
     `app.state` fails here."""
     routes_dir = Path(main.__file__).resolve().parent / "api" / "routes"
     offenders = [

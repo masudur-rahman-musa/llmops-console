@@ -5,7 +5,7 @@ migration runner and the schema convention.
 
 The modules: `db` is the seam and the runner, `cost_ledger` is the spend row and
 its daily rollup, `console_events` is the
-two records an operator and CI write by hand through `/admin/*`, `eval_store` is
+release record CI writes by hand through `/admin/releases`, `eval_store` is
 the eval run and case rows, and `dashboard_reads` is the console's read side. The
 command-line entry points are not re-exported - they live in `app.cli.ledger`,
 which `make migrate` and `make refresh-rollup` call.
@@ -13,9 +13,6 @@ which `make migrate` and `make refresh-rollup` call.
 
 from app.storage.console_events import (
     ConsoleEventWriter as ConsoleEventWriter,
-)
-from app.storage.console_events import (
-    IncidentRow as IncidentRow,
 )
 from app.storage.console_events import (
     InMemoryConsoleEventWriter as InMemoryConsoleEventWriter,

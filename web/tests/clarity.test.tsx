@@ -8,14 +8,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import HomePage from "@/app/(console)/page";
 import CostPage from "@/app/(console)/cost/page";
-import IncidentsPage from "@/app/(console)/incidents/page";
 import QualityPage from "@/app/(console)/quality/page";
-import ReleasesPage from "@/app/(console)/releases/page";
-import ReliabilityPage from "@/app/(console)/reliability/page";
-import ModelsPage from "@/app/(console)/models/page";
 import RequestsPage from "@/app/(console)/requests/page";
 
-type PageName = "home" | "cost" | "quality" | "reliability" | "incidents" | "releases" | "models" | "requests";
+type PageName = "home" | "requests" | "cost" | "quality";
 type Fixture = Record<string, unknown>;
 
 const SRC = fileURLToPath(new URL("../src", import.meta.url));
@@ -25,13 +21,9 @@ const TRADEOFF = fileURLToPath(new URL("./fixtures/tradeoff.json", import.meta.u
 
 const PAGES: Record<PageName, () => Promise<ReactElement>> = {
   home: HomePage,
+  requests: RequestsPage,
   cost: CostPage,
   quality: QualityPage,
-  reliability: ReliabilityPage,
-  incidents: IncidentsPage,
-  releases: ReleasesPage,
-  models: ModelsPage,
-  requests: RequestsPage,
 };
 const NAMES = Object.keys(PAGES) as PageName[];
 
@@ -39,10 +31,6 @@ const QUESTIONS: Record<PageName, string> = {
   home: "Is the gateway healthy today, and what has it cost?",
   cost: "What does the AI cost, per day, per tenant and per model, and what did caching save?",
   quality: "Does the help desk still answer well enough to ship?",
-  reliability: "Is the gateway up and fast enough, and which providers are failing?",
-  incidents: "What went wrong, and what did we learn?",
-  releases: "What was deployed, when, and did it pass the eval gate?",
-  models: "Which models does each alias use, in what order, and what is loaded right now?",
   requests:
     "What did the gateway hide, how many tokens went in and out, how often did the cache answer, and where is each request's trace?",
 };
@@ -144,7 +132,7 @@ describe("console pages are clear to a new reader", () => {
 
   it("the check score sentence shows wherever the score does", async () => {
     // Catches a page that leaves the check score unexplained, words it differently, or prints the sentence twice.
-    for (const name of ["home", "quality", "releases", "cost"] as const) {
+    for (const name of ["home", "quality", "cost"] as const) {
       const html = await render(name);
       expect(occurrences(text(html), text(CHECK_SCORE_SENTENCE)), name).toBe(1);
     }

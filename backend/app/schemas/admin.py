@@ -1,7 +1,7 @@
 """The request and response models for the operator surface.
 
-The resolved-routing view's shapes, the reload result, and the bodies the two
-hand-written records accept. What each field is checked against before a
+The resolved-routing view's shapes, the reload result, and the body the
+hand-written release record accepts. What each field is checked against before a
 statement runs is `app.storage.console_events`.
 """
 
@@ -61,53 +61,6 @@ class ReloadResult(BaseModel):
 
     reloaded: bool
     providers: tuple[str, ...]
-
-
-class IncidentCreate(BaseModel):
-    """What `POST /admin/incidents` accepts, and what it deliberately does NOT.
-
-    There is no `resolved_at` field, and that absence is the criterion: an
-    incident is born OPEN, a NULL `resolved_at` is what "open" means on the
-    timeline, and a body offering one would let an operator file an outage that
-    was never open. A caller sending the key anyway has it ignored by Pydantic's
-    default extra handling rather than stored.
-
-    `id` is absent for the other half of the rule: the server generates it, so
-    no client string shapes a primary key.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    started_at: datetime
-    severity: str
-    title: str
-    summary: str
-    postmortem_url: str | None = None
-
-
-class IncidentCreated(BaseModel):
-    """The 201 body: the id the caller needs in order to resolve this incident later.
-
-    The whole row is not echoed. The caller sent every other field, and the id is
-    the one thing it does not already know.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    id: str
-
-
-class IncidentResolve(BaseModel):
-    """What `PATCH /admin/incidents/{incident_id}` accepts: the resolution time only.
-
-    Nothing else on an incident is editable here. A wrong severity or a missing
-    postmortem link is a correction rather than a state change, and this plan's
-    surface is the state change; widening it later is a plan of its own.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    resolved_at: datetime
 
 
 class ReleaseCreate(BaseModel):

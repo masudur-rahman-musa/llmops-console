@@ -68,7 +68,7 @@ describe("console styles", () => {
   it("every page loads the shared stylesheet", () => {
     // Catches a root layout that never imports globals.css, or a second layout rendering <html> that would take a page out of the root layout's stylesheet.
     expect(read(ROOT_LAYOUT)).toContain('import "./globals.css"');
-    expect(pages.map(rel).sort()).toHaveLength(8);
+    expect(pages.map(rel).sort()).toHaveLength(5);
     for (const page of pages) {
       const chain: string[] = [];
       let dir = dirname(page);

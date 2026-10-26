@@ -1,4 +1,4 @@
-"""The six `/console/*` read routes: the key space, the pre-checks and the source flags.
+"""The four `/console/*` read routes: the key space, the pre-checks and the source flags.
 
 No backing service. Each case builds the admin app from `create_app` (cheap and
 in-process) and then replaces the two sources on `app.state`, exactly as the
@@ -10,7 +10,7 @@ pre-checks and the error handlers stay real.
 
 What is pinned, each case naming the wrong implementation it catches:
 
-* The six routes are in the ADMIN key space: no key, an unknown key, and a
+* The four routes are in the ADMIN key space: no key, an unknown key, and a
   working tenant key are all 401, before anything is read.
 * `days` and `tenant` are refused before any query runs, at the inclusive
   boundaries, because `tenant` is interpolated into PromQL.
@@ -33,8 +33,7 @@ from __future__ import annotations
 
 import json
 import logging
-import time
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -57,20 +56,15 @@ from app.schemas.dashboard import (
     CategoryCount,
     CostDay,
     EvalRunSummary,
-    Incident,
     LastEval,
     Regression,
-    Release,
     ReleaseMarker,
     Saving,
     TagCount,
 )
 from app.services.dashboard import JUDGE_NOTE
 from app.services.prometheus_reads import (
-    AVAILABILITY_BUDGET_QUERY,
-    CIRCUITS_QUERY,
     ERROR_RATE_QUERY,
-    LATENCY_BUDGET_QUERY,
     P95_QUERY,
     QUERY_PATH,
     QUERY_RANGE_PATH,
@@ -95,27 +89,22 @@ from .conftest import (
     assert_error_body,
 )
 
-# The six paths, written out so no request below reads its target from the module
-# under test. `test_the_eight_console_paths_are_pinned` compares them with the module's
+# The four paths, written out so no request below reads its target from the module
+# under test. `test_the_four_console_paths_are_pinned` compares them with the module's
 # constants and with what the factory mounted.
 HOME = "/console/home"
 COST = "/console/cost"
 QUALITY = "/console/quality"
-RELIABILITY = "/console/reliability"
-INCIDENTS = "/console/incidents"
-RELEASES = "/console/releases"
-MODELS = "/console/models"
 REQUESTS = "/console/requests"
 
-ALL_PATHS = [HOME, COST, QUALITY, RELIABILITY, INCIDENTS, RELEASES]
-# The seventh route reads no source, so it is outside ALL_PATHS (whose cases all assert
-# source flags); tests/api/test_console_models.py owns its cases. The eighth reads both
-# sources in its own shape; tests/api/test_console_requests.py owns its cases.
-MOUNTED_PATHS = [*ALL_PATHS, MODELS, REQUESTS]
-DAYS_PATHS = [COST, QUALITY, RELIABILITY]
+ALL_PATHS = [HOME, COST, QUALITY]
+# The fourth route reads both sources in its own shape; tests/api/test_console_requests.py
+# owns its cases.
+MOUNTED_PATHS = [*ALL_PATHS, REQUESTS]
+DAYS_PATHS = [COST, QUALITY]
 TENANT_PATHS = [COST]
-POSTGRES_PATHS = [HOME, COST, QUALITY, INCIDENTS, RELEASES]
-PROMETHEUS_PATHS = [HOME, RELIABILITY]
+POSTGRES_PATHS = [HOME, COST, QUALITY]
+PROMETHEUS_PATHS = [HOME]
 
 LOGGER = "app.services.dashboard"
 
@@ -139,7 +128,6 @@ HOME_READ = HomeRead(
     requests_today=42,
     cost_usd_today=1.25,
     last_eval=LastEval(id="run-a", finished_at=FINISHED, passed=True, check_score=0.91),
-    open_incidents=2,
 )
 
 COST_READ = CostRead(
@@ -176,31 +164,6 @@ QUALITY_READ = QualityRead(
     blocked=(),
 )
 
-INCIDENT_ROWS = (
-    Incident(
-        id="0af7651916cd43dd8448eb211c80319c",
-        started_at=STARTED,
-        resolved_at=None,
-        severity="sev2",
-        title="gateway 5xx on the eu pool",
-        summary="the eu pool answered 503 for eleven minutes",
-        postmortem_url=None,
-        open=True,
-    ),
-)
-
-RELEASE_ROWS = (
-    Release(
-        git_sha="abc1234",
-        deployed_at=DEPLOYED,
-        status="deployed",
-        pr_url=None,
-        eval_run_id="run-a",
-        eval_passed=True,
-        check_score=0.91,
-    ),
-)
-
 
 class StubReader:
     """A configured `ConsoleReader` recording every call, answering the reads above.
@@ -232,25 +195,10 @@ class StubReader:
         self._record("quality", days=days, now=now)
         return self.quality_read
 
-    def incidents(self) -> tuple[Incident, ...]:
-        self._record("incidents")
-        return INCIDENT_ROWS
-
-    def releases(self) -> tuple[Release, ...]:
-        self._record("releases")
-        return RELEASE_ROWS
-
 
 # --- the mock Prometheus -----------------------------------------------------------
 
 SAMPLE_TS = 1757980800
-
-FALLBACKS_PREFIX = "sum by (tenant, alias, provider) (increase(gateway_fallbacks_total"
-
-# An earlier change's budget queries, answered by default so every reliability case sees a full
-# `slos`: a 5xx share of 0.001 and a share under 6 seconds of 0.98.
-BAD_RATIO_30D = "0.001"
-UNDER_THRESHOLD_SHARE_30D = "0.98"
 
 
 def instant_result(query: str) -> list[dict[str, Any]]:
@@ -259,24 +207,6 @@ def instant_result(query: str) -> list[dict[str, Any]]:
         return [{"metric": {}, "value": [SAMPLE_TS, "0.734"]}]
     if query == ERROR_RATE_QUERY:
         return [{"metric": {}, "value": [SAMPLE_TS, "0.012"]}]
-    if query == AVAILABILITY_BUDGET_QUERY:
-        return [{"metric": {}, "value": [SAMPLE_TS, BAD_RATIO_30D]}]
-    if query == LATENCY_BUDGET_QUERY:
-        return [{"metric": {}, "value": [SAMPLE_TS, UNDER_THRESHOLD_SHARE_30D]}]
-    if query == CIRCUITS_QUERY:
-        return [
-            {"metric": {"provider": "anthropic"}, "value": [SAMPLE_TS, "0"]},
-            {"metric": {"provider": "local"}, "value": [SAMPLE_TS, "1"]},
-            {"metric": {"provider": "openai"}, "value": [SAMPLE_TS, "2"]},
-            {"metric": {"provider": "vllm"}, "value": [SAMPLE_TS, "3"]},
-        ]
-    if query.startswith(FALLBACKS_PREFIX):
-        return [
-            {
-                "metric": {"tenant": "evals", "alias": "agent-default", "provider": "local"},
-                "value": [SAMPLE_TS, "4"],
-            }
-        ]
     return []
 
 
@@ -402,7 +332,6 @@ POSTGRES_EMPTY: dict[str, dict[str, Any]] = {
         "requests_today": None,
         "cost_usd_today": None,
         "last_eval": None,
-        "open_incidents": None,
     },
     COST: {
         "rollup_populated": None,
@@ -412,24 +341,12 @@ POSTGRES_EMPTY: dict[str, dict[str, Any]] = {
         "cost_per_request": [],
     },
     QUALITY: {"runs": [], "release_markers": [], "categories": [], "taxonomy": [], "blocked": []},
-    RELIABILITY: {},
-    INCIDENTS: {"incidents": []},
-    RELEASES: {"releases": []},
 }
 
 PROMETHEUS_EMPTY: dict[str, dict[str, Any]] = {
     HOME: {"p95_seconds": None, "error_rate": None},
     COST: {},
     QUALITY: {},
-    RELIABILITY: {
-        "latency_p95": [],
-        "error_rate": [],
-        "circuits": [],
-        "fallbacks": [],
-        "slos": [],
-    },
-    INCIDENTS: {},
-    RELEASES: {},
 }
 
 
@@ -441,27 +358,19 @@ def subset(body: Mapping[str, Any], keys: Mapping[str, Any]) -> dict[str, Any]:
 # --- the paths and the key space ---------------------------------------------------
 
 
-def test_the_eight_console_paths_are_pinned(bare: TestClient) -> None:
+def test_the_four_console_paths_are_pinned(bare: TestClient) -> None:
     """Catches a route mounted under another path or method (`/console/costs`, a POST), a
-    constant renamed away from the literal, and a constant that exists while the factory
-    never included the router - the mounted set is read from the app's own OpenAPI
-    document."""
+    constant renamed away from the literal, a removed tab's constant left in the module, and a
+    constant that exists while the factory never included the router - the mounted set is
+    read from the app's own OpenAPI document."""
     assert console.CONSOLE_HOME == HOME
     assert console.CONSOLE_COST == COST
     assert console.CONSOLE_QUALITY == QUALITY
-    assert console.CONSOLE_RELIABILITY == RELIABILITY
-    assert console.CONSOLE_INCIDENTS == INCIDENTS
-    assert console.CONSOLE_RELEASES == RELEASES
-    assert console.CONSOLE_MODELS == MODELS
     assert console.CONSOLE_REQUESTS == REQUESTS
     assert tuple(console.CONSOLE_PATHS) == (
         "/console/home",
         "/console/cost",
         "/console/quality",
-        "/console/reliability",
-        "/console/incidents",
-        "/console/releases",
-        "/console/models",
         "/console/requests",
     )
 
@@ -521,13 +430,6 @@ def test_every_console_route_is_401_with_a_tenant_key(
 
 def days_sent(wired: Wired, path: str) -> list[int]:
     """The `days` each source was asked for on one route, read off the stubs."""
-    if path == RELIABILITY:
-        sent: list[int] = []
-        for query in wired.prom.queries(QUERY_PATH):
-            if query.startswith(FALLBACKS_PREFIX):
-                window = query.rsplit("[", 1)[1]
-                sent.append(int(window.split("d]", 1)[0]))
-        return sent
     return [int(kwargs["days"]) for _, kwargs in wired.reader.calls]
 
 
@@ -694,7 +596,13 @@ def test_with_nothing_configured_every_route_is_200_and_both_sources_unconfigure
     response = bare.get(path, headers=ADMIN_HEADERS)
 
     assert response.status_code == 200, response.text
-    assert response.json() == unconfigured_body(path)
+    body = response.json()
+    if path == HOME:
+        # The routing comes from the policy file, not a source, and `loaded_at` is the real
+        # clock; tests/api/test_console_overview.py pins both. Here only that they are set.
+        assert body.pop("routing")["aliases"] != []
+        assert body.pop("grafana_url") is None
+    assert body == unconfigured_body(path)
     assert set(console.SourceState) == {"ok", "unconfigured", "error"}
 
 
@@ -714,14 +622,13 @@ def test_a_failing_prometheus_is_200_with_prometheus_error_and_an_error_log(
 
     assert response.status_code == 200, response.text
     body = response.json()
-    postgres_state = UNCONFIGURED if path == RELIABILITY else OK
-    assert body["sources"] == {"postgres": postgres_state, "prometheus": ERROR}
+    assert body["sources"] == {"postgres": OK, "prometheus": ERROR}
     assert subset(body, PROMETHEUS_EMPTY[path]) == PROMETHEUS_EMPTY[path]
     assert error_records(caplog) != []
 
     if path == HOME:
         assert body["requests_today"] == 42
-        assert body["open_incidents"] == 2
+        assert "open_incidents" not in body
 
 
 @pytest.mark.parametrize("path", POSTGRES_PATHS)
@@ -756,13 +663,18 @@ def test_a_failing_reader_is_200_with_postgres_error_and_an_error_log(
 
 
 def test_the_home_body_reads_both_sources(wired: Wired) -> None:
-    """Catches a home route that swaps `p95_seconds` and `error_rate`, reads either from
-    the range API instead of an instant query, drops a reader field, or reports a source
-    that answered as anything but `ok`."""
+    """Catches a home route that still carries `open_incidents`, swaps `p95_seconds` and
+    `error_rate`, reads either from the range API instead of an instant query, drops a
+    reader field, or reports a source that answered as anything but `ok`."""
     response = wired.get(HOME)
 
     assert response.status_code == 200, response.text
-    assert response.json() == {
+    body = response.json()
+    # `routing` and `grafana_url` are pinned in tests/api/test_console_overview.py.
+    assert "routing" in body
+    assert body.pop("grafana_url") is None
+    del body["routing"]
+    assert body == {
         "sources": {"postgres": OK, "prometheus": OK},
         "requests_today": 42,
         "cost_usd_today": 1.25,
@@ -774,7 +686,6 @@ def test_the_home_body_reads_both_sources(wired: Wired) -> None:
             "passed": True,
             "check_score": 0.91,
         },
-        "open_incidents": 2,
     }
     assert sorted(wired.prom.queries(QUERY_PATH)) == sorted([P95_QUERY, ERROR_RATE_QUERY])
     assert wired.prom.queries(QUERY_RANGE_PATH) == []
@@ -850,80 +761,6 @@ def test_the_quality_body_carries_the_reader_answer(wired: Wired) -> None:
                 "passed": None,
             },
         ],
-    }
-    assert wired.prom.calls == []
-
-
-def sort_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Rows in a fixed order, for lists whose order the plan does not state."""
-    return sorted(rows, key=lambda row: sorted((key, str(value)) for key, value in row.items()))
-
-
-def test_the_reliability_body_reads_the_named_series(wired: Wired) -> None:
-    """Catches circuit states rendered as numbers or with a wrong name mapping (0 closed, 1
-    half_open, 2 open), an unknown state value passed through instead of skipped, series
-    swapped between latency and error rate, a range query not over `now - days` to `now`
-    at step 3600, and a fallbacks window that ignores `days`."""
-    before = time.time()
-    response = wired.get(RELIABILITY, days=7)
-    after = time.time()
-
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["sources"] == {"postgres": UNCONFIGURED, "prometheus": OK}
-    assert body["latency_p95"] == [[SAMPLE_TS, 0.42], [SAMPLE_TS + 3600, 0.51]]
-    assert body["error_rate"] == [[SAMPLE_TS, 0.01]]
-    assert sort_rows(body["circuits"]) == sort_rows(
-        [
-            {"provider": "anthropic", "state": "closed"},
-            {"provider": "local", "state": "half_open"},
-            {"provider": "openai", "state": "open"},
-        ]
-    )
-    assert body["fallbacks"] == [
-        {"tenant": "evals", "alias": "agent-default", "provider": "local", "count": 4.0}
-    ]
-    assert set(body) == {"sources", "latency_p95", "error_rate", "circuits", "fallbacks", "slos"}
-
-    # An earlier change (a recorded deviation from its section 8): the budget queries join the
-    # instant queries, so the exact list gains them; their values are pinned in
-    # tests/gateway/test_console_slo.py.
-    assert sorted(wired.prom.queries(QUERY_PATH)) == sorted(
-        [
-            CIRCUITS_QUERY,
-            "sum by (tenant, alias, provider) (increase(gateway_fallbacks_total[7d]))",
-            AVAILABILITY_BUDGET_QUERY,
-            LATENCY_BUDGET_QUERY,
-        ]
-    )
-    ranged = [params for sent, params in wired.prom.calls if sent == QUERY_RANGE_PATH]
-    assert sorted(params["query"] for params in ranged) == sorted([P95_QUERY, ERROR_RATE_QUERY])
-    for params in ranged:
-        start, end = float(params["start"]), float(params["end"])
-        assert before - 1 <= end <= after + 1
-        assert abs((end - start) - 7 * 86400) < 1
-        assert params["step"] == "3600"
-    assert wired.reader.calls == []
-
-
-ROW_ROUTES: list[tuple[str, str, Callable[[], list[dict[str, Any]]]]] = [
-    (INCIDENTS, "incidents", lambda: [row.model_dump(mode="json") for row in INCIDENT_ROWS]),
-    (RELEASES, "releases", lambda: [row.model_dump(mode="json") for row in RELEASE_ROWS]),
-]
-
-
-@pytest.mark.parametrize(("path", "key", "expected"), ROW_ROUTES, ids=["incidents", "releases"])
-def test_the_incidents_and_releases_bodies_carry_the_reader_rows(
-    path: str, key: str, expected: Callable[[], list[dict[str, Any]]], wired: Wired
-) -> None:
-    """Catches a timeline or deploys route that drops a column (`open`, `eval_passed`),
-    renames its list, or reports Prometheus as anything but `unconfigured`."""
-    response = wired.get(path)
-
-    assert response.status_code == 200, response.text
-    assert response.json() == {
-        "sources": {"postgres": OK, "prometheus": UNCONFIGURED},
-        key: expected(),
     }
     assert wired.prom.calls == []
 

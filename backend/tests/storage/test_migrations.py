@@ -48,6 +48,7 @@ THIRD_VERSION = "003_eval_runs"
 FOURTH_VERSION = "004_console_events"
 FIFTH_VERSION = "005_drop_residency"
 SIXTH_VERSION = "006_ledger_prompt_version"
+SEVENTH_VERSION = "007_drop_incidents"
 ALL_VERSIONS = (
     FIRST_VERSION,
     SECOND_VERSION,
@@ -55,6 +56,7 @@ ALL_VERSIONS = (
     FOURTH_VERSION,
     FIFTH_VERSION,
     SIXTH_VERSION,
+    SEVENTH_VERSION,
 )
 """Every migration that ships, in the order the runner applies them. A stem is
 the version string, so a file renamed after it has been applied somewhere would
@@ -112,6 +114,7 @@ def test_the_runner_applies_all_six_sql_files_from_backend_migrations() -> None:
         "004_console_events.sql",
         "005_drop_residency.sql",
         "006_ledger_prompt_version.sql",
+        "007_drop_incidents.sql",
     ]
     assert (MIGRATIONS / f"{FIRST_VERSION}.sql").read_text(encoding="utf-8").strip() != ""
 
@@ -331,6 +334,25 @@ def test_the_fifth_migration_drops_the_residency_log(pool: Pool, schema: str) ->
 
     assert FIFTH_VERSION in applied_versions(pool, schema)
     assert [name for name in table_names(pool, schema) if name.startswith("residency_log")] == []
+
+
+@requires_postgres
+def test_migration_007_drops_incidents_and_keeps_releases(pool: Pool, schema: str) -> None:
+    """Catches a migration that never runs or drops the wrong table: after all migrations
+    the `incidents` table is gone, while `releases` (Quality's markers and blocked releases
+    read it) still exists. Both halves are asserted on one schema, so a `DROP` of both
+    tables, or of neither, fails one of the two lines."""
+    with pool.connection() as conn:
+        apply_migrations(conn, schema=schema)
+
+    assert SEVENTH_VERSION in applied_versions(pool, schema)
+    with pool.connection() as conn:
+        incidents = conn.execute("select to_regclass(%s)", (f"{schema}.incidents",)).fetchone()
+        releases = conn.execute("select to_regclass(%s)", (f"{schema}.releases",)).fetchone()
+    assert incidents is not None
+    assert incidents[0] is None
+    assert releases is not None
+    assert releases[0] is not None
 
 
 @requires_postgres

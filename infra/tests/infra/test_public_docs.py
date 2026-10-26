@@ -50,7 +50,7 @@ GUARANTEE_TESTS = [
 ]
 
 #: A the project notes entry links the committed rules file or a committed postmortem.
-WHAT_BROKE_PREFIXES = ("dev/docs/rules.md", "dev/ops/postmortems/")
+WHAT_BROKE_PREFIXES = ("dev/docs/rules.md", "docs/postmortems/")
 
 ADR_PREFIX = "dev/adr/"
 ADR_TEMPLATE = "dev/adr/0000-template.md"

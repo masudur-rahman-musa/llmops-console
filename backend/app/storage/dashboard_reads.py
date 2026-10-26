@@ -48,10 +48,8 @@ from app.schemas.dashboard import (
     CategoryCount,
     CostDay,
     EvalRunSummary,
-    Incident,
     LastEval,
     Regression,
-    Release,
     ReleaseMarker,
     RequestRow,
     Saving,
@@ -81,7 +79,6 @@ class HomeRead(_Read):
     requests_today: int
     cost_usd_today: float
     last_eval: LastEval | None
-    open_incidents: int
 
 
 class CostRead(_Read):
@@ -153,10 +150,6 @@ class ConsoleReader(Protocol):
 
     def quality(self, *, days: int, now: datetime) -> QualityRead: ...
 
-    def incidents(self) -> tuple[Incident, ...]: ...
-
-    def releases(self) -> tuple[Release, ...]: ...
-
     def recent_requests(self) -> tuple[RequestRow, ...]: ...
 
 
@@ -174,7 +167,6 @@ class UnconfiguredConsoleReader:
             requests_today=0,
             cost_usd_today=0.0,
             last_eval=None,
-            open_incidents=0,
         )
 
     def cost(self, *, days: int, tenant: str | None, now: datetime, prices: PriceTable) -> CostRead:
@@ -184,12 +176,6 @@ class UnconfiguredConsoleReader:
 
     def quality(self, *, days: int, now: datetime) -> QualityRead:
         return QualityRead(runs=(), release_markers=(), categories=(), taxonomy=(), blocked=())
-
-    def incidents(self) -> tuple[Incident, ...]:
-        return ()
-
-    def releases(self) -> tuple[Release, ...]:
-        return ()
 
     def recent_requests(self) -> tuple[RequestRow, ...]:
         return ()
@@ -244,12 +230,7 @@ class PostgresConsoleReader:
                     "ORDER BY started_at DESC LIMIT 1"
                 ).format(self._table("eval_runs"))
             ).fetchone()
-            open_incidents = conn.execute(
-                sql.SQL("SELECT count(*) FROM {} WHERE resolved_at IS NULL").format(
-                    self._table("incidents")
-                )
-            ).fetchone()
-        assert ledger is not None and open_incidents is not None
+        assert ledger is not None
         return HomeRead(
             requests_today=ledger[0],
             cost_usd_today=float(ledger[1]),
@@ -258,7 +239,6 @@ class PostgresConsoleReader:
             else LastEval(
                 id=run[0], finished_at=run[1], passed=run[2], check_score=_accuracy(run[3])
             ),
-            open_incidents=open_incidents[0],
         )
 
     def cost(self, *, days: int, tenant: str | None, now: datetime, prices: PriceTable) -> CostRead:
@@ -414,53 +394,6 @@ class PostgresConsoleReader:
                 )
                 for row in blocked
             ),
-        )
-
-    def incidents(self) -> tuple[Incident, ...]:
-        with self._pool.connection() as conn:
-            rows = conn.execute(
-                sql.SQL(
-                    "SELECT id, started_at, resolved_at, severity, title, summary, postmortem_url "
-                    "FROM {} ORDER BY started_at DESC LIMIT %s"
-                ).format(self._table("incidents")),
-                (ROW_LIMIT,),
-            ).fetchall()
-        return tuple(
-            Incident(
-                id=row[0],
-                started_at=row[1],
-                resolved_at=row[2],
-                severity=row[3],
-                title=row[4],
-                summary=row[5],
-                postmortem_url=row[6],
-                open=row[2] is None,
-            )
-            for row in rows
-        )
-
-    def releases(self) -> tuple[Release, ...]:
-        with self._pool.connection() as conn:
-            rows = conn.execute(
-                sql.SQL(
-                    "SELECT rel.git_sha, rel.deployed_at, rel.status, rel.pr_url, "
-                    "rel.eval_run_id, run.passed, run.metrics "
-                    "FROM {} AS rel LEFT JOIN {} AS run ON run.id = rel.eval_run_id "
-                    "ORDER BY rel.deployed_at DESC LIMIT %s"
-                ).format(self._table("releases"), self._table("eval_runs")),
-                (ROW_LIMIT,),
-            ).fetchall()
-        return tuple(
-            Release(
-                git_sha=row[0],
-                deployed_at=row[1],
-                status=row[2],
-                pr_url=row[3],
-                eval_run_id=row[4],
-                eval_passed=row[5],
-                check_score=_accuracy(row[6]),
-            )
-            for row in rows
         )
 
     def recent_requests(self) -> tuple[RequestRow, ...]:

@@ -3046,21 +3046,17 @@ CONSOLE_READ_PATHS = (
     "/console/home",
     "/console/cost",
     "/console/quality",
-    "/console/reliability",
-    "/console/incidents",
-    "/console/releases",
-    "/console/models",
     "/console/requests",
 )
-"""The eight console read routes, written out rather than imported: importing the route
+"""The four console read routes, written out rather than imported: importing the route
 module here would turn its absence into a collection error for every case in this file."""
 
 
 def test_no_public_router_matches_a_console_path(built: list[dict[str, Any]]) -> None:
     """Catches a gateway-backed public router widened to cover `/console/` - a `/` router put
     back, or a `/console` Prefix added for the console app's convenience - which publishes
-    every tenant's spend and incident timeline behind nothing but the admin key.
-    The six paths are first asserted MOUNTED on the app, so a route moved to another path
+    every tenant's spend and request log behind nothing but the admin key.
+    The four paths are first asserted MOUNTED on the app, so a route moved to another path
     fails here instead of leaving this case green against strings nothing serves; and the
     matcher's boundary rows run first, so a matcher answering False for everything is red
     before the build is read."""

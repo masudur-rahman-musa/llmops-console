@@ -1,17 +1,13 @@
 import { costGuard, type CostBody } from "@/features/cost/guards";
 import { homeGuard, type HomeBody } from "@/features/home/guards";
-import { incidentsGuard, type IncidentsBody } from "@/features/incidents/guards";
-import { modelsGuard, type ModelsBody } from "@/features/models/guards";
 import { qualityGuard, type QualityBody } from "@/features/quality/guards";
-import { releasesGuard, type ReleasesBody } from "@/features/releases/guards";
-import { reliabilityGuard, type ReliabilityBody } from "@/features/reliability/guards";
 import { requestsGuard, type RequestsBody } from "@/features/requests/guards";
 
 /**
  * The console's only read client: server-side, one fixed path per page, never a
  * query string. A failure is a reason, never a throw, so a page
  * degrades to a notice. The admin key is sent and never
- * logged. The eight per-page guards (one feature folder each) are assembled
+ * logged. The four per-page guards (one feature folder each) are assembled
  * here into PageBodies and GUARDS.
  */
 
@@ -19,10 +15,6 @@ export const CONSOLE_PATHS = {
   home: "/console/home",
   cost: "/console/cost",
   quality: "/console/quality",
-  reliability: "/console/reliability",
-  incidents: "/console/incidents",
-  releases: "/console/releases",
-  models: "/console/models",
   requests: "/console/requests",
 } as const;
 
@@ -32,10 +24,6 @@ export type PageBodies = {
   home: HomeBody;
   cost: CostBody;
   quality: QualityBody;
-  reliability: ReliabilityBody;
-  incidents: IncidentsBody;
-  releases: ReleasesBody;
-  models: ModelsBody;
   requests: RequestsBody;
 };
 
@@ -43,10 +31,6 @@ export const GUARDS: { [N in PageName]: (value: unknown) => value is PageBodies[
   home: homeGuard,
   cost: costGuard,
   quality: qualityGuard,
-  reliability: reliabilityGuard,
-  incidents: incidentsGuard,
-  releases: releasesGuard,
-  models: modelsGuard,
   requests: requestsGuard,
 };
 

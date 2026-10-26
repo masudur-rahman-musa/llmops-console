@@ -1,12 +1,14 @@
 import { consolePage } from "@/components/layout/console-page";
-import { NA, ms, percent, usd } from "@/lib/format";
+import { ExternalLink } from "@/components/ui/external-link";
+import { Table } from "@/components/ui/table";
+import { NA, ms, percent, usd, utcTime } from "@/lib/format";
 import { CHECK_SCORE_SENTENCE } from "@/lib/labels";
 
 import styles from "./home.module.css";
 
 export const dynamic = "force-dynamic";
 
-export default consolePage("home", "Home", "Is the gateway healthy today, and what has it cost?", (body) => (
+export default consolePage("home", "Overview", "Is the gateway healthy today, and what has it cost?", (body) => (
   <>
     <p>
       Today the gateway handled <strong>{body.requests_today ?? NA}</strong> requests costing{" "}
@@ -19,10 +21,6 @@ export default consolePage("home", "Home", "Is the gateway healthy today, and wh
       <li className={styles.card}>
         <span className={styles.label}>Error rate:</span> <strong className={styles.value}>{percent(body.error_rate)}</strong>
       </li>
-      <li className={styles.card}>
-        <span className={styles.label}>Open incidents:</span>{" "}
-        <strong className={styles.value}>{body.open_incidents ?? NA}</strong>
-      </li>
     </ul>
     <p className="note">
       {body.last_eval === null
@@ -30,5 +28,25 @@ export default consolePage("home", "Home", "Is the gateway healthy today, and wh
         : `Last eval: check score ${percent(body.last_eval.check_score)}, ${body.last_eval.passed ? "passed" : "failed"}`}
     </p>
     <p className="note">{CHECK_SCORE_SENTENCE}</p>
+    <h2>Model routing</h2>
+    <Table
+      columns={["Alias", "Purpose", "Providers in fallback order"]}
+      rows={body.routing.aliases.map((alias) => ({
+        key: alias.name,
+        cells: [
+          <code key="name">{alias.name}</code>,
+          alias.purpose ?? "no purpose given",
+          alias.candidates.map((c, index) => `${index + 1}. ${c.provider} ${c.model}`).join(", "),
+        ],
+      }))}
+    />
+    <p className="note">Policy last loaded {utcTime(body.routing.loaded_at)}.</p>
+    <p>
+      {body.grafana_url === null ? (
+        "Grafana link not set."
+      ) : (
+        <ExternalLink url={body.grafana_url} label="Health details in Grafana" />
+      )}
+    </p>
   </>
 ));

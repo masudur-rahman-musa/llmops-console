@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import urlsplit
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_ROUTING_POLICY_PATH = Path(__file__).resolve().parents[2] / "config" / "routing.yaml"
@@ -173,6 +175,25 @@ class Settings(BaseSettings):
     Read only by `GET /console/requests`, which links a listed request to
     `<this>/traces/<trace_id>` when it is set. Unset on the cluster until the real
     project is known."""
+
+    grafana_url: str | None = None
+    """The Grafana page the Overview tab links for health details, or `None` for no link.
+
+    Read only by `GET /console/home`. It must be an `http` or `https` URL with a
+    host, checked here so a `javascript:` value never reaches a link; the console
+    checks it again before it draws one. Empty counts as unset. Unset on the
+    cluster until Grafana has a public address. Pinned by
+    tests/core/test_config.py::test_grafana_url_accepts_http_and_https_only."""
+
+    @field_validator("grafana_url")
+    @classmethod
+    def _grafana_url_is_http(cls, value: str | None) -> str | None:
+        if not value:
+            return None
+        parts = urlsplit(value)
+        if parts.scheme not in ("http", "https") or not parts.netloc:
+            raise ValueError("must be an http or https URL")
+        return value
 
     otel_service_name: str = "opsconsole-gateway"
     """What this process is called in a trace viewer. One trace carries spans from

@@ -7,7 +7,7 @@ writer's INSERT are written in two places and nothing type-checks between them,
 so a column added to one and not the other, or a positional binding that swapped
 two `text` columns, is invisible to PostgreSQL and to mypy both.
 
-The three raw-SQL cases are deliberate, not a shortcut. `severity`, `status` and
+The raw-SQL cases are deliberate, not a shortcut. `status` and
 `eval_run_id` each have a Python pre-check in front of them, so a case going
 through the writer would be refused before any statement ran and would prove
 only that the pre-check exists - which tests/storage/test_console_events.py
@@ -22,12 +22,10 @@ tests/storage/conftest.py, unchanged.
 
 The contract these cases are written against, before it exists:
 
-* `migrations/004_console_events.sql` creating `{schema}.incidents` and
-  `{schema}.releases`, with a CHECK on `severity`, a CHECK on `status`, a
+* `migrations/004_console_events.sql` creating `{schema}.releases`, with a CHECK on `status`, a
   nullable FK from `releases.eval_run_id` to `eval_runs (id)` and the composite
   primary key `(git_sha, deployed_at)` decision B fixes;
-* `PostgresConsoleEventWriter(pool, *, schema=...)` with `write_incident`,
-  `resolve_incident`, `write_release` and `eval_run_exists`.
+* `PostgresConsoleEventWriter(pool, *, schema=...)` with `write_release` and `eval_run_exists`.
 """
 
 from __future__ import annotations
@@ -40,40 +38,20 @@ import pytest
 from psycopg import sql
 
 from app.storage.console_events import (
-    INCIDENTS,
     RELEASES,
-    IncidentRow,
     PostgresConsoleEventWriter,
     ReleaseRow,
 )
 
 from .conftest import Pool, requires_postgres, table_names
 
-STARTED = datetime(2026, 9, 7, 22, 45, 13, tzinfo=UTC)
-RESOLVED = STARTED + timedelta(hours=3)
 DEPLOYED = datetime(2026, 9, 7, 9, 15, 0, tzinfo=UTC)
 REDEPLOYED = DEPLOYED + timedelta(hours=6)
 
-INCIDENT_ID = "0af7651916cd43dd8448eb211c80319c"
 GIT_SHA = "abc1234def5678"
 
 UNSTORED_RUN_ID = "ffffffffffffffffffffffffffffffff"
 """A 32-hex id no `eval_runs` row in a fresh schema carries."""
-
-
-def an_incident(**overrides: Any) -> IncidentRow:  # noqa: ANN401
-    """One well-formed incident row, with the named fields replaced."""
-    fields: dict[str, Any] = {
-        "id": INCIDENT_ID,
-        "started_at": STARTED,
-        "resolved_at": None,
-        "severity": "sev2",
-        "title": "gateway 5xx on the eu pool",
-        "summary": "the eu pool answered 503 for eleven minutes",
-        "postmortem_url": None,
-    }
-    fields.update(overrides)
-    return IncidentRow(**fields)
 
 
 def a_release(**overrides: Any) -> ReleaseRow:  # noqa: ANN401
@@ -103,7 +81,9 @@ def one_value(pool: Pool, statement: sql.Composed, params: tuple[Any, ...]) -> A
 
 
 @requires_postgres
-def test_the_migration_creates_both_tables_in_the_schema(pool: Pool, migrated_schema: str) -> None:
+def test_the_migration_creates_the_releases_table_in_the_schema(
+    pool: Pool, migrated_schema: str
+) -> None:
     """Catches `004_console_events.sql` never being picked up at all - added to the
     repository but not to the directory `apply_migrations` globs, or named so it sorts
     before the `eval_runs` migration its foreign key references, either of which leaves
@@ -111,26 +91,7 @@ def test_the_migration_creates_both_tables_in_the_schema(pool: Pool, migrated_sc
     suite stays green. The names are read from the module's own constants, so a table
     renamed in the SQL and not in the writer fails here rather than at the first INSERT.
     """
-    assert {INCIDENTS, RELEASES} <= table_names(pool, migrated_schema)
-
-
-@requires_postgres
-def test_the_severity_check_refuses_a_fourth_word(pool: Pool, migrated_schema: str) -> None:
-    """Catches the severity CHECK being left off the table, which makes the Python
-    pre-check the only guard and therefore no guard at all for the two writers that do
-    not go through it - a psql session, a later migration's backfill, the console's own
-    seed data. This statement goes ROUND the pre-check on purpose; without the
-    constraint PostgreSQL stores `sev4` happily and the timeline renders a severity no
-    filter matches.
-    """
-    with pytest.raises(psycopg.errors.CheckViolation), pool.connection() as conn:
-        conn.execute(
-            sql.SQL(
-                "INSERT INTO {} (id, started_at, resolved_at, severity, title, summary, "
-                "postmortem_url) VALUES (%s, %s, %s, %s, %s, %s, %s)"
-            ).format(sql.Identifier(migrated_schema, INCIDENTS)),
-            (INCIDENT_ID, STARTED, None, "sev4", "a title", "a summary", None),
-        )
+    assert RELEASES in table_names(pool, migrated_schema)
 
 
 @requires_postgres
@@ -215,26 +176,3 @@ def test_a_release_with_a_null_eval_run_id_is_stored(pool: Pool, migrated_schema
         (GIT_SHA,),
     )
     assert stored is None
-
-
-@requires_postgres
-def test_an_open_incident_stores_a_null_resolved_at_and_the_patch_sets_it(
-    pool: Pool, migrated_schema: str
-) -> None:
-    """Catches `resolved_at` declared NOT NULL or defaulted to `now()`, which makes
-    every incident arrive already closed and leaves the timeline with nothing open to
-    show; and catches `resolve_incident` issuing an UPDATE that touches the wrong column
-    or no row, which the in-memory case cannot see because it has no SQL. NULL before
-    and the exact timestamp after are asserted as a sequence on ONE row, so a writer
-    that inserted a second row on resolve fails on the first read too.
-    """
-    writer = writer_on(pool, migrated_schema)
-    column = sql.SQL("SELECT resolved_at FROM {} WHERE id = %s").format(
-        sql.Identifier(migrated_schema, INCIDENTS)
-    )
-
-    writer.write_incident(an_incident(resolved_at=None))
-    assert one_value(pool, column, (INCIDENT_ID,)) is None
-
-    writer.resolve_incident(INCIDENT_ID, RESOLVED)
-    assert one_value(pool, column, (INCIDENT_ID,)) == RESOLVED

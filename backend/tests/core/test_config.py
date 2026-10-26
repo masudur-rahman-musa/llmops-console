@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from app.core.config import (
     DEFAULT_PROVIDERS_DIR,
@@ -84,3 +85,30 @@ def test_a_backing_service_url_is_absent_until_the_environment_sets_it(
     monkeypatch.setenv(variable, value)
 
     assert getattr(Settings(), field) == value
+
+
+GRAFANA_ACCEPTED = ["https://grafana.example.com", "http://localhost:3001"]
+GRAFANA_REFUSED = [
+    ("a javascript link", "javascript:alert(1)"),
+    ("ftp", "ftp://grafana.example.com"),
+    ("a bare host with no scheme", "grafana.example.com"),
+]
+
+
+def test_grafana_url_accepts_http_and_https_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Catches a `grafana_url` that is stored unchecked (so a `javascript:` value reaches the
+    Overview link), one that accepts any scheme (`ftp://`), or one that insists on https and
+    refuses the local `http://localhost:3001`. The unset case is asserted first so a
+    check that refuses everything cannot pass the two accepted rows by accident."""
+    monkeypatch.delenv("OPSCONSOLE_GRAFANA_URL", raising=False)
+    assert Settings().grafana_url is None
+
+    for value in GRAFANA_ACCEPTED:
+        monkeypatch.setenv("OPSCONSOLE_GRAFANA_URL", value)
+        assert Settings().grafana_url == value
+
+    for _case, value in GRAFANA_REFUSED:
+        monkeypatch.setenv("OPSCONSOLE_GRAFANA_URL", value)
+        with pytest.raises(ValidationError) as caught:
+            Settings()
+        assert "grafana_url" in str(caught.value), value

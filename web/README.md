@@ -1,9 +1,9 @@
 # Console
 
 The web console for the AI Operations Console. It shows whether the AI is
-working and what it costs: six read-only pages (home, cost, quality,
-reliability, incidents, releases) behind a shared password login. Each page
-opens with one line saying what question it answers.
+working and what it costs: four read-only tabs (Overview, Requests, Cost,
+Quality) behind a shared password login. Each page opens with one line saying
+what question it answers.
 
 It is a Next.js 15 app (TypeScript, the app router, server components). Every
 page reads through `console-api` on the server only; the browser never talks to

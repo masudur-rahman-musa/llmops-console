@@ -5,7 +5,7 @@ alias, so the ledger, the request list and the Prometheus series all fill throug
 the real app. One request carries an email address, so the redaction count moves,
 and one is sent twice, so the cache hit rate is not null.
 
-`ops-check-console` then reads all eight `/console/*` pages with the admin key and
+`ops-check-console` then reads all four `/console/*` pages with the admin key and
 fails when a tab would show nothing. "Nothing" is spelled out per page in
 `REQUIRED`: a source in `error` or `unconfigured`, a list that is empty, a number
 that is null. The fields in `ALLOWED_EMPTY` stay empty on a healthy local stack,
@@ -56,33 +56,28 @@ PROMPTS: Final[tuple[str, ...]] = (
 """Six requests: the first two are equal (a cache hit on the second), the third
 carries an email address (a redaction). Short on purpose: a few cents in all."""
 
-PAGES: Final[tuple[str, ...]] = (
-    "home",
-    "cost",
-    "quality",
-    "reliability",
-    "incidents",
-    "releases",
-    "models",
-    "requests",
-)
+PAGES: Final[tuple[str, ...]] = ("home", "requests", "cost", "quality")
+"""The four console tabs, in nav order."""
 
 REQUIRED: Final[Mapping[str, tuple[str, ...]]] = {
-    "home": ("requests_today", "cost_usd_today", "p95_seconds", "error_rate", "last_eval"),
+    "home": (
+        "requests_today",
+        "cost_usd_today",
+        "p95_seconds",
+        "error_rate",
+        "last_eval",
+        "routing",
+    ),
+    "requests": ("requests", "tokens", "redactions", "cache_hit_rate"),
     "cost": ("days", "savings", "budgets", "cost_per_request"),
     "quality": ("gate", "runs", "release_markers", "categories"),
-    "reliability": ("slos", "latency_p95", "error_rate", "circuits"),
-    "incidents": (),
-    "releases": ("releases",),
-    "models": ("aliases", "provider_files"),
-    "requests": ("requests", "tokens", "redactions", "cache_hit_rate"),
 }
-"""Per page, the fields that must be neither null nor an empty list."""
+"""Per page, the fields that must be neither null nor an empty list. `routing` is
+full only when it names at least one alias."""
 
 ALLOWED_EMPTY: Final[Mapping[str, tuple[str, ...]]] = {
-    "incidents": ("incidents",),
+    "home": ("grafana_url",),
     "quality": ("taxonomy", "blocked"),
-    "reliability": ("fallbacks",),
     "requests": ("refusals",),
 }
 """Not read by the check; written down so the list of what may stay empty has one home."""
@@ -151,8 +146,8 @@ def page_failures(page: str, body: Mapping[str, Any]) -> list[str]:
         value = body.get(field)
         if value is None or value in ([], {}) or (field == "requests_today" and value <= 0):
             failures.append(f"{page} {field}: empty")
-        elif field == "slos" and any(slo.get("observed") is None for slo in value):
-            failures.append(f"{page} slos: observed is null")
+        elif field == "routing" and not value.get("aliases"):
+            failures.append(f"{page} routing: no aliases")
     return failures
 
 

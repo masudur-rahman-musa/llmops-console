@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 import pytest
 
+from app.cli.numbers import PAGES as CHECKED_PAGES
 from app.cli.numbers import check_console, send_traffic
 
 TENANT_KEY = "tenant-key-for-tests"
@@ -24,7 +25,7 @@ ADMIN_KEY = "admin-key-for-tests"
 GATEWAY = "http://gateway.test"
 EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 
-PAGES = ("home", "cost", "quality", "reliability", "incidents", "releases", "models", "requests")
+PAGES = ("home", "requests", "cost", "quality")
 
 NOW = "2026-10-26T10:00:00Z"
 SOURCES = {"postgres": "ok", "prometheus": "ok"}
@@ -134,7 +135,7 @@ class FakeClock:
 
 
 def full_pages() -> dict[str, dict[str, Any]]:
-    """Eight filled pages that follow the models in `app.schemas.dashboard`."""
+    """Four filled pages that follow the models in `app.schemas.dashboard`."""
     return {
         "home": {
             "sources": dict(SOURCES),
@@ -148,7 +149,18 @@ def full_pages() -> dict[str, dict[str, Any]]:
                 "passed": True,
                 "check_score": 0.9,
             },
-            "open_incidents": 0,
+            "routing": {
+                "loaded_at": NOW,
+                "aliases": [
+                    {
+                        "name": "agent-default",
+                        "purpose": "Everyday chat replies.",
+                        "candidates": [{"provider": "openai", "model": "m"}],
+                    }
+                ],
+            },
+            # Unset is a legal answer: the Overview just hides the link.
+            "grafana_url": None,
         },
         "cost": {
             "sources": dict(SOURCES),
@@ -204,66 +216,6 @@ def full_pages() -> dict[str, dict[str, Any]]:
                     "eval_run_id": None,
                     "regressed": [],
                 }
-            ],
-        },
-        "reliability": {
-            "sources": dict(SOURCES),
-            "slos": [
-                {
-                    "name": "availability",
-                    "objective": 0.99,
-                    "window": "30d",
-                    "observed": 1.0,
-                    "budget_remaining": 1.0,
-                }
-            ],
-            "latency_p95": [[1.0, 1.2]],
-            "error_rate": [[1.0, 0.0]],
-            "circuits": [{"provider": "openai", "state": "closed"}],
-            "fallbacks": [
-                {"tenant": "nordlicht", "alias": "agent-default", "provider": "x", "count": 1.0}
-            ],
-        },
-        "incidents": {
-            "sources": dict(SOURCES),
-            "incidents": [
-                {
-                    "id": "inc-1",
-                    "started_at": NOW,
-                    "resolved_at": None,
-                    "severity": "minor",
-                    "title": "t",
-                    "summary": "s",
-                    "postmortem_url": None,
-                    "open": True,
-                }
-            ],
-        },
-        "releases": {
-            "sources": dict(SOURCES),
-            "releases": [
-                {
-                    "git_sha": "abc",
-                    "deployed_at": NOW,
-                    "status": "deployed",
-                    "pr_url": None,
-                    "eval_run_id": "run-1",
-                    "eval_passed": True,
-                    "check_score": 0.9,
-                }
-            ],
-        },
-        "models": {
-            "loaded_at": NOW,
-            "aliases": [
-                {
-                    "name": "agent-default",
-                    "purpose": None,
-                    "candidates": [{"provider": "openai", "model": "m"}],
-                }
-            ],
-            "provider_files": [
-                {"name": "openai", "provider": "openai", "kind": "chat", "enabled": True}
             ],
         },
         "requests": {
@@ -345,7 +297,7 @@ def run_check(
 
 def test_check_passes_when_every_page_is_full() -> None:
     """Catches a check that fails on a good stack, skips a page, or sends no admin key:
-    all eight pages are read with the bearer key and the exit is 0 with no waiting."""
+    all four pages are read with the bearer key and the exit is 0 with no waiting."""
     console = Console([full_pages()])
     clock = FakeClock()
 
@@ -400,13 +352,6 @@ EMPTY_CASES: list[tuple[str, str, object]] = [
     ("quality", "runs", []),
     ("quality", "release_markers", []),
     ("quality", "categories", []),
-    ("reliability", "slos", []),
-    ("reliability", "latency_p95", []),
-    ("reliability", "error_rate", []),
-    ("reliability", "circuits", []),
-    ("releases", "releases", []),
-    ("models", "aliases", []),
-    ("models", "provider_files", []),
     ("requests", "requests", []),
     ("requests", "tokens", []),
     ("requests", "redactions", []),
@@ -429,29 +374,11 @@ def test_check_fails_on_each_required_field_empty(
     assert f"{page} {field}" in capsys.readouterr().out
 
 
-def test_check_fails_on_a_slo_with_no_observed_value(capsys: pytest.CaptureFixture[str]) -> None:
-    """Catches a check that counts a SLO row as filled when its `observed` is null: the
-    list is not empty but nothing was measured, so it must exit 1 and name `slos`."""
-    slo = {
-        "name": "availability",
-        "objective": 0.99,
-        "window": "30d",
-        "observed": None,
-        "budget_remaining": None,
-    }
-
-    assert run_check(Console([pages_with(reliability={"slos": [slo]})])) == 1
-
-    assert "reliability slos" in capsys.readouterr().out
-
-
 def test_check_allows_the_listed_fields_to_be_empty() -> None:
-    """Catches a check that demands data only a real failure creates: the incidents list,
-    `taxonomy`, `blocked`, `fallbacks` and `refusals` empty must still exit 0."""
+    """Catches a check that demands data only a real failure creates: `taxonomy`, `blocked`
+    and `refusals` empty, and an unset `grafana_url`, must still exit 0."""
     pages = pages_with(
-        incidents={"incidents": []},
         quality={"taxonomy": [], "blocked": []},
-        reliability={"fallbacks": []},
         requests={"refusals": []},
     )
     clock = FakeClock()
@@ -494,3 +421,19 @@ def test_check_fails_on_a_non_200_page(capsys: pytest.CaptureFixture[str]) -> No
     assert run_check(console) == 1
 
     assert "quality: HTTP 500" in capsys.readouterr().out
+
+
+def test_the_check_covers_the_four_tabs(capsys: pytest.CaptureFixture[str]) -> None:
+    """Catches a check still reading a removed tab (it would 404 on the real stack), one that
+    drops a kept tab, and an Overview check that never looks at the routing: a home body with
+    an empty `routing.aliases` is the only thing wrong here, so only a check that requires the
+    routing can turn it into exit 1."""
+    assert CHECKED_PAGES == ("home", "requests", "cost", "quality")
+
+    routing = {"loaded_at": NOW, "aliases": []}
+
+    assert run_check(Console([pages_with(home={"routing": routing})])) == 1
+
+    out = capsys.readouterr().out
+    assert "home" in out
+    assert "routing" in out

@@ -9,7 +9,7 @@ admin key authorises nobody. Not
 counted by the request metrics, traced, and cluster-internal.
 
 The console event writer arrives through the `ConsoleEventsDep` dependency
-(`app.api.deps.get_console_events`), the same one `/admin/incidents` takes, so a
+(`app.api.deps.get_console_events`), so a
 route never imports a sibling route and
 never reaches into state by hand.
 """

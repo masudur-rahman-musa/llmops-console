@@ -107,7 +107,7 @@ Every standing rule below is one the build paid for.
 - Failing tests went unseen for days because no run of the whole suite happened
   in that window. The fix was a blameless incident record, a visible unverified
   list, and a gate that has to be cleared before new work opens:
-  the project notes
+  [docs/postmortems/2026-09-17-red-tests-went-unseen.md](docs/postmortems/2026-09-17-red-tests-went-unseen.md).
 - An identifier pattern anchored with `$` accepted a value with a trailing
   newline, because in Python `$` also matches before one. Every key and
   identifier pattern now uses `re.fullmatch`, and every rejection table carries

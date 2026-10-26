@@ -8,13 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock, type MockIn
 
 import HomePage, { dynamic as homeDynamic } from "@/app/(console)/page";
 import CostPage, { dynamic as costDynamic } from "@/app/(console)/cost/page";
-import IncidentsPage, { dynamic as incidentsDynamic } from "@/app/(console)/incidents/page";
 import QualityPage, { dynamic as qualityDynamic } from "@/app/(console)/quality/page";
-import ReleasesPage, { dynamic as releasesDynamic } from "@/app/(console)/releases/page";
-import ReliabilityPage, { dynamic as reliabilityDynamic } from "@/app/(console)/reliability/page";
-import { CHECK_SCORE_SENTENCE } from "@/lib/labels";
 
-type PageName = "home" | "cost" | "quality" | "reliability" | "incidents" | "releases";
+type PageName = "home" | "cost" | "quality";
 type Fixture = Record<string, unknown>;
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -26,9 +22,6 @@ const PAGES: Record<PageName, () => Promise<ReactElement>> = {
   home: HomePage,
   cost: CostPage,
   quality: QualityPage,
-  reliability: ReliabilityPage,
-  incidents: IncidentsPage,
-  releases: ReleasesPage,
 };
 const NAMES = Object.keys(PAGES) as PageName[];
 
@@ -80,10 +73,6 @@ function has(html: string, expected: string): boolean {
 
 function occurrences(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
-}
-
-function words(html: string, word: string): number {
-  return (text(html).match(new RegExp(`(^|[^A-Za-z])${word}(?![A-Za-z])`, "g")) ?? []).length;
 }
 
 type Anchor = { tag: string; href: string | null; label: string };
@@ -149,8 +138,8 @@ afterEach(() => {
 describe("console pages", () => {
   it("every page module exports force-dynamic", () => {
     // Catches a page left statically rendered, which would cache one request's data for every visitor.
-    const exported = [homeDynamic, costDynamic, qualityDynamic, reliabilityDynamic, incidentsDynamic, releasesDynamic];
-    expect(exported).toEqual(Array(6).fill("force-dynamic"));
+    const exported = [homeDynamic, costDynamic, qualityDynamic];
+    expect(exported).toEqual(Array(3).fill("force-dynamic"));
   });
 
   it("each page renders its ok fixture", async () => {
@@ -166,7 +155,6 @@ describe("console pages", () => {
     expect(has(home, "Today the gateway handled 842 requests costing $1,234.50.")).toBe(true);
     expect(has(home, "p95 latency: 412 ms")).toBe(true);
     expect(has(home, "Error rate: 0.50%")).toBe(true);
-    expect(has(home, "Open incidents: 2")).toBe(true);
     expect(has(home, "Last eval: check score 93.12%, passed")).toBe(true);
     const failedEval = fixture("home");
     failedEval.last_eval = { ...(failedEval.last_eval as Fixture), passed: false };
@@ -233,52 +221,6 @@ describe("console pages", () => {
     const prLinks = anchors(quality).filter((anchor) => anchor.label === "PR");
     expect(prLinks.map((anchor) => anchor.href)).toEqual(["https://github.com/example/helpdesk/pull/41"]);
     expect(quality).not.toContain("No regression recorded.");
-
-    const reliability = await render("reliability");
-    expect(has(reliability, "p95 latency")).toBe(true);
-    expect(has(reliability, "Error rate")).toBe(true);
-    const circleCounts = svgs(reliability)
-      .map((svg) => count(svg, /<circle\b/g))
-      .filter((circles) => circles > 0)
-      .sort();
-    expect(circleCounts).toEqual([2, 3]);
-    expect(has(reliability, "mistral closed")).toBe(true);
-    expect(has(reliability, "local half_open")).toBe(true);
-    expect(has(reliability, "acme-eu support-fast local 5")).toBe(true);
-
-    const incidents = await render("incidents");
-    expectInOrder(incidents, ["Cache hit rate dropped", "EU provider latency spike", "Budget counter stalled"]);
-    for (const expected of [
-      "sev3",
-      "sev2",
-      "sev1",
-      "Redis evicted keys under memory pressure.",
-      "p95 above two seconds on the primary EU route.",
-      "Spend was not debited for forty minutes.",
-      "2026-09-14 08:30 UTC",
-      "2026-09-14 09:10 UTC",
-      "2026-09-16 07:45 UTC",
-      "2026-09-10 22:15 UTC",
-      "2026-09-11 01:05 UTC",
-      "n/a",
-    ]) {
-      expect(has(incidents, expected), expected).toBe(true);
-    }
-
-    const releases = await render("releases");
-    expectInOrder(releases, ["9b1c3d5e7f9a", "3f9c2a7b1e4d", "c4d5e6f70819"]);
-    for (const expected of ["2026-09-15 10:00 UTC", "2026-09-14 16:20 UTC", "2026-09-13 09:45 UTC", "deployed", "blocked", "javascript:alert(1)"]) {
-      expect(has(releases, expected), expected).toBe(true);
-    }
-    expect(has(releases, "check score 93.00%")).toBe(true);
-    expect(has(releases, "check score 88.00%")).toBe(true);
-    // The check score sentence says "passed" itself; only the eval column is counted.
-    const releaseRows = releases.replace(CHECK_SCORE_SENTENCE, "");
-    expect(words(releaseRows, "passed")).toBe(1);
-    expect(words(releaseRows, "failed")).toBe(1);
-    expect(occurrences(text(releases), "no eval")).toBe(1);
-    const releaseLinks = anchors(releases).filter((anchor) => anchor.label === "PR");
-    expect(releaseLinks.map((anchor) => anchor.href)).toEqual(["https://github.com/example/helpdesk/pull/44"]);
   });
 
   it("each page renders the unavailable notice for each reason", async () => {
@@ -328,17 +270,11 @@ describe("console pages", () => {
   });
 
   it("pages show an empty state for a run without check_score", async () => {
-    // Catches a null check_score drawn as 0%, as NaN, or as a plotted point: home says n/a, the
-    // releases row says n/a beside its pass or fail, and the quality chart has no data.
+    // Catches a null check_score drawn as 0%, as NaN, or as a plotted point: home says n/a and
+    // the quality chart has no data.
     const home = fixture("home");
     home.last_eval = { ...(home.last_eval as Fixture), check_score: null };
     expect(has(await render("home", home), "Last eval: check score n/a, passed")).toBe(true);
-
-    const releases = fixture("releases");
-    for (const release of list(releases, "releases")) release.check_score = null;
-    const releasesHtml = await render("releases", releases);
-    expect(has(releasesHtml, "check score n/a")).toBe(true);
-    expect(releasesHtml).not.toContain("0.00%");
 
     const quality = fixture("quality");
     for (const run of list(quality, "runs")) run.metrics = { judge_score: 0.9 };
@@ -391,48 +327,8 @@ describe("console pages", () => {
     expect(has(html, "Judge score: 0.9 (was 0.95)")).toBe(true);
   });
 
-  it("reliability renders the slo table above the charts", async () => {
-    // Catches the SLO table left off the page, or placed below the latency and error-rate charts it summarises.
-    const html = await render("reliability");
-    expectInOrder(html, ["availability", "p95 latency", "Error rate"]);
-  });
-
-  it("incidents render the open badge and a safe postmortem link only", async () => {
-    // Catches a badge on resolved incidents, a Postmortem link for a javascript: URL, or a link for a null URL.
-    const html = await render("incidents");
-    expect(words(html, "Open")).toBe(1);
-    const postmortems = anchors(html).filter((anchor) => anchor.label === "Postmortem");
-    expect(postmortems.map((anchor) => anchor.href)).toEqual(["https://docs.example.com/postmortems/31"]);
-    expect(has(html, "javascript:alert(1)")).toBe(true);
-    expect(html).not.toMatch(/href="\s*javascript:/i);
-
-    const allOpen = fixture("incidents");
-    for (const incident of list(allOpen, "incidents")) incident.open = true;
-    expect(words(await render("incidents", allOpen), "Open")).toBe(3);
-
-    const noneOpen = fixture("incidents");
-    for (const incident of list(noneOpen, "incidents")) {
-      incident.open = false;
-      incident.postmortem_url = null;
-    }
-    const closed = await render("incidents", noneOpen);
-    expect(words(closed, "Open")).toBe(0);
-    expect(anchors(closed)).toEqual([]);
-    expect(closed).not.toContain("javascript:");
-  });
-
-  it("releases render no eval when eval_passed is null", async () => {
-    // Catches a null eval_passed rendered as failed or passed.
-    const body = fixture("releases");
-    for (const release of list(body, "releases")) release.eval_passed = null;
-    const html = await render("releases", body);
-    expect(occurrences(text(html), "no eval")).toBe(3);
-    expect(words(html.replace(CHECK_SCORE_SENTENCE, ""), "passed")).toBe(0);
-    expect(words(html.replace(CHECK_SCORE_SENTENCE, ""), "failed")).toBe(0);
-  });
-
   it("external links carry rel noopener noreferrer", async () => {
-    // Catches a PR or Postmortem link rendered without rel, or any javascript: URL placed in an href.
+    // Catches a PR or Grafana link rendered without rel, or any javascript: URL placed in an href.
     let external = 0;
     for (const name of NAMES) {
       const html = await render(name);
@@ -444,8 +340,8 @@ describe("console pages", () => {
         }
       }
     }
-    // The quality, incidents and releases fixtures carry one safe link each.
-    expect(external).toBeGreaterThanOrEqual(3);
+    // The quality fixture carries one safe link and the home fixture the Grafana link.
+    expect(external).toBeGreaterThanOrEqual(2);
   });
 
   it("rendered html never contains the admin key", async () => {
