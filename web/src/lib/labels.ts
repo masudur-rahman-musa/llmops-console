@@ -18,3 +18,8 @@ export function scoreLabel(key: string): string {
   const words = key.replaceAll("_", " ");
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
+
+/** Days console-api covers when the console sends no `days`; pinned to its `DEFAULT_DAYS` by tests/console-clarity.test.tsx. */
+export const WINDOW_DAYS = 30;
+
+export const WINDOW_SENTENCE = `Last ${WINDOW_DAYS} days.`;

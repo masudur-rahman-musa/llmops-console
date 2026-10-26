@@ -164,6 +164,21 @@ svg {
   stroke: var(--muted);
 }
 
+.chart-axis {
+  stroke: var(--muted);
+}
+
+.chart-text {
+  fill: var(--muted);
+  font-size: 11px;
+}
+
+/* The one line under the question saying what time the page covers. */
+.window {
+  margin-top: 0;
+  color: var(--muted);
+}
+
 /* The one line under a page title saying what question the page answers. */
 .question {
   margin-top: 0;
@@ -253,4 +268,8 @@ tbody tr:last-child td {
 .bar > div {
   height: 100%;
   background: var(--accent);
+}
+
+.bar.over > div {
+  background: var(--danger);
 }

@@ -10,6 +10,13 @@ export const dynamic = "force-dynamic";
 
 const PER_REQUEST_DECIMALS = 4;
 
+/** Newest day first, then tenant, then provider. console-api's own order is left alone. */
+function newestFirst<T extends { day: string; tenant: string; provider: string }>(rows: ReadonlyArray<T>): T[] {
+  return rows.toSorted(
+    (a, b) => b.day.localeCompare(a.day) || a.tenant.localeCompare(b.tenant) || a.provider.localeCompare(b.provider),
+  );
+}
+
 /** `min(ratio, 1)` as a whole-page percentage, rounded so float noise never reaches the style. */
 function barWidth(ratio: number): string {
   return `${Math.round(Math.min(Math.max(ratio, 0), 1) * 10000) / 100}%`;
@@ -36,7 +43,7 @@ function TradeoffTable({ table }: { table: Tradeoff | null }) {
 
 export default consolePage("cost", "Cost", "What does the AI cost, per day, per tenant and per model, and what did caching save?", async (body, params) => {
   const tradeoff = await readTradeoff(process.env.CONSOLE_TRADEOFF_PATH);
-  const days = pageOf(body.days, params, PAGE_PARAMS.days);
+  const days = pageOf(newestFirst(body.days), params, PAGE_PARAMS.days);
   const savings = pageOf(body.savings, params, PAGE_PARAMS.savings);
   return (
     <>
@@ -67,11 +74,12 @@ export default consolePage("cost", "Cost", "What does the AI cost, per day, per 
         <div key={budget.tenant}>
           <p>
             {budget.tenant}: {usd(budget.spent_usd)} of {usd(budget.cap_usd)}
+            {budget.ratio !== null && budget.ratio > 1 && ", over"}
           </p>
           {budget.ratio === null ? (
             <p className="note">{NA}</p>
           ) : (
-            <div className="bar">
+            <div className={budget.ratio > 1 ? "bar over" : "bar"}>
               <div style={{ width: barWidth(budget.ratio) }} />
             </div>
           )}

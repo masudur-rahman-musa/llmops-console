@@ -362,7 +362,7 @@ describe("console pages", () => {
     const lines = Array.from(chart.matchAll(/<line\b[^>]*\bx1="([^"]*)"/g), (m) => Number(m[1]));
     // Runs by time: 09-12, 09-14, 09-15. Markers name the 09-14 and 09-15 runs.
     expect(circles).toHaveLength(3);
-    expect(circles[0]).toBe(8);
+    expect(circles[0]).toBe(48);
     expect(circles[2]).toBe(592);
     expect(lines).toEqual([circles[1], circles[2]]);
   });

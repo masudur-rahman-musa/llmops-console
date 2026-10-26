@@ -90,8 +90,9 @@ describe("paged panels", () => {
 
     const dayRows = rowsMatching(html, /\bdt\d+\b/);
     expect(dayRows).toHaveLength(5);
-    expect(dayRows.join(" ")).toContain("dt44");
-    expect(dayRows.join(" ")).not.toContain("dt39");
+    // Newest first: page 3 holds the oldest days, so dt0 (2026-08-01) is on it and dt44 (2026-08-17) is not.
+    expect(dayRows.join(" ")).toMatch(/\bdt0\b/);
+    expect(dayRows.join(" ")).not.toContain("dt44");
     const savingRows = rowsMatching(html, /\bst\d+\b/);
     expect(savingRows).toHaveLength(20);
     expect(savingRows.join(" ")).toContain("st0 ");

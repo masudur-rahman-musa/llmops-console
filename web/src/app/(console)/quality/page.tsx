@@ -5,10 +5,13 @@ import { Pager } from "@/components/ui/pager";
 import { NONE_IN_WINDOW, Table } from "@/components/ui/table";
 import type { GateScore } from "@/features/quality/guards";
 import { NA, points, shortSha } from "@/lib/format";
-import { CHECK_SCORE_SENTENCE, scoreLabel } from "@/lib/labels";
+import { CHECK_SCORE_SENTENCE, WINDOW_SENTENCE, scoreLabel } from "@/lib/labels";
 import { PAGE_PARAMS, pageOf } from "@/lib/paging";
 
 export const dynamic = "force-dynamic";
+
+/** Short enough that two release labels never touch on the chart. */
+const MARKER_LABEL_LENGTH = 7;
 
 function seconds(iso: string): number {
   return Date.parse(iso) / 1000;
@@ -36,7 +39,7 @@ export default consolePage("quality", "Quality", "Does the help desk still answe
   const runTimes = new Map(body.runs.map((run) => [run.id, seconds(run.started_at)]));
   const markers = body.release_markers.flatMap((marker) => {
     const at = marker.eval_run_id === null ? undefined : runTimes.get(marker.eval_run_id);
-    return at === undefined ? [] : [at];
+    return at === undefined ? [] : [{ at, label: marker.git_sha.slice(0, MARKER_LABEL_LENGTH) }];
   });
   return (
     <>
@@ -59,6 +62,7 @@ export default consolePage("quality", "Quality", "Does the help desk still answe
         title="Check score"
         points={scores}
         markers={markers}
+        yFormat={points}
       />
 
       <h2>Categories</h2>
@@ -110,4 +114,4 @@ export default consolePage("quality", "Quality", "Does the help desk still answe
       <Pager name={PAGE_PARAMS.blocked} page={blocked.page} pages={blocked.pages} params={params} />
     </>
   );
-});
+}, WINDOW_SENTENCE);

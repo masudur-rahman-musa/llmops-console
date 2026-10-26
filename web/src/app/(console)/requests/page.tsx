@@ -3,6 +3,7 @@ import { ExternalLink } from "@/components/ui/external-link";
 import { Pager } from "@/components/ui/pager";
 import { Table } from "@/components/ui/table";
 import { NA, percent, shortSha, usd, utcTime } from "@/lib/format";
+import { WINDOW_SENTENCE } from "@/lib/labels";
 import { PAGE_PARAMS } from "@/lib/paging";
 
 export const dynamic = "force-dynamic";
@@ -54,4 +55,5 @@ export default consolePage(
       <Pager name={PAGE_PARAMS.requests} page={body.requests_page} pages={body.requests_pages} params={params} />
     </>
   ),
+  `${WINDOW_SENTENCE} Newest requests lists every request, newest first.`,
 );
