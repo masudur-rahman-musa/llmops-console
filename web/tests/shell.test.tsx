@@ -17,8 +17,8 @@ function bannerIndex(html: string): number {
 }
 
 describe("console shell", () => {
-  it("the root layout renders the banner text exactly", () => {
-    // Catches a banner with different wording, casing or punctuation, a missing banner, or one rendered after the page content.
+  it("the root layout renders no demo banner", () => {
+    // Catches the demo-data banner coming back: the console shows real gateway traffic.
     const html = renderToStaticMarkup(
       <RootLayout>
         <p id="child">page content</p>
@@ -26,17 +26,16 @@ describe("console shell", () => {
     );
     expect(html).toMatch(/<html\b[^>]*\blang="en"/);
     expect(html).toMatch(/<body\b/);
-    expect(bannerIndex(html)).toBeGreaterThan(-1);
-    expect(occurrences(html, BANNER)).toBe(1);
-    expect(html.indexOf('id="child"')).toBeGreaterThan(bannerIndex(html));
+    expect(occurrences(html, BANNER)).toBe(0);
+    expect(html.indexOf('id="child"')).toBeGreaterThan(-1);
   });
 
-  it("the login page renders the banner", async () => {
-    // Catches a login page outside the banner, a failure message that is missing, repeated or shown without error=1, or a form not posting to /api/login.
+  it("the login page renders without the banner", async () => {
+    // Catches a login page that shows the banner, a failure message that is missing, repeated or shown without error=1, or a form not posting to /api/login.
     const failed = renderToStaticMarkup(
       <RootLayout>{await LoginPage({ searchParams: Promise.resolve({ error: "1", next: "/cost" }) })}</RootLayout>,
     );
-    expect(bannerIndex(failed)).toBeGreaterThan(-1);
+    expect(bannerIndex(failed)).toBe(-1);
     expect(occurrences(failed, "Sign-in failed.")).toBe(1);
 
     const form = failed.match(/<form\b[^>]*>/)?.[0] ?? "";
@@ -46,7 +45,7 @@ describe("console shell", () => {
     expect(failed).toMatch(/<input\b(?=[^>]*\bname="next")(?=[^>]*\btype="hidden")[^>]*>/);
 
     const fresh = renderToStaticMarkup(<RootLayout>{await LoginPage({ searchParams: Promise.resolve({}) })}</RootLayout>);
-    expect(bannerIndex(fresh)).toBeGreaterThan(-1);
+    expect(bannerIndex(fresh)).toBe(-1);
     expect(occurrences(fresh, "Sign-in failed.")).toBe(0);
   });
 
