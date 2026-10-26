@@ -16,6 +16,7 @@ from app.core.tracing import (
     GenerationAttributes,
     SpanAttributes,
     annotate,
+    note_request,
     stage_span,
     start_generation,
 )
@@ -101,6 +102,7 @@ def embed_texts(
             ),
         )
     label_candidate(scope, body.model, candidates[0])
+    note_request(scope, alias=body.model)
 
     texts = body.texts
     redacted = False
@@ -122,7 +124,7 @@ def embed_texts(
         label_candidate(scope, body.model, chosen)
         adapter = cast(EmbeddingAdapter, clients.adapters[chosen.provider])
         generation = start_generation(
-            scope, provider_span_name(chosen.provider), model=chosen.model
+            scope, provider_span_name(chosen.provider), model=chosen.model, alias=body.model
         )
         try:
             answer = adapter.embed(EmbeddingRequest(model=chosen.model, input=texts))

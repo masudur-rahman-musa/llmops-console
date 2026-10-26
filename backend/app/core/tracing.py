@@ -31,6 +31,7 @@ of one request.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -50,7 +51,7 @@ from opentelemetry.trace import (
     Tracer,
     set_span_in_context,
 )
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 from starlette.types import Scope
 
 from app.core.config import Settings
@@ -203,6 +204,77 @@ class GenerationAttributes(BaseModel):
         return attributes
 
 
+INPUT_NOTE_KEY = "langfuse.observation.input"
+OUTPUT_NOTE_KEY = "langfuse.observation.output"
+"""The labels Langfuse shows as a step's Input and Output. They carry a
+`PreviewNote`, never the prompt or the answer."""
+
+TAGS_KEY = "langfuse.trace.tags"
+"""The root span label Langfuse reads a trace's tags from."""
+
+INPUT_NOT_SENT = "not sent: prompts stay inside the gateway"
+OUTPUT_NOT_SENT = "not sent"
+
+FINISH_REASON_PATTERN = re.compile(r"[a-z_]{1,32}")
+"""What a finish reason must look like to be sent as given."""
+
+OTHER_FINISH_REASON = "other"
+"""What any other finish reason is sent as."""
+
+
+class PreviewNote(BaseModel):
+    """The short note Langfuse shows as a step's Input or Output, in place of the text.
+
+    Left empty, Langfuse shows `undefined`, which reads as a bug. The real text
+    must not go there, because Langfuse sits outside this system's redaction. So
+    a step says the text was not sent, plus a few safe facts. Closed like
+    `SpanAttributes`: a `prompt` or a `user` key is a `ValidationError`. Pinned by
+    `test_the_preview_note_field_set_is_closed`.
+
+    `finish_reason` is provider text, so anything that is not a short lower-case
+    word becomes `other` (`test_a_bad_finish_reason_is_sent_as_other`).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    text: str
+    alias: str | None = None
+    messages: int | None = None
+    finish_reason: str | None = None
+    tokens_out: int | None = None
+
+    @field_validator("finish_reason")
+    @classmethod
+    def _checked_finish_reason(cls, value: str | None) -> str | None:
+        if value is None or FINISH_REASON_PATTERN.fullmatch(value):
+            return value
+        return OTHER_FINISH_REASON
+
+    @classmethod
+    def input(cls, *, alias: str | None = None, messages: int | None = None) -> PreviewNote:
+        """An Input note: not sent, with what is known about the request."""
+        return cls(text=INPUT_NOT_SENT, alias=alias, messages=messages)
+
+    @classmethod
+    def output(
+        cls, *, finish_reason: str | None = None, tokens_out: int | None = None
+    ) -> PreviewNote:
+        """An Output note: not sent, with what is known about the answer."""
+        return cls(text=OUTPUT_NOT_SENT, finish_reason=finish_reason, tokens_out=tokens_out)
+
+    def as_json(self) -> str:
+        """Compact JSON of the set fields only; an unknown fact is left out, never null."""
+        return self.model_dump_json(exclude_none=True)
+
+
+def plain_notes() -> dict[str, str]:
+    """The Input and Output every step starts with."""
+    return {
+        INPUT_NOTE_KEY: PreviewNote.input().as_json(),
+        OUTPUT_NOTE_KEY: PreviewNote.output().as_json(),
+    }
+
+
 class Generation:
     """One provider call's span, opened by hand so it can outlive a `with` block.
 
@@ -211,15 +283,41 @@ class Generation:
     caller reports what it learns and ends it once; a second `end` is ignored, so
     an error path and a finished path can both end it safely. Holds `None` when
     the request is not traced, so call sites stay unconditional.
+
+    `root` is the request's root span, which carries the Output note of the call
+    that answered (`test_the_root_step_carries_the_provider_notes`).
     """
 
-    def __init__(self, span: Span | None) -> None:
+    def __init__(self, span: Span | None, root: Span | None = None) -> None:
         self._span = span
+        self._root = root
+        self._output = PreviewNote.output()
 
     def report(self, attributes: GenerationAttributes) -> None:
         """Add what is now known to the open span."""
         if self._span is not None and self._span.is_recording():
             self._span.set_attributes(attributes.as_attributes())
+
+    def note_output(
+        self, *, finish_reason: str | None = None, tokens_out: int | None = None
+    ) -> None:
+        """Add a fact about the answer to the Output note, here and on the root.
+
+        A stream learns the finish reason and the tokens from two events, so each
+        call keeps what an earlier one set.
+        """
+        if self._span is None or not self._span.is_recording():
+            return
+        self._output = PreviewNote.output(
+            finish_reason=finish_reason
+            if finish_reason is not None
+            else self._output.finish_reason,
+            tokens_out=tokens_out if tokens_out is not None else self._output.tokens_out,
+        )
+        note = self._output.as_json()
+        self._span.set_attribute(OUTPUT_NOTE_KEY, note)
+        if self._root is not None and self._root.is_recording():
+            self._root.set_attribute(OUTPUT_NOTE_KEY, note)
 
     def end(self) -> None:
         """Close the span; later calls do nothing."""
@@ -228,11 +326,14 @@ class Generation:
             span.end()
 
 
-def start_generation(scope: Scope, name: str, *, model: str) -> Generation:
+def start_generation(
+    scope: Scope, name: str, *, model: str, alias: str, messages: int | None = None
+) -> Generation:
     """Open a provider span as a Langfuse generation, labelled with the model now.
 
     Parented on the root span from the scope, like `stage_span`, and with the
-    same exception defaults off, so no provider message reaches the span.
+    same exception defaults off, so no provider message reaches the span. Its
+    Input note names the alias and, for a chat, how many messages went out.
     """
     record = request_trace(scope)
     if record is None:
@@ -240,7 +341,9 @@ def start_generation(scope: Scope, name: str, *, model: str) -> Generation:
     span = tracer().start_span(
         name, context=record.context, record_exception=False, set_status_on_exception=False
     )
-    generation = Generation(span)
+    span.set_attributes(plain_notes())
+    span.set_attribute(INPUT_NOTE_KEY, PreviewNote.input(alias=alias, messages=messages).as_json())
+    generation = Generation(span, record.span)
     generation.report(GenerationAttributes(model=model))
     return generation
 
@@ -288,7 +391,7 @@ def parent_context(trace_id: str, span_id: str) -> Context:
 
 def start_root_span(parent: Context | None) -> RequestTrace:
     """Open one request's root span, under a remote parent when there is one."""
-    span = tracer().start_span(ROOT_SPAN_NAME, context=parent)
+    span = tracer().start_span(ROOT_SPAN_NAME, context=parent, attributes=plain_notes())
     return RequestTrace(span=span, context=set_span_in_context(span))
 
 
@@ -341,10 +444,26 @@ def record_error_code(scope: Scope, code: str | None) -> None:
 
 
 def annotate(scope: Scope, attributes: SpanAttributes) -> None:
-    """Put allowlisted labels on this request's root span."""
+    """Put allowlisted labels on this request's root span.
+
+    A tenant also goes out as the trace tag `tenant:<tenant>`, so Langfuse can
+    filter on it; it is the tenant auth already checked
+    (`test_the_tenant_is_a_trace_tag`).
+    """
     record = request_trace(scope)
     if record is not None:
         record.span.set_attributes(attributes.as_attributes())
+        if attributes.tenant is not None:
+            record.span.set_attribute(TAGS_KEY, (f"tenant:{attributes.tenant}",))
+
+
+def note_request(scope: Scope, *, alias: str, messages: int | None = None) -> None:
+    """Put the request's Input note on the root span: the alias and the message count."""
+    record = request_trace(scope)
+    if record is not None:
+        record.span.set_attribute(
+            INPUT_NOTE_KEY, PreviewNote.input(alias=alias, messages=messages).as_json()
+        )
 
 
 @contextmanager
@@ -379,6 +498,7 @@ def stage_span(scope: Scope, name: str) -> Iterator[Span | None]:
     with tracer().start_as_current_span(
         name, context=record.context, record_exception=False, set_status_on_exception=False
     ) as span:
+        span.set_attributes(plain_notes())
         yield span
 
 

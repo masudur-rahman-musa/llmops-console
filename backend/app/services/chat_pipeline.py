@@ -27,6 +27,7 @@ from app.core.tracing import (
     GenerationAttributes,
     SpanAttributes,
     annotate,
+    note_request,
     stage_span,
     start_generation,
 )
@@ -77,6 +78,7 @@ from app.services.redaction_flow import (
 )
 from app.services.streaming import StreamPlan, streamed
 from app.services.wire_mapping import (
+    FINISH_REASON_BY_STOP_REASON,
     rehydrated,
     requested_mapping,
     to_neutral,
@@ -215,6 +217,7 @@ def _token_sink(
         )
         cost = _book_cost(clients, context, alias=alias, chosen=chosen, usage=usage, cached=False)
         generation.report(generation_usage(usage, cost))
+        generation.note_output(tokens_out=usage.completion_tokens)
 
     return sink
 
@@ -406,6 +409,7 @@ def complete_chat(
             is_healthy=health_seam(clients.breaker, lambda provider: provider in clients.adapters),
         )
     label_candidate(scope, body.model, candidates[0])
+    note_request(scope, alias=body.model, messages=len(body.messages))
 
     with stage_span(scope, CACHE_SPAN):
         key = requested_key(
@@ -480,8 +484,16 @@ def complete_chat(
         label_candidate(scope, body.model, chosen)
         headers = _gateway_headers(chosen, context.trace_id, redacted=redacted)
         generation = start_generation(
-            scope, provider_span_name(chosen.provider), model=chosen.model
+            scope,
+            provider_span_name(chosen.provider),
+            model=chosen.model,
+            alias=body.model,
+            messages=len(outbound.messages),
         )
+
+        def note_finish(reason: str) -> None:
+            generation.note_output(finish_reason=FINISH_REASON_BY_STOP_REASON.get(reason, reason))
+
         if body.stream:
             try:
                 plan = streamed(
@@ -501,6 +513,7 @@ def complete_chat(
                         prompt_chars=prompt_characters(outbound),
                     ),
                     on_close=generation.end,
+                    on_finish=note_finish,
                 )
             except BaseException:
                 generation.end()
@@ -543,6 +556,8 @@ def complete_chat(
             cached=False,
         )
         generation.report(generation_usage(answer.usage, headers[COST_HEADER]))
+        note_finish(answer.finish_reason)
+        generation.note_output(tokens_out=answer.usage.completion_tokens)
         generation.end()
         store_answer(
             clients.response_cache,

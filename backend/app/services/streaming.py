@@ -15,7 +15,7 @@ from app.model_routing.resolver import Resolved
 from app.providers.base import Adapter, StreamEvent
 from app.redaction import StreamRehydrator, rehydrate
 from app.schemas.chat import ChatCompletionRequest
-from app.schemas.provider import TextDelta, ToolCallDelta, Usage, UsageTotal
+from app.schemas.provider import FinishReason, TextDelta, ToolCallDelta, Usage, UsageTotal
 from app.services.wire_mapping import (
     COMPLETION_ID_BYTES,
     COMPLETION_ID_PREFIX,
@@ -87,6 +87,7 @@ def sse_frames(
     mapping: Mapping[str, str] | None = None,
     on_unreported_usage: Callable[[int], None] | None = None,
     on_close: Callable[[], None] | None = None,
+    on_finish: Callable[[str], None] | None = None,
 ) -> Generator[str, None, None]:
     """Render the neutral events as SSE frames, ending with `[DONE]` if they finish.
 
@@ -150,6 +151,10 @@ def sse_frames(
     sends, which is what ends a stream's generation span with the stream itself
     (`test_a_streamed_generation_carries_the_streams_usage`).
 
+    `on_finish` gets the provider's finish reason when its event arrives, for
+    the trace's Output note
+    (`test_a_streamed_provider_note_has_finish_reason_and_tokens`).
+
     The wrap runs INSIDE this generator rather than around the iterator it is
     handed: the `finally` below closes `events` by name, and closing
     a wrapper instead would leave the provider's stream to the garbage collector
@@ -201,6 +206,8 @@ def sse_frames(
                             update={"arguments": rehydrate(event.call.arguments, restore)}
                         ),
                     )
+            if isinstance(event, FinishReason) and on_finish is not None:
+                on_finish(event.reason)
             if isinstance(event, UsageTotal):
                 usage_reported = True
                 if on_usage is not None:
@@ -243,6 +250,7 @@ def streamed(
     mapping: Mapping[str, str] | None = None,
     on_unreported_usage: Callable[[int], None] | None = None,
     on_close: Callable[[], None] | None = None,
+    on_finish: Callable[[str], None] | None = None,
 ) -> StreamPlan:
     """Open the stream, pull its first event, and return the plan for the route.
 
@@ -278,6 +286,7 @@ def streamed(
             mapping=mapping,
             on_unreported_usage=on_unreported_usage,
             on_close=on_close,
+            on_finish=on_finish,
         ),
         media_type=SSE_MEDIA_TYPE,
         headers={**headers, **SSE_HEADERS},
