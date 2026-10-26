@@ -27,6 +27,7 @@ from typing import Annotated, Final
 from fastapi import APIRouter, Query, Request
 
 from app.api.deps import PolicyDep, PricesDep, SettingsDep, checked_tenant
+from app.core.validation import IdentifierInvalid
 from app.model_routing.policy import PolicyStore
 from app.schemas.dashboard import (
     BlockedItem,
@@ -48,6 +49,7 @@ from app.services.dashboard import (
     first,
     gate_scores,
     gate_verdict,
+    langfuse_traces_url,
     postgres,
     prometheus,
 )
@@ -61,8 +63,8 @@ from app.services.prometheus_reads import (
     redactions_query,
     refusals_query,
 )
-from app.storage.cost_ledger import TRACE_ID_PATTERN
-from app.storage.dashboard_reads import regressed_metrics
+from app.storage.cost_ledger import MAX_MODEL_LENGTH, MODEL_PATTERN, TRACE_ID_PATTERN
+from app.storage.dashboard_reads import RequestFilters, regressed_metrics
 
 CONSOLE_HOME: Final[str] = "/console/home"
 CONSOLE_COST: Final[str] = "/console/cost"
@@ -227,6 +229,13 @@ def trace_url(project_url: str | None, trace_id: str) -> str | None:
     return f"{project_url.rstrip('/')}/traces/{trace_id}"
 
 
+def checked_model(value: str) -> str:
+    """The `?model=` filter, against the ledger's own model rule (128 characters, no `;` or `,`)."""
+    if len(value) > MAX_MODEL_LENGTH or MODEL_PATTERN.fullmatch(value) is None:
+        raise IdentifierInvalid("model: not a provider model id", param="model")
+    return value
+
+
 def errors_by_day(client: PrometheusClient, days: int, now: datetime) -> dict[date, float]:
     """5xx answers per UTC day for the last `days` days ending today.
 
@@ -247,14 +256,32 @@ def errors_by_day(client: PrometheusClient, days: int, now: datetime) -> dict[da
 
 @router.get(CONSOLE_REQUESTS)
 def requests(
-    request: Request, settings: SettingsDep, days: Days = DEFAULT_DAYS, page: Page = DEFAULT_PAGE
+    request: Request,
+    settings: SettingsDep,
+    days: Days = DEFAULT_DAYS,
+    page: Page = DEFAULT_PAGE,
+    day: date | None = None,
+    tenant: str | None = None,
+    model: str | None = None,
+    errors_only: Annotated[bool, Query(alias="errors")] = False,
+    slow: bool = False,
+    cached: bool = False,
 ) -> RequestsPage:
     """Counts and errors per day from Prometheus; a ledger page, the hit rate, requests per
     day and tokens per model from Postgres.
 
     A dead or missing ledger is page 1 of 1 with no rows, no days and no tokens. A dead
-    Prometheus leaves each day's `errors` null."""
+    Prometheus leaves each day's `errors` null.
 
+    `day`, `tenant`, `model`, `errors`, `slow` and `cached` narrow the request list and its
+    page count only; a bad `tenant` or `model` is 422 naming itself."""
+    if tenant is not None:
+        checked_tenant(tenant)
+    if model is not None:
+        checked_model(model)
+    filters = RequestFilters(
+        day=day, tenant=tenant, model=model, errors=errors_only, slow=slow, cached=cached
+    )
     now = datetime.now(UTC)
 
     def read(client: PrometheusClient) -> RequestCounts:
@@ -272,12 +299,12 @@ def requests(
         )
 
     prom, counts = prometheus(request, "requests", read)
-    redactions, refusals, blocks, errors = counts if counts is not None else ((), (), None, None)
+    redactions, refusals, blocks, errors_by = counts if counts is not None else ((), (), None, None)
     pg, ledger_read = postgres(
         request,
         "requests",
         lambda reader: (
-            reader.recent_requests(page=page),
+            reader.recent_requests(page=page, filters=filters, days=days, now=now),
             reader.cache_hit_rate(days, now),
             reader.daily_requests(days, now),
             reader.model_tokens(days, now),
@@ -296,7 +323,9 @@ def requests(
         cache_hit_rate=hit_rate,
         per_day=tuple(
             DayRequests(
-                day=day, requests=count, errors=None if errors is None else errors.get(day, 0.0)
+                day=day,
+                requests=count,
+                errors=None if errors_by is None else errors_by.get(day, 0.0),
             )
             for day, count in daily
         ),
@@ -306,4 +335,10 @@ def requests(
         ),
         requests_page=1 if ledger is None else ledger.page,
         requests_pages=1 if ledger is None else ledger.pages,
+        slow_ms=None if ledger is None else ledger.slow_ms,
+        tenants=() if ledger is None else ledger.tenants,
+        models=() if ledger is None else ledger.models,
+        langfuse_url=langfuse_traces_url(
+            project_url, filters, None if ledger is None else ledger.slow_ms
+        ),
     )

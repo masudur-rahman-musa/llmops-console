@@ -26,7 +26,7 @@ from psycopg import sql
 from app.schemas.dashboard import RequestRow
 from app.storage import CostLedgerRow, PostgresCostLedgerWriter
 from app.storage.cost_ledger import COST_LEDGER
-from app.storage.dashboard_reads import PAGE_SIZE, PostgresConsoleReader
+from app.storage.dashboard_reads import PAGE_SIZE, PostgresConsoleReader, RequestFilters
 
 from .conftest import Pool, requires_postgres
 
@@ -34,6 +34,9 @@ pytestmark = [requires_postgres, pytest.mark.db]
 
 NEWEST = datetime(2026, 10, 26, 9, 0, tzinfo=UTC)
 TRACE_ID = "0af7651916cd43dd8448eb211c80319c"
+NOW = NEWEST + timedelta(hours=1)
+NO_FILTERS = RequestFilters()
+WINDOW_DAYS = 30
 PROMPT_VERSION = "9f2c4be07a1d3c58e6b0a4d2f1c7e9835b6a0d4c2e8f1a7b3c5d9e0f2a4b6c8d"
 
 
@@ -137,7 +140,10 @@ def test_requests_are_paged_newest_first(pool: Pool, migrated_schema: str) -> No
     write_rows(pool, migrated_schema, 121)
     reader = PostgresConsoleReader(pool, schema=migrated_schema)
 
-    reads = [reader.recent_requests(page=page) for page in range(1, 8)]
+    reads = [
+        reader.recent_requests(page=page, filters=NO_FILTERS, days=WINDOW_DAYS, now=NOW)
+        for page in range(1, 8)
+    ]
 
     assert [read.page for read in reads] == list(range(1, 8))
     assert {read.pages for read in reads} == {7}
@@ -160,6 +166,8 @@ def test_requests_are_paged_newest_first(pool: Pool, migrated_schema: str) -> No
         prompt_version=PROMPT_VERSION,
         trace_id=TRACE_ID,
         trace_url=None,
+        status=200,
+        latency_ms=None,
     )
     assert reads[0].rows[1].cached is True
     assert reads[0].rows[1].prompt_version is None
@@ -170,7 +178,9 @@ def test_a_page_past_the_last_serves_the_last(pool: Pool, migrated_schema: str) 
     or that reports the asked page number instead of the page it served."""
     write_rows(pool, migrated_schema, 121)
 
-    read = PostgresConsoleReader(pool, schema=migrated_schema).recent_requests(page=99)
+    read = PostgresConsoleReader(pool, schema=migrated_schema).recent_requests(
+        page=99, filters=NO_FILTERS, days=WINDOW_DAYS, now=NOW
+    )
 
     assert (read.page, read.pages) == (7, 7)
     assert [row.input_tokens for row in read.rows] == [120]
@@ -178,6 +188,8 @@ def test_a_page_past_the_last_serves_the_last(pool: Pool, migrated_schema: str) 
 
 def test_an_empty_ledger_is_one_empty_page(pool: Pool, migrated_schema: str) -> None:
     """Catches a read that answers 0 pages (page X of 0) or a page 0 for an empty ledger."""
-    read = PostgresConsoleReader(pool, schema=migrated_schema).recent_requests(page=1)
+    read = PostgresConsoleReader(pool, schema=migrated_schema).recent_requests(
+        page=1, filters=NO_FILTERS, days=WINDOW_DAYS, now=NOW
+    )
 
     assert (read.page, read.pages, read.rows) == (1, 1, ())

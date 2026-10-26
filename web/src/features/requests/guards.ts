@@ -20,9 +20,15 @@ export type RequestsBody = {
     cost_usd: number;
     prompt_version: string | null;
     trace_url: string | null;
+    status: number;
+    latency_ms: number | null;
   }>;
   requests_page: number;
   requests_pages: number;
+  slow_ms: number | null;
+  tenants: string[];
+  models: string[];
+  langfuse_url: string | null;
 };
 
 const check = shape({
@@ -44,10 +50,16 @@ const check = shape({
       cost_usd: num,
       prompt_version: nullable(str),
       trace_url: nullable(str),
+      status: int,
+      latency_ms: nullable(int),
     }),
   ),
   requests_page: num,
   requests_pages: num,
+  slow_ms: nullable(num),
+  tenants: listOf(str),
+  models: listOf(str),
+  langfuse_url: nullable(str),
 });
 
 export function requestsGuard(value: unknown): value is RequestsBody {

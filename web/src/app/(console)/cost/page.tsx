@@ -1,9 +1,11 @@
 import { consolePage } from "@/components/layout/console-page";
 import { BarChart, type BarDay } from "@/components/ui/bar-chart";
+import { DateField, FilterForm, SelectField } from "@/components/ui/filter-form";
 import { Pager } from "@/components/ui/pager";
 import { StatCards } from "@/components/ui/stat-cards";
 import { Table } from "@/components/ui/table";
 import type { CostBody } from "@/features/cost/guards";
+import { readCostFilters } from "@/lib/filters";
 import { NA, shortDay, smallUsd, usd } from "@/lib/format";
 import { CHECK_SCORE_SENTENCE, WINDOW_LINES, scoreLabel } from "@/lib/labels";
 import { PAGE_PARAMS, pageOf } from "@/lib/paging";
@@ -66,7 +68,23 @@ export default consolePage(
   "What does the AI cost, per day, per tenant and per model, and what did caching save?",
   async (body, params) => {
     const tradeoff = await readTradeoff(process.env.CONSOLE_TRADEOFF_PATH);
-    const days = pageOf(newestFirst(body.days), params, PAGE_PARAMS.days);
+    const filters = readCostFilters(params);
+    const filtered = body.days.filter(
+      (row) =>
+        (filters.from === undefined || row.day >= filters.from) &&
+        (filters.to === undefined || row.day <= filters.to) &&
+        (filters.tenant === undefined || row.tenant === filters.tenant),
+    );
+    const total = filtered.reduce(
+      (sum, row) => ({
+        requests: sum.requests + row.requests,
+        cached: sum.cached + row.cached_requests,
+        cost: sum.cost + row.cost_usd,
+      }),
+      { requests: 0, cached: 0, cost: 0 },
+    );
+    const days = pageOf(newestFirst(filtered), params, PAGE_PARAMS.days);
+    const tenants = [...new Set(body.days.map((row) => row.tenant))].sort();
     const chart = costByTenant(body.days);
     return (
       <>
@@ -105,12 +123,22 @@ export default consolePage(
 
         <h2>Daily cost</h2>
         {body.rollup_populated === false && <p className="note">Daily rollup not yet populated.</p>}
+        <FilterForm clearHref="/cost">
+          <DateField name="from" label="From" value={filters.from} />
+          <DateField name="to" label="To" value={filters.to} />
+          <SelectField name="tenant" label="Tenant" options={tenants} value={filters.tenant} any="All tenants" />
+        </FilterForm>
         <Table
           columns={["Day", "Tenant", "Provider", "Requests", "Cached requests", "Cost"]}
-          rows={days.rows.map((day) => ({
-            key: `${day.day}/${day.tenant}/${day.provider}`,
-            cells: [day.day, day.tenant, day.provider, day.requests, day.cached_requests, usd(day.cost_usd)],
-          }))}
+          rows={[
+            ...days.rows.map((day) => ({
+              key: `${day.day}/${day.tenant}/${day.provider}`,
+              cells: [day.day, day.tenant, day.provider, day.requests, day.cached_requests, usd(day.cost_usd)],
+            })),
+            ...(filtered.length === 0
+              ? []
+              : [{ key: "total", cells: ["Total", "", "", total.requests, total.cached, usd(total.cost)] }]),
+          ]}
         />
         <Pager name={PAGE_PARAMS.days} page={days.page} pages={days.pages} params={params} />
 

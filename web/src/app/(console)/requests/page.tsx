@@ -1,9 +1,11 @@
 import { consolePage } from "@/components/layout/console-page";
 import { BarChart } from "@/components/ui/bar-chart";
+import { CheckField, DateField, FilterForm, SelectField } from "@/components/ui/filter-form";
 import { ExternalLink } from "@/components/ui/external-link";
 import { Pager } from "@/components/ui/pager";
 import { StatCards } from "@/components/ui/stat-cards";
 import { Table } from "@/components/ui/table";
+import { readRequestFilters } from "@/lib/filters";
 import { NA, percent, shortDay, shortSha, usd, utcTime } from "@/lib/format";
 import { WINDOW_LINES, plainName, redactionLabel } from "@/lib/labels";
 import { PAGE_PARAMS } from "@/lib/paging";
@@ -13,9 +15,15 @@ export const dynamic = "force-dynamic";
 const ANSWERED = "Answered";
 const FAILED = "Failed (5xx)";
 
+function latency(value: number | null): string {
+  return value === null ? NA : `${Math.round(value).toLocaleString("en-US")} ms`;
+}
+
 function count(value: number | null): string {
   return value === null ? NA : Math.round(value).toLocaleString("en-US");
 }
+
+const filters = readRequestFilters;
 
 export default consolePage(
   "requests",
@@ -66,14 +74,26 @@ export default consolePage(
         rows={body.tokens.map((row) => ({ key: row.model, cells: [row.model, count(row.input), count(row.output)] }))}
       />
       <h2>Newest requests</h2>
+      <FilterForm clearHref="/requests">
+        <DateField name="day" label="Day" value={filters(params).day} />
+        <SelectField name="tenant" label="Tenant" options={body.tenants} value={filters(params).tenant} any="All tenants" />
+        <SelectField name="model" label="Model" options={body.models} value={filters(params).model} any="All models" />
+        <CheckField name="errors" label="Errors only" checked={filters(params).errors} />
+        <CheckField name="slow" label="Slow only" checked={filters(params).slow} />
+        <CheckField name="cached" label="Cache hits" checked={filters(params).cached} />
+      </FilterForm>
+      {body.slow_ms !== null && <p className="note">Slow means above {latency(body.slow_ms)}.</p>}
+      <ExternalLink url={body.langfuse_url} label="Open these in Langfuse" />
       <Table
-        columns={["Time", "Tenant", "Model", "Tokens in / out", "Cost", "Cache", "Prompt version", "Trace"]}
+        columns={["Time", "Tenant", "Model", "Status", "Latency", "Tokens in / out", "Cost", "Cache", "Prompt version", "Trace"]}
         rows={body.requests.map((row, index) => ({
           key: `${row.ts}/${index}`,
           cells: [
             utcTime(row.ts),
             row.tenant,
             row.model,
+            String(row.status),
+            latency(row.latency_ms),
             `${count(row.input_tokens)} / ${count(row.output_tokens)}`,
             usd(row.cost_usd, 6),
             row.cached ? "answered from cache" : "sent to the model",

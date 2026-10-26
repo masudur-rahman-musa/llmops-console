@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -62,6 +63,9 @@ class Clients:
     semantic_cache: SemanticCache
     redaction_map_store: RedactionMapStore
     directory_store: DirectoryStore
+    clock: Callable[[], float] = time.monotonic
+    """Seconds, monotonic. Read when a chat request starts and when its row is booked, so
+    `latency_ms` is the difference; tests/api/test_request_status_rows.py hands in a fake."""
 
 
 @dataclass
@@ -290,6 +294,7 @@ def book_cost(
     cached: bool,
     prompt_chars: int = 0,
     completion_chars: int = 0,
+    latency_ms: int | None = None,
 ) -> str:
     """Price one served request, file its row, count it, debit its budget, answer the header.
 
@@ -347,6 +352,7 @@ def book_cost(
         trace_id=context.trace_id,
         prompt_version=context.prompt_version,
         price_key=adapters[chosen.provider].price_key(chosen.model),
+        latency_ms=latency_ms,
     )
     record_cost_usd(
         tenant=context.tenant, provider=chosen.provider, model=chosen.model, usd=row.cost_usd
@@ -354,6 +360,40 @@ def book_cost(
     debit_budget(clients, context, usd=row.cost_usd)
     debit_tokens(clients, context, row=row)
     return cost_header_value(row.cost_usd)
+
+
+def book_failure(
+    clients: Clients,
+    context: RequestContext,
+    *,
+    alias: str,
+    chosen: Resolved,
+    status: int,
+    latency_ms: int | None,
+) -> CostLedgerRow:
+    """File the row of a request that failed with a 5xx after its alias resolved.
+
+    Cost 0 and tokens 0, against the first candidate. It moves no budget, no token bucket and
+    no cost counter, because nothing was served or spent: only `record_cost` runs. Every
+    served number on the console reads `status < 500`, so this row changes none of them.
+    """
+    adapters: Mapping[str, Adapter] = clients.adapters
+    return record_cost(
+        clients.cost_ledger,
+        table=clients.prices.table,
+        tenant=context.tenant,
+        alias=alias,
+        provider=chosen.provider,
+        model=chosen.model,
+        usage=Usage(prompt_tokens=0, completion_tokens=0, total_tokens=0),
+        cached=False,
+        session=context.session,
+        trace_id=context.trace_id,
+        prompt_version=context.prompt_version,
+        price_key=adapters[chosen.provider].price_key(chosen.model),
+        status=status,
+        latency_ms=latency_ms,
+    )
 
 
 def cost_header_value(usd: Decimal) -> str:

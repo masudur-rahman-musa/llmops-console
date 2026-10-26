@@ -2,6 +2,7 @@ import type { ReactElement, ReactNode } from "react";
 
 import { SourceNotice } from "@/components/ui/source-notice";
 import { Unavailable } from "@/components/ui/unavailable";
+import { readRequestFilters } from "@/lib/filters";
 import { getConsolePage, type PageBodies, type PageName, type PageQuery } from "@/lib/console-api";
 import { PAGE_PARAMS, parsePage, type Params } from "@/lib/paging";
 
@@ -22,7 +23,7 @@ type PageComponent = {
  * its body builder, which may be async so the cost page can still read the
  * tradeoff file, and which gets the URL params so a panel can read its page.
  * Requests asks console-api for the page in `requests_page`, parsed to a whole
- * number first. Pinned by tests/shared-parts.test.tsx, tests/clarity.test.tsx
+ * number first, with the filters from the address (bad values dropped). Pinned by tests/shared-parts.test.tsx, tests/clarity.test.tsx
  * and tests/paging-pages.test.tsx.
  */
 export function consolePage<N extends PageName>(
@@ -35,7 +36,7 @@ export function consolePage<N extends PageName>(
   return async function Page(props?: PageProps): Promise<ReactElement> {
     const params = (await props?.searchParams) ?? {};
     const query: PageQuery | undefined =
-      name === "requests" ? { page: parsePage(params[PAGE_PARAMS.requests]) } : undefined;
+      name === "requests" ? { page: parsePage(params[PAGE_PARAMS.requests]), filters: readRequestFilters(params) } : undefined;
     const result = await getConsolePage(name, {}, query);
     if (!result.ok) {
       return <Unavailable title={title} reason={result.reason} />;

@@ -859,7 +859,8 @@ def test_a_request_that_books_no_row_moves_no_cost(
     response = post(cost_client, chat_body(model=ALIAS))
 
     assert response.status_code == 502, response.text
-    assert rows_of(writer) == ()
+    # An earlier change: a 5xx after routing now books one zero-cost failed row.
+    assert [(row.status, row.cost_usd) for row in rows_of(writer)] == [(502, Decimal(0))]
     assert metrics.total(COST_USD) == 0.0
     assert metrics.total(REQUESTS) == 1
 
@@ -939,7 +940,8 @@ def test_the_cost_header_is_absent_on_an_error_response(
 
     assert response.status_code == 502, response.text
     assert COST_HEADER not in {name.lower() for name in response.headers}
-    assert rows_of(writer) == ()
+    # An earlier change: the failed request books a zero-cost 502 row.
+    assert [row.status for row in rows_of(writer)] == [502]
 
 
 # --------------------------------------------------------------------------

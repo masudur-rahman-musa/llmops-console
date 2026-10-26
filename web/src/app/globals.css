@@ -319,6 +319,27 @@ svg {
   padding: var(--space-1) var(--space-4);
 }
 
+/* The filter form above a table: fields in a row that wraps, Apply and Clear at the end. */
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: end;
+  margin: 0 0 var(--space-3);
+}
+
+.filters .field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+}
+
+.filters .field.check {
+  flex-direction: row;
+  align-items: center;
+}
+
 /* The pager under a paged panel: Prev, "Page X of Y", Next on one line. */
 .pager {
   display: flex;

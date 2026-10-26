@@ -115,6 +115,8 @@ class RequestRow(_Body):
     prompt_version: str | None
     trace_id: str
     trace_url: str | None
+    status: int
+    latency_ms: int | None
 
 
 class ModelCandidate(_Body):
@@ -244,7 +246,10 @@ class RequestsPage(_Body):
 
     `guardrail_blocks` is null when Prometheus has no series, `cache_hit_rate` when the
     ledger has no rows in the window: no traffic is not a 0% hit rate. `requests` is one
-    page of the ledger: `requests_page` of `requests_pages`, newest first. `per_day` has
+    page of the ledger: `requests_page` of `requests_pages`, newest first, narrowed by the
+    request's filters. `slow_ms` is the window's p95 latency (null with no latencies),
+    `tenants` and `models` are the window's distinct values for the filter lists, and
+    `langfuse_url` opens the same requests in Langfuse (null without a project URL). `per_day` has
     every window day, oldest first, and is empty with `tokens` when the ledger is down."""
 
     sources: Sources
@@ -257,3 +262,7 @@ class RequestsPage(_Body):
     requests: tuple[RequestRow, ...]
     requests_page: int
     requests_pages: int
+    slow_ms: float | None
+    tenants: tuple[str, ...]
+    models: tuple[str, ...]
+    langfuse_url: str | None

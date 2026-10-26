@@ -149,6 +149,12 @@ const RENDERED: Record<PageName, Path[]> = {
     ["requests", -1, "cost_usd"],
     ["requests", -1, "prompt_version"],
     ["requests", -1, "trace_url"],
+    ["requests", -1, "status"],
+    ["requests", -1, "latency_ms"],
+    ["slow_ms"],
+    ["tenants"],
+    ["models"],
+    ["langfuse_url"],
   ],
 };
 
@@ -199,6 +205,22 @@ describe("page body guards", () => {
     expect(passes("requests", withValue("requests", ["per_day", -1, "requests"], "7"))).toBe(false);
     expect(passes("requests", withValue("requests", ["per_day", -1, "errors"], "2"))).toBe(false);
     expect(passes("requests", withValue("requests", ["per_day", -1, "day"], 20261026))).toBe(false);
+  });
+
+  it("requests guard checks the filter fields", () => {
+    // Catches a requests guard that lets a text status or latency through, accepts a null status (every row has one), refuses the nulls console-api may send (no latency, no latency line, no Langfuse project), or lets a non-list of tenants or models through.
+    expect(passes("requests", withValue("requests", ["requests", -1, "status"], "502"))).toBe(false);
+    expect(passes("requests", withValue("requests", ["requests", -1, "status"], null))).toBe(false);
+    expect(passes("requests", withValue("requests", ["requests", -1, "status"], 502))).toBe(true);
+    expect(passes("requests", withValue("requests", ["requests", -1, "latency_ms"], "412"))).toBe(false);
+    expect(passes("requests", withValue("requests", ["requests", -1, "latency_ms"], null))).toBe(true);
+    expect(passes("requests", withValue("requests", ["slow_ms"], null))).toBe(true);
+    expect(passes("requests", withValue("requests", ["slow_ms"], "1905"))).toBe(false);
+    expect(passes("requests", withValue("requests", ["langfuse_url"], null))).toBe(true);
+    expect(passes("requests", withValue("requests", ["langfuse_url"], 7))).toBe(false);
+    expect(passes("requests", withValue("requests", ["tenants"], []))).toBe(true);
+    expect(passes("requests", withValue("requests", ["tenants"], "acme"))).toBe(false);
+    expect(passes("requests", withValue("requests", ["models"], [7]))).toBe(false);
   });
 
   it("quality guard takes a marker eval_run_id", () => {

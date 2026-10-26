@@ -164,6 +164,9 @@ class CostLedgerRow(BaseModel):
     `session` and `prompt_version` are the nullable fields. A request with no
     session or prompt version header is still a request that cost money, and
     refusing it here would lose exactly those rows.
+
+    `status` is the HTTP answer (200 for a served request, 5xx for one that failed after
+    routing) and `latency_ms` the time it took, null when it was not measured.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -184,6 +187,8 @@ class CostLedgerRow(BaseModel):
     prompt_version: str | None = None
     cache_read_tokens: int = Field(default=0, ge=0)
     cache_write_tokens: int = Field(default=0, ge=0)
+    status: int = 200
+    latency_ms: int | None = None
 
 
 class CostLedgerWriter(Protocol):
@@ -403,8 +408,10 @@ class PostgresCostLedgerWriter:
                         "INSERT INTO {} ("
                         "ts, tenant, alias, provider, model, input_tokens, "
                         "output_tokens, cached, cost_usd, price_version, estimated, "
-                        "session, trace_id, prompt_version, cache_read_tokens, cache_write_tokens) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                        "session, trace_id, prompt_version, cache_read_tokens, cache_write_tokens, "
+                        "status, latency_ms) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+                        "%s, %s)"
                     ).format(sql.Identifier(self._schema, COST_LEDGER)),
                     (
                         row.ts,
@@ -423,6 +430,8 @@ class PostgresCostLedgerWriter:
                         row.prompt_version,
                         row.cache_read_tokens,
                         row.cache_write_tokens,
+                        row.status,
+                        row.latency_ms,
                     ),
                 )
                 stage = "commit"

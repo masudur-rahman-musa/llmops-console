@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping
+from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Final
+from urllib.parse import quote
 
 import psycopg
 from fastapi import Request
@@ -22,7 +24,7 @@ from app.limits.budget import budget_ratio, to_micro_usd
 from app.model_routing.policy import PolicyStore
 from app.schemas.dashboard import Budget, EvalRunSummary, GateScore, SourceState
 from app.services.prometheus_reads import PrometheusClient, PrometheusError
-from app.storage.dashboard_reads import ConsoleReader
+from app.storage.dashboard_reads import ConsoleReader, RequestFilters
 
 logger = logging.getLogger(__name__)
 
@@ -159,3 +161,36 @@ def _gate_rows(baseline_path: Path, metrics: Mapping[str, Any] | None) -> tuple[
             )
         )
     return tuple(rows)
+
+
+def langfuse_traces_url(
+    project_url: str | None, filters: RequestFilters, slow_ms: float | None
+) -> str | None:
+    """The Langfuse traces page with the request list's filters set, or `None` without a project.
+
+    Each filter is `column;type;key;operator;value`, percent-encoded apart from `,;:.`, and
+    they are joined by commas: the day as two UTC-midnight bounds, then tenant, model, cache,
+    errors and slow (latency in seconds). Nothing filtered is the bare `/traces` page. This
+    is Langfuse's page address, not a stable API; the checks on tenant and model keep `;`
+    and `,` out of every value. Pinned by tests/api/test_console_filters.py."""
+    if not project_url:
+        return None
+    parts: list[str] = []
+    if filters.day is not None:
+        start = f"{filters.day.isoformat()}T00:00:00.000Z"
+        end = f"{(filters.day + timedelta(days=1)).isoformat()}T00:00:00.000Z"
+        parts += [f"Timestamp;datetime;;>=;{start}", f"Timestamp;datetime;;<;{end}"]
+    if filters.tenant is not None:
+        parts.append(f"Metadata;stringObject;tenant;=;{filters.tenant}")
+    if filters.model is not None:
+        parts.append(f"Metadata;stringObject;model;=;{filters.model}")
+    if filters.cached:
+        parts.append("Metadata;stringObject;cache;=;hit")
+    if filters.errors:
+        parts.append("Level;string;;=;ERROR")
+    if filters.slow and slow_ms is not None:
+        parts.append(f"Latency (s);number;;>;{slow_ms / 1000:g}")
+    base = f"{project_url.rstrip('/')}/traces"
+    if not parts:
+        return base
+    return f"{base}?filter={','.join(quote(part, safe=',;:.') for part in parts)}"

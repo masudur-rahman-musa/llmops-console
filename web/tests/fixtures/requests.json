@@ -1,23 +1,58 @@
 {
-  "sources": { "postgres": "ok", "prometheus": "ok" },
+  "sources": {
+    "postgres": "ok",
+    "prometheus": "ok"
+  },
   "redactions": [
-    { "kind": "email", "count": 41 },
-    { "kind": "iban", "count": 7 }
+    {
+      "kind": "email",
+      "count": 41
+    },
+    {
+      "kind": "iban",
+      "count": 7
+    }
   ],
   "refusals": [
-    { "reason": "out_of_scope", "count": 12 },
-    { "reason": "needs_approval", "count": 3 }
+    {
+      "reason": "out_of_scope",
+      "count": 12
+    },
+    {
+      "reason": "needs_approval",
+      "count": 3
+    }
   ],
   "guardrail_blocks": 5,
   "tokens": [
-    { "model": "claude-haiku-5-5", "input": 120450, "output": 30210 },
-    { "model": "gpt-5-mini", "input": 8800, "output": 2100 }
+    {
+      "model": "claude-haiku-5-5",
+      "input": 120450,
+      "output": 30210
+    },
+    {
+      "model": "gpt-5-mini",
+      "input": 8800,
+      "output": 2100
+    }
   ],
   "cache_hit_rate": 0.3125,
   "per_day": [
-    { "day": "2026-10-24", "requests": 300, "errors": 4 },
-    { "day": "2026-10-25", "requests": 250, "errors": 0 },
-    { "day": "2026-10-26", "requests": 100, "errors": null }
+    {
+      "day": "2026-10-24",
+      "requests": 300,
+      "errors": 4
+    },
+    {
+      "day": "2026-10-25",
+      "requests": 250,
+      "errors": 0
+    },
+    {
+      "day": "2026-10-26",
+      "requests": 100,
+      "errors": null
+    }
   ],
   "requests_page": 1,
   "requests_pages": 1,
@@ -31,10 +66,12 @@
       "input_tokens": 137,
       "output_tokens": 29,
       "cached": false,
-      "cost_usd": 0.000028,
+      "cost_usd": 2.8e-05,
       "prompt_version": "9f2c4be07a1d3c58e6b0a4d2f1c7e9835b6a0d4c2e8f1a7b3c5d9e0f2a4b6c8d",
       "trace_id": "0af7651916cd43dd8448eb211c80319c",
-      "trace_url": "https://cloud.langfuse.com/project/demo/traces/0af7651916cd43dd8448eb211c80319c"
+      "trace_url": "https://cloud.langfuse.com/project/demo/traces/0af7651916cd43dd8448eb211c80319c",
+      "status": 200,
+      "latency_ms": 412
     },
     {
       "ts": "2026-10-26T08:12:00Z",
@@ -48,7 +85,19 @@
       "cost_usd": 0,
       "prompt_version": null,
       "trace_id": "b7ad6b7169203331b7ad6b7169203331",
-      "trace_url": null
+      "trace_url": null,
+      "status": 200,
+      "latency_ms": null
     }
-  ]
+  ],
+  "slow_ms": 1905.0,
+  "tenants": [
+    "cuan",
+    "nordlicht"
+  ],
+  "models": [
+    "claude-haiku-5-5",
+    "gpt-5-mini"
+  ],
+  "langfuse_url": "https://cloud.langfuse.com/project/demo/traces"
 }

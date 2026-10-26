@@ -44,7 +44,7 @@ from app.services.prometheus_reads import (
     redactions_query,
     refusals_query,
 )
-from app.storage.dashboard_reads import RequestsRead
+from app.storage.dashboard_reads import RequestFilters, RequestsRead
 
 from .conftest import ADMIN_KEY, NO_PROVIDER_KEYS, TEST_KEYS, assert_error_body
 
@@ -86,6 +86,8 @@ def a_row(trace_id: str, **overrides: Any) -> RequestRow:  # noqa: ANN401
         "prompt_version": "9f2c4be07a1d",
         "trace_id": trace_id,
         "trace_url": None,
+        "status": 200,
+        "latency_ms": None,
     }
     fields.update(overrides)
     return RequestRow(**fields)
@@ -119,6 +121,10 @@ class StubReader:
         self.rows = rows
         self.calls: list[str] = []
         self.pages_asked: list[int] = []
+        self.filters_asked: list[RequestFilters] = []
+        self.slow_ms: float | None = None
+        self.tenants: tuple[str, ...] = ()
+        self.models: tuple[str, ...] = ()
         self.error: Exception | None = None
         self.answer_page = 1
         self.answer_pages = 1
@@ -152,12 +158,22 @@ class StubReader:
             raise self.error
         return self.hit_rate
 
-    def recent_requests(self, *, page: int) -> RequestsRead:
+    def recent_requests(
+        self, *, page: int, filters: RequestFilters, days: int, now: datetime
+    ) -> RequestsRead:
         self.calls.append("recent_requests")
         self.pages_asked.append(page)
+        self.filters_asked.append(filters)
         if self.error is not None:
             raise self.error
-        return RequestsRead(rows=self.rows, page=self.answer_page, pages=self.answer_pages)
+        return RequestsRead(
+            rows=self.rows,
+            page=self.answer_page,
+            pages=self.answer_pages,
+            slow_ms=self.slow_ms,
+            tenants=self.tenants,
+            models=self.models,
+        )
 
 
 def series(labels: dict[str, str], value: str) -> dict[str, Any]:
@@ -305,6 +321,10 @@ def test_requests_body_maps_counts(wired: Wired) -> None:
         "requests",
         "requests_page",
         "requests_pages",
+        "slow_ms",
+        "tenants",
+        "models",
+        "langfuse_url",
     }
     assert body["sources"] == {"postgres": "ok", "prometheus": "ok"}
     assert sorted(body["redactions"], key=lambda r: r["kind"]) == [
@@ -506,6 +526,10 @@ def test_nothing_configured_is_200_with_both_sources_unconfigured(admin_settings
         "requests": [],
         "requests_page": 1,
         "requests_pages": 1,
+        "slow_ms": None,
+        "tenants": [],
+        "models": [],
+        "langfuse_url": None,
     }
 
 

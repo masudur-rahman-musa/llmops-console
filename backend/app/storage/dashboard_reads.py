@@ -79,12 +79,31 @@ class _Read(BaseModel):
     model_config = ConfigDict(frozen=True)
 
 
+class RequestFilters(_Read):
+    """What narrows the request list; every part is optional and they are joined with AND.
+
+    `errors` means status 500 or above, the line the error rate uses. `slow` means latency
+    above the window's p95. `day` is a UTC date. Values reach SQL as bound parameters."""
+
+    day: date | None = None
+    tenant: str | None = None
+    model: str | None = None
+    errors: bool = False
+    slow: bool = False
+    cached: bool = False
+
+
 class RequestsRead(_Read):
-    """One page of the request list, its number and how many pages there are (at least 1)."""
+    """One page of the request list, its number and how many pages there are (at least 1).
+
+    `slow_ms`, `tenants` and `models` describe the page window, not the filtered list."""
 
     rows: tuple[RequestRow, ...]
     page: int
     pages: int
+    slow_ms: float | None = None
+    tenants: tuple[str, ...] = ()
+    models: tuple[str, ...] = ()
 
 
 class HomeRead(_Read):
@@ -170,7 +189,9 @@ class ConsoleReader(Protocol):
 
     def quality(self, *, days: int, now: datetime) -> QualityRead: ...
 
-    def recent_requests(self, *, page: int) -> RequestsRead: ...
+    def recent_requests(
+        self, *, page: int, filters: RequestFilters, days: int, now: datetime
+    ) -> RequestsRead: ...
 
     def cache_hit_rate(self, days: int, now: datetime) -> float | None: ...
 
@@ -206,7 +227,9 @@ class UnconfiguredConsoleReader:
     def quality(self, *, days: int, now: datetime) -> QualityRead:
         return QualityRead(runs=(), release_markers=(), categories=(), taxonomy=(), blocked=())
 
-    def recent_requests(self, *, page: int) -> RequestsRead:
+    def recent_requests(
+        self, *, page: int, filters: RequestFilters, days: int, now: datetime
+    ) -> RequestsRead:
         return RequestsRead(rows=(), page=1, pages=1)
 
     def cache_hit_rate(self, days: int, now: datetime) -> float | None:
@@ -258,7 +281,8 @@ class PostgresConsoleReader:
         with self._pool.connection() as conn:
             ledger = conn.execute(
                 sql.SQL(
-                    "SELECT count(*), coalesce(sum(cost_usd), 0) FROM {} WHERE ts >= %s AND ts < %s"
+                    "SELECT count(*), coalesce(sum(cost_usd), 0) FROM {} "
+                    "WHERE ts >= %s AND ts < %s AND status < 500"
                 ).format(self._table("cost_ledger")),
                 (start, end),
             ).fetchone()
@@ -291,7 +315,7 @@ class PostgresConsoleReader:
             row = conn.execute(
                 sql.SQL(
                     "SELECT count(*) FILTER (WHERE cached), count(*) FROM {} "
-                    "WHERE ts >= %s AND ts <= %s"
+                    "WHERE ts >= %s AND ts <= %s AND status < 500"
                 ).format(self._table("cost_ledger")),
                 (now - timedelta(days=days), now),
             ).fetchone()
@@ -313,7 +337,7 @@ class PostgresConsoleReader:
             rows = conn.execute(
                 sql.SQL(
                     "SELECT (ts AT TIME ZONE 'UTC')::date, count(*) FROM {} "
-                    "WHERE ts >= %s AND ts < %s GROUP BY 1"
+                    "WHERE ts >= %s AND ts < %s AND status < 500 GROUP BY 1"
                 ).format(self._table("cost_ledger")),
                 (start, end),
             ).fetchall()
@@ -334,7 +358,8 @@ class PostgresConsoleReader:
             rows = conn.execute(
                 sql.SQL(
                     "SELECT model, coalesce(sum(input_tokens), 0), coalesce(sum(output_tokens), 0) "
-                    "FROM {} WHERE ts >= %s AND ts <= %s GROUP BY model ORDER BY model LIMIT %s"
+                    "FROM {} WHERE ts >= %s AND ts <= %s AND status < 500 "
+                    "GROUP BY model ORDER BY model LIMIT %s"
                 ).format(self._table("cost_ledger")),
                 (now - timedelta(days=days), now, ROW_LIMIT),
             ).fetchall()
@@ -367,7 +392,7 @@ class PostgresConsoleReader:
                 sql.SQL(
                     "SELECT (ts AT TIME ZONE 'UTC')::date, tenant, provider, model, "
                     "sum(input_tokens), sum(output_tokens), min(ts) FROM {} "
-                    "WHERE cached AND ts >= %s{} "
+                    "WHERE cached AND status < 500 AND ts >= %s{} "
                     "GROUP BY 1, tenant, provider, model, price_version"
                 ).format(self._table("cost_ledger"), where_tenant),
                 (since, *tenant_params),
@@ -375,7 +400,7 @@ class PostgresConsoleReader:
             alias_rows = conn.execute(
                 sql.SQL(
                     "SELECT alias, sum(cost_usd) / count(*) FROM {} "
-                    "WHERE NOT cached AND ts >= %s{} GROUP BY alias ORDER BY alias"
+                    "WHERE NOT cached AND status < 500 AND ts >= %s{} GROUP BY alias ORDER BY alias"
                 ).format(self._table("cost_ledger"), where_tenant),
                 (since, *tenant_params),
             ).fetchall()
@@ -517,31 +542,85 @@ class PostgresConsoleReader:
             ),
         )
 
-    def recent_requests(self, *, page: int) -> RequestsRead:
+    def recent_requests(
+        self, *, page: int, filters: RequestFilters, days: int, now: datetime
+    ) -> RequestsRead:
         """One page of the ledger, newest first, each row with `trace_url` null.
 
         OFFSET paging with a `count(*)` on the same connection, since the console shows
         "Page X of Y" and jumps by page number. `trace_id` breaks a tie on `ts`, so no row
         shows on two pages. A page past the last serves the last,
-        and an empty ledger is page 1 of 1. Pinned by
+        and an empty ledger is page 1 of 1.
+
+        The filters narrow the list and its count only. `slow_ms` (the 95th percentile of
+        the window's latencies), `tenants` and `models` are read over the whole window
+        `[now - days, now]` and ignore the filters, so a filter list never shrinks to the
+        choice already made. Pinned by tests/storage/test_request_filters_postgres.py and
         tests/storage/test_requests_ledger_postgres.py."""
         table = self._table("cost_ledger")
+        since = now - timedelta(days=days)
         with self._pool.connection() as conn:
-            counted = conn.execute(sql.SQL("SELECT count(*) FROM {}").format(table)).fetchone()
+            window = conn.execute(
+                sql.SQL(
+                    "SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) "
+                    "FROM {} WHERE ts >= %s AND ts <= %s AND latency_ms IS NOT NULL"
+                ).format(table),
+                (since, now),
+            ).fetchone()
+            slow_ms = None if window is None or window[0] is None else float(window[0])
+            options = conn.execute(
+                sql.SQL(
+                    "SELECT 'tenant', tenant FROM {t} WHERE ts >= %s AND ts <= %s GROUP BY tenant "
+                    "UNION ALL SELECT 'model', model FROM {t} WHERE ts >= %s AND ts <= %s "
+                    "GROUP BY model ORDER BY 1, 2"
+                ).format(t=table),
+                (since, now, since, now),
+            ).fetchall()
+            clauses: list[sql.Composable] = []
+            params: list[object] = []
+            if filters.day is not None:
+                start = datetime(filters.day.year, filters.day.month, filters.day.day, tzinfo=UTC)
+                clauses.append(sql.SQL("ts >= %s AND ts < %s"))
+                params += [start, start + timedelta(days=1)]
+            if filters.tenant is not None:
+                clauses.append(sql.SQL("tenant = %s"))
+                params.append(filters.tenant)
+            if filters.model is not None:
+                clauses.append(sql.SQL("model = %s"))
+                params.append(filters.model)
+            if filters.errors:
+                clauses.append(sql.SQL("status >= 500"))
+            if filters.slow:
+                # No latencies in the window means no line, and nothing is slow. Slow is
+                # judged inside the window the line was taken from.
+                if slow_ms is None:
+                    clauses.append(sql.SQL("false"))
+                else:
+                    clauses.append(sql.SQL("latency_ms > %s AND ts >= %s"))
+                    params += [slow_ms, since]
+            if filters.cached:
+                clauses.append(sql.SQL("cached"))
+            where = sql.SQL(" WHERE ") + sql.SQL(" AND ").join(clauses) if clauses else sql.SQL("")
+            counted = conn.execute(
+                sql.SQL("SELECT count(*) FROM {}{}").format(table, where), params
+            ).fetchone()
             total = 0 if counted is None else int(counted[0])
             pages = max(1, -(-total // PAGE_SIZE))
             page = min(max(page, 1), pages)
             rows = conn.execute(
                 sql.SQL(
                     "SELECT ts, tenant, alias, provider, model, input_tokens, output_tokens, "
-                    "cached, cost_usd, prompt_version, trace_id "
-                    "FROM {} ORDER BY ts DESC, trace_id DESC LIMIT %s OFFSET %s"
-                ).format(table),
-                (PAGE_SIZE, (page - 1) * PAGE_SIZE),
+                    "cached, cost_usd, prompt_version, trace_id, status, latency_ms "
+                    "FROM {}{} ORDER BY ts DESC, trace_id DESC LIMIT %s OFFSET %s"
+                ).format(table, where),
+                (*params, PAGE_SIZE, (page - 1) * PAGE_SIZE),
             ).fetchall()
         return RequestsRead(
             page=page,
             pages=pages,
+            slow_ms=slow_ms,
+            tenants=tuple(row[1] for row in options if row[0] == "tenant"),
+            models=tuple(row[1] for row in options if row[0] == "model"),
             rows=tuple(
                 RequestRow(
                     ts=row[0],
@@ -556,6 +635,8 @@ class PostgresConsoleReader:
                     prompt_version=row[9],
                     trace_id=row[10],
                     trace_url=None,
+                    status=row[11],
+                    latency_ms=row[12],
                 )
                 for row in rows
             ),

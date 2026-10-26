@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 from starlette.types import Scope
 
@@ -13,7 +13,7 @@ from app.cache import (
     tools_hash,
 )
 from app.core.context import RequestContext
-from app.core.errors import ProviderError
+from app.core.errors import GatewayError, ProviderError
 from app.core.metrics import (
     EXACT_CACHE_KIND,
     SEMANTIC_CACHE_KIND,
@@ -41,6 +41,7 @@ from app.schemas.provider import Usage
 from app.services.chat_accounting import (
     ChatResult,
     Clients,
+    book_failure,
     check_rate_limit,
 )
 from app.services.chat_accounting import (
@@ -186,6 +187,7 @@ def _token_sink(
     alias: str,
     chosen: Resolved,
     generation: Generation,
+    started: float,
 ) -> Callable[[Usage], None]:
     """The callback a stream books its tokens AND its cost through when the usage arrives.
 
@@ -215,7 +217,15 @@ def _token_sink(
             prompt_tokens=usage.prompt_tokens,
             completion_tokens=usage.completion_tokens,
         )
-        cost = _book_cost(clients, context, alias=alias, chosen=chosen, usage=usage, cached=False)
+        cost = _book_cost(
+            clients,
+            context,
+            alias=alias,
+            chosen=chosen,
+            usage=usage,
+            cached=False,
+            latency_ms=_elapsed_ms(clients, started),
+        )
         generation.report(generation_usage(usage, cost))
         generation.note_output(tokens_out=usage.completion_tokens)
 
@@ -223,7 +233,13 @@ def _token_sink(
 
 
 def _estimated_cost_sink(
-    clients: Clients, context: RequestContext, *, alias: str, chosen: Resolved, prompt_chars: int
+    clients: Clients,
+    context: RequestContext,
+    *,
+    alias: str,
+    chosen: Resolved,
+    prompt_chars: int,
+    started: float,
 ) -> Callable[[int], None]:
     """The callback a stream books an ESTIMATED row through when it reported no usage.
 
@@ -254,9 +270,15 @@ def _estimated_cost_sink(
             cached=False,
             prompt_chars=prompt_chars,
             completion_chars=completion_chars,
+            latency_ms=_elapsed_ms(clients, started),
         )
 
     return sink
+
+
+def _elapsed_ms(clients: Clients, started: float) -> int:
+    """Whole milliseconds from `started` to now on the clients' clock."""
+    return round((clients.clock() - started) * 1000)
 
 
 def generation_usage(usage: Usage, cost: str) -> GenerationAttributes:
@@ -393,7 +415,12 @@ def complete_chat(
     except the HTTP layer (response headers, streaming setup).
 
     Returns `ChatResult` for a non-streaming body, `StreamPlan` for a streaming one.
+
+    A request that fails with a 5xx once its alias has resolved books one zero-cost row
+    carrying that status and then raises as before. Answers below 500 (a 422,
+    a 429) book nothing.
     """
+    started = clients.clock()
     check_rate_limit(clients, context)
     _check_budget(clients, context, override=budget_override)
 
@@ -408,6 +435,43 @@ def complete_chat(
             context.data_class.value,
             is_healthy=health_seam(clients.breaker, lambda provider: provider in clients.adapters),
         )
+    try:
+        return _serve(
+            clients,
+            context,
+            body,
+            scope,
+            candidates,
+            allowed=allowed,
+            mapping=mapping,
+            started=started,
+        )
+    except GatewayError as exc:
+        status = getattr(exc, "http_status", 0)
+        if status >= 500:
+            book_failure(
+                clients,
+                context,
+                alias=body.model,
+                chosen=candidates[0],
+                status=status,
+                latency_ms=_elapsed_ms(clients, started),
+            )
+        raise
+
+
+def _serve(
+    clients: Clients,
+    context: RequestContext,
+    body: ChatCompletionRequest,
+    scope: Scope,
+    candidates: tuple[Resolved, ...],
+    *,
+    allowed: bool,
+    mapping: Mapping[str, str] | None,
+    started: float,
+) -> ChatResult | StreamPlan:
+    """Everything after the alias resolved: both cache tiers, redaction, the fallback loop."""
     label_candidate(scope, body.model, candidates[0])
     note_request(scope, alias=body.model, messages=len(body.messages))
 
@@ -433,6 +497,7 @@ def complete_chat(
             chosen=candidates[0],
             usage=hit.usage,
             cached=True,
+            latency_ms=_elapsed_ms(clients, started),
         )
         return ChatResult(body=to_wire(rehydrated(hit, mapping), body.model), headers=headers)
 
@@ -473,6 +538,7 @@ def complete_chat(
                 chosen=candidates[0],
                 usage=near.usage,
                 cached=True,
+                latency_ms=_elapsed_ms(clients, started),
             )
             return ChatResult(body=to_wire(rehydrated(near, mapping), body.model), headers=headers)
 
@@ -502,7 +568,12 @@ def complete_chat(
                     chosen,
                     headers,
                     _token_sink(
-                        clients, context, alias=body.model, chosen=chosen, generation=generation
+                        clients,
+                        context,
+                        alias=body.model,
+                        chosen=chosen,
+                        generation=generation,
+                        started=started,
                     ),
                     mapping=mapping,
                     on_unreported_usage=_estimated_cost_sink(
@@ -511,6 +582,7 @@ def complete_chat(
                         alias=body.model,
                         chosen=chosen,
                         prompt_chars=prompt_characters(outbound),
+                        started=started,
                     ),
                     on_close=generation.end,
                     on_finish=note_finish,
@@ -554,6 +626,7 @@ def complete_chat(
             chosen=chosen,
             usage=answer.usage,
             cached=False,
+            latency_ms=_elapsed_ms(clients, started),
         )
         generation.report(generation_usage(answer.usage, headers[COST_HEADER]))
         note_finish(answer.finish_reason)
