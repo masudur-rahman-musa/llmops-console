@@ -104,7 +104,11 @@ GATE_SCORES: Final[tuple[tuple[str, str], ...]] = (
 )
 """The scores the eval gate checks, in the order the quality page lists them."""
 
-JUDGE_NOTE: Final[str] = "Counts only while the judge agrees with people (kappa 0.7 or better)."
+JUDGE_NOTE: Final[str] = (
+    "Counts only while the judge agrees with people (kappa 0.7 or better). "
+    "Kappa measures that agreement: 1 means the judge and people always agree, "
+    "0 means they agree no more than chance would."
+)
 """Fixed, because a run row stores no kappa to say whether the judge counted."""
 
 

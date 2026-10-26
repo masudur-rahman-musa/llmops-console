@@ -75,3 +75,12 @@ export function safeHref(value: string | null | undefined): string | null {
 export function shortSha(sha: string): string {
   return sha.slice(0, SHORT_SHA_LENGTH);
 }
+
+/** A `YYYY-MM-DD` day as `Oct 24`, read as a UTC date so no zone moves it. */
+export function shortDay(day: string): string {
+  const at = new Date(`${day}T00:00:00Z`);
+  if (Number.isNaN(at.getTime())) {
+    return day;
+  }
+  return at.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+}

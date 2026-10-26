@@ -350,6 +350,7 @@ POSTGRES_EMPTY: dict[str, dict[str, Any]] = {
         "days": [],
         "savings": [],
         "savings_usd_total": None,
+        "month_spend_usd": None,
         "cost_per_request": [],
     },
     QUALITY: {"runs": [], "release_markers": [], "categories": [], "taxonomy": [], "blocked": []},

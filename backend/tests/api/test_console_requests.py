@@ -1,4 +1,4 @@
-"""`GET /console/requests`: what the gateway hides, tokens, hit rate and the newest requests.
+"""`GET /console/requests`: what the gateway hides, tokens, hit rate, per day, newest rows.
 
 No backing service. Each case builds the admin app from `create_app` and then replaces the
 two sources on `app.state`, as tests/api/test_console_routes.py does: `console_reader`
@@ -10,8 +10,10 @@ The contract these cases are written against, before it exists:
 
 * `app.api.routes.dashboard.CONSOLE_REQUESTS == "/console/requests"`, admin key, `days`
   1 to 90 with a default of 30;
-* `app.services.prometheus_reads`: `redactions_query(days)`, `tokens_query(days)`,
-  `refusals_query(days)`, `guardrail_blocks_query(days)`;
+* `app.services.prometheus_reads`: `redactions_query(days)`, `refusals_query(days)`,
+  `guardrail_blocks_query(days)` and `errors_per_day_query()` (an earlier change; `tokens_query` is
+  gone, tokens come from the ledger);
+* `ConsoleReader.daily_requests(days, now)` and `ConsoleReader.model_tokens(days, now)`: the per-day request counts and the per-model token sums of the ledger;
 * `ConsoleReader.cache_hit_rate(days, now) -> float | None`: cached ledger rows over all rows
   in the window, None when the window has no rows;
 * `ConsoleReader.recent_requests() -> tuple[RequestRow, ...]`, newest first, with
@@ -22,7 +24,7 @@ The contract these cases are written against, before it exists:
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -33,13 +35,14 @@ from fastapi.testclient import TestClient
 from app.api.routes import dashboard as console
 from app.core.config import Settings
 from app.main import create_app
-from app.schemas.dashboard import RequestRow
+from app.schemas.dashboard import ModelTokens, RequestRow
 from app.services.prometheus_reads import (
+    QUERY_RANGE_PATH,
     PrometheusClient,
+    errors_per_day_query,
     guardrail_blocks_query,
     redactions_query,
     refusals_query,
-    tokens_query,
 )
 from app.storage.dashboard_reads import RequestsRead
 
@@ -53,12 +56,19 @@ OTHER_TRACE_ID = "b7ad6b7169203331b7ad6b7169203331"
 SAMPLE_TS = 1757980800
 
 # The four queries for a 7 day window, written out so no case reads its expectation from the
-# module under test.
+# module under test. The errors query has a fixed one-day window whatever `days` is.
 REDACTIONS_7D = "sum by (kind) (increase(gateway_redactions_total[7d]))"
 TOKENS_7D = "sum by (model, direction) (increase(gateway_tokens_total[7d]))"
 REFUSALS_7D = "sum by (reason) (increase(helpdesk_refusals_total[7d]))"
 BLOCKS_7D = "sum(increase(helpdesk_sod_blocks_total[7d]))"
-ALL_7D = {REDACTIONS_7D, TOKENS_7D, REFUSALS_7D, BLOCKS_7D}
+ERRORS_PER_DAY = 'sum(increase(gateway_requests_total{status=~"5.."}[1d]))'
+ALL_7D = {REDACTIONS_7D, REFUSALS_7D, BLOCKS_7D, ERRORS_PER_DAY}
+DAY_SECONDS = 86400
+
+LEDGER_TOKENS = (
+    ModelTokens(model="claude-haiku-5-5", input=120450.0, output=30210.0),
+    ModelTokens(model="gpt-5-mini", input=8800.0, output=2100.0),
+)
 
 
 def a_row(trace_id: str, **overrides: Any) -> RequestRow:  # noqa: ANN401
@@ -97,9 +107,11 @@ ROWS = (
 class StubReader:
     """A configured `ConsoleReader` that records calls and answers the rows above.
 
-    Only `recent_requests` and `cache_hit_rate` are read by this route. `error`, when set, is
-    raised instead, which is how the Postgres failure case arranges a failing read without a
-    database.
+    `recent_requests`, `cache_hit_rate`, `daily_requests` and `model_tokens` are read by this
+    route. `daily` is the request count of each window day, oldest first (a short list is
+    zero filled); the dates come from the `now` the route passes, so no case depends on the
+    clock. `tokens` is the per-model read. `error`, when set, is raised instead, which is how
+    the Postgres failure case arranges a failing read without a database.
     """
 
     def __init__(self, rows: tuple[RequestRow, ...] = ROWS) -> None:
@@ -112,6 +124,26 @@ class StubReader:
         self.answer_pages = 1
         self.hit_rate: float | None = 0.3125
         self.hit_rate_asked: list[tuple[int, datetime]] = []
+        self.daily: list[int] = [10, 0, 7]
+        self.daily_asked: list[tuple[int, datetime]] = []
+        self.tokens: tuple[ModelTokens, ...] = LEDGER_TOKENS
+        self.tokens_asked: list[tuple[int, datetime]] = []
+
+    def daily_requests(self, days: int, now: datetime) -> tuple[tuple[date, int], ...]:
+        self.calls.append("daily_requests")
+        self.daily_asked.append((days, now))
+        if self.error is not None:
+            raise self.error
+        counts = [self.daily[i] if i < len(self.daily) else 0 for i in range(days)]
+        first = now.date() - timedelta(days=days - 1)
+        return tuple((first + timedelta(days=i), n) for i, n in enumerate(counts))
+
+    def model_tokens(self, days: int, now: datetime) -> tuple[ModelTokens, ...]:
+        self.calls.append("model_tokens")
+        self.tokens_asked.append((days, now))
+        if self.error is not None:
+            raise self.error
+        return self.tokens
 
     def cache_hit_rate(self, days: int, now: datetime) -> float | None:
         self.calls.append("cache_hit_rate")
@@ -149,17 +181,34 @@ ANSWERS: dict[str, list[dict[str, Any]]] = {
 
 
 class PromStub:
-    """A mock Prometheus that answers `ANSWERS` by query text and records every query."""
+    """A mock Prometheus that answers `ANSWERS` by query text and records every query.
+
+    A range query (the errors per day) is answered from `errors`: day index (0 is the first
+    window day) to its 5xx count, as one point per day at `start + index * 86400`, the way
+    Prometheus lays out a one-day step. A day missing from `errors` has no point. `calls`
+    keeps the path and parameters of every request.
+    """
 
     def __init__(self) -> None:
         self.mode = "ok"
         self.queries: list[str] = []
+        self.calls: list[tuple[str, dict[str, str]]] = []
+        self.errors: dict[int, float] = {0: 2.0, 2: 5.0}
 
     def handle(self, request: httpx.Request) -> httpx.Response:
-        query = request.url.params.get("query", "")
+        params = dict(request.url.params)
+        query = params.get("query", "")
         self.queries.append(query)
+        self.calls.append((request.url.path, params))
         if self.mode == "500":
             return httpx.Response(500, text="internal error")
+        if request.url.path == QUERY_RANGE_PATH:
+            start = float(params["start"])
+            values = [[start + i * DAY_SECONDS, str(v)] for i, v in sorted(self.errors.items())]
+            matrix = [] if self.mode == "empty" else [{"metric": {}, "values": values}]
+            return httpx.Response(
+                200, json={"status": "success", "data": {"resultType": "matrix", "result": matrix}}
+            )
         result = [] if self.mode == "empty" else ANSWERS.get(query, [])
         return httpx.Response(
             200, json={"status": "success", "data": {"resultType": "vector", "result": result}}
@@ -224,13 +273,13 @@ def wired(make_wired: Callable[[str | None], Wired]) -> Wired:
 def test_requests_queries_are_pinned(wired: Wired) -> None:
     """Catches a changed metric name, a missing `sum by`, a window that ignores `days`, and a
     route that asks for more or fewer queries than the four: the sent set must equal the
-    literals (a hit-rate query still sent to Prometheus would be a fifth)."""
+    literals (a hit-rate or tokens query still sent to Prometheus would be a fifth)."""
     assert console.CONSOLE_REQUESTS == REQUESTS
     assert redactions_query(7) == REDACTIONS_7D
-    assert tokens_query(7) == TOKENS_7D
     assert refusals_query(7) == REFUSALS_7D
     assert guardrail_blocks_query(7) == BLOCKS_7D
-    for query in ALL_7D:
+    assert errors_per_day_query() == ERRORS_PER_DAY
+    for query in (REDACTIONS_7D, REFUSALS_7D, BLOCKS_7D):
         assert "[7d]" in query
 
     wired.body(days=7)
@@ -241,8 +290,8 @@ def test_requests_queries_are_pinned(wired: Wired) -> None:
 
 def test_requests_body_maps_counts(wired: Wired) -> None:
     """Catches a body that swaps in and out, drops a model, a kind or a reason, reads the
-    help desk's two counters from each other's series, or turns the hit rate (read from the
-    reader) into a percent (the page does that, the body carries the ratio)."""
+    help desk's two counters from each other's series, drops `per_day`, or turns the hit rate
+    (read from the reader) into a percent (the page does that, the body carries the ratio)."""
     body = wired.body(days=7)
 
     assert set(body) == {
@@ -252,6 +301,7 @@ def test_requests_body_maps_counts(wired: Wired) -> None:
         "guardrail_blocks",
         "tokens",
         "cache_hit_rate",
+        "per_day",
         "requests",
         "requests_page",
         "requests_pages",
@@ -275,7 +325,12 @@ def test_requests_body_maps_counts(wired: Wired) -> None:
         ("nordlicht", "9f2c4be07a1d"),
         ("cuan", None),
     ]
-    assert sorted(wired.reader.calls) == ["cache_hit_rate", "recent_requests"]
+    assert sorted(wired.reader.calls) == [
+        "cache_hit_rate",
+        "daily_requests",
+        "model_tokens",
+        "recent_requests",
+    ]
     assert wired.reader.pages_asked == [1]
 
 
@@ -285,8 +340,10 @@ def test_no_traffic_gives_null_rate_and_blocks(wired: Wired) -> None:
     results."""
     wired.prom.mode = "empty"
     wired.reader.hit_rate = None
+    wired.reader.tokens = ()
+    wired.reader.daily = []
 
-    body = wired.body()
+    body = wired.body(days=3)
 
     assert body["sources"] == {"postgres": "ok", "prometheus": "ok"}
     assert body["cache_hit_rate"] is None
@@ -294,21 +351,26 @@ def test_no_traffic_gives_null_rate_and_blocks(wired: Wired) -> None:
     assert body["redactions"] == []
     assert body["refusals"] == []
     assert body["tokens"] == []
+    assert [(row["requests"], row["errors"]) for row in body["per_day"]] == [(0, 0.0)] * 3
 
 
 def test_the_default_window_is_30_days(wired: Wired) -> None:
     """Catches a default other than 30 days: the queries sent with no `days` must be the 30
-    day forms of the four builders, and the ledger hit rate must be asked for 30 days."""
-    wired.body()
+    day forms of the builders (the errors query is one day whatever the window), and the
+    ledger reads (hit rate, per day, tokens) must be asked for 30 days."""
+    body = wired.body()
 
     assert set(wired.prom.queries) == {
         redactions_query(30),
-        tokens_query(30),
         refusals_query(30),
         guardrail_blocks_query(30),
+        ERRORS_PER_DAY,
     }
-    assert all("[30d]" in query for query in wired.prom.queries)
+    assert all("[30d]" in query for query in wired.prom.queries if query != ERRORS_PER_DAY)
     assert [days for days, _ in wired.reader.hit_rate_asked] == [30]
+    assert [days for days, _ in wired.reader.daily_asked] == [30]
+    assert [days for days, _ in wired.reader.tokens_asked] == [30]
+    assert len(body["per_day"]) == 30
 
 
 def test_hit_rate_comes_from_the_ledger_not_prometheus(wired: Wired) -> None:
@@ -324,7 +386,11 @@ def test_hit_rate_comes_from_the_ledger_not_prometheus(wired: Wired) -> None:
     now = wired.reader.hit_rate_asked[0][1]
     assert now.tzinfo is not None
     assert not any("cache=" in query for query in wired.prom.queries)
-    assert not any("gateway_requests_total" in query for query in wired.prom.queries)
+    # The errors per day query is the one that may name the requests counter, and it has no
+    # cache label; any other query naming it would be a hit-rate query sent to Prometheus.
+    assert not any(
+        "gateway_requests_total" in query for query in wired.prom.queries if query != ERRORS_PER_DAY
+    )
 
 
 def test_an_empty_window_gives_a_null_hit_rate(wired: Wired) -> None:
@@ -388,8 +454,8 @@ def test_no_project_url_gets_no_link(make_wired: Callable[[str | None], Wired]) 
 
 def test_prometheus_down_keeps_the_request_list(wired: Wired) -> None:
     """Catches a Prometheus failure that blanks the request list or the ledger hit rate (the
-    rate no longer comes from Prometheus), fails the whole page with a 500, reports
-    `unconfigured` or `ok`, or leaves stale counts in the body."""
+    rate and the tokens no longer come from Prometheus), fails the whole page with a 500,
+    reports `unconfigured` or `ok`, or leaves stale counts in the body."""
     wired.prom.mode = "500"
 
     body = wired.body()
@@ -397,7 +463,9 @@ def test_prometheus_down_keeps_the_request_list(wired: Wired) -> None:
     assert body["sources"] == {"postgres": "ok", "prometheus": "error"}
     assert body["redactions"] == []
     assert body["refusals"] == []
-    assert body["tokens"] == []
+    assert body["tokens"] == [t.model_dump() for t in LEDGER_TOKENS]
+    assert len(body["per_day"]) == 30
+    assert all(row["errors"] is None for row in body["per_day"])
     assert body["guardrail_blocks"] is None
     assert body["cache_hit_rate"] == 0.3125
     assert len(body["requests"]) == 2
@@ -413,6 +481,8 @@ def test_postgres_down_keeps_the_counts(wired: Wired) -> None:
 
     assert body["sources"] == {"postgres": "error", "prometheus": "ok"}
     assert body["requests"] == []
+    assert body["per_day"] == []
+    assert body["tokens"] == []
     assert body["guardrail_blocks"] == 5
     assert body["cache_hit_rate"] is None
     assert len(body["redactions"]) == 2
@@ -432,6 +502,7 @@ def test_nothing_configured_is_200_with_both_sources_unconfigured(admin_settings
         "guardrail_blocks": None,
         "tokens": [],
         "cache_hit_rate": None,
+        "per_day": [],
         "requests": [],
         "requests_page": 1,
         "requests_pages": 1,
@@ -465,7 +536,7 @@ def test_days_91_is_refused(wired: Wired) -> None:
     assert wired.prom.queries == []
 
     assert wired.get(days=90).status_code == 200
-    assert all("[90d]" in query for query in wired.prom.queries)
+    assert all("[90d]" in query for query in wired.prom.queries if query != ERRORS_PER_DAY)
 
 
 def test_days_0_is_refused(wired: Wired) -> None:

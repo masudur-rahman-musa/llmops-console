@@ -72,8 +72,8 @@ const RENDERED: Record<PageName, Path[]> = {
     ["sources"],
     ["rollup_populated"],
     ["days"],
-    ["savings"],
     ["savings_usd_total"],
+    ["month_spend_usd"],
     ["budgets"],
     ["cost_per_request"],
     ["days", -1, "day"],
@@ -82,9 +82,6 @@ const RENDERED: Record<PageName, Path[]> = {
     ["days", -1, "requests"],
     ["days", -1, "cached_requests"],
     ["days", -1, "cost_usd"],
-    ["savings", -1, "day"],
-    ["savings", -1, "tenant"],
-    ["savings", -1, "saved_usd"],
     ["budgets", -1, "tenant"],
     ["budgets", -1, "cap_usd"],
     ["budgets", -1, "spent_usd"],
@@ -133,7 +130,11 @@ const RENDERED: Record<PageName, Path[]> = {
     ["guardrail_blocks"],
     ["tokens"],
     ["cache_hit_rate"],
+    ["per_day"],
     ["requests"],
+    ["per_day", -1, "day"],
+    ["per_day", -1, "requests"],
+    ["per_day", -1, "errors"],
     ["redactions", -1, "kind"],
     ["redactions", -1, "count"],
     ["refusals", -1, "reason"],
@@ -177,7 +178,27 @@ describe("page body guards", () => {
 
     const nullCost = withValue("cost", ["rollup_populated"], null);
     nullCost.savings_usd_total = null;
+    nullCost.month_spend_usd = null;
     expect(passes("cost", nullCost), "cost nulls").toBe(true);
+
+    // Catches a requests guard that refuses a day whose errors are null (Prometheus down), which would blank the page.
+    expect(passes("requests", withValue("requests", ["per_day", -1, "errors"], null)), "errors null").toBe(true);
+    expect(passes("requests", withValue("requests", ["per_day"], [])), "per_day empty").toBe(true);
+  });
+
+  it("cost guard no longer checks the savings rows", () => {
+    // Catches a cost guard that still demands `savings` (the page stopped reading it, so a body without it must still render), and one that stopped checking the total the Cache saved card shows.
+    const noSavings = fixture("cost");
+    delete noSavings.savings;
+    expect(passes("cost", noSavings)).toBe(true);
+    expect(passes("cost", withValue("cost", ["savings_usd_total"], "4.55"))).toBe(false);
+  });
+
+  it("requests guard checks the per day types", () => {
+    // Catches a guard that lets a text count or a text day through as a per day entry.
+    expect(passes("requests", withValue("requests", ["per_day", -1, "requests"], "7"))).toBe(false);
+    expect(passes("requests", withValue("requests", ["per_day", -1, "errors"], "2"))).toBe(false);
+    expect(passes("requests", withValue("requests", ["per_day", -1, "day"], 20261026))).toBe(false);
   });
 
   it("quality guard takes a marker eval_run_id", () => {

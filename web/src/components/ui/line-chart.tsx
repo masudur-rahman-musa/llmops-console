@@ -3,7 +3,7 @@ const HEIGHT = 200;
 const PAD = 8;
 const LEFT = 48;
 const TOP = 20;
-const BOTTOM = 32;
+const BOTTOM = 40;
 const DATE_GAP = 48;
 
 type Point = readonly [number, number];
@@ -19,11 +19,25 @@ function dateLabel(seconds: number): string {
   return new Date(seconds * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
+/** `06:00`, the run's UTC time, printed under its date. */
+function timeLabel(seconds: number): string {
+  return new Date(seconds * 1000).toISOString().slice(11, 16);
+}
+
+/** A marker label at the chart's left or right end is anchored inward so the edge never cuts it. */
+function markerAnchor(x: number): "start" | "middle" | "end" {
+  if (x <= LEFT) return "start";
+  if (x >= WIDTH - PAD) return "end";
+  return "middle";
+}
+
 /**
  * A server-rendered line chart: no client script, no library.
  * Non-finite points are dropped first; nothing left renders `No data.`. The
  * axis is `<path>` and `<text>` only, so each marker is the only `<line>` it
- * draws; a date closer than 48 px to the last one shown is skipped. Pinned by tests/chart.test.tsx.
+ * draws; a date closer than 48 px to the last one shown is skipped, and each date
+ * shown has its UTC time under it. The svg has no fixed size, so the `chart` class
+ * fills the page width. Pinned by tests/chart.test.tsx.
  */
 export function LineChart({
   title,
@@ -63,29 +77,34 @@ export function LineChart({
     const x = coords[index][0];
     if (x - lastDate < DATE_GAP) return [];
     lastDate = x;
-    return [{ x, text: dateLabel(seconds) }];
+    return [{ x, text: dateLabel(seconds), time: timeLabel(seconds) }];
   });
   return (
     <figure>
       <figcaption>{title}</figcaption>
-      <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} width={WIDTH} height={HEIGHT} className="chart" role="img" aria-label={title}>
+      <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} className="chart" role="img" aria-label={title}>
         {ticks.map((value) => (
           <text key={`y${value}`} x={LEFT - 6} y={scale(value, minY, maxY, HEIGHT - BOTTOM, TOP) + 4} textAnchor="end" className="chart-text">
             {yFormat(value)}
           </text>
         ))}
         <path d={`M${LEFT} ${TOP} V${HEIGHT - BOTTOM} H${WIDTH - PAD}`} fill="none" className="chart-axis" />
-        {dates.map(({ x, text }, index) => (
-          <text key={`d${index}`} x={x} y={HEIGHT - 10} textAnchor="middle" className="chart-text">
-            {text}
-          </text>
+        {dates.map(({ x, text, time }, index) => (
+          <g key={`d${index}`}>
+            <text x={x} y={HEIGHT - 22} textAnchor="middle" className="chart-text">
+              {text}
+            </text>
+            <text x={x} y={HEIGHT - 8} textAnchor="middle" className="chart-text">
+              {time}
+            </text>
+          </g>
         ))}
         {shown.map((marker, index) => {
           const x = scale(marker.at, minX, maxX, LEFT, WIDTH - PAD);
           return (
             <g key={`m${index}`}>
               <line x1={x} x2={x} y1={TOP} y2={HEIGHT - BOTTOM} className="chart-marker" strokeDasharray="4 4" />
-              <text x={x} y={TOP - 6} textAnchor="middle" className="chart-text">
+              <text x={x} y={TOP - 6} textAnchor={markerAnchor(x)} className="chart-text">
                 {marker.label}
               </text>
             </g>

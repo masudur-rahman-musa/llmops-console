@@ -68,8 +68,8 @@ afterEach(() => {
 });
 
 describe("paged panels", () => {
-  it("cost pages daily cost and cache savings apart", async () => {
-    // Catches panels that share one page number, a browser page that shows every row, or a pager whose text counts the wrong total.
+  it("cost pages daily cost", async () => {
+    // Catches a daily cost that ignores its page number, a browser page that shows every row, a pager whose text counts the wrong total, or a second pager left behind for the removed cache savings table.
     const body = fixture("cost");
     body.days = Array.from({ length: 45 }, (_, i) => ({
       day: `2026-08-${String((i % 28) + 1).padStart(2, "0")}`,
@@ -84,6 +84,7 @@ describe("paged panels", () => {
       tenant: `st${i}`,
       saved_usd: 1,
     }));
+    // The rows stay in the body (make numbers checks them) but the page no longer shows them.
     stubFetch(body);
 
     const html = renderToStaticMarkup(await CostPage(props({ days_page: "3" })));
@@ -93,11 +94,8 @@ describe("paged panels", () => {
     // Newest first: page 3 holds the oldest days, so dt0 (2026-08-01) is on it and dt44 (2026-08-17) is not.
     expect(dayRows.join(" ")).toMatch(/\bdt0\b/);
     expect(dayRows.join(" ")).not.toContain("dt44");
-    const savingRows = rowsMatching(html, /\bst\d+\b/);
-    expect(savingRows).toHaveLength(20);
-    expect(savingRows.join(" ")).toContain("st0 ");
-    expect(savingRows.join(" ")).not.toContain("st20");
-    expect(pagerTexts(html)).toEqual(["Page 3 of 3", "Page 1 of 2"]);
+    expect(rowsMatching(html, /\bst\d+\b/)).toEqual([]);
+    expect(pagerTexts(html)).toEqual(["Page 3 of 3"]);
   });
 
   it("quality pages taxonomy and blocked releases", async () => {
@@ -115,9 +113,9 @@ describe("paged panels", () => {
 
     const html = renderToStaticMarkup(await QualityPage(props({ taxonomy_page: "2", blocked_page: "2" })));
 
-    expect(rowsMatching(html, /\btag_\d+\b/)).toHaveLength(1);
-    expect(text(html)).toContain("tag_20");
-    expect(text(html)).not.toContain("tag_19");
+    expect(rowsMatching(html, /\bTag \d+\b/)).toHaveLength(1);
+    expect(text(html)).toContain("Tag 20");
+    expect(text(html)).not.toContain("Tag 19");
     const pulls = Array.from(html.matchAll(/helpdesk\/pull\/(\d+)/g), (m) => Number(m[1]));
     expect(pulls).toEqual([21, 22, 23, 24, 25]);
     expect(pagerTexts(html)).toEqual(["Page 2 of 2", "Page 2 of 2"]);
@@ -146,7 +144,7 @@ describe("paged panels", () => {
   });
 
   it("fixed panels get no pager", async () => {
-    // Catches a pager drawn under a fixed-size panel: 25 redaction kinds stay unpaged, and the one paged panel gives the only pager.
+    // Catches a pager drawn under a fixed-size panel: 25 redaction kinds stay unpaged (and read Kind 0 to Kind 24, not kind_0), and the one paged panel gives the only pager.
     const body = fixture("requests");
     body.redactions = Array.from({ length: 25 }, (_, i) => ({ kind: `kind_${i}`, count: 1 }));
     body.requests_page = 1;
@@ -155,7 +153,8 @@ describe("paged panels", () => {
 
     const html = renderToStaticMarkup(await RequestsPage(props({})));
 
-    expect(rowsMatching(html, /\bkind_\d+\b/)).toHaveLength(25);
+    expect(rowsMatching(html, /\bKind \d+\b/)).toHaveLength(25);
+    expect(rowsMatching(html, /\bkind_\d+\b/)).toEqual([]);
     expect(pagerTexts(html)).toEqual(["Page 1 of 3"]);
   });
 

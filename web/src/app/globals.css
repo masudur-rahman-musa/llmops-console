@@ -17,6 +17,12 @@
   --danger: #b42318;
   --danger-soft: #fdecea;
 
+  /* Chart series, in order; a fifth series reuses the first. */
+  --series-1: #2f5bd3;
+  --series-2: #c2410c;
+  --series-3: #0f8b6e;
+  --series-4: #7c4dcc;
+
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -51,6 +57,10 @@
     --accent-soft: #1d2a47;
     --danger: #ff8a7a;
     --danger-soft: #3a1d1a;
+    --series-1: #7ea2ff;
+    --series-2: #fb923c;
+    --series-3: #34d399;
+    --series-4: #c4b5fd;
   }
 }
 
@@ -155,6 +165,7 @@ svg {
 }
 
 .chart {
+  width: 100%;
   border: var(--line);
   border-radius: var(--radius);
   background: var(--surface);
@@ -171,6 +182,98 @@ svg {
 .chart-text {
   fill: var(--muted);
   font-size: 11px;
+}
+
+/* Bar parts and legend swatches, one colour per series. */
+.series-1 {
+  fill: var(--series-1);
+  background: var(--series-1);
+}
+
+.series-2 {
+  fill: var(--series-2);
+  background: var(--series-2);
+}
+
+.series-3 {
+  fill: var(--series-3);
+  background: var(--series-3);
+}
+
+.series-4 {
+  fill: var(--series-4);
+  background: var(--series-4);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.swatch {
+  display: inline-block;
+  width: var(--space-3);
+  height: var(--space-3);
+  border-radius: var(--border-width);
+}
+
+/* The row of number cards every tab shows under its window line. */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-3);
+  margin: var(--space-4) 0 var(--space-5);
+  padding: 0;
+  list-style: none;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-4);
+  border: var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.card-link {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  color: inherit;
+  text-decoration: none;
+}
+
+.card-link:hover .card-label {
+  color: var(--accent);
+}
+
+.card-label {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.card-value {
+  font-size: var(--text-lg);
+}
+
+.card-sub,
+.card-hint {
+  color: var(--muted);
+  font-size: var(--text-xs);
 }
 
 /* The one line under the question saying what time the page covers. */

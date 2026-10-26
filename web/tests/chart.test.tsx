@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
@@ -14,18 +17,22 @@ const CIRCLE = /<circle\b/g;
 const LINE = /<line[\s/>]/g;
 const POLYLINE = /<polyline\b/g;
 
+const GLOBALS = fileURLToPath(new URL("../src/app/globals.css", import.meta.url));
 const DAY = 86400;
 const DATE = /^[A-Z][a-z]{2} \d{1,2}$/;
+const TIME = /^\d{2}:\d{2}$/;
 
 /** Epoch seconds of 2026-09-<day> at <hour>:00 UTC. */
 function utc(day: number, hour: number): number {
   return Date.UTC(2026, 8, day, hour) / 1000;
 }
 
-/** Every `<text>` element: its x attribute and its visible content. */
-function textElements(html: string): Array<{ x: string | null; body: string }> {
+/** Every `<text>` element: its x and y attributes, its anchor and its visible content. */
+function textElements(html: string): Array<{ x: string | null; y: string | null; anchor: string | null; body: string }> {
   return Array.from(html.matchAll(/<text\b([^>]*)>([\s\S]*?)<\/text>/g), (match) => ({
     x: match[1].match(/\bx="([^"]*)"/)?.[1] ?? null,
+    y: match[1].match(/\by="([^"]*)"/)?.[1] ?? null,
+    anchor: match[1].match(/\btext-anchor="([^"]*)"/)?.[1] ?? null,
     body: match[2].replace(/<!--[\s\S]*?-->/g, "").replace(/<[^>]*>/g, "").trim(),
   }));
 }
@@ -182,5 +189,66 @@ describe("LineChart", () => {
     expect(count(html, LINE)).toBe(0);
     expect(html).not.toContain("bad");
     expect(html).not.toMatch(/NaN/);
+  });
+
+  it("each shown date carries its UTC time", () => {
+    // Catches a chart with no run times, times in the server's zone (17:00 must stay 17:00), a time under no date or beside the wrong one, and a thinned-out date whose time is still drawn.
+    const runs: Array<[number, number]> = [
+      [utc(12, 6), 0.91],
+      [utc(14, 17), 0.93],
+      [utc(15, 6), 0.88],
+    ];
+    const html = renderToStaticMarkup(<LineChart title="Check score" points={runs} yFormat={formatPoints} />);
+    const items = textElements(html);
+    const dates = items.filter((item) => DATE.test(item.body));
+    const times = items.filter((item) => TIME.test(item.body));
+    expect(dates.map((item) => item.body)).toEqual(["Sep 12", "Sep 14", "Sep 15"]);
+    expect(times.map((item) => item.body)).toEqual(["06:00", "17:00", "06:00"]);
+    for (const [index, date] of dates.entries()) {
+      expect(times[index].x, date.body).toBe(date.x);
+      expect(Number(times[index].y), date.body).toBeGreaterThan(Number(date.y));
+    }
+
+    const crowded = Array.from({ length: 30 }, (_, i): [number, number] => [utc(1, 6) + i * DAY, 0.9 + (i % 3) / 100]);
+    const thinned = textElements(renderToStaticMarkup(<LineChart title="Check score" points={crowded} yFormat={formatPoints} />));
+    const shownDates = thinned.filter((item) => DATE.test(item.body));
+    expect(shownDates.length).toBeLessThan(30);
+    expect(thinned.filter((item) => TIME.test(item.body))).toHaveLength(shownDates.length);
+  });
+
+  it("marker labels stay inside the chart", () => {
+    // Catches a label centred on a marker at the first or last run, which the svg edge cuts in half: the last anchors end, the first anchors start, one between stays centred.
+    const html = renderToStaticMarkup(
+      <LineChart
+        title="Check score"
+        points={[[utc(12, 6), 0.91], [utc(14, 6), 0.93], [utc(15, 6), 0.88]]}
+        yFormat={formatPoints}
+        markers={[
+          { at: utc(12, 6), label: "first00" },
+          { at: utc(14, 6), label: "middle0" },
+          { at: utc(15, 6), label: "last000" },
+        ]}
+      />,
+    );
+    const anchorOf = (label: string): string | null => textElements(html).find((item) => item.body === label)?.anchor ?? null;
+    expect(anchorOf("first00")).toBe("start");
+    expect(anchorOf("middle0")).toBe("middle");
+    expect(anchorOf("last000")).toBe("end");
+  });
+
+  it("the chart fills its width", () => {
+    // Catches a fixed width or height on the svg (it would stop at 600 px instead of filling the page), a lost viewBox (the drawing would not scale), and a chart class that never sets width 100%.
+    const html = renderToStaticMarkup(
+      <LineChart title="Check score" points={[[utc(12, 6), 0.91], [utc(14, 6), 0.93]]} yFormat={formatPoints} />,
+    );
+    const tag = html.match(/<svg\b[^>]*>/)?.[0] ?? "";
+    expect(tag).toMatch(/\bviewBox="0 0 \d+ \d+"/);
+    expect(tag).toMatch(/\bclass="chart"/);
+    expect(tag).not.toMatch(/\swidth=/);
+    expect(tag).not.toMatch(/\sheight=/);
+
+    const css = readFileSync(GLOBALS, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    const rule = css.match(/(?:^|\})\s*\.chart\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(rule).toMatch(/width:\s*100%/);
   });
 });

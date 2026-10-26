@@ -94,6 +94,12 @@ function count(html: string, pattern: RegExp): number {
   return (html.match(pattern) ?? []).length;
 }
 
+// The words of each number card on a page, label then value (then any hint), in order.
+function cardTexts(html: string): string[] {
+  const list = html.match(/<ul class="cards">[\s\S]*?<\/ul>/)?.[0] ?? "";
+  return Array.from(list.matchAll(/<li class="card"[^>]*>([\s\S]*?)<\/li>/g), (match) => text(match[1]));
+}
+
 function filesUnder(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = join(dir, entry.name);
@@ -153,31 +159,38 @@ describe("console pages", () => {
     }
 
     const home = await render("home");
-    expect(has(home, "Today the gateway handled 842 requests costing $1,234.50.")).toBe(true);
-    expect(has(home, "p95 latency: 412 ms")).toBe(true);
-    expect(has(home, "Error rate: 0.50%")).toBe(true);
-    expect(has(home, "Last eval: check score 93.12%, passed")).toBe(true);
+    expect(cardTexts(home)).toEqual([
+      "Requests today 842",
+      "Cost today $1,234.50",
+      "p95 latency 412 ms",
+      "Error rate 0.50%",
+      "Last eval 93.12% passed",
+    ]);
     const failedEval = fixture("home");
     failedEval.last_eval = { ...(failedEval.last_eval as Fixture), passed: false };
-    expect(has(await render("home", failedEval), "Last eval: check score 93.12%, failed")).toBe(true);
+    expect(cardTexts(await render("home", failedEval))).toContain("Last eval 93.12% failed");
     const nullHome = fixture("home");
     nullHome.requests_today = null;
-    expect(has(await render("home", nullHome), "Today the gateway handled n/a requests costing $1,234.50.")).toBe(true);
+    expect(cardTexts(await render("home", nullHome))).toContain("Requests today n/a");
 
     const cost = await render("cost");
     expect(has(cost, "2026-09-15 acme-eu mistral 412 37 $18.25")).toBe(true);
     expect(has(cost, "2026-09-14 globex-eu local 268 54 $0.00")).toBe(true);
-    expect(has(cost, "2026-09-15 acme-eu $3.10")).toBe(true);
-    expect(has(cost, "2026-09-14 globex-eu $1.45")).toBe(true);
-    expect(has(cost, "Estimated cache savings: $4.55")).toBe(true);
+    expect(cardTexts(cost)).toEqual([
+      "This month's spend $61.00",
+      "Cache saved $4.55",
+      "support-fast $0.0042",
+      "support-smart $0.0187",
+    ]);
+    expect(has(cost, "2026-09-15 acme-eu $3.10")).toBe(false);
+    expect(has(cost, "Cache savings")).toBe(false);
+    expect(has(cost, "Estimated cache savings")).toBe(false);
     expect(has(cost, "$31.00 of $50.00")).toBe(true);
     expect(has(cost, "$25.00 of $100.00")).toBe(true);
     expect(has(cost, "$5.00 of $20.00")).toBe(true);
     expect(cost).toMatch(/style="[^"]*width:\s*62%/);
     expect(cost).toMatch(/style="[^"]*width:\s*25%/);
-    expect(has(cost, "What one request costs")).toBe(true);
-    expect(has(cost, "support-fast: $0.0042")).toBe(true);
-    expect(has(cost, "support-smart: $0.0187")).toBe(true);
+    expect(has(cost, "What one request costs")).toBe(false);
     expect(cost).not.toContain("Daily rollup not yet populated.");
     // The null ratio is the only difference between these two bodies, so only its n/a can separate them.
     const knownRatio = fixture("cost");
@@ -210,10 +223,10 @@ describe("console pages", () => {
     expect(qualityCharts).toHaveLength(1);
     expect(count(qualityCharts[0], /<circle\b/g)).toBe(3);
     expect(count(qualityCharts[0], /<line[\s/>]/g)).toBe(2);
-    expect(has(quality, "refusal 18 of 20")).toBe(true);
-    expect(has(quality, "citation 9 of 12")).toBe(true);
-    expect(has(quality, "wrong_tool 4")).toBe(true);
-    expect(has(quality, "missed_refusal 2")).toBe(true);
+    expect(has(quality, "Refusal 18 of 20")).toBe(true);
+    expect(has(quality, "Citation 9 of 12")).toBe(true);
+    expect(has(quality, "Wrong tool 4")).toBe(true);
+    expect(has(quality, "Missed refusal 2")).toBe(true);
     expect(has(quality, "3f9c2a7b1e4d")).toBe(true);
     expect(has(quality, "a1b2c3d4e5f6")).toBe(true);
     expect(has(quality, "Check score: 0.88 (was 0.93)")).toBe(true);
@@ -278,22 +291,22 @@ describe("console pages", () => {
     const home = fixture("home");
     home.last_eval = { ...(home.last_eval as Fixture), check_score: 57.14, passed: true };
     const html = await render("home", home);
-    expect(has(html, "Last eval: check score 57.14%, passed")).toBe(true);
+    expect(cardTexts(html)).toContain("Last eval 57.14% passed");
     expect(html).not.toContain("5714");
 
     const noBaseline = fixture("home");
     noBaseline.last_eval = { ...(noBaseline.last_eval as Fixture), check_score: 57.14, passed: null };
     const nullHtml = await render("home", noBaseline);
-    expect(has(nullHtml, "Last eval: check score 57.14%, no baseline to check against")).toBe(true);
-    expect(nullHtml).not.toContain(", failed");
-    expect(nullHtml).not.toContain(", passed");
+    const lastEval = cardTexts(nullHtml).find((card) => card.startsWith("Last eval")) ?? "";
+    expect(lastEval).toContain("57.14%");
+    expect(lastEval).not.toMatch(/passed|failed/);
   });
 
   it("cost shows savings under a cent", async () => {
     // Catches savings rounded to cents: a total of $0.0000257 must not read $0.00.
     const body = fixture("cost");
     body.savings_usd_total = 0.0000257;
-    expect(has(await render("cost", body), "Estimated cache savings: $0.000026")).toBe(true);
+    expect(cardTexts(await render("cost", body))).toContain("Cache saved $0.000026");
   });
 
   it("home renders no eval yet when last_eval is null", async () => {
@@ -311,7 +324,9 @@ describe("console pages", () => {
     // the quality chart has no data.
     const home = fixture("home");
     home.last_eval = { ...(home.last_eval as Fixture), check_score: null };
-    expect(has(await render("home", home), "Last eval: check score n/a, passed")).toBe(true);
+    const lastEval = cardTexts(await render("home", home)).find((card) => card.startsWith("Last eval")) ?? "";
+    expect(lastEval).toContain("n/a");
+    expect(lastEval).not.toContain("0.00%");
 
     const quality = fixture("quality");
     for (const run of list(quality, "runs")) run.metrics = { judge_score: 0.9 };
@@ -338,8 +353,8 @@ describe("console pages", () => {
       expect(has(html, "Not measured yet."), label).toBe(true);
       expect(html, label).not.toContain("Cost per 1,000 turns");
       expect(has(html, "2026-09-15 acme-eu mistral 412 37 $18.25"), label).toBe(true);
-      expect(has(html, "Estimated cache savings: $4.55"), label).toBe(true);
-      expect(has(html, "support-fast: $0.0042"), label).toBe(true);
+      expect(cardTexts(html), label).toContain("Cache saved $4.55");
+      expect(cardTexts(html), label).toContain("support-fast $0.0042");
     }
   });
 

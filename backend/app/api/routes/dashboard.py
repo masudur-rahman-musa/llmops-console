@@ -5,7 +5,7 @@ Four routes, one per console tab, all behind `app.api.deps.admin_key`:
     GET /console/home          today's traffic, spend, latency, the last eval, the live routing
     GET /console/cost          the daily rollup, estimated cache savings, budgets
     GET /console/quality       the eval gate, runs, categories, taxonomy, blocked releases
-    GET /console/requests      redactions, refusals, blocks, tokens, hit rate, newest requests
+    GET /console/requests      redactions, refusals, blocks, tokens, hit rate, per day, newest
 
 The console reads through here and never touches Postgres or Prometheus itself.
 A working tenant key is 401 on all four, as on `/admin/*`. The sums and source
@@ -21,7 +21,7 @@ PromQL label matcher.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Final
 
 from fastapi import APIRouter, Query, Request
@@ -31,10 +31,10 @@ from app.model_routing.policy import PolicyStore
 from app.schemas.dashboard import (
     BlockedItem,
     CostPage,
+    DayRequests,
     HomePage,
     ModelAlias,
     ModelCandidate,
-    ModelTokens,
     QualityPage,
     RedactionCount,
     RefusalCount,
@@ -52,13 +52,14 @@ from app.services.dashboard import (
     prometheus,
 )
 from app.services.prometheus_reads import (
+    DAY_STEP_SECONDS,
     ERROR_RATE_QUERY,
     P95_QUERY,
     PrometheusClient,
+    errors_per_day_query,
     guardrail_blocks_query,
     redactions_query,
     refusals_query,
-    tokens_query,
 )
 from app.storage.cost_ledger import TRACE_ID_PATTERN
 from app.storage.dashboard_reads import regressed_metrics
@@ -165,6 +166,7 @@ def cost(
         savings_usd_total=None if read is None else read.savings_usd_total,
         estimated=True,
         budgets=budgets(request, tenant, spend),
+        month_spend_usd=None if spend is None else sum(spend.values()),
         cost_per_request=() if read is None else read.cost_per_request,
     )
 
@@ -209,9 +211,9 @@ RequestCounts = tuple[
     tuple[RedactionCount, ...],
     tuple[RefusalCount, ...],
     float | None,
-    tuple[ModelTokens, ...],
+    dict[date, float],
 ]
-"""The Prometheus half of the requests page: redactions, refusals, blocks, tokens."""
+"""The Prometheus half of the requests page: redactions, refusals, blocks, errors per day."""
 
 
 def trace_url(project_url: str | None, trace_id: str) -> str | None:
@@ -225,27 +227,35 @@ def trace_url(project_url: str | None, trace_id: str) -> str | None:
     return f"{project_url.rstrip('/')}/traces/{trace_id}"
 
 
-def _tokens(samples: list[tuple[dict[str, str], float]]) -> tuple[ModelTokens, ...]:
-    """One row per model, `in` and `out` folded together; a missing direction is 0."""
-    by_model: dict[str, dict[str, float]] = {}
-    for labels, value in samples:
-        directions = by_model.setdefault(labels.get("model", ""), {"in": 0.0, "out": 0.0})
-        direction = labels.get("direction", "")
-        if direction in directions:
-            directions[direction] += value
-    return tuple(
-        ModelTokens(model=model, input=d["in"], output=d["out"])
-        for model, d in sorted(by_model.items())
+def errors_by_day(client: PrometheusClient, days: int, now: datetime) -> dict[date, float]:
+    """5xx answers per UTC day for the last `days` days ending today.
+
+    One range query at a one-day step from the midnight after the first day to tomorrow's
+    midnight; the point at midnight D+1 counts day D. A day with no point had no errors.
+    Pinned by tests/api/test_console_layout.py::test_errors_per_day_query_is_pinned."""
+    today = now.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    points = client.range_query(
+        errors_per_day_query(),
+        start=(today - timedelta(days=days - 2)).timestamp(),
+        end=(today + timedelta(days=1)).timestamp(),
+        step=DAY_STEP_SECONDS,
     )
+    return {
+        datetime.fromtimestamp(ts, UTC).date() - timedelta(days=1): value for ts, value in points
+    }
 
 
 @router.get(CONSOLE_REQUESTS)
 def requests(
     request: Request, settings: SettingsDep, days: Days = DEFAULT_DAYS, page: Page = DEFAULT_PAGE
 ) -> RequestsPage:
-    """Counts over the window from Prometheus; a ledger page and the hit rate from Postgres.
+    """Counts and errors per day from Prometheus; a ledger page, the hit rate, requests per
+    day and tokens per model from Postgres.
 
-    A dead or missing ledger is page 1 of 1 with no rows."""
+    A dead or missing ledger is page 1 of 1 with no rows, no days and no tokens. A dead
+    Prometheus leaves each day's `errors` null."""
+
+    now = datetime.now(UTC)
 
     def read(client: PrometheusClient) -> RequestCounts:
         return (
@@ -258,19 +268,24 @@ def requests(
                 for labels, value in client.instant_query(refusals_query(days))
             ),
             first(client.instant_query(guardrail_blocks_query(days))),
-            _tokens(client.instant_query(tokens_query(days))),
+            errors_by_day(client, days, now),
         )
 
     prom, counts = prometheus(request, "requests", read)
-    empty: RequestCounts = ((), (), None, ())
-    redactions, refusals, blocks, tokens = counts if counts is not None else empty
-    now = datetime.now(UTC)
+    redactions, refusals, blocks, errors = counts if counts is not None else ((), (), None, None)
     pg, ledger_read = postgres(
         request,
         "requests",
-        lambda reader: (reader.recent_requests(page=page), reader.cache_hit_rate(days, now)),
+        lambda reader: (
+            reader.recent_requests(page=page),
+            reader.cache_hit_rate(days, now),
+            reader.daily_requests(days, now),
+            reader.model_tokens(days, now),
+        ),
     )
-    ledger, hit_rate = ledger_read if ledger_read is not None else (None, None)
+    ledger, hit_rate, daily, tokens = (
+        ledger_read if ledger_read is not None else (None, None, (), ())
+    )
     project_url = settings.langfuse_project_url
     return RequestsPage(
         sources=Sources(postgres=pg, prometheus=prom),
@@ -279,6 +294,12 @@ def requests(
         guardrail_blocks=blocks,
         tokens=tokens,
         cache_hit_rate=hit_rate,
+        per_day=tuple(
+            DayRequests(
+                day=day, requests=count, errors=None if errors is None else errors.get(day, 0.0)
+            )
+            for day, count in daily
+        ),
         requests=tuple(
             row.model_copy(update={"trace_url": trace_url(project_url, row.trace_id)})
             for row in (() if ledger is None else ledger.rows)

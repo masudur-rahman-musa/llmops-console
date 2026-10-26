@@ -34,6 +34,9 @@ Prometheus costs a page load seconds rather than a hung worker."""
 RANGE_STEP_SECONDS: Final[int] = 3600
 """One point per hour on the reliability series."""
 
+DAY_STEP_SECONDS: Final[int] = 86400
+"""One point per UTC day, on the errors-per-day series."""
+
 QUERY_PATH: Final[str] = "/api/v1/query"
 QUERY_RANGE_PATH: Final[str] = "/api/v1/query_range"
 
@@ -99,9 +102,11 @@ def redactions_query(days: int) -> str:
     return f"sum by (kind) (increase(gateway_redactions_total[{days}d]))"
 
 
-def tokens_query(days: int) -> str:
-    """Tokens billed over the window, by served model and direction (`in` or `out`)."""
-    return f"sum by (model, direction) (increase(gateway_tokens_total[{days}d]))"
+def errors_per_day_query() -> str:
+    """5xx answers over the day before each point. Asked at a one-day step with every
+    point on a UTC midnight, the point at midnight D+1 counts day D. A failed request
+    writes no ledger row, so errors per day come from here and requests from the ledger."""
+    return 'sum(increase(gateway_requests_total{status=~"5.."}[1d]))'
 
 
 def refusals_query(days: int) -> str:
@@ -178,8 +183,10 @@ class PrometheusClient:
             raise PrometheusError(f"{QUERY_PATH}: a series is malformed") from exc
         return samples
 
-    def range_query(self, query: str, *, start: float, end: float) -> list[tuple[float, float]]:
-        """The first series' `(unix_ts, value)` points at `RANGE_STEP_SECONDS`.
+    def range_query(
+        self, query: str, *, start: float, end: float, step: int = RANGE_STEP_SECONDS
+    ) -> list[tuple[float, float]]:
+        """The first series' `(unix_ts, value)` points every `step` seconds.
 
         The console's range queries are all aggregated to one series, so the first
         is the only one; no series at all is an empty list.
@@ -188,7 +195,7 @@ class PrometheusClient:
             "query": query,
             "start": str(start),
             "end": str(end),
-            "step": str(RANGE_STEP_SECONDS),
+            "step": str(step),
         }
         result = self._result(QUERY_RANGE_PATH, params, MATRIX)
         if not result:

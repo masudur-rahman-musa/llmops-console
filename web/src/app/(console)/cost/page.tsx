@@ -1,8 +1,11 @@
 import { consolePage } from "@/components/layout/console-page";
+import { BarChart, type BarDay } from "@/components/ui/bar-chart";
 import { Pager } from "@/components/ui/pager";
+import { StatCards } from "@/components/ui/stat-cards";
 import { Table } from "@/components/ui/table";
-import { NA, smallUsd, usd } from "@/lib/format";
-import { CHECK_SCORE_SENTENCE, scoreLabel } from "@/lib/labels";
+import type { CostBody } from "@/features/cost/guards";
+import { NA, shortDay, smallUsd, usd } from "@/lib/format";
+import { CHECK_SCORE_SENTENCE, WINDOW_LINES, scoreLabel } from "@/lib/labels";
 import { PAGE_PARAMS, pageOf } from "@/lib/paging";
 import { TRADEOFF_METRICS, readTradeoff, type Tradeoff } from "@/lib/tradeoff";
 
@@ -15,6 +18,22 @@ function newestFirst<T extends { day: string; tenant: string; provider: string }
   return rows.toSorted(
     (a, b) => b.day.localeCompare(a.day) || a.tenant.localeCompare(b.tenant) || a.provider.localeCompare(b.provider),
   );
+}
+
+/** One bar per day, oldest first, one part per tenant with its providers summed. */
+function costByTenant(rows: CostBody["days"]): { days: BarDay[]; tenants: string[] } {
+  const tenants = [...new Set(rows.map((row) => row.tenant))].sort();
+  const byDay = new Map<string, Map<string, number>>();
+  for (const row of rows) {
+    const day = byDay.get(row.day) ?? new Map<string, number>();
+    day.set(row.tenant, (day.get(row.tenant) ?? 0) + row.cost_usd);
+    byDay.set(row.day, day);
+  }
+  const days = [...byDay.keys()].sort().map((day) => ({
+    label: shortDay(day),
+    parts: tenants.map((tenant) => ({ series: tenant, value: byDay.get(day)?.get(tenant) ?? 0 })),
+  }));
+  return { days, tenants };
 }
 
 /** `min(ratio, 1)` as a whole-page percentage, rounded so float noise never reaches the style. */
@@ -41,62 +60,64 @@ function TradeoffTable({ table }: { table: Tradeoff | null }) {
   );
 }
 
-export default consolePage("cost", "Cost", "What does the AI cost, per day, per tenant and per model, and what did caching save?", async (body, params) => {
-  const tradeoff = await readTradeoff(process.env.CONSOLE_TRADEOFF_PATH);
-  const days = pageOf(newestFirst(body.days), params, PAGE_PARAMS.days);
-  const savings = pageOf(body.savings, params, PAGE_PARAMS.savings);
-  return (
-    <>
-      <h2>Daily cost</h2>
-      {body.rollup_populated === false && <p className="note">Daily rollup not yet populated.</p>}
-      <Table
-        columns={["Day", "Tenant", "Provider", "Requests", "Cached requests", "Cost"]}
-        rows={days.rows.map((day) => ({
-          key: `${day.day}/${day.tenant}/${day.provider}`,
-          cells: [day.day, day.tenant, day.provider, day.requests, day.cached_requests, usd(day.cost_usd)],
-        }))}
-      />
-      <Pager name={PAGE_PARAMS.days} page={days.page} pages={days.pages} params={params} />
+export default consolePage(
+  "cost",
+  "Cost",
+  "What does the AI cost, per day, per tenant and per model, and what did caching save?",
+  async (body, params) => {
+    const tradeoff = await readTradeoff(process.env.CONSOLE_TRADEOFF_PATH);
+    const days = pageOf(newestFirst(body.days), params, PAGE_PARAMS.days);
+    const chart = costByTenant(body.days);
+    return (
+      <>
+        <StatCards
+          cards={[
+            { label: "This month's spend", value: usd(body.month_spend_usd) },
+            { label: "Cache saved", value: smallUsd(body.savings_usd_total) },
+            ...body.cost_per_request.map((alias) => ({
+              label: alias.alias,
+              value: usd(alias.cost_usd, PER_REQUEST_DECIMALS),
+            })),
+          ]}
+        />
+        <p className="note">
+          Cache saved is estimated: what the cached answers would have cost. Each alias card is the average cost of one
+          request.
+        </p>
+        <BarChart title="Cost per day by tenant" days={chart.days} series={chart.tenants} yFormat={(value) => usd(value)} />
 
-      <h2>Cache savings</h2>
-      <Table
-        columns={["Day", "Tenant", "Saved"]}
-        rows={savings.rows.map((saving) => ({
-          key: `${saving.day}/${saving.tenant}`,
-          cells: [saving.day, saving.tenant, smallUsd(saving.saved_usd)],
-        }))}
-      />
-      <Pager name={PAGE_PARAMS.savings} page={savings.page} pages={savings.pages} params={params} />
-      <p>Estimated cache savings: {smallUsd(body.savings_usd_total)}</p>
-
-      <h2>Budgets this month</h2>
-      {body.budgets.map((budget) => (
-        <div key={budget.tenant}>
-          <p>
-            {budget.tenant}: {usd(budget.spent_usd)} of {usd(budget.cap_usd)}
-            {budget.ratio !== null && budget.ratio > 1 && ", over"}
-          </p>
-          {budget.ratio === null ? (
-            <p className="note">{NA}</p>
-          ) : (
-            <div className={budget.ratio > 1 ? "bar over" : "bar"}>
-              <div style={{ width: barWidth(budget.ratio) }} />
-            </div>
-          )}
-        </div>
-      ))}
-
-      <section>
-        <h2>What one request costs</h2>
-        {body.cost_per_request.map((alias) => (
-          <p key={alias.alias}>
-            {alias.alias}: {usd(alias.cost_usd, PER_REQUEST_DECIMALS)}
-          </p>
+        <h2>Budgets this month</h2>
+        {body.budgets.map((budget) => (
+          <div key={budget.tenant}>
+            <p>
+              {budget.tenant}: {usd(budget.spent_usd)} of {usd(budget.cap_usd)}
+              {budget.ratio !== null && budget.ratio > 1 && ", over"}
+            </p>
+            {budget.ratio === null ? (
+              <p className="note">{NA}</p>
+            ) : (
+              <div className={budget.ratio > 1 ? "bar over" : "bar"}>
+                <div style={{ width: barWidth(budget.ratio) }} />
+              </div>
+            )}
+          </div>
         ))}
-      </section>
 
-      <h2>Model tradeoff</h2>
-      <TradeoffTable table={tradeoff} />
-    </>
-  );
-});
+        <h2>Daily cost</h2>
+        {body.rollup_populated === false && <p className="note">Daily rollup not yet populated.</p>}
+        <Table
+          columns={["Day", "Tenant", "Provider", "Requests", "Cached requests", "Cost"]}
+          rows={days.rows.map((day) => ({
+            key: `${day.day}/${day.tenant}/${day.provider}`,
+            cells: [day.day, day.tenant, day.provider, day.requests, day.cached_requests, usd(day.cost_usd)],
+          }))}
+        />
+        <Pager name={PAGE_PARAMS.days} page={days.page} pages={days.pages} params={params} />
+
+        <h2>Model tradeoff</h2>
+        <TradeoffTable table={tradeoff} />
+      </>
+    );
+  },
+  WINDOW_LINES.cost,
+);

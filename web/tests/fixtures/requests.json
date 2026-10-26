@@ -14,6 +14,11 @@
     { "model": "gpt-5-mini", "input": 8800, "output": 2100 }
   ],
   "cache_hit_rate": 0.3125,
+  "per_day": [
+    { "day": "2026-10-24", "requests": 300, "errors": 4 },
+    { "day": "2026-10-25", "requests": 250, "errors": 0 },
+    { "day": "2026-10-26", "requests": 100, "errors": null }
+  ],
   "requests_page": 1,
   "requests_pages": 1,
   "requests": [

@@ -76,19 +76,20 @@ afterEach(() => {
 
 describe("requests page", () => {
   it("requests page shows question and counts", async () => {
-    // Catches a page without its question, or one that drops a redaction kind, a refusal reason, the guardrail blocks, a model's tokens in or out, or shows the hit rate as a raw ratio.
+    // Catches a page without its question, or one that drops a redaction kind, a refusal reason, the self-approval blocks, a model's tokens in or out, shows the hit rate as a raw ratio, or prints a kind or reason in its code spelling.
     const html = await render();
     const flat = text(html);
     expect(flat).toContain(QUESTION);
 
-    const redactions = rowWith(html, "email");
-    expect(text(redactions)).toContain("41");
-    expect(text(rowWith(html, "iban"))).toContain("7");
+    expect(text(rowWith(html, "Emails"))).toBe("Emails 41");
+    expect(text(rowWith(html, "Bank accounts"))).toBe("Bank accounts 7");
 
-    expect(text(rowWith(html, "out_of_scope"))).toContain("12");
-    expect(text(rowWith(html, "needs_approval"))).toContain("3");
+    expect(text(rowWith(html, "Out of scope"))).toBe("Out of scope 12");
+    expect(text(rowWith(html, "Needs approval"))).toBe("Needs approval 3");
+    expect(flat).not.toMatch(/out_of_scope|needs_approval/);
 
-    expect(flat).toMatch(/guardrail blocks[^0-9]*5\b/i);
+    expect(flat).toMatch(/Self-approvals blocked[^0-9]*5\b/);
+    expect(flat).not.toMatch(/guardrail/i);
 
     // Input and output stay in separate cells of the model's row, so a swap is caught.
     const haiku = text(rowsOf(html).find((row) => /<td\b/.test(row) && text(row).startsWith("claude-haiku-5-5")) ?? "");

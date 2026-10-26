@@ -49,6 +49,7 @@ from app.schemas.dashboard import (
     CostDay,
     EvalRunSummary,
     LastEval,
+    ModelTokens,
     Regression,
     ReleaseMarker,
     RequestRow,
@@ -173,6 +174,10 @@ class ConsoleReader(Protocol):
 
     def cache_hit_rate(self, days: int, now: datetime) -> float | None: ...
 
+    def daily_requests(self, days: int, now: datetime) -> tuple[tuple[date, int], ...]: ...
+
+    def model_tokens(self, days: int, now: datetime) -> tuple[ModelTokens, ...]: ...
+
 
 class UnconfiguredConsoleReader:
     """What a gateway with no `database_url` holds. The routes never call it.
@@ -206,6 +211,12 @@ class UnconfiguredConsoleReader:
 
     def cache_hit_rate(self, days: int, now: datetime) -> float | None:
         return None
+
+    def daily_requests(self, days: int, now: datetime) -> tuple[tuple[date, int], ...]:
+        return ()
+
+    def model_tokens(self, days: int, now: datetime) -> tuple[ModelTokens, ...]:
+        return ()
 
 
 def _accuracy(metrics: object) -> float | None:
@@ -287,6 +298,49 @@ class PostgresConsoleReader:
         assert row is not None
         cached, total = row
         return None if total == 0 else cached / total
+
+    def daily_requests(self, days: int, now: datetime) -> tuple[tuple[date, int], ...]:
+        """Ledger rows per UTC day for the last `days` UTC dates ending today, oldest first.
+
+        Every day is present, a day with no rows as 0, so the chart has no gaps. Pinned by
+        tests/storage/test_dashboard_reads_postgres.py::test_daily_requests_counts_each_utc_day_and_fills_zeros.
+        """
+        today = now.astimezone(UTC).date()
+        first = today - timedelta(days=days - 1)
+        start = datetime(first.year, first.month, first.day, tzinfo=UTC)
+        end = datetime(today.year, today.month, today.day, tzinfo=UTC) + timedelta(days=1)
+        with self._pool.connection() as conn:
+            rows = conn.execute(
+                sql.SQL(
+                    "SELECT (ts AT TIME ZONE 'UTC')::date, count(*) FROM {} "
+                    "WHERE ts >= %s AND ts < %s GROUP BY 1"
+                ).format(self._table("cost_ledger")),
+                (start, end),
+            ).fetchall()
+        counts: dict[date, int] = {row[0]: row[1] for row in rows}
+        return tuple(
+            (first + timedelta(days=offset), counts.get(first + timedelta(days=offset), 0))
+            for offset in range(days)
+        )
+
+    def model_tokens(self, days: int, now: datetime) -> tuple[ModelTokens, ...]:
+        """Tokens in and out per served model over `[now - days, now]`, by model name.
+
+        Read from the ledger like Daily cost, so the two agree: the Prometheus counter
+        missed OpenAI rows. Pinned by
+        tests/storage/test_dashboard_reads_postgres.py::test_model_tokens_sum_the_window_by_model.
+        """
+        with self._pool.connection() as conn:
+            rows = conn.execute(
+                sql.SQL(
+                    "SELECT model, coalesce(sum(input_tokens), 0), coalesce(sum(output_tokens), 0) "
+                    "FROM {} WHERE ts >= %s AND ts <= %s GROUP BY model ORDER BY model LIMIT %s"
+                ).format(self._table("cost_ledger")),
+                (now - timedelta(days=days), now, ROW_LIMIT),
+            ).fetchall()
+        return tuple(
+            ModelTokens(model=row[0], input=float(row[1]), output=float(row[2])) for row in rows
+        )
 
     def cost(self, *, days: int, tenant: str | None, now: datetime, prices: PriceTable) -> CostRead:
         since = now - timedelta(days=days)

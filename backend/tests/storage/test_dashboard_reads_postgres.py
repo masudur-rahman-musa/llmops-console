@@ -41,6 +41,7 @@ from app.schemas.dashboard import (
     CostDay,
     EvalRunSummary,
     LastEval,
+    ModelTokens,
     ReleaseMarker,
     Saving,
     TagCount,
@@ -811,3 +812,67 @@ def test_month_spend_sums_this_utc_month_not_cached(pool: Pool, migrated_schema:
     )
     assert reader.month_spend(tenant="nordlicht", now=NOW) == pytest.approx({"nordlicht": 1.75})
     assert reader.month_spend(tenant="evals", now=NOW) == {}
+
+
+# --- requests per day and tokens per model ------------------------------------------
+
+
+def test_daily_requests_counts_each_utc_day_and_fills_zeros(
+    pool: Pool, migrated_schema: str
+) -> None:
+    """Catches days cut on local or rolling-24-hour edges (the rows at 23:59 and 00:00 UTC
+    must land on their own days), a day with no rows dropped instead of 0, a window of 6 or
+    8 days instead of 7 (the row 8 days back and the one a second before the first day's
+    midnight are left out, the one at that midnight is in), cached rows or other tenants
+    left uncounted, and a result not oldest first."""
+    schema = migrated_schema
+    first_day = datetime(2026, 9, 10, tzinfo=UTC)
+    insert_cost(pool, schema, ts=NOW - timedelta(days=8))
+    insert_cost(pool, schema, ts=first_day - SECOND)
+    insert_cost(pool, schema, ts=first_day)
+    insert_cost(pool, schema, ts=datetime(2026, 9, 14, 23, 59, tzinfo=UTC))
+    insert_cost(pool, schema, ts=datetime(2026, 9, 15, 0, 0, tzinfo=UTC))
+    insert_cost(pool, schema, ts=datetime(2026, 9, 16, 8, 0, tzinfo=UTC), cached=True, cost_usd="0")
+    insert_cost(pool, schema, ts=datetime(2026, 9, 16, 9, 0, tzinfo=UTC), tenant="cuan")
+    reader = PostgresConsoleReader(pool, schema=schema)
+
+    assert reader.daily_requests(7, NOW) == (
+        (date(2026, 9, 10), 1),
+        (date(2026, 9, 11), 0),
+        (date(2026, 9, 12), 0),
+        (date(2026, 9, 13), 0),
+        (date(2026, 9, 14), 1),
+        (date(2026, 9, 15), 1),
+        (date(2026, 9, 16), 2),
+    )
+
+
+def test_model_tokens_sum_the_window_by_model(pool: Pool, migrated_schema: str) -> None:
+    """Catches tokens summed over every row instead of the window (the Anthropic row a second
+    before the start is left out), an exclusive lower edge (the OpenAI row exactly at the
+    start is counted), rows of one model not summed together, a provider other than
+    Anthropic dropped (the OpenAI model shows), input and output swapped, and an order other
+    than by model name."""
+    schema = migrated_schema
+    start = NOW - timedelta(days=7)
+    insert_cost(pool, schema, ts=NOW - timedelta(hours=1), input_tokens=100, output_tokens=50)
+    insert_cost(
+        pool, schema, ts=NOW - timedelta(hours=2), input_tokens=30, output_tokens=20, tenant="cuan"
+    )
+    insert_cost(
+        pool,
+        schema,
+        ts=start,
+        provider="openai",
+        model="gpt-5-mini",
+        input_tokens=1000,
+        output_tokens=400,
+        price_version="openai/gpt-5-mini@2025-08-07",
+    )
+    insert_cost(pool, schema, ts=start - SECOND, input_tokens=9000, output_tokens=8000)
+    reader = PostgresConsoleReader(pool, schema=schema)
+
+    assert reader.model_tokens(7, NOW) == (
+        ModelTokens(model=SHIPPED_MODEL, input=130.0, output=70.0),
+        ModelTokens(model="gpt-5-mini", input=1000.0, output=400.0),
+    )

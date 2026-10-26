@@ -10,6 +10,7 @@
     { "day": "2026-09-14", "tenant": "globex-eu", "saved_usd": 1.45 }
   ],
   "savings_usd_total": 4.55,
+  "month_spend_usd": 61.0,
   "estimated": true,
   "budgets": [
     { "tenant": "acme-eu", "cap_usd": 50.0, "spent_usd": 31.0, "ratio": 0.62 },

@@ -9,7 +9,7 @@ import CostPage from "@/app/(console)/cost/page";
 import HomePage from "@/app/(console)/page";
 import QualityPage from "@/app/(console)/quality/page";
 import RequestsPage from "@/app/(console)/requests/page";
-import { WINDOW_DAYS } from "@/lib/labels";
+import { WINDOW_DAYS, WINDOW_LINES } from "@/lib/labels";
 
 type PageName = "home" | "requests" | "cost" | "quality";
 type Fixture = Record<string, unknown>;
@@ -42,6 +42,7 @@ function text(html: string): string {
   return html
     .replace(/<!--[\s\S]*?-->/g, "")
     .replace(/<[^>]*>/g, " ")
+    .replace(/&#x27;|&#39;/g, "'")
     .replace(/&amp;/g, "&")
     .replace(/\s+/g, " ")
     .replace(/\s+([.,:;)%])/g, "$1")
@@ -98,10 +99,17 @@ describe("console clarity", () => {
     expect(WINDOW_DAYS).toBe(Number(match?.[1]));
   });
 
-  it("overview and cost carry no window line", async () => {
-    // Catches a window line added by the shared page opening to every page, though only Requests and Quality read a window.
-    for (const name of ["home", "cost"] as const) {
-      expect(await render(name), name).not.toContain('class="window"');
+  it("overview and cost name their window under the question", async () => {
+    // Catches a tab with no window line, one worded differently (Overview covers today and the last 24 hours, Cost the 30 days and the calendar month), and a line from another tab.
+    const expected: Array<[PageName, string]> = [
+      ["home", "Today so far (UTC). p95 latency and error rate cover the last 24 hours."],
+      ["cost", "Last 30 days. Budgets and this month's spend cover the calendar month so far (UTC)."],
+    ];
+    for (const [name, sentence] of expected) {
+      const match = (await render(name)).match(/<p class="question">[^<]*<\/p><p class="window">([^<]*)<\/p>/);
+      expect(match, name).not.toBeNull();
+      expect(text(match?.[1] ?? ""), name).toBe(sentence);
+      expect(WINDOW_LINES[name as "home" | "cost"], name).toBe(sentence);
     }
   });
 

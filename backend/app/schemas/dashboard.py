@@ -167,6 +167,9 @@ class Budget(_Body):
 
 
 class CostPage(_Body):
+    """`month_spend_usd` is every tenant's not-cached ledger spend this UTC month, the
+    budgets' own read summed; null when Postgres is down or unconfigured."""
+
     sources: Sources
     rollup_populated: bool | None
     days: tuple[CostDay, ...]
@@ -174,6 +177,7 @@ class CostPage(_Body):
     savings_usd_total: float | None
     estimated: bool
     budgets: tuple[Budget, ...]
+    month_spend_usd: float | None
     cost_per_request: tuple[AliasCost, ...]
 
 
@@ -225,12 +229,23 @@ class ModelTokens(_Body):
     output: float
 
 
+class DayRequests(_Body):
+    """One UTC day: ledger rows that day, and the 5xx answers Prometheus counted.
+
+    `errors` is null when Prometheus could not be read."""
+
+    day: date
+    requests: int
+    errors: float | None
+
+
 class RequestsPage(_Body):
     """What the gateway hid, tokens per model, the cache hit rate and the newest requests.
 
     `guardrail_blocks` is null when Prometheus has no series, `cache_hit_rate` when the
     ledger has no rows in the window: no traffic is not a 0% hit rate. `requests` is one
-    page of the ledger: `requests_page` of `requests_pages`, newest first."""
+    page of the ledger: `requests_page` of `requests_pages`, newest first. `per_day` has
+    every window day, oldest first, and is empty with `tokens` when the ledger is down."""
 
     sources: Sources
     redactions: tuple[RedactionCount, ...]
@@ -238,6 +253,7 @@ class RequestsPage(_Body):
     guardrail_blocks: float | None
     tokens: tuple[ModelTokens, ...]
     cache_hit_rate: float | None
+    per_day: tuple[DayRequests, ...]
     requests: tuple[RequestRow, ...]
     requests_page: int
     requests_pages: int

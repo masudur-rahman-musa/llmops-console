@@ -2,10 +2,11 @@ import { consolePage } from "@/components/layout/console-page";
 import { ExternalLink } from "@/components/ui/external-link";
 import { LineChart } from "@/components/ui/line-chart";
 import { Pager } from "@/components/ui/pager";
+import { StatCards, type StatCard } from "@/components/ui/stat-cards";
 import { NONE_IN_WINDOW, Table } from "@/components/ui/table";
 import type { GateScore } from "@/features/quality/guards";
 import { NA, points, shortSha } from "@/lib/format";
-import { CHECK_SCORE_SENTENCE, WINDOW_SENTENCE, scoreLabel } from "@/lib/labels";
+import { CHECK_SCORE_SENTENCE, WINDOW_LINES, plainName, scoreLabel } from "@/lib/labels";
 import { PAGE_PARAMS, pageOf } from "@/lib/paging";
 
 export const dynamic = "force-dynamic";
@@ -17,13 +18,13 @@ function seconds(iso: string): number {
   return Date.parse(iso) / 1000;
 }
 
-/** No verdict without a baseline: the page cannot know pass or fail. */
-function gateCells(row: GateScore): string[] {
+/** The newest run's score beside its baseline; no verdict without a baseline, since the page cannot know pass or fail. */
+function gateCard(row: GateScore): StatCard {
   if (row.threshold === null) {
-    return [row.label, points(row.value), "Baseline not set", ""];
+    return { label: row.label, value: points(row.value), sub: "Baseline not set" };
   }
   const result = row.passed === null ? NA : row.passed ? "passed" : "failed";
-  return [row.label, points(row.value), points(row.threshold), result];
+  return { label: row.label, value: points(row.value), sub: `Baseline ${points(row.threshold)} ${result}` };
 }
 
 export default consolePage("quality", "Quality", "Does the help desk still answer well enough to ship?", (body, params) => {
@@ -43,12 +44,7 @@ export default consolePage("quality", "Quality", "Does the help desk still answe
   });
   return (
     <>
-      <h2>Eval gate</h2>
-      <p>Each score the eval gate checks, from the newest run, beside the baseline it must reach.</p>
-      <Table
-        columns={["Score", "Newest run", "Baseline", "Result"]}
-        rows={body.gate.map((row) => ({ key: row.name, cells: gateCells(row) }))}
-      />
+      <StatCards cards={body.gate.map(gateCard)} />
       {body.gate
         .filter((row) => row.note !== null)
         .map((row) => (
@@ -72,7 +68,7 @@ export default consolePage("quality", "Quality", "Does the help desk still answe
         rows={body.categories.map((category) => ({
           key: category.category,
           cells: [
-            category.category,
+            plainName(category.category),
             <>
               {category.passed} of {category.total}
             </>,
@@ -86,7 +82,7 @@ export default consolePage("quality", "Quality", "Does the help desk still answe
         columns={["Failure tag", "Cases"]}
         rows={taxonomy.rows.map((tag) => ({
           key: tag.tag,
-          cells: [tag.tag, tag.count],
+          cells: [plainName(tag.tag), tag.count],
         }))}
       />
       <Pager name={PAGE_PARAMS.taxonomy} page={taxonomy.page} pages={taxonomy.pages} params={params} />
@@ -114,4 +110,4 @@ export default consolePage("quality", "Quality", "Does the help desk still answe
       <Pager name={PAGE_PARAMS.blocked} page={blocked.page} pages={blocked.pages} params={params} />
     </>
   );
-}, WINDOW_SENTENCE);
+}, WINDOW_LINES.quality);

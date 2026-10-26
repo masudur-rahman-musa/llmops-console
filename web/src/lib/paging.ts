@@ -12,7 +12,6 @@ export type Params = Record<string, string | string[] | undefined>;
 export const PAGE_PARAMS = {
   requests: "requests_page",
   days: "days_page",
-  savings: "savings_page",
   taxonomy: "taxonomy_page",
   blocked: "blocked_page",
 } as const;

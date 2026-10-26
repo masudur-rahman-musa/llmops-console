@@ -131,10 +131,11 @@ describe("console pages are clear to a new reader", () => {
   });
 
   it("the check score sentence shows wherever the score does", async () => {
-    // Catches a page that leaves the check score unexplained, words it differently, or prints the sentence twice.
+    // Catches a page that leaves the check score unexplained, words it differently, or prints the sentence twice; Overview shows only a number card, so it carries none.
+    const expected = { home: 0, quality: 1, cost: 1 } as const;
     for (const name of ["home", "quality", "cost"] as const) {
       const html = await render(name);
-      expect(occurrences(text(html), text(CHECK_SCORE_SENTENCE)), name).toBe(1);
+      expect(occurrences(text(html), text(CHECK_SCORE_SENTENCE)), name).toBe(expected[name]);
     }
   });
 
@@ -174,14 +175,14 @@ describe("console pages are clear to a new reader", () => {
   });
 
   it("quality shows gate scores as percentages beside the baseline", async () => {
-    // Catches a gate table that drops a score, swaps value and baseline, flips a verdict, loses the judge note, prints the scores as bare numbers with one decimal, or still calls the baseline a threshold.
+    // Catches a score card that drops a score, swaps value and baseline, flips a verdict, loses the judge note, prints the scores as bare numbers with one decimal, still calls the baseline a threshold, or keeps the old gate table.
     const html = await render("quality");
-    expect(has(html, "Check score 52.10% 48.48% passed")).toBe(true);
-    expect(has(html, "Judge score 25.00% 27.40% failed")).toBe(true);
+    expect(has(html, "Check score 52.10% Baseline 48.48% passed")).toBe(true);
+    expect(has(html, "Judge score 25.00% Baseline 27.40% failed")).toBe(true);
     expect(has(html, "kappa 0.7")).toBe(true);
     const flat = text(html);
     expect(flat.indexOf("Check score 52.10%")).toBeLessThan(flat.indexOf("Judge score 25.00%"));
-    expect(headers(tableWith(html, ["Score", "Newest run", "Baseline", "Result"]))).toContain("Baseline");
+    expect(tables(html).filter((table) => headers(table).includes("Baseline"))).toEqual([]);
     expect(flat).not.toMatch(/threshold/i);
   });
 
@@ -191,14 +192,11 @@ describe("console pages are clear to a new reader", () => {
     const gate = body.gate as Array<Record<string, unknown>>;
     Object.assign(gate[0], { threshold: null, passed: null });
     const html = await render("quality", body);
-    expect(has(html, "Baseline not set")).toBe(true);
-    const row = tables(html)
-      .flatMap(rows)
-      .find((line) => line.startsWith("Check score 52.10%"));
-    expect(row).toBeDefined();
-    expect(row).toContain("Baseline not set");
-    expect(row).not.toMatch(/passed|failed/);
-    // The judge row still has its baseline, so the notice belongs to the check row alone.
+    expect(has(html, "Check score 52.10% Baseline not set")).toBe(true);
+    const card = (html.match(/<li class="card"[^>]*>[\s\S]*?<\/li>/g) ?? []).map(text).find((line) => line.startsWith("Check score"));
+    expect(card).toBeDefined();
+    expect(card).not.toMatch(/passed|failed/);
+    // The judge card still has its baseline, so the notice belongs to the check card alone.
     expect(occurrences(text(html), "Baseline not set")).toBe(1);
     expect(text(html)).not.toMatch(/threshold/i);
   });
