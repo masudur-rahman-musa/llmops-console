@@ -29,8 +29,8 @@ and the reverse import would be a cycle. A test over the command's tuple keeps
 the two from drifting apart in silence. The CHECK constraint in
 `003_eval_runs.sql` is the second guard, for the row somebody loads with `psql`.
 
-`tags` is read straight off the report's own `CaseReport.tags` (always empty for a
-conversation run) rather than recomputed here. `metrics` carries `check_score`,
+`tags` is read straight off the report's own `CaseReport.tags` (the checks a failed
+case broke) rather than recomputed here. `metrics` carries `check_score`,
 `judge_score` and the counts the same way, in the report's own JSON form, exactly as
 they are in the file. The `eval_runs.metrics` column is `jsonb`, so the swap from the
 old metric names needed no migration.
@@ -154,7 +154,7 @@ class EvalCaseRow(BaseModel):
     category: str
     passed: bool
     tags: tuple[str, ...] = ()
-    """The tags the report carries for this case, always empty for a conversation run.
+    """The tags the report carries for this case: the checks a failed case broke.
     Stored in an order-preserving `text[]`."""
     latency_ms: int | None
     cost_usd: Decimal | None

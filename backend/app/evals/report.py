@@ -11,8 +11,9 @@ Things the module holds that no single field states:
   is not the same claim as a case whose checks all passed;
 * the three fields a per-turn eval measured (`latency_ms`, `cost_usd`, `provider`) are
   kept as `None` on every case. A conversation answer carries none of them, and a zero
-  there would read as a free, instant success. `tags` stays for the same reason the
-  columns do: the store and the console read it, and it is always empty;
+  there would read as a free, instant success;
+* a failed case is tagged with each check its first failed run broke, once each, in
+  `FAILURE_TAGS` order. A passed case, or one that never answered, has none;
 * `tenant` is `ALL_TENANTS` for a conversation run: the cases name their own tenants;
 * a case played several times is ONE `CaseReport`: it passed when every run passed, it
   carries its pass rate and 95% range, and an unstable one is listed in its own section
@@ -71,6 +72,9 @@ METRICS_HEADING: Final[str] = "## Metrics"
 CATEGORIES_HEADING: Final[str] = "## Cases by category"
 UNSTABLE_HEADING: Final[str] = "## Unstable cases"
 """Cases that both passed and failed across their runs. Left out of `check_score`."""
+
+FAILURE_TAGS: Final[tuple[str, ...]] = ("wrong_tool", "early_change", "made_up_name", "judge_low")
+"""The tags a failed conversation case can carry, in the order it carries them."""
 
 RunCalibration = CalibrationReport
 """What a run publishes about its judge: the six fields of a `calibration.json`."""
@@ -135,6 +139,29 @@ class RunReport(BaseModel):
     cases: tuple[CaseReport, ...]
 
 
+def _failure_tags(line: CaseLine) -> tuple[str, ...]:
+    """The checks one failed run broke, in `FAILURE_TAGS` order.
+
+    A run that never answered (it has an `error`) gets none: the target failed, not a
+    check. A run with no `check` can still be `judge_low`. Pinned by
+    `test_a_case_that_never_answered_carries_no_tags` and
+    `test_a_conversation_case_stores_no_measurements`.
+    """
+    if line.passed or line.error is not None:
+        return ()
+    broken: set[str] = set()
+    if line.check is not None:
+        if not line.check.tools_in_order:
+            broken.add("wrong_tool")
+        if any(not turn.no_early_change for turn in line.check.turns):
+            broken.add("early_change")
+        if any(not turn.no_made_up_name for turn in line.check.turns):
+            broken.add("made_up_name")
+    if any(reply.verdict == "fail" for reply in line.judged):
+        broken.add("judge_low")
+    return tuple(tag for tag in FAILURE_TAGS if tag in broken)
+
+
 def _case_report(runs: Sequence[CaseLine]) -> CaseReport:
     """One case's row from all its runs. The first failed run explains a failure."""
     shown = next((line for line in runs if not line.passed), runs[0])
@@ -144,6 +171,7 @@ def _case_report(runs: Sequence[CaseLine]) -> CaseReport:
         case_id=shown.case_id,
         category=shown.category,
         passed=passes == len(runs),
+        tags=_failure_tags(shown),
         error=shown.error,
         check=shown.check,
         judged=tuple(reply for line in runs for reply in line.judged),

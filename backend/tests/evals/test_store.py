@@ -46,6 +46,7 @@ from psycopg_pool import ConnectionPool
 
 from app.cli.evals import RUN_KINDS
 from app.core.validation import MAX_IDENTIFIER_LENGTH, IdentifierInvalid
+from app.evals.checks import CaseCheck, TurnCheck
 from app.evals.report import REPORT_JSON_NAME, RunCalibration, RunReport, build_report
 from app.evals.runner import CaseLine
 from app.storage.eval_store import (
@@ -304,7 +305,30 @@ def test_a_conversation_case_stores_no_measurements() -> None:
         assert row.latency_ms is None
         assert row.cost_usd is None
         assert row.provider is None
-        assert row.tags == ()
+        assert row.tags == (("judge_low",) if row.case_id == "beta" else ())
+
+
+def test_a_failed_case_row_carries_the_report_tags() -> None:
+    """Catches a mapping that drops the tags (the row gets `()` and Taxonomy stays empty) or
+    reshapes them: a case tagged with two names must reach its row with both, in order."""
+    line = CaseLine(
+        case_id="tagged",
+        category="attacks",
+        passed=False,
+        error=None,
+        check=CaseCheck(
+            tools_in_order=False,
+            turns=(TurnCheck(turn=1, no_early_change=False, no_made_up_name=True),),
+        ),
+        judged=(),
+        answer=None,
+    )
+    report = build((line,))
+
+    _, case_rows = rows_from_report(report, report_path=Path("/tmp/report.json"))
+
+    assert report.cases[0].tags == ("wrong_tool", "early_change")
+    assert case_rows[0].tags == report.cases[0].tags
 
 
 def test_the_report_path_is_the_report_json_that_was_written() -> None:

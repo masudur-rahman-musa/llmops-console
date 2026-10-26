@@ -13,7 +13,7 @@ Contract these tests are written against:
   run_kind, git_sha, tenant, target, judge_prompt_version=None, calibration=None)
   -> RunReport`. `RunReport` keeps its header (`id` of 32 characters, times, set, run kind,
   git sha, tenant, target, `passed`, `metrics`, `calibration`) and holds one `CaseReport` per
-  line (`case_id`, `category`, `passed`, `tags` always empty, the four measured fields
+  line (`case_id`, `category`, `passed`, `tags` (the checks a failed case broke), the four measured fields
   `latency_ms`, `cost_usd`, `provider` all `None`, `error`, `check`, `judged`).
   `RunReport.passed` is true when every case passed. `tenant` is `ALL_TENANTS = "all"`
   for a conversation run: the cases name their own tenants.
@@ -24,9 +24,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
+from app.evals.checks import CaseCheck, TurnCheck
 from app.evals.report import (
     FAILURES_HEADING,
     REPORT_JSON_NAME,
@@ -37,7 +39,7 @@ from app.evals.report import (
     report_markdown,
     write_reports,
 )
-from app.evals.runner import CaseLine
+from app.evals.runner import CaseLine, JudgedReply
 from app.evals.scores import METRIC_NAMES, compute_metrics
 
 from .builders import case_line
@@ -185,3 +187,147 @@ def test_no_metric_of_the_old_format_is_reported(name: str) -> None:
     report = report_of(case_line("conv-001", passed=True))
 
     assert name not in report.metrics
+
+
+# --------------------------------------------------------------------------
+# failure tags
+# --------------------------------------------------------------------------
+
+
+def turn_check(number: int, *, early: bool = False, made_up: bool = False) -> TurnCheck:
+    """One turn's two checks; the flags say which one broke."""
+    return TurnCheck(turn=number, no_early_change=not early, no_made_up_name=not made_up)
+
+
+def judged(*verdicts: Literal["pass", "fail"] | None) -> tuple[JudgedReply, ...]:
+    """One judged reply per verdict, numbered from turn 1."""
+    return tuple(
+        JudgedReply(turn=n + 1, rubric="r", reply="x", verdict=v, reason=None)
+        for n, v in enumerate(verdicts)
+    )
+
+
+def tagged_line(
+    case_id: str = "conv-001",
+    *,
+    passed: bool = False,
+    tools_ok: bool = True,
+    turns: tuple[TurnCheck, ...] = (),
+    verdicts: tuple[Literal["pass", "fail"] | None, ...] = (),
+    error: str | None = None,
+    answered: bool = True,
+) -> CaseLine:
+    """A saved case line with a real `CaseCheck` (unless `answered` is false)."""
+    check = CaseCheck(tools_in_order=tools_ok, turns=turns) if answered else None
+    return CaseLine(
+        case_id=case_id,
+        category="paraphrases",
+        passed=passed,
+        error=error,
+        check=check,
+        judged=judged(*verdicts),
+        answer=None,
+    )
+
+
+def test_a_case_that_missed_the_tool_order_is_tagged_wrong_tool() -> None:
+    """Catches an implementation that leaves tags empty, or that tags the tool check as
+    some other name: only `tools_in_order` is false here, so only `wrong_tool` is right."""
+    line = tagged_line(tools_ok=False, turns=(turn_check(1),))
+
+    assert report_of(line).cases[0].tags == ("wrong_tool",)
+
+
+def test_a_change_before_the_yes_is_tagged_early_change() -> None:
+    """Catches an implementation that does not look at the turn checks for an early change,
+    or that reads the made-up-name flag by mistake: only `no_early_change` is false."""
+    line = tagged_line(turns=(turn_check(1), turn_check(2, early=True)))
+
+    assert report_of(line).cases[0].tags == ("early_change",)
+
+
+def test_a_made_up_name_is_tagged_made_up_name() -> None:
+    """Catches an implementation that reads the early-change flag for this tag, or never
+    tags a made-up name: only `no_made_up_name` is false."""
+    line = tagged_line(turns=(turn_check(1, made_up=True),))
+
+    assert report_of(line).cases[0].tags == ("made_up_name",)
+
+
+def test_a_judge_fail_on_a_failed_case_is_tagged_judge_low() -> None:
+    """Catches an implementation that never turns a judge "fail" into a tag. Every check
+    passes here, so the judge is the only thing that can explain the failure."""
+    line = tagged_line(turns=(turn_check(1),), verdicts=("pass", "fail"))
+
+    assert report_of(line).cases[0].tags == ("judge_low",)
+
+
+def test_a_case_that_broke_every_check_carries_four_tags_in_order_once_each() -> None:
+    """Catches a wrong tag order, and a tag repeated once per broken turn or per judge fail
+    (two turns and two judge fails break here, yet each tag must appear once)."""
+    line = tagged_line(
+        tools_ok=False,
+        turns=(turn_check(1, early=True, made_up=True), turn_check(2, early=True, made_up=True)),
+        verdicts=("fail", "fail"),
+    )
+
+    assert report_of(line).cases[0].tags == (
+        "wrong_tool",
+        "early_change",
+        "made_up_name",
+        "judge_low",
+    )
+
+
+def test_a_passed_case_carries_no_tags_even_when_the_judge_said_fail() -> None:
+    """Catches an implementation that tags every case with a judge fail and forgets that a
+    passed case (the judge does not fail a case) must carry no tags."""
+    line = tagged_line(passed=True, turns=(turn_check(1),), verdicts=("fail",))
+
+    assert report_of(line).cases[0].tags == ()
+
+
+def test_a_case_that_never_answered_carries_no_tags() -> None:
+    """Catches an implementation that invents a tag for a case the target never answered,
+    for example `wrong_tool` because there is no check to say the tools were right."""
+    line = tagged_line(error="HTTP 500 for conv-001", answered=False)
+
+    assert report_of(line).cases[0].tags == ()
+
+
+def test_a_judge_verdict_of_none_is_not_judge_low() -> None:
+    """Catches an implementation that tags `judge_low` for any judged reply, or for a
+    verdict that is not "pass", instead of only a "fail". An unusable verdict (`None`) is
+    not a fail."""
+    line = tagged_line(tools_ok=False, turns=(turn_check(1),), verdicts=(None,))
+
+    assert report_of(line).cases[0].tags == ("wrong_tool",)
+
+
+def test_an_unstable_case_takes_its_tags_from_its_first_failed_run() -> None:
+    """Catches an implementation that takes tags from the first run (a pass, no tags), from
+    the last run (made_up_name), or from every run together. The first run passed with a
+    judge fail, the first failed run broke the tools, the last run made up a name and
+    the judge failed it: only `wrong_tool` is right."""
+    passed_run = tagged_line(passed=True, turns=(turn_check(1),), verdicts=("fail",))
+    tools_run = tagged_line(tools_ok=False, turns=(turn_check(1),))
+    name_run = tagged_line(turns=(turn_check(1, made_up=True),), verdicts=("fail",))
+
+    case = report_of(passed_run, tools_run, name_run).cases[0]
+
+    assert case.unstable is True
+    assert case.tags == ("wrong_tool",)
+
+
+def test_the_tags_survive_the_json_round_trip() -> None:
+    """Catches tags lost or reshaped between `report.json` and `RunReport`: the gate and the
+    store read the file back, and a tuple that comes back as nothing would empty Taxonomy."""
+    report = report_of(
+        tagged_line("conv-001", tools_ok=False, turns=(turn_check(1, early=True),)),
+        tagged_line("conv-002", turns=(turn_check(1),), verdicts=("fail",)),
+        tagged_line("conv-003", passed=True, turns=(turn_check(1),)),
+    )
+
+    back = RunReport.model_validate_json(report_json(report))
+
+    assert [c.tags for c in back.cases] == [("wrong_tool", "early_change"), ("judge_low",), ()]
