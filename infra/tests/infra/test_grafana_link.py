@@ -2,7 +2,7 @@
 
 On the server the link is the gateway's own Grafana dashboard, built from the Grafana Ingress host
 and the dashboard `uid`; locally it is the compose Grafana's gateway overview on port 3002.
-An earlier change: the build runs no Grafana, so its link is empty.
+An earlier change: the build runs Grafana, so its link is the `.dev` host's gateway overview.
 An earlier change: the local stack runs Grafana, so `backend/.env.demo` holds the 3002 link.
 """
 
@@ -24,6 +24,7 @@ COMPOSE = REPO_ROOT / "docker-compose.yml"
 ENV_DEMO = REPO_ROOT / "backend" / ".env.demo"
 KEY = "OPSCONSOLE_GRAFANA_URL"
 EXPECTED = "https://grafana.example.com/d/gateway-overview"
+SERVER_EXPECTED = "https://grafana.example.com/d/gateway-overview"
 
 
 def grafana_host() -> str:
@@ -35,7 +36,9 @@ def grafana_host() -> str:
     return str(rules[0]["host"])
 
 
-def test_the_server_links_the_gateway_overview_dashboard(built: list[dict[str, Any]]) -> None:
+def test_the_server_links_the_gateway_overview_dashboard(
+    built: list[dict[str, Any]],
+) -> None:
     """Catches the key missing from the built `gateway-config` (the page says "not set" on the
     server), a link to the Grafana root or another dashboard, and a host or uid that drifts from
     the Ingress or the dashboard file while this value keeps the old one."""
@@ -46,28 +49,31 @@ def test_the_server_links_the_gateway_overview_dashboard(built: list[dict[str, A
     assert built_value == EXPECTED, f"{GATEWAY_CONFIG_MAP} sets {KEY} to {built_value!r}"
 
 
-def test_the_server_server_leaves_the_grafana_link_unset(
+def server_grafana_host(server_built: list[dict[str, Any]]) -> str:
+    hosts = [
+        str(rule["host"])
+        for d in server_built
+        if d.get("kind") == "Ingress"
+        and d.get("metadata", {}).get("name") == "grafana"
+        and d.get("metadata", {}).get("namespace") == "monitoring"
+        for rule in d["spec"]["rules"]
+    ]
+    assert len(hosts) == 1, f"the build has {len(hosts)} Grafana Ingress hosts, not 1"
+    return hosts[0]
+
+
+def test_the_server_server_links_its_own_grafana(
     server_built: list[dict[str, Any]],
 ) -> None:
-    """Catches the build still carrying the Hetzner link (a dead host on the live console),
-    and the key dropped from the patch (the value is then absent, not empty), or set to a
-    placeholder or a space instead of exactly the empty string the gateway reads as "no link"."""
+    """Catches the build still carrying the empty string (the console says "not set"
+    next to a Grafana that runs), the Hetzner `.net` link (a dead host on the live console), a
+    host that drifts from the Grafana Ingress, and a uid that drifts from the dashboard."""
+    uid = json.loads(DASHBOARD.read_text(encoding="utf-8"))["uid"]
     data = gateway_config(server_built)
 
     assert KEY in data, f"{GATEWAY_CONFIG_MAP} on the server carries {sorted(data)}"
-    assert data[KEY] == "", f"{KEY} on the server is {data[KEY]!r}, not the empty string"
-
-
-def test_the_server_server_runs_no_grafana(server_built: list[dict[str, Any]]) -> None:
-    """Catches Grafana added to the build while its link stays empty: the console would
-    keep saying "Grafana link not set" next to a Grafana that runs. Fails so the value is filled."""
-    workloads = [
-        f"{d['kind']}/{d.get('metadata', {}).get('name')}"
-        for d in server_built
-        if d.get("kind") in ("Deployment", "StatefulSet")
-        and d.get("metadata", {}).get("name") == "grafana"
-    ]
-    assert workloads == [], f"the server now runs {workloads}: fill {KEY} in the server patch"
+    assert data[KEY] == SERVER_EXPECTED, f"{KEY} on the server is {data[KEY]!r}"
+    assert f"https://{server_grafana_host(server_built)}/d/{uid}" == SERVER_EXPECTED
 
 
 def test_the_local_grafana_link_points_at_the_gateway_overview() -> None:
