@@ -2,7 +2,12 @@
   "model": "claude-haiku-4-5",
   "max_tokens": 4096,
   "messages": [
-    { "role": "user", "content": "Weather in Berlin?" }
+    {
+      "role": "user",
+      "content": [
+        { "type": "text", "text": "Weather in Berlin?", "cache_control": { "type": "ephemeral" } }
+      ]
+    }
   ],
   "system": [
     { "type": "text", "text": "You are terse.", "cache_control": { "type": "ephemeral" } }

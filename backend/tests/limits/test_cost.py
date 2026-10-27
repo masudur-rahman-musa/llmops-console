@@ -16,11 +16,13 @@ from __future__ import annotations
 import logging
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
 from app.limits.cost import _WARNED_KEYS, Cost, cost_for, estimate_tokens
 from app.limits.prices import PriceEntry, PriceTable
+from app.model_routing.provider_files import build_price_table, load_provider_files
 from app.schemas.provider import Usage
 
 KEY = "prov-a/model-a"
@@ -313,3 +315,22 @@ def test_only_the_read_rate_present_leaves_the_write_rate_at_input() -> None:
     cost = cost_for(table_with(entry), KEY, AT, usage=cache_usage())
 
     assert str(cost.usd) == "0.013000"
+
+
+def test_an_openai_cached_million_costs_the_cached_rate() -> None:
+    """Catches a shipped `gpt-5-mini` row with no cached rate (a million cached tokens would
+    cost the input rate, 0.250000) and a cached rate at the wrong figure: 1,000,000 cached
+    tokens and nothing else cost exactly 0.025 USD."""
+    shipped = build_price_table(
+        load_provider_files(Path(__file__).resolve().parents[2] / "config" / "providers")
+    )
+    usage = Usage(
+        prompt_tokens=0,
+        completion_tokens=0,
+        total_tokens=1_000_000,
+        cache_read_tokens=1_000_000,
+    )
+
+    cost = cost_for(shipped, "openai/gpt-5-mini", datetime(2026, 10, 28, tzinfo=UTC), usage=usage)
+
+    assert str(cost.usd) == "0.025000"

@@ -341,9 +341,11 @@ To fill every console tab with real numbers, run `make numbers`. It runs the
 real eval, sends six real chat requests, records a release, then checks every
 tab. It needs `ANTHROPIC_API_KEY` and costs a real eval run plus a few cents.
 
-The local llama.cpp embedding server is off by default. To start it too:
+The local llama.cpp embedding server starts with the rest, so the semantic
+cache works locally. Fetch its model file once before the first `up`
+(`make up` does this for you):
 
-    docker compose --profile local-model up -d
+    make embed-model
 
 Then send it an OpenAI-shaped request, naming an alias rather than a model:
 

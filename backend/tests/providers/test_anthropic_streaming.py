@@ -475,6 +475,34 @@ def test_the_stream_body_asks_the_provider_to_stream() -> None:
     assert sent.headers["x-api-key"] == TEST_API_KEY
 
 
+def test_a_streamed_request_marks_the_newest_message_too() -> None:
+    """Catches a stream path that builds its own body without the newest-message mark (the
+    streamed chats of the help desk would re-bill their history at full price while the
+    non-streamed ones were cached): the streamed body carries the same mark on the last
+    block of the newest message, and an earlier turn stays plain."""
+    request = ChatRequest(
+        model="claude-haiku-4-5",
+        messages=(
+            ChatMessage(role="user", content="Which city?"),
+            ChatMessage(role="assistant", content="Berlin."),
+            ChatMessage(role="user", content="And the country?"),
+        ),
+    )
+    adapter, scripted = make_sse_adapter([sse_body("stream_text")])
+
+    list(adapter.stream_chat(request))
+
+    payload = json.loads(scripted.requests[0].content.decode("utf-8"))
+    assert payload["messages"][0] == {"role": "user", "content": "Which city?"}
+    assert payload["messages"][-1] == {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "And the country?", "cache_control": {"type": "ephemeral"}}
+        ],
+    }
+    assert json.dumps(payload).count("cache_control") == 1
+
+
 def test_stream_chat_yields_the_recorded_events_over_the_transport() -> None:
     """Catches a `stream_chat` that reads the response with `.json()` or `.text` instead
     of iterating lines: the whole body would arrive as one unparsable blob, so nothing

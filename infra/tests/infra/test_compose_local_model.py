@@ -1,19 +1,19 @@
-r"""The local embedding server is off by default and comes back with one profile.
+r"""The local embedding server starts by default, from a model file one `make` step fetches.
 
-An earlier change put the llama.cpp servers in `docker-compose.yml` behind the `local-model`
-profile, so `docker compose up -d` starts the same model-free stack the node runs.
-An earlier change removed the local chat model; only `llama-embed` is left behind the
-profile. Its config stays whole, so turning it on is `--profile local-model` (or
-`COMPOSE_PROFILES=local-model` in `.env.demo`), never a rewrite.
+An earlier change put the llama.cpp servers behind a `local-model` profile. An earlier change removed the local
+chat model. An earlier change takes the profile off the one that is left, `llama-embed`:
+the semantic cache needs it, so a plain `docker compose up -d` starts it. Its model file
+(`bge-small-en-v1.5-q8_0.gguf`) comes from `make embed-model`, which `make up` runs first.
+the server keeps the server off, so its manifests are not touched here.
 
 Most cases read files as TEXT or as parsed YAML (`yaml.safe_load`), through `read` and
 `load_yaml` from `test_hetzner_module.py`, spelled as the package `__init__` files make it. A file the plan has not changed yet fails the case that reads it, never
 the collection.
 
-One case asks Docker Compose itself which services start, with and without the profile.
-That pair of `docker compose config --services` calls is made ONCE per module, and skips
-only when `docker` is not on `PATH`. A non-zero exit fails with Compose's stderr, because a
-config that cannot be read is the failure this file exists to report.
+One case asks Docker Compose itself which services start by default. That
+`docker compose config --services` call is made ONCE per module, and skips only when `docker`
+is not on `PATH`. A non-zero exit fails with Compose's stderr, because a config that cannot
+be read is the failure this file exists to report.
 
 No case needs a backing service, and none writes anywhere.
 """
@@ -34,14 +34,28 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 COMPOSE_FILE = REPO_ROOT / "docker-compose.yml"
 TRADEOFF_SCRIPT = REPO_ROOT / "infra" / "scripts" / "tradeoff_run.sh"
 README = REPO_ROOT / "README.md"
+MAKEFILE = REPO_ROOT / "Makefile"
+HANDBOOK = REPO_ROOT / "dev" / "docs" / "ci-cd-deploy.md"
 
-#: The profile the embedding server sits behind.
+#: The profile the embedding server used to sit behind. It is gone since an earlier change.
 PROFILE = "local-model"
 
 #: The services that start with a plain `docker compose up -d`.
 DEFAULT_SERVICES = frozenset(
-    {"gateway", "redis", "postgres", "pushgateway", "qdrant", "prometheus", "grafana"}
+    {
+        "gateway",
+        "redis",
+        "postgres",
+        "pushgateway",
+        "qdrant",
+        "prometheus",
+        "grafana",
+        "llama-embed",
+    }
 )
+
+#: The model file `make embed-model` fetches and compose mounts.
+EMBED_MODEL_FILE = "bge-small-en-v1.5-q8_0.gguf"
 
 #: The local embedding server, with the host port mapping it must keep.
 LLAMA_PORTS = {"llama-embed": ["8083:8083"]}
@@ -81,34 +95,31 @@ def compose_services(*extra: str) -> set[str]:
 
 @pytest.fixture(scope="module")
 def listed() -> dict[str, set[str]]:
-    """Both `config --services` runs, made ONCE for this module; skips without `docker`."""
+    """The `config --services` run, made ONCE for this module; skips without `docker`."""
     if shutil.which("docker") is None:
         pytest.skip("docker is not on PATH; the YAML cases in this file still pin the profiles")
-    return {
-        "default": compose_services(),
-        "profile": compose_services("--profile", PROFILE),
-    }
+    return {"default": compose_services()}
 
 
-def test_the_llama_services_sit_behind_the_local_model_profile() -> None:
-    """The embedding server carries exactly the `local-model` profile, and the chat
-    model is gone.
+def test_llama_embed_has_no_profile_and_starts_by_default() -> None:
+    """`llama-embed` carries no `profiles` key at all, and the chat model is still gone.
 
-    Catches a compose file that leaves it unprofiled, or brings back `llama`, or names the profile
-    something the script and README do not use.
+    Catches a compose file that leaves the embedding server behind a profile (the semantic
+    cache would find no embedder in the default stack), one that swaps the profile for an
+    empty list, and one that brings back `llama`.
     """
     found = services()
     assert "llama" not in found
     for name in LLAMA_PORTS:
         assert name in found, f"{name} is gone from docker-compose.yml; it must be kept"
-        assert found[name].get("profiles") == [PROFILE], name
+        assert "profiles" not in found[name], name
 
 
 def test_every_other_base_service_starts_by_default() -> None:
-    """The services without `profiles` are exactly the six the default stack needs.
+    """The services without `profiles` are exactly the eight the default stack needs.
 
-    Catches a profile added to the gateway or a backing store, and a llama service whose
-    profile was dropped, since either changes this set.
+    Catches a profile added to the gateway or a backing store, and a profile left on
+    `llama-embed`, since either changes this set.
     """
     unprofiled = {name for name, body in services().items() if "profiles" not in body}
     assert unprofiled == DEFAULT_SERVICES
@@ -143,14 +154,14 @@ def test_the_gateway_does_not_wait_on_a_local_model() -> None:
     assert set(depends_on) == {"redis", "postgres", "qdrant"}
 
 
-def test_the_default_stack_starts_no_local_model(listed: dict[str, set[str]]) -> None:
-    """Compose itself leaves the embedding server out by default and lists it with the profile.
+def test_the_default_stack_starts_the_embedding_server(listed: dict[str, set[str]]) -> None:
+    """Compose itself lists `llama-embed` among the services a plain `up` starts.
 
-    Catches a profile spelled in a way the YAML cases accept but Compose ignores, and a
-    profile name `--profile local-model` does not bring back.
+    Catches a profile spelled in a way the YAML cases accept but Compose still honours, so
+    the default list would lack the embedding server.
     """
     assert listed["default"] == set(DEFAULT_SERVICES)
-    assert listed["profile"] == set(DEFAULT_SERVICES) | set(LLAMA_PORTS)
+    assert "llama-embed" in listed["default"]
 
 
 def test_the_tradeoff_run_starts_no_local_model() -> None:
@@ -166,12 +177,13 @@ def test_the_tradeoff_run_starts_no_local_model() -> None:
     assert PROFILE not in flags, lines[0]
 
 
-def test_the_readme_quickstart_names_the_profile() -> None:
-    """The README shows how to start the stack with the local embedding server.
+def test_the_readme_quickstart_names_the_model_step() -> None:
+    """The README tells the reader to run `make embed-model` to get the model file.
 
-    Catches a README that turns it off without saying how to turn it back on.
+    Catches a README that starts the embedding server by default without saying where its
+    model file comes from, which leaves a fresh clone with a server that cannot load.
     """
-    assert "docker compose --profile local-model up -d" in read(README)
+    assert "make embed-model" in read(README)
 
 
 def test_the_readme_default_up_drops_the_local_model() -> None:
@@ -185,3 +197,55 @@ def test_the_readme_default_up_drops_the_local_model() -> None:
     assert commented, "README has no commented `docker compose up -d` line"
     for line in commented:
         assert "local model" not in line.lower(), line
+
+
+def target_line(makefile: str, target: str) -> str:
+    """The `target: prerequisites` line of a Makefile, without its `##` help text."""
+    match = re.search(rf"^{re.escape(target)}:[ \t]*([^#\n]*)", makefile, flags=re.MULTILINE)
+    assert match is not None, f"Makefile has no `{target}:` target"
+    return match.group(1)
+
+
+def target_recipe(makefile: str, target: str) -> str:
+    """The tab-indented recipe lines under a Makefile target, joined."""
+    match = re.search(
+        rf"^{re.escape(target)}:[^\n]*\n((?:\t[^\n]*\n?)+)", makefile, flags=re.MULTILINE
+    )
+    assert match is not None, f"Makefile has no recipe under `{target}:`"
+    return match.group(1)
+
+
+def test_make_embed_model_fetches_the_file_compose_mounts() -> None:
+    """The target exists, names the model file, the `.cache/models` folder compose mounts,
+    and checks a sha256.
+
+    Catches a target that downloads a different file than `LLAMA_EMBED_MODEL_FILE` expects,
+    puts it where compose does not mount it, or skips the checksum (a truncated download
+    would then start a server that fails to load).
+    """
+    makefile = read(MAKEFILE)
+    recipe = target_recipe(makefile, "embed-model")
+    assert EMBED_MODEL_FILE in makefile
+    assert EMBED_MODEL_FILE in recipe or "EMBED_MODEL" in recipe
+    assert ".cache/models" in makefile
+    assert "sha256" in makefile.lower()
+    assert re.search(r"[0-9a-f]{64}", makefile), "the sha256 is not pinned in the Makefile"
+
+
+def test_make_up_fetches_the_model_first() -> None:
+    """`up` lists `embed-model` as a prerequisite.
+
+    Catches an `up` that starts the stack before the model file exists, which makes Docker
+    create an empty folder where the file should be.
+    """
+    assert "embed-model" in target_line(read(MAKEFILE), "up").split()
+
+
+@pytest.mark.parametrize("path", [README, HANDBOOK], ids=["README.md", "ci-cd-deploy.md"])
+def test_the_docs_no_longer_name_the_local_model_profile(path: Path) -> None:
+    """Neither the README nor the handbook names `--profile local-model`.
+
+    Catches a doc that still sends the reader to a profile that no longer exists, where
+    the command would start nothing extra and say nothing.
+    """
+    assert "--profile local-model" not in read(path)

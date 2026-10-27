@@ -127,7 +127,7 @@ def test_multi_turn_order_is_preserved_after_the_system_lift() -> None:
     assert [(m["role"], m["content"]) for m in body["messages"]] == [
         ("user", "Which city?"),
         ("assistant", "Berlin."),
-        ("user", "And the country?"),
+        ("user", marked_text("And the country?")),
     ]
 
 
@@ -569,7 +569,12 @@ def test_tool_result_turn_renders_as_a_user_turn_in_order() -> None:
         {
             "role": "user",
             "content": [
-                {"type": "tool_result", "tool_use_id": TOOL_CALL_ID, "content": "18C, clear"}
+                {
+                    "type": "tool_result",
+                    "tool_use_id": TOOL_CALL_ID,
+                    "content": "18C, clear",
+                    "cache_control": dict(CACHE_MARK),
+                }
             ],
         },
     ]
@@ -582,7 +587,13 @@ def test_a_tool_call_only_assistant_turn_has_no_text_block() -> None:
     body = to_anthropic(request_with({"messages": (TOOL_LOOP[2],)}))
 
     assert body["messages"][0]["content"] == [
-        {"type": "tool_use", "id": TOOL_CALL_ID, "name": "get_weather", "input": {"city": "Berlin"}}
+        {
+            "type": "tool_use",
+            "id": TOOL_CALL_ID,
+            "name": "get_weather",
+            "input": {"city": "Berlin"},
+            "cache_control": dict(CACHE_MARK),
+        }
     ]
 
 
@@ -936,12 +947,14 @@ def test_only_the_last_tool_is_marked_for_caching() -> None:
 def test_no_system_and_no_tools_sends_no_cache_marker() -> None:
     """Catches an implementation that always emits `system` and `tools` with a marker, or
     that sends a marker with nothing under it: Anthropic refuses an empty text block, so a
-    plain question with no system prompt would fail on every call."""
+    plain question with no system prompt would fail on every call. The one mark left is
+    the newest message's, so a second mark anywhere is caught too."""
     body = to_anthropic(request_with())
 
     assert "system" not in body
     assert "tools" not in body
-    assert "cache_control" not in json.dumps(body)
+    assert json.dumps(body).count("cache_control") == 1
+    assert body["messages"][0]["content"] == marked_text("What is the capital of Germany?")
 
 
 def test_cache_counts_are_read_from_the_reply() -> None:
@@ -982,3 +995,59 @@ def test_a_negative_cache_count_is_unreadable(field: str) -> None:
         from_anthropic(payload)
 
     assert raised.value.retryable is False
+
+
+# --- the newest message is marked too -----------------------
+
+
+def test_the_newest_message_carries_the_cache_mark() -> None:
+    """Catches an implementation that leaves the chat history unmarked (it is re-billed at
+    full price every call), or marks every turn (older turns would use up the four marks
+    Anthropic allows): a plain string newest turn becomes one marked text block and the
+    earlier turns stay as they were."""
+    body = to_anthropic(request_with({"messages": MULTI_TURN}))
+
+    assert body["messages"][-1] == {"role": "user", "content": marked_text("And the country?")}
+    assert body["messages"][0] == {"role": "user", "content": "Which city?"}
+    assert body["messages"][1] == {"role": "assistant", "content": "Berlin."}
+
+
+def test_a_newest_tool_result_marks_its_tool_result_block() -> None:
+    """Catches an implementation that wraps a tool result in an extra text block to mark it,
+    or marks the turn rather than the block: the mark must sit on the `tool_result` block
+    itself."""
+    body = to_anthropic(request_with({"messages": TOOL_LOOP}))
+
+    assert body["messages"][-1]["content"] == [
+        {
+            "type": "tool_result",
+            "tool_use_id": TOOL_CALL_ID,
+            "content": "18C, clear",
+            "cache_control": dict(CACHE_MARK),
+        }
+    ]
+    assert "cache_control" not in body["messages"][1]["content"][0]
+
+
+def test_a_newest_text_and_call_turn_marks_only_its_last_block() -> None:
+    """Catches an implementation that marks every block of the newest turn (two marks for
+    one turn) or the first one: the text block stays plain and only the closing `tool_use`
+    carries the mark."""
+    turn = ChatMessage(role="assistant", content="Checking.", tool_calls=(WEATHER_CALL,))
+
+    body = to_anthropic(request_with({"messages": (turn,)}))
+
+    text_block, call_block = body["messages"][0]["content"]
+    assert text_block == {"type": "text", "text": "Checking."}
+    assert call_block["type"] == "tool_use"
+    assert call_block["cache_control"] == CACHE_MARK
+
+
+def test_system_tools_and_newest_message_make_three_marks() -> None:
+    """Catches an implementation that adds the newest-message mark and drops or doubles
+    another (system, last tool), or marks a system turn as the newest message: the body
+    carries exactly three marks, one per place."""
+    body = to_anthropic(cached_prefix_request())
+
+    assert json.dumps(body).count("cache_control") == 3
+    assert body["messages"][-1]["content"][-1]["cache_control"] == CACHE_MARK

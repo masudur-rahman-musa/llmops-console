@@ -265,14 +265,28 @@ def _usage(block: Mapping[str, Any]) -> Usage:
     The two counts are required - a missing one raises rather than defaulting to
     zero, which would book a real, billed call as free - while an absent
     total falls back to the sum, because some builds omit it.
+
+    OpenAI counts its cached prompt tokens INSIDE `prompt_tokens`, under
+    `prompt_tokens_details.cached_tokens`. They become `cache_read_tokens`, and
+    `prompt_tokens` keeps only the rest, the meaning Anthropic's count has, so the
+    input rate never bills a cached token twice. Absent or `null` details read 0;
+    a cached count above the prompt count is unreadable. Pinned by
+    `test_openai_cache_tokens.py`.
     """
     prompt_tokens = block["prompt_tokens"]
     completion_tokens = block["completion_tokens"]
     total = block.get("total_tokens")
+    details = block.get("prompt_tokens_details") or {}
+    cached = details.get("cached_tokens") or 0
+    if not isinstance(cached, int) or isinstance(cached, bool) or cached < 0:
+        raise ValueError("cached_tokens: not a count of tokens")
+    if cached > prompt_tokens:
+        raise ValueError("cached_tokens: more than prompt_tokens")
     return Usage(
-        prompt_tokens=prompt_tokens,
+        prompt_tokens=prompt_tokens - cached,
         completion_tokens=completion_tokens,
         total_tokens=prompt_tokens + completion_tokens if total is None else total,
+        cache_read_tokens=cached,
     )
 
 

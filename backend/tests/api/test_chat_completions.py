@@ -506,6 +506,7 @@ def test_tool_result_turn_reaches_the_provider_in_order(settings: Settings) -> N
                     "type": "tool_result",
                     "tool_use_id": "toolu_01WeatherCall00000000",
                     "content": "18C, clear",
+                    "cache_control": {"type": "ephemeral"},
                 }
             ],
         },

@@ -150,13 +150,12 @@ def test_the_semantic_threshold_is_exactly_the_published_one() -> None:
 
 
 def test_the_probe_text_is_the_final_user_message() -> None:
-    """Catches a probe built from the whole conversation joined together, or from the
-    first turn: the vector is what similarity is measured on, so embedding the history
-    would make two callers with the same question but different histories miss each
-    other - the hit this tier exists to produce."""
+    """Catches a probe built from the final message alone (two chats answering "yes, that
+    one please" would collide), and one built from the whole conversation: the probe is the
+    turn right before the final user message, a blank line, then the final message."""
     body = wire_body(messages=[FIRST_QUESTION, ASSISTANT_TURN, SECOND_QUESTION])
 
-    assert probe_text(body) == SECOND_QUESTION["content"]
+    assert probe_text(body) == f"Berlin.\n\n{SECOND_QUESTION['content']}"
 
 
 def test_the_probe_text_changes_when_the_final_user_message_changes() -> None:
@@ -179,12 +178,14 @@ def test_a_trailing_assistant_turn_is_not_the_probe_text() -> None:
 
 
 def test_an_earlier_message_does_not_change_the_probe_text() -> None:
-    """Catches a probe that concatenates the user turns: the two bodies below ask the same
-    final question after different histories, which is the pair the tier must treat as one
-    probe, and a concatenating implementation still passes every "different question,
-    different probe" case."""
+    """Catches a probe that concatenates the user turns: the two bodies below end on the same
+    previous turn and final question after different histories before that, which is the
+    pair the tier must treat as one probe. A different PREVIOUS turn now does change the
+    probe, so only the turns before it may differ."""
     first = wire_body(messages=[FIRST_QUESTION, ASSISTANT_TURN, SECOND_QUESTION])
-    second = wire_body(messages=[{"role": "user", "content": "Anything else"}, SECOND_QUESTION])
+    second = wire_body(
+        messages=[{"role": "user", "content": "Anything else"}, ASSISTANT_TURN, SECOND_QUESTION]
+    )
 
     assert probe_text(first) == probe_text(second)
 
@@ -434,3 +435,119 @@ def test_the_response_format_alone_decides_an_otherwise_eligible_request() -> No
 
     assert semantic_eligible(without, alias=alias_with(semantic_cache=True)) is True
     assert semantic_eligible(with_schema, alias=alias_with(semantic_cache=True)) is False
+
+
+# --------------------------------------------------------------------------
+# the minimum length and the previous turn
+# --------------------------------------------------------------------------
+
+
+def final_message(text: str) -> ChatCompletionRequest:
+    """A body whose only turn is one user message with this text."""
+    return wire_body(messages=[{"role": "user", "content": text}])
+
+
+def test_a_final_message_of_15_characters_has_no_probe_text() -> None:
+    """Catches a minimum of 15 or less (an off-by-one that lets "the T14, please" through
+    to be matched across chats): 15 characters is below the minimum and gives `None`."""
+    assert probe_text(final_message("a" * 15)) is None
+
+
+def test_a_final_message_of_exactly_16_characters_is_probed() -> None:
+    """Catches a minimum of 17 or more, or a `<=` where `<` belongs: 16 is the first length
+    that is looked up."""
+    assert probe_text(final_message("a" * 16)) == "a" * 16
+
+
+def test_spaces_do_not_count_toward_the_minimum() -> None:
+    """Catches a length taken before trimming: "  yes please  " is 14 characters padded
+    with spaces past 16, and only a trimmed count sees it is short. The padding is what
+    makes the untrimmed length pass, so the trim alone decides this row."""
+    padded = "   " + "yes please" + "    "
+    assert len(padded) >= 16
+
+    assert probe_text(final_message(padded)) is None
+
+
+def test_the_probe_is_the_previous_turn_then_the_final_message() -> None:
+    """Catches a separator other than a blank line, or the two parts swapped: the text is
+    the previous turn, `\\n\\n`, then the final user message."""
+    body = wire_body(messages=[FIRST_QUESTION, ASSISTANT_TURN, SECOND_QUESTION])
+
+    assert probe_text(body) == "Berlin.\n\nWhich city is the capital of Spain?"
+
+
+def test_the_same_reply_after_different_answers_probes_differently() -> None:
+    """Catches a probe that ignores the previous turn: "yes, that one please" after two
+    different assistant questions must give two probes, or one chat would be served the
+    other's answer."""
+    reply = {"role": "user", "content": "yes, that one please"}
+    after_laptop = wire_body(
+        messages=[FIRST_QUESTION, {"role": "assistant", "content": "The T14?"}, reply]
+    )
+    after_phone = wire_body(
+        messages=[FIRST_QUESTION, {"role": "assistant", "content": "The Pixel?"}, reply]
+    )
+
+    assert probe_text(after_laptop) != probe_text(after_phone)
+
+
+def test_only_the_last_1000_characters_of_the_previous_turn_are_kept() -> None:
+    """Catches a previous turn kept whole, or its FIRST 1,000 characters kept: the turn
+    below is 1,001 characters whose first character differs from the rest, so the kept
+    part must be the last 1,000 (the odd first character is dropped)."""
+    previous = "X" + "y" * 1000
+    body = wire_body(messages=[{"role": "assistant", "content": previous}, SECOND_QUESTION])
+
+    assert probe_text(body) == "y" * 1000 + "\n\n" + SECOND_QUESTION["content"]
+
+
+def test_a_previous_turn_of_exactly_1000_characters_is_kept_whole() -> None:
+    """Catches a cut that takes 999 or drops a character at the boundary: 1,000 characters
+    is the inclusive limit and passes through unchanged."""
+    previous = "z" * 1000
+    body = wire_body(messages=[{"role": "assistant", "content": previous}, SECOND_QUESTION])
+
+    assert probe_text(body) == previous + "\n\n" + SECOND_QUESTION["content"]
+
+
+def test_a_tool_turn_or_a_call_only_turn_before_adds_nothing() -> None:
+    """Catches a previous turn taken blindly from the list: a tool result and an assistant
+    turn that holds only tool calls are not text turns, so each leaves the final message
+    alone (and a `None` content must not be glued in as the word "None")."""
+    call = {"id": "call_1", "type": "function", "function": {"name": "f", "arguments": "{}"}}
+    after_tool = wire_body(
+        messages=[
+            FIRST_QUESTION,
+            {"role": "assistant", "content": None, "tool_calls": [call]},
+            {"role": "tool", "tool_call_id": "call_1", "content": "18C, clear"},
+            SECOND_QUESTION,
+        ]
+    )
+    after_call_only = wire_body(
+        messages=[
+            FIRST_QUESTION,
+            {"role": "assistant", "content": None, "tool_calls": [call]},
+            SECOND_QUESTION,
+        ]
+    )
+
+    assert probe_text(after_tool) == SECOND_QUESTION["content"]
+    assert probe_text(after_call_only) == SECOND_QUESTION["content"]
+
+
+def test_turns_before_the_previous_one_do_not_change_the_probe() -> None:
+    """Catches a probe that reaches back past the previous turn: the two bodies share their
+    last two turns and differ at the start, so they must give one probe."""
+    first = wire_body(messages=[FIRST_QUESTION, ASSISTANT_TURN, SECOND_QUESTION])
+    second = wire_body(
+        messages=[
+            SYSTEM_TURN,
+            {"role": "user", "content": "Something quite different entirely"},
+            {"role": "assistant", "content": "Okay."},
+            ASSISTANT_TURN,
+            SECOND_QUESTION,
+        ]
+    )
+
+    assert probe_text(first) == probe_text(second)

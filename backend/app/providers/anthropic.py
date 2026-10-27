@@ -158,6 +158,23 @@ def _rendered_turn(index: int, message: ChatMessage) -> dict[str, Any]:
     return {"role": message.role, "content": message.content}
 
 
+def _mark_newest(turn: dict[str, Any]) -> None:
+    """Put the cache marker on the last block of the newest turn.
+
+    Anthropic caches everything up to a marked block, so the next call reads the
+    whole chat history from cache instead of paying for it again. A plain string
+    becomes one text block, since a marker sits only on a block. Only the LAST
+    block is marked: with the system and last-tool markers that is three, under
+    Anthropic's limit of four. Pinned by
+    `test_system_tools_and_newest_message_make_three_marks`.
+    """
+    content = turn["content"]
+    if isinstance(content, str):
+        turn["content"] = [{"type": "text", "text": content, "cache_control": dict(CACHE_MARKER)}]
+    else:
+        content[-1]["cache_control"] = dict(CACHE_MARKER)
+
+
 def to_anthropic(request: ChatRequest) -> dict[str, Any]:
     """Render a normalised request as an Anthropic Messages request body.
 
@@ -188,6 +205,9 @@ def to_anthropic(request: ChatRequest) -> dict[str, Any]:
             if message.role != "system"
         ],
     }
+
+    if body["messages"]:
+        _mark_newest(body["messages"][-1])
 
     system = "\n\n".join(
         message.content for message in request.messages if message.role == "system"

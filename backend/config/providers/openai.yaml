@@ -17,8 +17,18 @@ models:
       - effective_from: 2025-08-07
         input_usd_per_1m: "0.25"
         output_usd_per_1m: "2.00"
+      # Cached prompt tokens at OpenAI's list rate, 0.1 times input. OpenAI
+      # charges nothing to write its cache, so there is no write rate.
+      - effective_from: 2026-10-27
+        input_usd_per_1m: "0.25"
+        output_usd_per_1m: "2.00"
+        cache_read_usd_per_1m: "0.025"
   gpt-5:
     prices:
       - effective_from: 2025-08-07
         input_usd_per_1m: "1.25"
         output_usd_per_1m: "10.00"
+      - effective_from: 2026-10-27
+        input_usd_per_1m: "1.25"
+        output_usd_per_1m: "10.00"
+        cache_read_usd_per_1m: "0.125"

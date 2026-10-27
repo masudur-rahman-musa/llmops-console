@@ -1,4 +1,4 @@
-.PHONY: help setup run up down rebuild all gateway console test test-infra fast test-slowest lint typecheck format verify security eval infra-check k8s-check k8s-aws-check k8s-server-check server-secrets server-helpdesk-data k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate refresh-rollup secrets-encrypt secrets-decrypt secrets-check load numbers grafana-check
+.PHONY: help setup run up embed-model down rebuild all gateway console test test-infra fast test-slowest lint typecheck format verify security eval infra-check k8s-check k8s-aws-check k8s-server-check server-secrets server-helpdesk-data k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate refresh-rollup secrets-encrypt secrets-decrypt secrets-check load numbers grafana-check
 
 # The console's checks run through pnpm, and are skipped only in a checkout that
 # has no web, so the intended gate stays visible in this file. The
@@ -22,8 +22,22 @@ help:       ## Show all targets
 setup:      ## Install dependencies and pre-commit hooks
 	uv sync --project backend && $(UV_ROOT) pre-commit install
 	$(call console,install)
-up:         ## Start everything in Docker: backing services, gateway and the console on 3001
+up: embed-model ## Start everything in Docker: backing services, gateway and the console on 3001
 	docker compose --profile app up -d --build
+# The embedding model `llama-embed` mounts, fetched once from Hugging Face into
+# `.cache/models` (gitignored). A file already there is not fetched again, and
+# every run checks its sha256, so a broken or swapped file stops here.
+EMBED_MODEL_FILE = bge-small-en-v1.5-q8_0.gguf
+EMBED_MODEL_DIR = .cache/models
+EMBED_MODEL_URL = https://huggingface.co/CompendiumLabs/bge-small-en-v1.5-gguf/resolve/main/$(EMBED_MODEL_FILE)
+EMBED_MODEL_SHA256 = ec38e8da142596baa913124ae50550de284b6916bf59577ef2f0cb9660c2f514
+embed-model: ## Fetch the local embedding model (bge-small-en-v1.5) once, and check it
+	@mkdir -p $(EMBED_MODEL_DIR)
+	@if [ ! -f $(EMBED_MODEL_DIR)/$(EMBED_MODEL_FILE) ]; then \
+		curl -fL --retry 3 -o $(EMBED_MODEL_DIR)/$(EMBED_MODEL_FILE).part $(EMBED_MODEL_URL) && \
+		mv $(EMBED_MODEL_DIR)/$(EMBED_MODEL_FILE).part $(EMBED_MODEL_DIR)/$(EMBED_MODEL_FILE); \
+	fi
+	@echo "$(EMBED_MODEL_SHA256)  $(EMBED_MODEL_DIR)/$(EMBED_MODEL_FILE)" | shasum -a 256 -c -
 down:       ## Stop the whole Docker stack, keeping its data
 	docker compose --profile app down
 # `make rebuild` or `make rebuild all`: rebuild and restart the gateway and the console,

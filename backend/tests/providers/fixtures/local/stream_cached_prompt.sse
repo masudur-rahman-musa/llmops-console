@@ -1,0 +1,12 @@
+: HAND-WRITTEN, not recorded. It follows the published OpenAI chat-completions
+: streaming wire shape with `stream_options.include_usage`: the last chunk before
+: [DONE] has empty `choices` and carries `usage`, including the cached count.
+data: {"id":"chatcmpl-openai-cached-stream","object":"chat.completion.chunk","created":1761500010,"model":"gpt-5-mini","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-openai-cached-stream","object":"chat.completion.chunk","created":1761500010,"model":"gpt-5-mini","choices":[{"index":0,"delta":{"content":"Ship it."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-openai-cached-stream","object":"chat.completion.chunk","created":1761500010,"model":"gpt-5-mini","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-openai-cached-stream","object":"chat.completion.chunk","created":1761500010,"model":"gpt-5-mini","choices":[],"usage":{"prompt_tokens":2006,"completion_tokens":12,"total_tokens":2018,"prompt_tokens_details":{"cached_tokens":1920,"audio_tokens":0}}}
+
+data: [DONE]

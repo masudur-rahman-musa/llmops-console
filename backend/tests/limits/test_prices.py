@@ -825,3 +825,29 @@ def test_the_shipped_anthropic_rows_carry_cache_rates() -> None:
         assert newest.cache_write_usd_per_1m == newest.input_usd_per_1m * Decimal("1.25"), model
         assert newest.input_usd_per_1m == before.input_usd_per_1m, model
         assert newest.output_usd_per_1m == before.output_usd_per_1m, model
+
+
+SHIPPED_OPENAI_RATES = {
+    "gpt-5-mini": (Decimal("0.25"), Decimal("2.00"), Decimal("0.025")),
+    "gpt-5": (Decimal("1.25"), Decimal("10.00"), Decimal("0.125")),
+}
+OPENAI_CACHE_PRICES_FROM = date(2026, 10, 27)
+
+
+def test_the_shipped_openai_rows_carry_a_cached_input_rate() -> None:
+    """Catches an OpenAI row that is edited in place instead of appended (history lost), a
+    model left without a cached rate (a cached token billed at full input), a read rate at
+    the wrong multiple, and a made-up write rate (OpenAI charges none): each model's newest
+    row is dated 2026-10-27, reads at 0.1 times input with no write rate, and keeps the
+    input and output of the row before it, pinned to the published numbers."""
+    table = shipped_table()
+
+    for model, (input_rate, output_rate, read_rate) in SHIPPED_OPENAI_RATES.items():
+        entries = sorted(table.prices[f"openai/{model}"], key=lambda e: e.effective_from)
+        newest, before = entries[-1], entries[-2]
+        assert newest.effective_from == OPENAI_CACHE_PRICES_FROM, model
+        assert newest.cache_read_usd_per_1m == read_rate, model
+        assert newest.cache_read_usd_per_1m == newest.input_usd_per_1m * Decimal("0.1"), model
+        assert newest.cache_write_usd_per_1m is None, model
+        assert newest.input_usd_per_1m == input_rate == before.input_usd_per_1m, model
+        assert newest.output_usd_per_1m == output_rate == before.output_usd_per_1m, model

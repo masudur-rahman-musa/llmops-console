@@ -839,10 +839,10 @@ def test_the_probe_is_the_final_user_message_of_the_outbound_body(
     semantic_client: TestClient, embed_stub: EmbedStub
 ) -> None:
     """Catches a probe built from the whole conversation, from the first user turn or from
-    the assistant's last answer: a caller replaying a long history would then ask a
-    different question from one asking it cold, and the tier would never hit for exactly
-    the traffic #23 describes. The earlier turns carry text that would change the probe if
-    it included them, so an implementation that concatenated cannot pass."""
+    the assistant's last answer alone: the embedded text is the previous turn, a blank line
+    and the final user message, and the turn BEFORE the previous one carries
+    text that would change the probe if it were included, so an implementation that
+    concatenated every turn cannot pass."""
     response = post_chat(
         semantic_client,
         chat_body(
@@ -856,7 +856,49 @@ def test_the_probe_is_the_final_user_message_of_the_outbound_body(
     )
 
     assert response.status_code == 200, response.text
-    assert embed_stub.inputs == (QUESTION,)
+    assert embed_stub.inputs == (f"Ask me something else.\n\n{QUESTION}",)
+
+
+def test_the_embedded_text_carries_the_previous_turn(
+    semantic_client: TestClient, embed_stub: EmbedStub
+) -> None:
+    """Catches a route that embeds the final message alone after the probe gained a
+    previous turn (the same "yes, that one please" in two chats would sit at cosine 1.0),
+    and one that joins the two with a single newline or a space: the stub receives the
+    previous turn, a blank line, then the final message, exactly."""
+    previous = "Which laptop do you want, the T14 or the X1?"
+    final = "yes, the T14 one please"
+
+    response = post_chat(
+        semantic_client,
+        chat_body(
+            model=ALIAS,
+            messages=[
+                {"role": "user", "content": DIFFERENT_QUESTION},
+                {"role": "assistant", "content": previous},
+                {"role": "user", "content": final},
+            ],
+        ),
+    )
+
+    assert response.status_code == 200, response.text
+    assert embed_stub.inputs == (f"{previous}\n\n{final}",)
+
+
+def test_a_short_final_message_is_neither_looked_up_nor_stored(
+    semantic_client: TestClient, chat_stub: ChatStub, embed_stub: EmbedStub
+) -> None:
+    """Catches a route that skips the length rule on either side: "the T14" is under 16
+    characters, so nothing is embedded (no lookup, and no store, since a store needs the
+    vector), and the SAME short message sent twice reaches the provider twice instead of
+    the second being served from a stored entry of the first."""
+    first = send(semantic_client, "the T14")
+    second = send(semantic_client, "the T14")
+
+    assert content_of(first) == CHAT_ANSWER
+    assert content_of(second) == CHAT_ANSWER
+    assert embed_stub.call_count == 0
+    assert chat_stub.call_count == 2
 
 
 # --------------------------------------------------------------------------
