@@ -1,0 +1,22 @@
+# Grafana's alerting provisioning, one copy for both Grafanas: compose mounts
+# this file, and the cluster gets it as the `grafana-alerting` ConfigMap.
+#
+# Grafana holds no alert rules, so it sends nothing. Alerts come from the rules
+# in infra/k8s/monitoring/alerts/rules.yml, evaluated by Prometheus and sent by
+# the server's Alertmanager (infra/k8s/monitoring/alertmanager.yaml). This
+# contact point only names that place, so the built-in `grafana-default-email`
+# no longer looks like where alerts go.
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: alerts-sent-by-server-alertmanager
+    receivers:
+      - uid: alerts-sent-by-server-alertmanager
+        type: prometheus-alertmanager
+        settings:
+          url: http://alertmanager.monitoring.svc:9093
+
+policies:
+  - orgId: 1
+    receiver: alerts-sent-by-server-alertmanager

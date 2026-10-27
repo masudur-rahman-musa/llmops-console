@@ -55,7 +55,7 @@ caused. Every function here that touches a family does its work inside
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
@@ -433,6 +433,18 @@ def record_circuit_state(*, provider: str, state: int) -> None:
     """
     with _guarded("circuit state"):
         CIRCUIT_STATE.labels(provider=provider).set(state)
+
+
+def record_closed_circuits(providers: Iterable[str]) -> None:
+    """Publish every named provider as closed (0) before any call reaches it.
+
+    The gateway reports a provider's circuit only once a route consults it, so
+    after a start or a policy reload the gauge had no series and the dashboard
+    read "No data". Every provider in the policy starts closed, so say so. Pinned
+    by `test_every_policy_provider_reads_closed_before_any_call`.
+    """
+    for provider in providers:
+        record_circuit_state(provider=provider, state=0)
 
 
 def record_redactions(*, tenant: str, counts: Mapping[str, int]) -> None:

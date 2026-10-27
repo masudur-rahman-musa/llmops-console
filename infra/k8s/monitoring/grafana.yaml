@@ -198,6 +198,9 @@ spec:
             - name: dashboards
               mountPath: /etc/grafana/dashboards
               readOnly: true
+            - name: alerting
+              mountPath: /etc/grafana/provisioning/alerting
+              readOnly: true
             - name: data
               mountPath: /var/lib/grafana
       volumes:
@@ -213,6 +216,10 @@ spec:
             # the name-suffix hash disabled, so this reference is the name the
             # build actually emits (decision E).
             name: grafana-dashboards
+        - name: alerting
+          configMap:
+            # Generated beside the dashboards, same disabled hash.
+            name: grafana-alerting
         - name: data
           persistentVolumeClaim:
             claimName: grafana-data

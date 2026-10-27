@@ -14,11 +14,21 @@
   },
   "panels": [
     {
+      "id": 9,
+      "type": "text",
+      "title": "",
+      "gridPos": { "h": 2, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "Alerts are sent from the server's Alertmanager, not from Grafana. Nothing is sent locally."
+      }
+    },
+    {
       "id": 1,
       "type": "timeseries",
       "title": "Requests per second, by status",
       "description": "Every request the gateway served, split by the status it answered with.",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 2 },
       "fieldConfig": {
         "defaults": { "unit": "reqps", "min": 0 },
         "overrides": []
@@ -39,7 +49,7 @@
       "type": "timeseries",
       "title": "Latency p50 and p95",
       "description": "End-to-end duration, measured until the last byte is sent. Quantiles come from the histogram buckets, so a bucket edge is the resolution limit.",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 2 },
       "fieldConfig": {
         "defaults": { "unit": "s", "min": 0 },
         "overrides": []
@@ -68,7 +78,7 @@
       "type": "timeseries",
       "title": "Provider errors per second, by code",
       "description": "Provider call failures by typed error code. Only provider failures are counted here; every other error moves gateway_requests_total's status label only.",
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 10 },
       "fieldConfig": {
         "defaults": { "unit": "reqps", "min": 0 },
         "overrides": []
@@ -89,7 +99,7 @@
       "type": "timeseries",
       "title": "Fallbacks per second",
       "description": "Requests a later candidate served after an earlier one failed. A rising line here is the breaker working; a flat line with errors above is a fallback that never fires.",
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 10 },
       "fieldConfig": {
         "defaults": { "unit": "reqps", "min": 0 },
         "overrides": []
@@ -110,30 +120,51 @@
       "type": "stat",
       "title": "Circuit state, by provider",
       "description": "0 closed, 1 half-open, 2 open. Anything but 0 is a provider the gateway is currently routing around.",
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 10 },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "min": 0,
           "max": 2,
           "mappings": [
-            { "type": "value", "options": { "0": { "text": "closed", "index": 0 } } },
-            { "type": "value", "options": { "1": { "text": "half-open", "index": 1 } } },
-            { "type": "value", "options": { "2": { "text": "open", "index": 2 } } }
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "closed", "index": 0 }
+              }
+            },
+            {
+              "type": "value",
+              "options": {
+                "1": { "text": "half-open", "index": 1 }
+              }
+            },
+            {
+              "type": "value",
+              "options": {
+                "2": { "text": "open", "index": 2 }
+              }
+            }
           ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
+              { "color": "#808080", "value": null },
+              { "color": "green", "value": 0 },
               { "color": "orange", "value": 1 },
               { "color": "red", "value": 2 }
             ]
-          }
+          },
+          "noValue": "No data yet"
         },
         "overrides": []
       },
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
         "colorMode": "background",
         "textMode": "auto"
       },
@@ -153,7 +184,7 @@
       "type": "row",
       "title": "SLO error budgets",
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 16 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 },
       "panels": []
     },
     {
@@ -161,23 +192,29 @@
       "type": "stat",
       "title": "Availability: 5xx share over 30d",
       "description": "Objective 99.5%: the budget is spent when this reaches 0.5%. Budget remaining = 1 - value / 0.005. The console's SLO table reads the same query (dev/ops/slo.md).",
-      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 17 },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 19 },
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
+              { "color": "#808080", "value": null },
+              { "color": "green", "value": 0 },
               { "color": "orange", "value": 0.0025 },
               { "color": "red", "value": 0.005 }
             ]
-          }
+          },
+          "noValue": "No data yet"
         },
         "overrides": []
       },
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
         "colorMode": "background",
         "textMode": "auto"
       },
@@ -196,23 +233,29 @@
       "type": "stat",
       "title": "Latency: API-tier share under 6s over 30d",
       "description": "Objective p95 under 6s: the budget is spent when this falls to 95%. Budget remaining = 1 - (1 - value) / 0.05. Streamed requests are counted too (dev/ops/slo.md).",
-      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 17 },
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 19 },
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red", "value": null },
+              { "color": "#808080", "value": null },
+              { "color": "red", "value": 0 },
               { "color": "orange", "value": 0.95 },
               { "color": "green", "value": 0.975 }
             ]
-          }
+          },
+          "noValue": "No data yet"
         },
         "overrides": []
       },
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
         "colorMode": "background",
         "textMode": "auto"
       },

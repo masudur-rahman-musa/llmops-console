@@ -140,6 +140,8 @@ services:
       - ./infra/local/grafana-datasource.yml:/etc/grafana/provisioning/datasources/local.yml:ro
       - ./infra/local/grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/local.yml:ro
       - ./infra/k8s/monitoring/dashboards:/var/lib/grafana/dashboards:ro
+      # Where alerts go, one copy with the cluster. Grafana sends none itself.
+      - ./infra/k8s/monitoring/grafana-alerting.yml:/etc/grafana/provisioning/alerting/alerting.yml:ro
 
   qdrant:
     image: qdrant/qdrant:v1.19.2

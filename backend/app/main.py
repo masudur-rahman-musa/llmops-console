@@ -41,7 +41,7 @@ from app.core.clients import PROBE_TIMEOUT_SECONDS, build_redis_client
 from app.core.concurrency import build_provider_limiter
 from app.core.config import Settings
 from app.core.http_errors import register_error_handlers
-from app.core.metrics import observe_request, start_request
+from app.core.metrics import observe_request, record_closed_circuits, start_request
 from app.core.tracing import (
     ERROR_STATUS_FLOOR,
     TRACE_SCOPE_KEY,
@@ -416,6 +416,7 @@ def create_app(
     app.state.provider_environ = os.environ if environ is None else environ
     app.state.adapters = build_adapters(app.state.policy.policy, app.state.provider_environ)
     app.state.breaker = CircuitBreaker()
+    record_closed_circuits(app.state.policy.policy.providers)
     app.state.prices = PriceStore(resolved.providers_dir)
     check_policy_models_priced(app.state.policy.policy, app.state.prices.table)
     app.state.provider_limiter = build_provider_limiter()

@@ -116,6 +116,7 @@ MONITORING_OBJECTS: frozenset[tuple[str, str, str | None]] = frozenset(
         ("ConfigMap", "grafana-datasources", MONITORING),
         ("ConfigMap", "grafana-dashboard-providers", MONITORING),
         ("ConfigMap", "grafana-dashboards", MONITORING),
+        ("ConfigMap", "grafana-alerting", MONITORING),
         ("Ingress", GRAFANA, MONITORING),
         ("Middleware", "rate-limit", MONITORING),
         ("Middleware", "security-headers", MONITORING),
@@ -1053,8 +1054,9 @@ def test_the_monitoring_namespace_emits_grafana_and_nothing_else_new(
 ) -> None:
     """Criterion 1, by `(kind, name, namespace)` EQUALITY in both directions over everything the
     build files into `monitoring`, plus every `ClusterRole` and `ClusterRoleBinding` anywhere in
-    the build - the twenty-two rows of `MONITORING_OBJECTS`, which this module owns from an earlier change
-    on (its §8 entry 1). The CRD and `monitoring.coreos.com` scoping is an earlier change's, unchanged.
+    the build - the twenty-three rows of `MONITORING_OBJECTS` (an earlier change added
+    `ConfigMap/grafana-alerting`), which this module owns from an earlier change on (its §8 entry 1). The
+    CRD and `monitoring.coreos.com` scoping is an earlier change's, unchanged.
 
     Catches the commonest failure of a new manifest: `grafana.yaml`, `middlewares.yaml`,
     `ingress.yaml` or the `configMapGenerator` block written correctly and never added to

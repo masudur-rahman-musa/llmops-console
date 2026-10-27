@@ -22,6 +22,7 @@ from dataclasses import dataclass
 
 from starlette.datastructures import State
 
+from app.core.metrics import record_closed_circuits
 from app.limits.prices import PriceStore
 from app.model_routing.policy import (
     Policy,
@@ -154,6 +155,7 @@ class RoutingRuntimeStore:
             price_store._table = new_table
             self._state.adapters = new_adapters
             self._state.breaker = new_breaker
+            record_closed_circuits(new_policy.providers)
 
             # Deferred or immediate close for the old adapter set.
             if old_key in self._leases:

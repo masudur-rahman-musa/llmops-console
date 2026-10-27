@@ -49,6 +49,12 @@ configMapGenerator:
       - dashboards/platform.json
       - dashboards/evals.json
       - dashboards/helpdesk-agent.json
+  # The alerting provisioning file, generated the same way so the cluster and
+  # the laptop read one copy (infra/k8s/monitoring/grafana-alerting.yml).
+  - name: grafana-alerting
+    namespace: monitoring
+    files:
+      - grafana-alerting.yml
 
 generatorOptions:
   # No name-suffix hash. The usual argument for the hash is that it rolls the

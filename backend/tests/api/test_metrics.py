@@ -32,8 +32,10 @@ neither is copied from the policy.
 
 from __future__ import annotations
 
+import shutil
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
+from pathlib import Path
 from typing import cast
 
 import pytest
@@ -45,9 +47,11 @@ from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry
 from app.api.routes.redact import REDACT
 from app.core.config import Settings
 from app.core.errors import ProviderError
-from app.core.metrics import request_metrics
+from app.core.metrics import record_circuit_state, request_metrics
 from app.core.validation import MAX_IDENTIFIER_LENGTH
 from app.main import create_app
+from app.model_routing.errors import PolicyInvalid
+from app.model_routing.policy import load_policy
 from app.providers.base import (
     ChatRequest,
     ChatResponse,
@@ -58,8 +62,10 @@ from app.providers.base import (
     UsageTotal,
 )
 from app.providers.breaker import MAX_FAILURES as BREAKER_MAX_FAILURES
+from app.providers.breaker import CircuitBreaker
 
 from .conftest import (
+    API_KEYS,
     CHAT,
     FALLBACK_ALIAS,
     FALLBACK_CLASS,
@@ -67,6 +73,8 @@ from .conftest import (
     FIRST_PROVIDER,
     NO_PROVIDER_KEYS,
     SECOND_PROVIDER,
+    SHIPPED_POLICY_PATH,
+    SHIPPED_PROVIDERS_DIR,
     STREAM_FRAGMENTS,
     STREAM_USAGE,
     STUB_EMBEDDING_USAGE,
@@ -1018,3 +1026,92 @@ def test_the_circuit_gauge_reads_open_for_the_failed_provider_and_closed_for_the
 
     assert gauge_value(metrics_registry, CIRCUIT_STATE, provider=FIRST_PROVIDER) == CIRCUIT_OPEN
     assert gauge_value(metrics_registry, CIRCUIT_STATE, provider=SECOND_PROVIDER) == CIRCUIT_CLOSED
+
+
+# --------------------------------------------------------------------------
+# the gauge before any call, and across a reload
+# --------------------------------------------------------------------------
+
+CIRCUIT_PROVIDER = "anthropic"
+"""A provider in the shipped policy, used as the one that opens."""
+
+
+def shipped_provider_names() -> list[str]:
+    """Every provider name the shipped routing policy declares, read off the policy itself."""
+    names = sorted(load_policy(SHIPPED_POLICY_PATH, SHIPPED_PROVIDERS_DIR).providers)
+    assert CIRCUIT_PROVIDER in names, names
+    return names
+
+
+def publish_open(provider: str) -> None:
+    """Leave `provider`'s series at the open level, as a route does after five failures."""
+    record_circuit_state(provider=provider, state=int(CIRCUIT_OPEN))
+
+
+def app_on_private_policy(tmp_path: Path, environ: Mapping[str, str]) -> FastAPI:
+    """An app over a private copy of the shipped policy, so a case may rewrite the file."""
+    policy_path = tmp_path / "routing.yaml"
+    policy_path.write_text(SHIPPED_POLICY_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+    shutil.copytree(SHIPPED_PROVIDERS_DIR, tmp_path / "providers")
+    private = Settings(
+        api_keys=API_KEYS,
+        routing_policy_path=policy_path,
+        providers_dir=tmp_path / "providers",
+    )
+    return create_app(private, environ)
+
+
+def test_every_policy_provider_reads_closed_before_any_call(
+    settings: Settings, metrics_registry: CollectorRegistry
+) -> None:
+    """Catches a gateway that publishes a provider's circuit only after its first call, which
+    is the "No data" Circuit state panel after every restart. Every provider's series is first
+    left at 2 (open), so a build that publishes nothing reads 2 here, and only a build that
+    sets every policy provider to 0 reads closed; no request is sent."""
+    names = shipped_provider_names()
+    for name in names:
+        publish_open(name)
+
+    create_app(settings, NO_PROVIDER_KEYS)
+
+    for name in names:
+        assert gauge_value(metrics_registry, CIRCUIT_STATE, provider=name) == CIRCUIT_CLOSED, name
+
+
+def test_a_reload_publishes_closed_for_the_new_policys_providers(
+    tmp_path: Path, metrics_registry: CollectorRegistry
+) -> None:
+    """Catches a reload that swaps in a fresh breaker and leaves the gauge at the old
+    breaker's last level: the panel would read open for a provider whose new breaker is
+    closed. The provider is opened first (five real failures on the breaker, and the gauge
+    published as a route would), so only a reload that publishes closed again reads 0."""
+    app = app_on_private_policy(tmp_path, NO_PROVIDER_KEYS)
+    breaker = app.state.breaker
+    assert isinstance(breaker, CircuitBreaker)
+    for _ in range(BREAKER_MAX_FAILURES):
+        breaker.record_failure(CIRCUIT_PROVIDER)
+    publish_open(CIRCUIT_PROVIDER)
+    assert gauge_value(metrics_registry, CIRCUIT_STATE, provider=CIRCUIT_PROVIDER) == CIRCUIT_OPEN
+
+    app.state.routing_store.reload(NO_PROVIDER_KEYS)
+
+    assert CIRCUIT_PROVIDER in app.state.policy.policy.providers
+    for name in app.state.policy.policy.providers:
+        assert gauge_value(metrics_registry, CIRCUIT_STATE, provider=name) == CIRCUIT_CLOSED, name
+
+
+def test_a_bad_reload_leaves_the_circuit_gauge_alone(
+    tmp_path: Path, metrics_registry: CollectorRegistry
+) -> None:
+    """Catches a reload that publishes closed before the new policy has parsed: the old
+    breaker is still the one serving, so zeroing the gauge would show an open provider as
+    healthy after an operator's typo. The invalid file raises `PolicyInvalid` and the
+    provider must still read 2."""
+    app = app_on_private_policy(tmp_path, NO_PROVIDER_KEYS)
+    publish_open(CIRCUIT_PROVIDER)
+    (tmp_path / "routing.yaml").write_text("aliases: not-a-mapping-of-aliases\n", encoding="utf-8")
+
+    with pytest.raises(PolicyInvalid):
+        app.state.routing_store.reload(NO_PROVIDER_KEYS)
+
+    assert gauge_value(metrics_registry, CIRCUIT_STATE, provider=CIRCUIT_PROVIDER) == CIRCUIT_OPEN

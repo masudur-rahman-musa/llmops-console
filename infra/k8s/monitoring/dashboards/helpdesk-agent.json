@@ -88,10 +88,14 @@
       "id": 5,
       "type": "timeseries",
       "title": "Pod restarts, Helpdesk workloads",
-      "description": "Container restart count for helpdesk-api, helpdesk-worker and helpdesk-scheduler. Reads empty until the companion Helpdesk repo's four workloads exist in the cluster (STATUS: images not yet built).",
+      "description": "Cluster only, empty on localhost. Container restart count for helpdesk-api, helpdesk-worker and helpdesk-scheduler. Reads empty until the companion Helpdesk repo's four workloads exist in the cluster (STATUS: images not yet built).",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
       "fieldConfig": {
-        "defaults": { "unit": "short", "min": 0 },
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "Cluster only, empty on localhost"
+        },
         "overrides": []
       },
       "targets": [
@@ -109,10 +113,15 @@
       "id": 6,
       "type": "timeseries",
       "title": "Pod phase, Helpdesk workloads",
-      "description": "1 when a Helpdesk pod is in the given phase, 0 otherwise. Reads empty until those pods exist.",
+      "description": "Cluster only, empty on localhost. 1 when a Helpdesk pod is in the given phase, 0 otherwise. Reads empty until those pods exist.",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
       "fieldConfig": {
-        "defaults": { "unit": "short", "min": 0, "max": 1 },
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 1,
+          "noValue": "Cluster only, empty on localhost"
+        },
         "overrides": []
       },
       "targets": [
