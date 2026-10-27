@@ -301,7 +301,7 @@ describe("LineChart", () => {
       const y2 = Number(baseline[0].match(/\by2="([^"]*)"/)?.[1]);
       expect(y1).toBeCloseTo(expected, 1);
       expect(y2).toBeCloseTo(expected, 1);
-      expect(html).toMatch(/<p class="chart-key">.*Check score.*Baseline 48\.48%<\/p>/);
+      expect(html).toMatch(/<p class="chart-key">.*Check score 57\.14% \(newest run\).*Baseline 48\.48%.*Release<\/p>/);
     });
 
     it("the baseline label never covers a point", () => {

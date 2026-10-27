@@ -43,8 +43,9 @@ function dateAnchor(x: number): "start" | "middle" | "end" {
  * shown has its UTC time under it. The svg has no fixed size, so the `chart` class
  * fills the page width. A fixed `range` with its `steps` keeps the score axis
  * still (steps read as whole percents, a score past the range sits on its edge),
- * and a finite `baseline` adds one `chart-baseline` line, named in a key under the chart
- * beside the scored line, so its label sits by its own line style and never on a point.
+ * and a finite `baseline` adds one `chart-baseline` line. A key under the chart names each
+ * line by its style: the scored line with the newest run's value, the baseline, and
+ * `Release` for the markers; so no label ever sits on a point.
  * Dates at either end anchor inward. Pinned by
  * tests/chart.test.tsx.
  */
@@ -134,12 +135,22 @@ export function LineChart({
           <circle key={`p${index}`} cx={x} cy={y} r={3} fill="currentColor" />
         ))}
       </svg>
-      {level !== undefined && (
+      {(level !== undefined || shown.length > 0) && (
         <p className="chart-key">
           <span className="chart-key-line" aria-hidden="true" />
-          {title}
-          <span className="chart-key-line chart-key-baseline" aria-hidden="true" />
-          {level.label}
+          {`${title} ${yFormat(kept[kept.length - 1][1])} (newest run)`}
+          {level !== undefined && (
+            <>
+              <span className="chart-key-line chart-key-baseline" aria-hidden="true" />
+              {level.label}
+            </>
+          )}
+          {shown.length > 0 && (
+            <>
+              <span className="chart-key-line chart-key-release" aria-hidden="true" />
+              Release
+            </>
+          )}
         </p>
       )}
     </figure>

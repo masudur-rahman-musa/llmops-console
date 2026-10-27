@@ -236,6 +236,10 @@ svg {
   border-top: 2px dotted var(--accent);
 }
 
+.chart-key-release {
+  border-top: 2px dashed var(--muted);
+}
+
 /* A clear area over each bar part; hover or focus shows its value above the bar. */
 .chart-hit {
   fill: transparent;
