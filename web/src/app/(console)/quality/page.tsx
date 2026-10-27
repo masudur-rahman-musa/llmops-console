@@ -2,6 +2,7 @@ import { consolePage } from "@/components/layout/console-page";
 import { ExternalLink } from "@/components/ui/external-link";
 import { LineChart } from "@/components/ui/line-chart";
 import { Pager } from "@/components/ui/pager";
+import { Panel } from "@/components/ui/panel";
 import { StatCards, type StatCard } from "@/components/ui/stat-cards";
 import { NONE_IN_WINDOW, Table } from "@/components/ui/table";
 import type { GateScore } from "@/features/quality/guards";
@@ -71,53 +72,56 @@ export default consolePage("quality", "Quality", "Does the help desk still answe
         baseline={baseline}
       />
 
-      <h2>Categories</h2>
-      <p>How many help desk cases passed in each kind of conversation, in the newest run.</p>
-      <Table
-        columns={["Category", "Cases passed"]}
-        rows={body.categories.map((category) => ({
-          key: category.category,
-          cells: [
-            plainName(category.category),
-            <>
-              {category.passed} of {category.total}
-            </>,
-          ],
-        }))}
-      />
+      <Panel title="Categories">
+        <p>How many help desk cases passed in each kind of conversation, in the newest run.</p>
+        <Table
+          columns={["Category", "Cases passed"]}
+          rows={body.categories.map((category) => ({
+            key: category.category,
+            cells: [
+              plainName(category.category),
+              <>
+                {category.passed} of {category.total}
+              </>,
+            ],
+          }))}
+        />
+      </Panel>
 
-      <h2>Taxonomy</h2>
-      <p>Why cases failed: each failure tag and how many cases carry it.</p>
-      <Table
-        columns={["Failure tag", "Cases"]}
-        rows={taxonomy.rows.map((tag) => ({
-          key: tag.tag,
-          cells: [plainName(tag.tag), tag.count],
-        }))}
-      />
-      <Pager name={PAGE_PARAMS.taxonomy} page={taxonomy.page} pages={taxonomy.pages} params={params} />
+      <Panel title="Taxonomy">
+        <p>Why cases failed: each failure tag and how many cases carry it.</p>
+        <Table
+          columns={["Failure tag", "Cases"]}
+          rows={taxonomy.rows.map((tag) => ({
+            key: tag.tag,
+            cells: [plainName(tag.tag), tag.count],
+          }))}
+        />
+        <Pager name={PAGE_PARAMS.taxonomy} page={taxonomy.page} pages={taxonomy.pages} params={params} />
+      </Panel>
 
-      <h2>Blocked releases</h2>
-      {blocked.rows.length === 0 && <p className="note">{NONE_IN_WINDOW}</p>}
-      <ul>
-        {blocked.rows.map((item) => (
-          <li key={`${item.git_sha}/${item.deployed_at}`}>
-            <code>{shortSha(item.git_sha)}</code> <ExternalLink url={item.pr_url} label="PR" />
-            {item.regressed.length === 0 ? (
-              <p>No regression recorded.</p>
-            ) : (
-              <ul>
-                {item.regressed.map((regression) => (
-                  <li key={regression.metric}>
-                    {`${scoreLabel(regression.metric)}: ${regression.value} (was ${regression.previous})`}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </li>
-        ))}
-      </ul>
-      <Pager name={PAGE_PARAMS.blocked} page={blocked.page} pages={blocked.pages} params={params} />
+      <Panel title="Blocked releases">
+        {blocked.rows.length === 0 && <p className="note">{NONE_IN_WINDOW}</p>}
+        <ul>
+          {blocked.rows.map((item) => (
+            <li key={`${item.git_sha}/${item.deployed_at}`}>
+              <code>{shortSha(item.git_sha)}</code> <ExternalLink url={item.pr_url} label="PR" />
+              {item.regressed.length === 0 ? (
+                <p>No regression recorded.</p>
+              ) : (
+                <ul>
+                  {item.regressed.map((regression) => (
+                    <li key={regression.metric}>
+                      {`${scoreLabel(regression.metric)}: ${regression.value} (was ${regression.previous})`}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          ))}
+        </ul>
+        <Pager name={PAGE_PARAMS.blocked} page={blocked.page} pages={blocked.pages} params={params} />
+      </Panel>
     </>
   );
 }, WINDOW_LINES.quality);

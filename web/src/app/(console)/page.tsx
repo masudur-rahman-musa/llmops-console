@@ -1,5 +1,6 @@
 import { consolePage } from "@/components/layout/console-page";
 import { ExternalLink } from "@/components/ui/external-link";
+import { Panel } from "@/components/ui/panel";
 import { StatCards } from "@/components/ui/stat-cards";
 import { Table } from "@/components/ui/table";
 import { NA, ms, percent, points, smallUsd, utcTime } from "@/lib/format";
@@ -34,26 +35,27 @@ export default consolePage(
           },
         ]}
       />
-      <h2>Model routing</h2>
-      <Table
-        columns={["Alias", "Purpose", "Providers in fallback order"]}
-        rows={body.routing.aliases.map((alias) => ({
-          key: alias.name,
-          cells: [
-            <code key="name">{alias.name}</code>,
-            alias.purpose ?? "no purpose given",
-            alias.candidates.map((c, index) => `${index + 1}. ${c.provider} ${c.model}`).join(", "),
-          ],
-        }))}
-      />
-      <p className="note">Policy last loaded {utcTime(body.routing.loaded_at)}.</p>
-      <p>
-        {body.grafana_url === null ? (
-          "Grafana link not set."
-        ) : (
-          <ExternalLink url={body.grafana_url} label="Health details in Grafana" />
-        )}
-      </p>
+      <Panel title="Model routing">
+        <Table
+          columns={["Alias", "Purpose", "Providers in fallback order"]}
+          rows={body.routing.aliases.map((alias) => ({
+            key: alias.name,
+            cells: [
+              <code key="name">{alias.name}</code>,
+              alias.purpose ?? "no purpose given",
+              alias.candidates.map((c, index) => `${index + 1}. ${c.provider} ${c.model}`).join(", "),
+            ],
+          }))}
+        />
+        <p className="note">Policy last loaded {utcTime(body.routing.loaded_at)}.</p>
+        <p>
+          {body.grafana_url === null ? (
+            "Grafana link not set."
+          ) : (
+            <ExternalLink url={body.grafana_url} label="Health details in Grafana" />
+          )}
+        </p>
+      </Panel>
     </>
   ),
   WINDOW_LINES.home,

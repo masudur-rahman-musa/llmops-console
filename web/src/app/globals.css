@@ -119,7 +119,8 @@ code {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
   color: inherit;
 }
@@ -141,6 +142,29 @@ input {
   border: var(--line);
   border-radius: var(--radius);
   background: var(--surface);
+}
+
+/* Selects match the date input beside them, with a down arrow drawn in the muted colour. */
+select {
+  appearance: none;
+  padding: var(--space-2) var(--space-3);
+  padding-right: var(--space-6);
+  border: var(--line);
+  border-radius: var(--radius);
+  background-color: var(--surface);
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    right var(--space-4) center,
+    right var(--space-3) center;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+  cursor: pointer;
+}
+
+select:hover {
+  border-color: var(--accent);
 }
 
 :focus-visible {
@@ -257,6 +281,23 @@ svg {
   width: var(--space-3);
   height: var(--space-3);
   border-radius: var(--border-width);
+}
+
+/* One section of a tab: a box with its heading, notes, filters, table and pager inside. */
+.panel {
+  margin: 0 0 var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border: var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.panel h2 {
+  margin-top: 0;
+}
+
+.panel > :last-child {
+  margin-bottom: 0;
 }
 
 /* The row of number cards every tab shows under its window line. */

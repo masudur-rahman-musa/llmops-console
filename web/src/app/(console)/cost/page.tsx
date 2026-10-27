@@ -6,6 +6,7 @@ import {
   SelectField,
 } from "@/components/ui/filter-form";
 import { Pager } from "@/components/ui/pager";
+import { Panel } from "@/components/ui/panel";
 import { StatCards } from "@/components/ui/stat-cards";
 import { Table } from "@/components/ui/table";
 import type { CostBody } from "@/features/cost/guards";
@@ -174,137 +175,141 @@ export default consolePage(
           yFormat={smallUsd}
         />
 
-        <h2>Budgets this month</h2>
-        {budgets.rows.map((budget) => (
-          <div key={budget.tenant}>
-            <p>
-              {budget.tenant}: {smallUsd(budget.spent_usd)} of{" "}
-              {smallUsd(budget.cap_usd)}
-              {budget.ratio !== null && budget.ratio > 1 && ", over"}
-            </p>
-            {budget.ratio === null ? (
-              <p className="note">{NA}</p>
-            ) : (
-              <div className={budget.ratio > 1 ? "bar over" : "bar"}>
-                <div style={{ width: barWidth(budget.ratio) }} />
-              </div>
-            )}
-          </div>
-        ))}
-        <Pager
-          name={PAGE_PARAMS.budgets}
-          page={budgets.page}
-          pages={budgets.pages}
-          params={params}
-        />
-
-        <h2>Top users by cost</h2>
-        {body.top_users.length === 0 ? (
-          <p className="note">No user ids recorded in this window.</p>
-        ) : (
-          <>
-            <FilterForm
-              clearHref="/cost"
-              keep={{
-                from: filters.from,
-                to: filters.to,
-                tenant: filters.tenant,
-              }}
-            >
-              <SelectField
-                name="users_tenant"
-                label="Tenant"
-                options={userTenants}
-                value={filters.usersTenant}
-                any="All tenants"
-              />
-            </FilterForm>
-            <Table
-              columns={["Tenant", "User", "Requests", "Cost"]}
-              rows={users.rows.map((user) => ({
-                key: `${user.tenant}/${user.user_id}`,
-                cells: [
-                  user.tenant,
-                  user.user_id,
-                  user.requests,
-                  smallUsd(user.cost_usd),
-                ],
-              }))}
-            />
-            <Pager
-              name={PAGE_PARAMS.users}
-              page={users.page}
-              pages={users.pages}
-              params={params}
-            />
-          </>
-        )}
-
-        <h2>Daily cost</h2>
-        {body.rollup_populated === false && (
-          <p className="note">Daily rollup not yet populated.</p>
-        )}
-        <FilterForm
-          clearHref="/cost"
-          keep={{ users_tenant: filters.usersTenant }}
-        >
-          <DateField name="from" label="From" value={filters.from} />
-          <DateField name="to" label="To" value={filters.to} />
-          <SelectField
-            name="tenant"
-            label="Tenant"
-            options={tenants}
-            value={filters.tenant}
-            any="All tenants"
+        <Panel title="Budgets this month">
+          {budgets.rows.map((budget) => (
+            <div key={budget.tenant}>
+              <p>
+                {budget.tenant}: {smallUsd(budget.spent_usd)} of{" "}
+                {smallUsd(budget.cap_usd)}
+                {budget.ratio !== null && budget.ratio > 1 && ", over"}
+              </p>
+              {budget.ratio === null ? (
+                <p className="note">{NA}</p>
+              ) : (
+                <div className={budget.ratio > 1 ? "bar over" : "bar"}>
+                  <div style={{ width: barWidth(budget.ratio) }} />
+                </div>
+              )}
+            </div>
+          ))}
+          <Pager
+            name={PAGE_PARAMS.budgets}
+            page={budgets.page}
+            pages={budgets.pages}
+            params={params}
           />
-        </FilterForm>
-        <Table
-          columns={[
-            "Day",
-            "Tenant",
-            "Provider",
-            "Requests",
-            "Cached requests",
-            "Cost",
-          ]}
-          rows={[
-            ...days.rows.map((day) => ({
-              key: `${day.day}/${day.tenant}/${day.provider}`,
-              cells: [
-                day.day,
-                day.tenant,
-                day.provider,
-                day.requests,
-                day.cached_requests,
-                smallUsd(day.cost_usd),
-              ],
-            })),
-            ...(filtered.length === 0
-              ? []
-              : [
-                  {
-                    key: "total",
-                    cells: [
-                      "Total",
-                      "",
-                      "",
-                      total.requests,
-                      total.cached,
-                      smallUsd(total.cost),
-                    ],
-                  },
-                ]),
-          ]}
-        />
-        <Pager
-          name={PAGE_PARAMS.days}
-          page={days.page}
-          pages={days.pages}
-          params={params}
-        />
+        </Panel>
 
-        <h2>Model tradeoff</h2>
-        <TradeoffTable table={tradeoff} />
+        <Panel title="Top users by cost">
+          {body.top_users.length === 0 ? (
+            <p className="note">No user ids recorded in this window.</p>
+          ) : (
+            <>
+              <FilterForm
+                clearHref="/cost"
+                keep={{
+                  from: filters.from,
+                  to: filters.to,
+                  tenant: filters.tenant,
+                }}
+              >
+                <SelectField
+                  name="users_tenant"
+                  label="Tenant"
+                  options={userTenants}
+                  value={filters.usersTenant}
+                  any="All tenants"
+                />
+              </FilterForm>
+              <Table
+                columns={["Tenant", "User", "Requests", "Cost"]}
+                rows={users.rows.map((user) => ({
+                  key: `${user.tenant}/${user.user_id}`,
+                  cells: [
+                    user.tenant,
+                    user.user_id,
+                    user.requests,
+                    smallUsd(user.cost_usd),
+                  ],
+                }))}
+              />
+              <Pager
+                name={PAGE_PARAMS.users}
+                page={users.page}
+                pages={users.pages}
+                params={params}
+              />
+            </>
+          )}
+        </Panel>
+
+        <Panel title="Daily cost">
+          {body.rollup_populated === false && (
+            <p className="note">Daily rollup not yet populated.</p>
+          )}
+          <FilterForm
+            clearHref="/cost"
+            keep={{ users_tenant: filters.usersTenant }}
+          >
+            <DateField name="from" label="From" value={filters.from} />
+            <DateField name="to" label="To" value={filters.to} />
+            <SelectField
+              name="tenant"
+              label="Tenant"
+              options={tenants}
+              value={filters.tenant}
+              any="All tenants"
+            />
+          </FilterForm>
+          <Table
+            columns={[
+              "Day",
+              "Tenant",
+              "Provider",
+              "Requests",
+              "Cached requests",
+              "Cost",
+            ]}
+            rows={[
+              ...days.rows.map((day) => ({
+                key: `${day.day}/${day.tenant}/${day.provider}`,
+                cells: [
+                  day.day,
+                  day.tenant,
+                  day.provider,
+                  day.requests,
+                  day.cached_requests,
+                  smallUsd(day.cost_usd),
+                ],
+              })),
+              ...(filtered.length === 0
+                ? []
+                : [
+                    {
+                      key: "total",
+                      cells: [
+                        "Total",
+                        "",
+                        "",
+                        total.requests,
+                        total.cached,
+                        smallUsd(total.cost),
+                      ],
+                    },
+                  ]),
+            ]}
+          />
+          <Pager
+            name={PAGE_PARAMS.days}
+            page={days.page}
+            pages={days.pages}
+            params={params}
+          />
+        </Panel>
+
+        <Panel title="Model tradeoff">
+          <TradeoffTable table={tradeoff} />
+        </Panel>
       </>
     );
   },

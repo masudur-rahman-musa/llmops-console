@@ -7,6 +7,7 @@ import {
   SelectField,
 } from "@/components/ui/filter-form";
 import { ExternalLink } from "@/components/ui/external-link";
+import { Panel } from "@/components/ui/panel";
 import { Pager } from "@/components/ui/pager";
 import { StatCards } from "@/components/ui/stat-cards";
 import { Table } from "@/components/ui/table";
@@ -84,106 +85,110 @@ export default consolePage(
           ],
         }))}
       />
-      <h2>Redactions by kind</h2>
-      <Table
-        columns={["Kind", "Values hidden"]}
-        rows={body.redactions.map((row) => ({
-          key: row.kind,
-          cells: [redactionLabel(row.kind), count(row.count)],
-        }))}
-      />
-      <h2>Help desk refusals by reason</h2>
-      <Table
-        columns={["Reason", "Refusals"]}
-        rows={body.refusals.map((row) => ({
-          key: row.reason,
-          cells: [plainName(row.reason), count(row.count)],
-        }))}
-      />
-      <h2>Tokens per model</h2>
-      <Table
-        columns={["Model", "Tokens in", "Tokens out"]}
-        rows={body.tokens.map((row) => ({
-          key: row.model,
-          cells: [row.model, count(row.input), count(row.output)],
-        }))}
-      />
-      <h2>Newest requests</h2>
-      <FilterForm clearHref="/requests">
-        <DateField name="day" label="Day" value={filters(params).day} />
-        <SelectField
-          name="tenant"
-          label="Tenant"
-          options={body.tenants}
-          value={filters(params).tenant}
-          any="All tenants"
+      <Panel title="Redactions by kind">
+        <Table
+          columns={["Kind", "Values hidden"]}
+          rows={body.redactions.map((row) => ({
+            key: row.kind,
+            cells: [redactionLabel(row.kind), count(row.count)],
+          }))}
         />
-        <SelectField
-          name="model"
-          label="Model"
-          options={body.models}
-          value={filters(params).model}
-          any="All models"
+      </Panel>
+      <Panel title="Help desk refusals by reason">
+        <Table
+          columns={["Reason", "Refusals"]}
+          rows={body.refusals.map((row) => ({
+            key: row.reason,
+            cells: [plainName(row.reason), count(row.count)],
+          }))}
         />
-        <CheckField
-          name="errors"
-          label="Errors only"
-          checked={filters(params).errors}
+      </Panel>
+      <Panel title="Tokens per model">
+        <Table
+          columns={["Model", "Tokens in", "Tokens out"]}
+          rows={body.tokens.map((row) => ({
+            key: row.model,
+            cells: [row.model, count(row.input), count(row.output)],
+          }))}
         />
-        <CheckField
-          name="slow"
-          label="Slow only"
-          checked={filters(params).slow}
+      </Panel>
+      <Panel title="Newest requests">
+        <FilterForm clearHref="/requests">
+          <DateField name="day" label="Day" value={filters(params).day} />
+          <SelectField
+            name="tenant"
+            label="Tenant"
+            options={body.tenants}
+            value={filters(params).tenant}
+            any="All tenants"
+          />
+          <SelectField
+            name="model"
+            label="Model"
+            options={body.models}
+            value={filters(params).model}
+            any="All models"
+          />
+          <CheckField
+            name="errors"
+            label="Errors only"
+            checked={filters(params).errors}
+          />
+          <CheckField
+            name="slow"
+            label="Slow only"
+            checked={filters(params).slow}
+          />
+          <CheckField
+            name="cached"
+            label="Cache hits"
+            checked={filters(params).cached}
+          />
+        </FilterForm>
+        {body.slow_ms !== null && (
+          <p className="note">Slow means above {latency(body.slow_ms)}.</p>
+        )}
+        <ExternalLink url={body.langfuse_url} label="Open these in Langfuse" />
+        <Table
+          columns={[
+            "Time",
+            "Trace",
+            "Tenant",
+            "Model",
+            "Status",
+            "Latency",
+            "Tokens in / out",
+            "Cost",
+            "Cache",
+            "Prompt version",
+          ]}
+          rows={body.requests.map((row, index) => ({
+            key: `${row.ts}/${index}`,
+            cells: [
+              utcTime(row.ts),
+              <ExternalLink key="trace" url={row.trace_url} label="Open trace" />,
+              row.tenant,
+              row.model,
+              String(row.status),
+              latency(row.latency_ms),
+              `${count(row.input_tokens)} / ${count(row.output_tokens)}`,
+              usd(row.cost_usd, 6),
+              row.cached ? "answered from cache" : "sent to the model",
+              row.prompt_version === null ? (
+                "none sent"
+              ) : (
+                <code key="pv">{shortSha(row.prompt_version)}</code>
+              ),
+            ],
+          }))}
         />
-        <CheckField
-          name="cached"
-          label="Cache hits"
-          checked={filters(params).cached}
+        <Pager
+          name={PAGE_PARAMS.requests}
+          page={body.requests_page}
+          pages={body.requests_pages}
+          params={params}
         />
-      </FilterForm>
-      {body.slow_ms !== null && (
-        <p className="note">Slow means above {latency(body.slow_ms)}.</p>
-      )}
-      <ExternalLink url={body.langfuse_url} label="Open these in Langfuse" />
-      <Table
-        columns={[
-          "Time",
-          "Trace",
-          "Tenant",
-          "Model",
-          "Status",
-          "Latency",
-          "Tokens in / out",
-          "Cost",
-          "Cache",
-          "Prompt version",
-        ]}
-        rows={body.requests.map((row, index) => ({
-          key: `${row.ts}/${index}`,
-          cells: [
-            utcTime(row.ts),
-            <ExternalLink key="trace" url={row.trace_url} label="Open trace" />,
-            row.tenant,
-            row.model,
-            String(row.status),
-            latency(row.latency_ms),
-            `${count(row.input_tokens)} / ${count(row.output_tokens)}`,
-            usd(row.cost_usd, 6),
-            row.cached ? "answered from cache" : "sent to the model",
-            row.prompt_version === null ? (
-              "none sent"
-            ) : (
-              <code key="pv">{shortSha(row.prompt_version)}</code>
-            ),
-          ],
-        }))}
-      />
-      <Pager
-        name={PAGE_PARAMS.requests}
-        page={body.requests_page}
-        pages={body.requests_pages}
-        params={params}
-      />
+      </Panel>
     </>
   ),
   WINDOW_LINES.requests,
