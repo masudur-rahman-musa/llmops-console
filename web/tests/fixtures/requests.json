@@ -37,6 +37,7 @@
     }
   ],
   "cache_hit_rate": 0.3125,
+  "prompt_cache_share": 0.4213,
   "per_day": [
     {
       "day": "2026-10-24",

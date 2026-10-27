@@ -129,6 +129,7 @@ class CostRead(_Read):
     savings_usd_total: float
     cost_per_request: tuple[AliasCost, ...]
     top_users: tuple[UserCost, ...] = ()
+    prompt_cache_saved_usd: float = 0.0
 
 
 class BlockedRelease(_Read):
@@ -252,6 +253,31 @@ def _accuracy(metrics: object) -> float | None:
     return _number(metrics.get("check_score")) if isinstance(metrics, dict) else None
 
 
+def _prompt_cache_saving(prices: PriceTable, row: tuple[Any, ...]) -> Decimal:
+    """What one row group's prompt cache saved: its price with every cache token billed
+    as plain input, minus its real price, at the price in force at its first row.
+
+    Below zero when writes cost more than reads saved; 0 for an unpriced model or one
+    with no cache rates. Pinned by tests/storage/test_prompt_cache_reads_postgres.py.
+    """
+    provider, model, input_tokens, output_tokens, reads, writes, first_ts = row
+    key = f"{provider}/{model}"
+    plain, out, read, write = int(input_tokens), int(output_tokens), int(reads), int(writes)
+    as_input = Usage(
+        prompt_tokens=plain + read + write,
+        completion_tokens=out,
+        total_tokens=plain + read + write + out,
+    )
+    real = Usage(
+        prompt_tokens=plain,
+        completion_tokens=out,
+        total_tokens=plain + read + write + out,
+        cache_read_tokens=read,
+        cache_write_tokens=write,
+    )
+    return cost_for(prices, key, first_ts, as_input).usd - cost_for(prices, key, first_ts, real).usd
+
+
 def _tenant_clause(tenant: str | None) -> tuple[sql.Composable, tuple[str, ...]]:
     """` AND tenant = %s` and its parameter, or nothing when no tenant is asked for."""
     if tenant is None:
@@ -362,14 +388,23 @@ class PostgresConsoleReader:
         with self._pool.connection() as conn:
             rows = conn.execute(
                 sql.SQL(
-                    "SELECT model, coalesce(sum(input_tokens), 0), coalesce(sum(output_tokens), 0) "
+                    "SELECT model, coalesce(sum(input_tokens), 0), "
+                    "coalesce(sum(output_tokens), 0), coalesce(sum(cache_read_tokens), 0), "
+                    "coalesce(sum(cache_write_tokens), 0) "
                     "FROM {} WHERE ts >= %s AND ts <= %s AND status < 500 "
                     "GROUP BY model ORDER BY model LIMIT %s"
                 ).format(self._table("cost_ledger")),
                 (now - timedelta(days=days), now, ROW_LIMIT),
             ).fetchall()
         return tuple(
-            ModelTokens(model=row[0], input=float(row[1]), output=float(row[2])) for row in rows
+            ModelTokens(
+                model=row[0],
+                input=float(row[1]),
+                output=float(row[2]),
+                cache_read=float(row[3]),
+                cache_write=float(row[4]),
+            )
+            for row in rows
         )
 
     def cost(self, *, days: int, tenant: str | None, now: datetime, prices: PriceTable) -> CostRead:
@@ -402,6 +437,16 @@ class PostgresConsoleReader:
                 ).format(self._table("cost_ledger"), where_tenant),
                 (since, *tenant_params),
             ).fetchall()
+            prompt_cache_rows = conn.execute(
+                sql.SQL(
+                    "SELECT provider, model, sum(input_tokens), sum(output_tokens), "
+                    "sum(cache_read_tokens), sum(cache_write_tokens), min(ts) FROM {} "
+                    "WHERE NOT cached AND status < 500 AND ts >= %s AND ts <= %s{} "
+                    "AND (cache_read_tokens > 0 OR cache_write_tokens > 0) "
+                    "GROUP BY provider, model, price_version"
+                ).format(self._table("cost_ledger"), where_tenant),
+                (since, now, *tenant_params),
+            ).fetchall()
             alias_rows = conn.execute(
                 sql.SQL(
                     "SELECT alias, sum(cost_usd) / count(*) FROM {} "
@@ -431,6 +476,9 @@ class PostgresConsoleReader:
                 total_tokens=int(input_tokens) + int(output_tokens),
             )
             saved[(day, row_tenant)] += cost_for(prices, f"{provider}/{model}", first_ts, usage).usd
+        prompt_saved = sum(
+            (_prompt_cache_saving(prices, row) for row in prompt_cache_rows), Decimal(0)
+        )
         savings = tuple(
             Saving(day=day, tenant=row_tenant, saved_usd=float(usd))
             for (day, row_tenant), usd in sorted(saved.items())
@@ -450,6 +498,7 @@ class PostgresConsoleReader:
             ),
             savings=savings,
             savings_usd_total=float(sum(saved.values(), Decimal(0))),
+            prompt_cache_saved_usd=float(prompt_saved),
             cost_per_request=tuple(
                 AliasCost(alias=row[0], cost_usd=float(row[1])) for row in alias_rows
             ),

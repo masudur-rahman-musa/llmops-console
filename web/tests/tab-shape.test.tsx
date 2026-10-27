@@ -162,7 +162,8 @@ describe("every tab has the same shape", () => {
 
     expect(cards(html).map((item) => [item.label, item.value])).toEqual([
       ["Requests", "650"],
-      ["Cache hit rate", "31.25%"],
+      ["Answer cache hit rate", "31.25%"],
+      ["Prompt cache share", "42.13%"],
       ["Values hidden", "48"],
       ["Self-approvals blocked", "5"],
     ]);
@@ -174,7 +175,7 @@ describe("every tab has the same shape", () => {
     unknown.cache_hit_rate = null;
     const nulls = await render("requests", unknown);
     expect(card(nulls, "Self-approvals blocked").value).toBe("n/a");
-    expect(card(nulls, "Cache hit rate").value).toBe("n/a");
+    expect(card(nulls, "Answer cache hit rate").value).toBe("n/a");
   });
 
   it("requests chart stacks answered and failed per day", async () => {
@@ -214,7 +215,8 @@ describe("every tab has the same shape", () => {
 
     expect(cards(html).map((item) => [item.label, item.value])).toEqual([
       ["This month's spend", "$61.00"],
-      ["Cache saved", "$4.55"],
+      ["Answer cache saved", "$4.55"],
+      ["Prompt cache saved", "$0.000120"],
       ["support-fast", "$0.0042"],
       ["support-smart", "$0.0187"],
     ]);

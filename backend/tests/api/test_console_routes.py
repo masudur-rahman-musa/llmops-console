@@ -351,6 +351,7 @@ POSTGRES_EMPTY: dict[str, dict[str, Any]] = {
         "days": [],
         "savings": [],
         "savings_usd_total": None,
+        "prompt_cache_saved_usd": None,
         "month_spend_usd": None,
         "cost_per_request": [],
         "top_users": [],

@@ -36,6 +36,7 @@ from app.schemas.dashboard import (
     HomePage,
     ModelAlias,
     ModelCandidate,
+    ModelTokens,
     QualityPage,
     RedactionCount,
     RefusalCount,
@@ -143,6 +144,14 @@ def home(request: Request, store: PolicyDep, settings: SettingsDep) -> HomePage:
     )
 
 
+def prompt_cache_share(tokens: tuple[ModelTokens, ...]) -> float | None:
+    """Cache reads over all input (plain, cache reads and cache writes); null with no input,
+    since no traffic is not a 0% share. Pinned by tests/api/test_console_prompt_cache.py."""
+    reads = sum(row.cache_read for row in tokens)
+    total = sum(row.input + row.cache_read + row.cache_write for row in tokens)
+    return None if total == 0 else reads / total
+
+
 @router.get(CONSOLE_COST)
 def cost(
     request: Request, prices: PricesDep, days: Days = DEFAULT_DAYS, tenant: str | None = None
@@ -169,6 +178,7 @@ def cost(
         estimated=True,
         budgets=budgets(request, tenant, spend),
         month_spend_usd=None if spend is None else sum(spend.values()),
+        prompt_cache_saved_usd=None if read is None else read.prompt_cache_saved_usd,
         cost_per_request=() if read is None else read.cost_per_request,
         top_users=() if read is None else read.top_users,
     )
@@ -322,6 +332,7 @@ def requests(
         guardrail_blocks=blocks,
         tokens=tokens,
         cache_hit_rate=hit_rate,
+        prompt_cache_share=None if ledger_read is None else prompt_cache_share(tokens),
         per_day=tuple(
             DayRequests(
                 day=day,

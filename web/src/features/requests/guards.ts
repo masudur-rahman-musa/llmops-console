@@ -9,6 +9,7 @@ export type RequestsBody = {
   guardrail_blocks: number | null;
   tokens: Array<{ model: string; input: number; output: number }>;
   cache_hit_rate: number | null;
+  prompt_cache_share: number | null;
   per_day: Array<{ day: string; requests: number; errors: number | null }>;
   requests: Array<{
     ts: string;
@@ -38,6 +39,7 @@ const check = shape({
   guardrail_blocks: nullable(num),
   tokens: listOf(shape({ model: str, input: num, output: num })),
   cache_hit_rate: nullable(num),
+  prompt_cache_share: nullable(num),
   per_day: listOf(shape({ day: str, requests: int, errors: nullable(num) })),
   requests: listOf(
     shape({

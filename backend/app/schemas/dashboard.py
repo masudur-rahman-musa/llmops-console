@@ -179,7 +179,8 @@ class Budget(_Body):
 
 class CostPage(_Body):
     """`month_spend_usd` is every tenant's not-cached ledger spend this UTC month, the
-    budgets' own read summed; null when Postgres is down or unconfigured."""
+    budgets' own read summed; null when Postgres is down or unconfigured.
+    `prompt_cache_saved_usd` is what the provider's prompt cache saved, null likewise."""
 
     sources: Sources
     rollup_populated: bool | None
@@ -189,6 +190,7 @@ class CostPage(_Body):
     estimated: bool
     budgets: tuple[Budget, ...]
     month_spend_usd: float | None
+    prompt_cache_saved_usd: float | None
     cost_per_request: tuple[AliasCost, ...]
     top_users: tuple[UserCost, ...]
 
@@ -236,9 +238,13 @@ class RefusalCount(_Body):
 
 
 class ModelTokens(_Body):
+    """`input` is plain input; `cache_read` and `cache_write` are the prompt-cache tokens."""
+
     model: str
     input: float
     output: float
+    cache_read: float = 0.0
+    cache_write: float = 0.0
 
 
 class DayRequests(_Body):
@@ -260,7 +266,8 @@ class RequestsPage(_Body):
     request's filters. `slow_ms` is the window's p95 latency (null with no latencies),
     `tenants` and `models` are the window's distinct values for the filter lists, and
     `langfuse_url` opens the same requests in Langfuse (null without a project URL). `per_day` has
-    every window day, oldest first, and is empty with `tokens` when the ledger is down."""
+    every window day, oldest first, and is empty with `tokens` when the ledger is down.
+    `prompt_cache_share` is cache reads over all input in `tokens`, null when there is none."""
 
     sources: Sources
     redactions: tuple[RedactionCount, ...]
@@ -268,6 +275,7 @@ class RequestsPage(_Body):
     guardrail_blocks: float | None
     tokens: tuple[ModelTokens, ...]
     cache_hit_rate: float | None
+    prompt_cache_share: float | None
     per_day: tuple[DayRequests, ...]
     requests: tuple[RequestRow, ...]
     requests_page: int

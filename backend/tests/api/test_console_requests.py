@@ -317,6 +317,7 @@ def test_requests_body_maps_counts(wired: Wired) -> None:
         "guardrail_blocks",
         "tokens",
         "cache_hit_rate",
+        "prompt_cache_share",
         "per_day",
         "requests",
         "requests_page",
@@ -337,8 +338,20 @@ def test_requests_body_maps_counts(wired: Wired) -> None:
     ]
     assert body["guardrail_blocks"] == 5
     assert sorted(body["tokens"], key=lambda t: t["model"]) == [
-        {"model": "claude-haiku-5-5", "input": 120450, "output": 30210},
-        {"model": "gpt-5-mini", "input": 8800, "output": 2100},
+        {
+            "model": "claude-haiku-5-5",
+            "input": 120450,
+            "output": 30210,
+            "cache_read": 0.0,
+            "cache_write": 0.0,
+        },
+        {
+            "model": "gpt-5-mini",
+            "input": 8800,
+            "output": 2100,
+            "cache_read": 0.0,
+            "cache_write": 0.0,
+        },
     ]
     assert body["cache_hit_rate"] == 0.3125
     assert [(row["tenant"], row["prompt_version"]) for row in body["requests"]] == [
@@ -522,6 +535,7 @@ def test_nothing_configured_is_200_with_both_sources_unconfigured(admin_settings
         "guardrail_blocks": None,
         "tokens": [],
         "cache_hit_rate": None,
+        "prompt_cache_share": None,
         "per_day": [],
         "requests": [],
         "requests_page": 1,

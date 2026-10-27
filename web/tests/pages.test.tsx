@@ -178,7 +178,8 @@ describe("console pages", () => {
     expect(has(cost, "2026-09-14 globex-eu local 268 54 $0.00")).toBe(true);
     expect(cardTexts(cost)).toEqual([
       "This month's spend $61.00",
-      "Cache saved $4.55",
+      "Answer cache saved $4.55",
+      "Prompt cache saved $0.000120",
       "support-fast $0.0042",
       "support-smart $0.0187",
     ]);
@@ -306,7 +307,7 @@ describe("console pages", () => {
     // Catches savings rounded to cents: a total of $0.0000257 must not read $0.00.
     const body = fixture("cost");
     body.savings_usd_total = 0.0000257;
-    expect(cardTexts(await render("cost", body))).toContain("Cache saved $0.000026");
+    expect(cardTexts(await render("cost", body))).toContain("Answer cache saved $0.000026");
   });
 
   it("home renders no eval yet when last_eval is null", async () => {
@@ -442,7 +443,7 @@ describe("console pages", () => {
       expect(has(html, "Not measured yet."), label).toBe(true);
       expect(html, label).not.toContain("Cost per 1,000 turns");
       expect(has(html, "2026-09-15 acme-eu mistral 412 37 $18.25"), label).toBe(true);
-      expect(cardTexts(html), label).toContain("Cache saved $4.55");
+      expect(cardTexts(html), label).toContain("Answer cache saved $4.55");
       expect(cardTexts(html), label).toContain("support-fast $0.0042");
     }
   });

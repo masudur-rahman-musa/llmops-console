@@ -9,6 +9,7 @@ export type CostBody = {
   savings_usd_total: number | null;
   budgets: Array<{ tenant: string; cap_usd: number; spent_usd: number | null; ratio: number | null }>;
   month_spend_usd: number | null;
+  prompt_cache_saved_usd: number | null;
   cost_per_request: Array<{ alias: string; cost_usd: number }>;
   top_users: Array<{ tenant: string; user_id: string; requests: number; cost_usd: number }>;
 };
@@ -20,6 +21,7 @@ const check = shape({
   savings_usd_total: nullable(num),
   budgets: listOf(shape({ tenant: str, cap_usd: num, spent_usd: nullable(num), ratio: nullable(num) })),
   month_spend_usd: nullable(num),
+  prompt_cache_saved_usd: nullable(num),
   cost_per_request: listOf(shape({ alias: str, cost_usd: num })),
   top_users: listOf(shape({ tenant: str, user_id: str, requests: int, cost_usd: num })),
 });

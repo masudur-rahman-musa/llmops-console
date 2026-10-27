@@ -10,6 +10,7 @@
     { "day": "2026-09-14", "tenant": "globex-eu", "saved_usd": 1.45 }
   ],
   "savings_usd_total": 4.55,
+  "prompt_cache_saved_usd": 0.00012,
   "month_spend_usd": 61.0,
   "estimated": true,
   "budgets": [
