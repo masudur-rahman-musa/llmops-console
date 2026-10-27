@@ -61,7 +61,7 @@ describe("findJunk", () => {
   it("only the text a reader sees is checked", () => {
     // Catches a check that reads attributes, scripts or styles, so every chart's raw coordinates and the page's own script would fail it.
     expect(findJunk('<svg><circle cx="173.33333333333334" cy="20" r="3"></circle></svg>')).toEqual([]);
-    expect(findJunk('<a href="https://cloud.langfuse.com/traces/0af7651916cd43dd8448eb211c80319c">Open trace</a>')).toEqual([]);
+    expect(findJunk('<a href="https://cloud.langfuse.com/traces/0af7651916cd43dd8448eb211c80319c">Public Trace</a>')).toEqual([]);
     expect(findJunk("<script>self.__next_f.push([1,null,\"$undefined\"])</script><p>ok</p>")).toEqual([]);
     expect(findJunk("<style>.a{width:33.33333333%}</style><p>ok</p>")).toEqual([]);
   });

@@ -102,12 +102,12 @@ describe("requests page", () => {
   });
 
   it("requests page lists requests with prompt version and trace link", async () => {
-    // Catches a request list that drops the prompt version, prints a null one as "null" or blank, or shows no "Open trace" link to the trace url.
+    // Catches a request list that drops the prompt version, prints a null one as "null" or blank, or shows no "Public Trace" link to the trace url.
     const html = await render();
 
     const first = rowWith(html, "nordlicht");
-    const links = anchors(first).filter((anchor) => anchor.label === "Open trace");
-    expect(links).toEqual([{ href: TRACE_URL, label: "Open trace" }]);
+    const links = anchors(first).filter((anchor) => anchor.label === "Public Trace");
+    expect(links).toEqual([{ href: TRACE_URL, label: "Public Trace" }]);
     expect(first).toMatch(/rel="noopener noreferrer"/);
     expect(text(first)).toContain("9f2c4be07a1d");
     expect(text(first)).not.toContain("none sent");
@@ -119,17 +119,17 @@ describe("requests page", () => {
   });
 
   it("request with no trace url shows no link", async () => {
-    // Catches a row that links to a made-up trace address, or shows an empty "Open trace" anchor, when the console-api sent a null trace_url.
+    // Catches a row that links to a made-up trace address, or shows an empty "Public Trace" anchor, when the console-api sent a null trace_url.
     const html = await render();
     const second = rowWith(html, "none sent");
     expect(anchors(second)).toEqual([]);
-    expect(text(second)).not.toContain("Open trace");
+    expect(text(second)).not.toContain("Public Trace");
 
     const body = fixture();
     for (const row of body.requests as Array<Record<string, unknown>>) row.trace_url = null;
     const bare = await render(body);
-    expect(anchors(bare).filter((anchor) => anchor.label === "Open trace")).toEqual([]);
-    expect(text(bare)).not.toContain("Open trace");
+    expect(anchors(bare).filter((anchor) => anchor.label === "Public Trace")).toEqual([]);
+    expect(text(bare)).not.toContain("Public Trace");
   });
 
   it("trace column comes right after time", async () => {
@@ -141,7 +141,7 @@ describe("requests page", () => {
     expect(heads.slice(time, time + 3)).toEqual(["Time", "Trace", "Tenant"]);
 
     const cells = Array.from(rowWith(html, "nordlicht").matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g), (match) => match[1]);
-    expect(text(cells[1])).toBe("Open trace");
+    expect(text(cells[1])).toBe("Public Trace");
     expect(text(cells[2])).toBe("nordlicht");
   });
 

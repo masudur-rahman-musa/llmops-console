@@ -165,7 +165,7 @@ export default consolePage(
             key: `${row.ts}/${index}`,
             cells: [
               utcTime(row.ts),
-              <ExternalLink key="trace" url={row.trace_url} label="Open trace" />,
+              <ExternalLink key="trace" url={row.trace_url} label="Public Trace" />,
               row.tenant,
               row.model,
               String(row.status),
