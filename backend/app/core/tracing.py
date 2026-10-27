@@ -244,7 +244,8 @@ TAGS_KEY = "langfuse.trace.tags"
 """The root span label Langfuse reads a trace's tags from."""
 
 PUBLIC_KEY = "langfuse.trace.public"
-"""The root span label that makes a trace readable by anyone with its link."""
+"""The label that makes a trace readable by anyone with its link. It goes on EVERY span of a
+public request, because Langfuse keeps the value of the span that started last."""
 
 INPUT_NOT_SENT = "not sent: prompts stay inside the gateway"
 OUTPUT_NOT_SENT = "not sent"
@@ -495,6 +496,8 @@ def start_generation(
         name, context=record.context, record_exception=False, set_status_on_exception=False
     )
     span.set_attributes(plain_notes())
+    if record.public:
+        span.set_attribute(PUBLIC_KEY, True)
     generation = Generation(span, record.span, content=conversation is not None)
     if conversation is None:
         span.set_attribute(
@@ -520,6 +523,8 @@ class RequestTrace:
     span: Span
     context: Context
     error_code: str | None = None
+    public: bool = False
+    """Set by `mark_public`; every step span opened after that copies the label."""
 
 
 def request_trace(scope: Scope) -> RequestTrace | None:
@@ -615,15 +620,19 @@ def annotate(scope: Scope, attributes: SpanAttributes) -> None:
             record.span.set_attribute(TAGS_KEY, (f"tenant:{attributes.tenant}",))
 
 
-def mark_public(scope: Scope) -> None:
-    """Make this request's trace public in Langfuse, on the root span only.
+def mark_public(scope: Scope, step: Span | None = None) -> None:
+    """Make this request's trace public in Langfuse, on every span.
 
-    The caller decides whether it may be public; this only sets the label
-    (`test_the_switch_on_marks_the_root_span_public`).
+    Labels the root and `step` (the span open now) and remembers the choice, so each
+    step span opened later copies it (`test_the_switch_on_marks_every_span_public`).
+    The caller decides whether it may be public; this only sets the label.
     """
     record = request_trace(scope)
     if record is not None:
+        record.public = True
         record.span.set_attribute(PUBLIC_KEY, True)
+        if step is not None:
+            step.set_attribute(PUBLIC_KEY, True)
 
 
 def note_request(scope: Scope, *, alias: str, messages: int | None = None) -> None:
@@ -668,6 +677,8 @@ def stage_span(scope: Scope, name: str) -> Iterator[Span | None]:
         name, context=record.context, record_exception=False, set_status_on_exception=False
     ) as span:
         span.set_attributes(step_notes())
+        if record.public:
+            span.set_attribute(PUBLIC_KEY, True)
         try:
             yield span
         except GatewayError as exc:

@@ -1,6 +1,6 @@
-"""Public traces: the root span of a request carries `langfuse.trace.public` when it may.
+"""Public traces: every span of a request carries `langfuse.trace.public` when it may.
 
-An earlier change and a design note. Every case is a real request through `TestClient`, read back from the
+An earlier change, a design note and 0062. Every case is a real request through `TestClient`, read back from the
 in-memory span exporter. The gateway switch is `Settings.public_trace_langfuse`; a tenant can
 opt out with `trace_public: false` in the policy, and cannot turn it on alone.
 """
@@ -122,27 +122,43 @@ def send_chat(client: TestClient) -> None:
     assert response.status_code == 200, response.text
 
 
-def test_the_switch_on_marks_the_root_span_public(
+def test_the_switch_on_marks_every_span_public(
     on_client: TestClient, spans: InMemorySpanExporter
 ) -> None:
-    """Catches an implementation that never sets the key, sets a string "true" instead of a
-    bool, or sets it on every span instead of the root only."""
+    """Catches a label left off any span (root only, or `auth` before the decision), a string
+    "true" instead of a bool, or a provider step opened without the copy."""
     send_chat(on_client)
     recorded = finished(spans)
 
-    assert len(recorded) > 1, "a single span would make the root-only check empty"
-    assert dict(root_of(recorded).attributes or {}).get(PUBLIC_KEY) is True
-    assert carriers(recorded) == [root_of(recorded)]
+    assert len(recorded) > 1, "a single span would make the every-span check empty"
+    names = {span.name for span in recorded}
+    assert "auth" in names
+    assert any(name.startswith("provider:") for name in names)
+    for span in recorded:
+        assert dict(span.attributes or {}).get(PUBLIC_KEY) is True, span.name
 
 
-def test_an_embedding_request_is_public_too(
+def test_every_span_of_an_embedding_request_is_public(
     on_embeddings_client: TestClient, spans: InMemorySpanExporter
 ) -> None:
     """Catches a mark placed in the chat route only, which leaves embedding traces private."""
     response = post_embeddings(on_embeddings_client, embeddings_body())
     assert response.status_code == 200, response.text
 
-    assert dict(root_of(finished(spans)).attributes or {}).get(PUBLIC_KEY) is True
+    recorded = finished(spans)
+    assert len(recorded) > 1
+    for span in recorded:
+        assert dict(span.attributes or {}).get(PUBLIC_KEY) is True, span.name
+
+
+def test_the_last_started_span_carries_the_mark(
+    on_client: TestClient, spans: InMemorySpanExporter
+) -> None:
+    """Langfuse keeps the value of the span that started last, so that span must be public."""
+    send_chat(on_client)
+
+    last = max(finished(spans), key=lambda span: span.start_time or 0)
+    assert dict(last.attributes or {}).get(PUBLIC_KEY) is True, last.name
 
 
 def test_the_switch_off_marks_nothing(off_client: TestClient, spans: InMemorySpanExporter) -> None:
@@ -158,7 +174,7 @@ def test_a_tenant_that_opts_out_stays_private(
     """Catches an implementation that ignores `trace_public: false`. The same app marks the
     request first without the opt-out, so the key's absence afterwards is the opt-out's doing."""
     send_chat(on_client)
-    assert len(carriers(finished(spans))) == 1, "the control request was not marked"
+    assert carriers(finished(spans)), "the control request was not marked"
 
     spans.clear()
     with evals_trace_public(tmp_path, on_client, False):

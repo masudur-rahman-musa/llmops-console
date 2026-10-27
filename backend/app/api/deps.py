@@ -281,6 +281,8 @@ def request_context(
             user_id=checked_user_id(x_user, param="X-User") if x_user is not None else None,
         )
         note_step(span, input="API key and X-Tenant", output=f"accepted: tenant {tenant}")
+        if _trace_is_public(request, tenant):
+            mark_public(request.scope, span)
 
     annotate(
         request.scope,
@@ -292,8 +294,6 @@ def request_context(
         ),
     )
     label_tenant(request.scope, context.tenant)
-    if _trace_is_public(request, context.tenant):
-        mark_public(request.scope)
     return context
 
 

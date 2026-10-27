@@ -36,6 +36,7 @@ Langfuse shows a trace only to members of the project, unless the trace is publi
 
 - **The switch.** The gateway setting `OPSCONSOLE_PUBLIC_TRACE_LANGFUSE=true` makes every trace public, for every tenant, including tenants added later. Unset or `false`, no trace is public.
 - **Opting a tenant out.** A tenant with `trace_public: false` in `backend/config/routing.yaml` stays private while the switch is on. A tenant without the line follows the switch. `trace_public: true` does nothing while the switch is off.
+- **Every span.** The label goes on every span of a public request, not only the first, because Langfuse keeps the value from the span that started last.
 - **Refused requests.** A request refused at auth is never public.
 - **What a visitor sees.** With `trace_content` on, a public trace shows the redacted conversation and the answer to anyone with its link. What redaction misses (above) reaches them too.
 - **Undoing it.** Turning the switch off stops new traces being public. A trace already public stays public until you switch it off in Langfuse, on the trace's own page.
