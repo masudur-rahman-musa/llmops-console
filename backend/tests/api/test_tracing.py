@@ -71,6 +71,7 @@ from app.providers.base import (
     TextDelta,
     UsageTotal,
 )
+from app.storage import InMemoryCostLedgerWriter
 
 from .conftest import (
     API_KEYS,
@@ -209,6 +210,14 @@ INPUT_NOTE_KEY = "langfuse.observation.input"
 OUTPUT_NOTE_KEY = "langfuse.observation.output"
 TAGS_KEY = "langfuse.trace.tags"
 FINISH_REASON_KEY = "langfuse.observation.metadata.finish_reason"
+METADATA_PREFIX = "langfuse.observation.metadata."
+STEP_MODEL_KEY = f"{METADATA_PREFIX}model"
+STEP_INPUT_TOKENS_KEY = f"{METADATA_PREFIX}input_tokens"
+STEP_OUTPUT_TOKENS_KEY = f"{METADATA_PREFIX}output_tokens"
+STEP_COST_KEY = f"{METADATA_PREFIX}cost_usd"
+STEP_COST_WIRE_KEYS = frozenset(
+    {STEP_MODEL_KEY, STEP_INPUT_TOKENS_KEY, STEP_OUTPUT_TOKENS_KEY, STEP_COST_KEY}
+)
 PREVIEW_WIRE_KEYS = frozenset({INPUT_NOTE_KEY, OUTPUT_NOTE_KEY, TAGS_KEY})
 ALLOWED_WIRE_KEYS = (
     (ALLOWED_ATTRIBUTE_KEYS - {"session", "user_id"})
@@ -216,10 +225,11 @@ ALLOWED_WIRE_KEYS = (
     | GENERATION_WIRE_KEYS
     | PREVIEW_WIRE_KEYS
     | {FINISH_REASON_KEY}
+    | STEP_COST_WIRE_KEYS
 )
 """Every key a span may carry on the wire: the `SpanAttributes` keys with the session
-renamed, plus the generation keys, the three preview keys and the finish
-reason metadata."""
+renamed, plus the generation keys, the three preview keys, the finish
+reason metadata and the four cost metadata keys of the provider step."""
 
 # A string that appears nowhere else in this repository, so finding it on a span
 # can only mean the request's own message body was copied there.
@@ -1231,14 +1241,13 @@ def no_usage_client(settings: Settings, no_usage_stub: StubAdapter) -> Iterator[
 def test_the_provider_span_is_a_generation_with_model_tokens_and_cost(
     chat_client: TestClient, chat_stub: StubAdapter, spans: InMemorySpanExporter
 ) -> None:
-    """Catches an implementation that leaves the provider call a plain span, labels it with
+    """Catches an implementation that leaves the request root a plain span, labels it with
     the alias instead of the provider's model, or books a second price instead of the
     one `X-Gateway-Cost-USD` carries, so Langfuse's Model, Tokens and Cost stay empty or wrong."""
     response = send_chat(chat_client, None)
     assert response.status_code == 200, response.text
 
-    provider = span_named(finished(spans), PROVIDER_SPAN)
-    attributes = attributes_of(provider)
+    attributes = attributes_of(root_of(finished(spans)))
 
     assert attributes[OBSERVATION_TYPE_KEY] == GENERATION
     assert attributes[MODEL_KEY] == chat_stub.requests[-1].model
@@ -1251,8 +1260,8 @@ def test_the_provider_span_is_a_generation_with_model_tokens_and_cost(
 def test_only_the_provider_span_is_a_generation(
     openai_chat_client: TestClient, spans: InMemorySpanExporter
 ) -> None:
-    """Catches a label applied to every stage span (or to the root), which would make
-    Langfuse count auth, route and cache steps as model calls and double every token total."""
+    """Catches a label left on the provider step, or put on any stage span, next to the
+    root's: Langfuse would count the one model call twice and double every token and cost total."""
     response = post_chat(
         openai_chat_client,
         chat_body(model=ALIAS, messages=[{"role": "user", "content": TEXT_WITH_PII}]),
@@ -1261,12 +1270,15 @@ def test_only_the_provider_span_is_a_generation(
     assert response.status_code == 200, response.text
 
     recorded = finished(spans)
-    others = [span for span in recorded if span.name != f"provider:{OPENAI_PROVIDER}"]
+    root = root_of(recorded)
+    others = [span for span in recorded if span is not root]
 
-    assert OBSERVATION_TYPE_KEY in attributes_of(
-        span_named(recorded, f"provider:{OPENAI_PROVIDER}")
-    ), "the check below is only meaningful if the provider span is the generation"
-    assert {AUTH_SPAN, ROUTE_SPAN, CACHE_SPAN, REDACT_SPAN} <= {span.name for span in others}
+    assert attributes_of(root)[OBSERVATION_TYPE_KEY] == GENERATION, (
+        "the check below is only meaningful if the root is the generation"
+    )
+    assert {AUTH_SPAN, ROUTE_SPAN, CACHE_SPAN, REDACT_SPAN, OPENAI_PROVIDER_SPAN} <= {
+        span.name for span in others
+    }
     for span in others:
         assert not is_labelled(span), f"{span.name} carries generation labels"
 
@@ -1284,8 +1296,9 @@ def test_a_streamed_generation_carries_the_streams_usage(
     response = post_chat(slow_stream_client, chat_body(model=ALIAS, stream=True))
     assert response.status_code == 200, response.text
 
-    provider = span_named(finished(spans), PROVIDER_SPAN)
-    attributes = attributes_of(provider)
+    recorded = finished(spans)
+    provider = span_named(recorded, PROVIDER_SPAN)
+    attributes = attributes_of(root_of(recorded))
 
     assert duration_seconds(provider) >= delay
     assert attributes[OBSERVATION_TYPE_KEY] == GENERATION
@@ -1302,7 +1315,7 @@ def test_a_stream_without_usage_ends_with_the_model_only(
     response = post_chat(no_usage_client, chat_body(model=ALIAS, stream=True))
     assert response.status_code == 200, response.text
 
-    attributes = attributes_of(span_named(finished(spans), PROVIDER_SPAN))
+    attributes = attributes_of(root_of(finished(spans)))
 
     assert attributes[OBSERVATION_TYPE_KEY] == GENERATION
     assert attributes[MODEL_KEY] == no_usage_stub.requests[-1].model
@@ -1319,7 +1332,7 @@ def test_an_embeddings_call_is_a_generation_with_input_tokens(
     response = send_embeddings(embeddings_client, None)
     assert response.status_code == 200, response.text
 
-    attributes = attributes_of(span_named(finished(spans), f"provider:{EMBED_PROVIDER}"))
+    attributes = attributes_of(root_of(finished(spans)))
 
     assert attributes[OBSERVATION_TYPE_KEY] == GENERATION
     assert attributes[MODEL_KEY] == embedding_stub.requests[-1].model
@@ -1848,3 +1861,162 @@ def test_an_unauthorized_request_has_no_tenant_tag(
     assert TAGS_KEY not in attributes_of(root)
     assert note_of(root, INPUT_NOTE_KEY) == PLAIN_INPUT
     assert note_of(root, OUTPUT_NOTE_KEY) == PLAIN_OUTPUT
+
+
+# --------------------------------------------------------------------------
+# an earlier change: the request root is the one generation; the provider step keeps metadata
+# --------------------------------------------------------------------------
+
+
+def test_the_root_carries_the_requests_cost(
+    chat_client: TestClient, chat_stub: StubAdapter, spans: InMemorySpanExporter
+) -> None:
+    """Catches a cost left only on the provider step, or priced again from the tokens: the
+    request row in Langfuse would show a dash, or a number other than the booked
+    `X-Gateway-Cost-USD`."""
+    response = send_chat(chat_client, None)
+    assert response.status_code == 200, response.text
+
+    attributes = attributes_of(root_of(finished(spans)))
+
+    assert attributes[OBSERVATION_TYPE_KEY] == GENERATION
+    assert attributes[MODEL_KEY] == chat_stub.requests[-1].model
+    assert attributes[MODEL_KEY] != ALIAS
+    assert attributes[INPUT_TOKENS_KEY] == STUB_USAGE.prompt_tokens
+    assert attributes[OUTPUT_TOKENS_KEY] == STUB_USAGE.completion_tokens
+    assert attributes[COST_KEY] == float(response.headers[COST_HEADER])
+    assert float(response.headers[COST_HEADER]) > 0, "a zero cost would pass a missing cost"
+
+
+def test_the_provider_step_shows_the_cost_as_metadata(
+    chat_client: TestClient, chat_stub: StubAdapter, spans: InMemorySpanExporter
+) -> None:
+    """Catches a step that keeps its `gen_ai.*` labels beside the root's (Langfuse would
+    count and price the call twice) and a step that drops its numbers altogether (a reader
+    opening the step would lose the model, tokens and cost they saw before)."""
+    response = send_chat(chat_client, None)
+    assert response.status_code == 200, response.text
+
+    recorded = finished(spans)
+    step = attributes_of(span_named(recorded, PROVIDER_SPAN))
+    root = attributes_of(root_of(recorded))
+
+    assert not [key for key in step if key.startswith("gen_ai.")]
+    assert OBSERVATION_TYPE_KEY not in step
+    assert step[STEP_MODEL_KEY] == root[MODEL_KEY] == chat_stub.requests[-1].model
+    assert step[STEP_INPUT_TOKENS_KEY] == root[INPUT_TOKENS_KEY] == STUB_USAGE.prompt_tokens
+    assert step[STEP_OUTPUT_TOKENS_KEY] == root[OUTPUT_TOKENS_KEY] == STUB_USAGE.completion_tokens
+    assert step[STEP_COST_KEY] == root[COST_KEY] == float(response.headers[COST_HEADER])
+
+
+def test_exactly_one_span_per_request_carries_a_cost(
+    chat_client: TestClient, spans: InMemorySpanExporter
+) -> None:
+    """Catches the cost written on the root and the step both under `gen_ai.usage.cost`:
+    Langfuse adds up every generation in a trace, so the session, user and Dashboard totals
+    would be double the booked cost."""
+    response = send_chat(chat_client, None)
+    assert response.status_code == 200, response.text
+
+    recorded = finished(spans)
+    carriers = [span for span in recorded if COST_KEY in attributes_of(span)]
+
+    assert len(recorded) > 1, "the claim is only meaningful with more than one span"
+    assert carriers == [root_of(recorded)]
+
+
+def test_a_streamed_root_carries_the_streams_cost(
+    finished_stream_client: TestClient, spans: InMemorySpanExporter
+) -> None:
+    """Catches a streamed root closed before the usage frame (no tokens, no cost), or one
+    priced from the plain-chat numbers instead of the cost the token sink booked."""
+    app = app_of(finished_stream_client)
+    previous = app.state.cost_ledger
+    writer = InMemoryCostLedgerWriter()
+    app.state.cost_ledger = writer
+    try:
+        response = post_chat(finished_stream_client, chat_body(model=ALIAS, stream=True))
+    finally:
+        app.state.cost_ledger = previous
+    assert response.status_code == 200, response.text
+    assert len(writer.rows) == 1
+
+    recorded = finished(spans)
+    attributes = attributes_of(root_of(recorded))
+    booked = float(writer.rows[0].cost_usd)
+
+    assert booked > 0, "a zero cost would pass a missing cost"
+    assert attributes[OBSERVATION_TYPE_KEY] == GENERATION
+    assert attributes[INPUT_TOKENS_KEY] == STREAM_USAGE.prompt_tokens
+    assert attributes[OUTPUT_TOKENS_KEY] == STREAM_USAGE.completion_tokens
+    assert attributes[COST_KEY] == booked
+    assert [span for span in recorded if COST_KEY in attributes_of(span)] == [root_of(recorded)]
+
+
+def test_an_embeddings_root_carries_the_cost(
+    embeddings_client: TestClient,
+    embedding_stub: EmbeddingStubAdapter,
+    spans: InMemorySpanExporter,
+) -> None:
+    """Catches the root move done for chat only: embeddings cost would stay on the step
+    and the two routes would count cost differently. Also catches output tokens invented
+    for a call that has none."""
+    response = send_embeddings(embeddings_client, None)
+    assert response.status_code == 200, response.text
+
+    recorded = finished(spans)
+    attributes = attributes_of(root_of(recorded))
+
+    assert attributes[OBSERVATION_TYPE_KEY] == GENERATION
+    assert attributes[MODEL_KEY] == embedding_stub.requests[-1].model
+    assert attributes[INPUT_TOKENS_KEY] == STUB_EMBEDDING_USAGE.prompt_tokens
+    assert OUTPUT_TOKENS_KEY not in attributes
+    assert attributes[COST_KEY] == float(response.headers[COST_HEADER])
+    assert not is_labelled(span_named(recorded, f"provider:{EMBED_PROVIDER}"))
+
+
+def test_a_fallback_counts_the_cost_once(
+    fallback_client: TestClient,
+    fallback_adapters: dict[str, FallbackStubAdapter],
+    spans: InMemorySpanExporter,
+) -> None:
+    """Catches a root that adds up the cost of every attempt, or takes the model of the
+    first (failed) attempt: the failed provider never charged, so the root must carry the
+    answering call's numbers only, once."""
+    fallback_adapters[FIRST_PROVIDER].chat_error = retryable_error(FIRST_PROVIDER)
+
+    response = post_chat(
+        fallback_client,
+        chat_body(model=FALLBACK_ALIAS),
+        key=TEST_KEYS[FALLBACK_TENANT],
+        tenant=FALLBACK_TENANT,
+        data_class=FALLBACK_CLASS,
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["x-gateway-provider"] == SECOND_PROVIDER
+
+    recorded = finished(spans)
+    steps = [span for span in recorded if span.name.startswith("provider:")]
+    attributes = attributes_of(root_of(recorded))
+
+    assert len(steps) == 2
+    for step in steps:
+        assert not is_labelled(step), f"{step.name} is a generation"
+    assert float(response.headers[COST_HEADER]) > 0, "a zero cost would pass a missing cost"
+    assert attributes[COST_KEY] == float(response.headers[COST_HEADER])
+    assert attributes[MODEL_KEY] == fallback_adapters[SECOND_PROVIDER].requests[-1].model
+    assert [span for span in recorded if COST_KEY in attributes_of(span)] == [root_of(recorded)]
+
+
+def test_a_failed_request_root_has_no_cost(
+    failing_client: TestClient, spans: InMemorySpanExporter
+) -> None:
+    """Catches a root that reports zero tokens or a zero cost when every provider failed:
+    Langfuse would show a free call that never happened, instead of a request with no usage."""
+    response = post_chat(failing_client, chat_body(model=ALIAS))
+    assert_error_body(response, status=502, code="PROVIDER_ERROR")
+
+    recorded = finished(spans)
+
+    assert PROVIDER_SPAN in {span.name for span in recorded}, "no provider was tried"
+    assert not [key for key in attributes_of(root_of(recorded)) if key.startswith("gen_ai.usage.")]

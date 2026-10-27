@@ -187,6 +187,10 @@ GENERATION_KEYS: dict[str, str] = {
 }
 """The standard `gen_ai.*` key each `GenerationAttributes` field goes out under."""
 
+STEP_METADATA_PREFIX = "langfuse.observation.metadata."
+"""Where a provider step shows the same model, tokens and cost: Langfuse shows
+metadata but neither adds it to a total nor prices it again."""
+
 
 class GenerationAttributes(BaseModel):
     """What the provider span may say beyond its name: model, tokens, cost.
@@ -212,6 +216,14 @@ class GenerationAttributes(BaseModel):
             if value is not None:
                 attributes[GENERATION_KEYS[field]] = value
         return attributes
+
+    def as_metadata(self) -> dict[str, str | float | bool | int]:
+        """The set fields as step metadata, with no type label and no `gen_ai.*` key."""
+        return {
+            STEP_METADATA_PREFIX + field: value
+            for field, value in self.model_dump().items()
+            if value is not None
+        }
 
 
 INPUT_NOTE_KEY = "langfuse.observation.input"
@@ -371,6 +383,13 @@ class Generation:
     `root` is the request's root span, which carries the Output note of the call
     that answered (`test_the_root_step_carries_the_provider_notes`).
 
+    The root, not this step, is the request's one Langfuse generation:
+    `report` puts the model, tokens and cost on the root under `gen_ai.*`, and on
+    this step only as metadata, so Langfuse counts the cost once. Each attempt
+    writes over the root, so the call that answered is the one it shows
+    (`test_exactly_one_span_per_request_carries_a_cost`,
+    `test_a_fallback_counts_the_cost_once`).
+
     With `content` on, the Output is the answer rather than a note, and the
     finish reason goes as metadata instead. A stream hands its text
     pieces to `add_text`, and `end` writes them joined
@@ -395,9 +414,12 @@ class Generation:
             self._root.set_attribute(key, value)
 
     def report(self, attributes: GenerationAttributes) -> None:
-        """Add what is now known to the open span."""
-        if self._span is not None and self._span.is_recording():
-            self._span.set_attributes(attributes.as_attributes())
+        """Add what is now known: as metadata on this step, as the generation on the root."""
+        if self._span is None or not self._span.is_recording():
+            return
+        self._span.set_attributes(attributes.as_metadata())
+        if self._root is not None and self._root.is_recording():
+            self._root.set_attributes(attributes.as_attributes())
 
     def note_output(
         self, *, finish_reason: str | None = None, tokens_out: int | None = None
@@ -453,7 +475,7 @@ def start_generation(
     messages: int | None = None,
     conversation: Sequence[tuple[str, str]] | None = None,
 ) -> Generation:
-    """Open a provider span as a Langfuse generation, labelled with the model now.
+    """Open a provider step, and label the root a generation of this model now.
 
     Parented on the root span from the scope, like `stage_span`, and with the
     same exception defaults off, so no provider message reaches the span. Its
