@@ -114,7 +114,7 @@ LEDGER_QUEUE_SIZE: Final[int] = 10000
 Decided without asking: 10 000 absorbs a burst of concurrent requests, or a
 database outage of a few minutes, without growing without bound. A row that fits
 in neither is counted as `dropped_full` and the chat reply still succeeds.
-Pinned by `test_the_buffer_holds_exactly_10000_rows`.
+A test pins the size.
 """
 
 LEDGER_RETRY_WAIT_START: Final[float] = 1.0
@@ -126,8 +126,7 @@ LEDGER_RETRY_WAIT_CAP: Final[float] = 30.0
 def next_retry_wait(current: float | None) -> float:
     """The wait after `current`: the start when there was none, else double, capped.
 
-    Pure, so the sequence is tested without a clock
-    (`test_the_retry_wait_doubles_from_one_second_to_a_thirty_second_cap`).
+    Pure, so the sequence is tested without a clock.
     """
     if current is None:
         return LEDGER_RETRY_WAIT_START
@@ -237,7 +236,7 @@ class PostgresCostLedgerWriter:
     `write` enqueues and returns at once so a slow or stuck database
     cannot hold a chat reply. A daemon thread drains the queue and does the
     actual INSERT. Where a failed INSERT failed decides what happens to the row
-    (a design note, pinned in `tests/storage/test_ledger_retry.py`):
+    (tests pin each case):
 
     * getting a connection, or the INSERT lost with its connection: nothing was
       committed, so the row goes to a retry buffer and is sent again;
@@ -397,8 +396,7 @@ class PostgresCostLedgerWriter:
         The stage is tracked by hand because the same exception class means
         different things at different places: an `OperationalError` from the
         INSERT is a lost connection with nothing committed, while one raised on
-        leaving the block is a failed commit that may have landed
-        (`test_a_failed_commit_is_dropped_unsure_and_never_sent_again`).
+        leaving the block is a failed commit that may have landed.
         """
         stage = "connect"
         try:
@@ -507,8 +505,8 @@ class NoDatabaseMonthSpendReader:
 class PostgresMonthSpendReader:
     """Sums `cost_usd` over one tenant's (or user's) not-cached rows of one UTC month.
 
-    Any `psycopg.Error` becomes `LedgerUnreadable`. Pinned by
-    `tests/storage/test_ledger_month_spend_postgres.py` and `test_ledger_month_spend.py`.
+    Any `psycopg.Error` becomes `LedgerUnreadable`. Tests pin
+    this, with and without a real Postgres.
     """
 
     def __init__(

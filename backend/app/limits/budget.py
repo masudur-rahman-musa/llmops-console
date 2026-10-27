@@ -167,7 +167,7 @@ def user_month_key(
     `{prefix}-user:{tenant}:{user_id}:{YYYY-MM}`, apart from the tenant's own key so a
     user's debit never adds to the tenant total. The tenant and month get the
     `month_key` checks and the user id `checked_user_id`, all before the key exists:
-    a colon in any of them would forge a segment. Pinned by `test_user_month_key_shape`.
+    a colon in any of them would forge a segment. A test pins the key shape.
     """
     month_key(tenant, month, prefix=prefix)
     checked_user_id(user_id)
@@ -178,7 +178,7 @@ def budget_seeded_key(tenant: str, month: str, *, prefix: str = BUDGET_KEY_PREFI
     """The marker saying one tenant's month counter was loaded from the ledger.
 
     `{prefix}-seeded:{tenant}:{YYYY-MM}`, checked the way `month_key` checks the counter's
-    key, before any command. Pinned by `test_the_marker_keys_are_checked_before_any_command`.
+    key, before any command. A test pins this.
     """
     month_key(tenant, month, prefix=prefix)
     return f"{prefix}-seeded:{tenant}:{month}"
@@ -211,8 +211,8 @@ return tonumber(redis.call('GET', KEYS[2]) or '0')
 
 One script, so two replicas loading at once cannot interleave: the second finds the
 marker and only reads. The counter is SET, not added to, so a debit that landed before
-the load is replaced by the ledger total, which holds or will hold that row. Pinned by
-`test_two_replicas_loading_at_once_count_the_spend_once`."""
+the load is replaced by the ledger total, which holds or will hold that row. A test pins
+this."""
 
 
 def to_micro_usd(usd: Decimal) -> int:

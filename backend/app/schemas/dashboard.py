@@ -85,8 +85,7 @@ class ReleaseMarker(_Body):
     status: str
     eval_run_id: str | None = None
     """The eval run that let this release through, so the Quality chart draws the marker
-    at that run. `None` when no run was recorded. Pinned by
-    tests/storage/test_dashboard_reads_postgres.py::test_a_release_marker_names_its_eval_run."""
+    at that run. `None` when no run was recorded. A test pins this."""
 
 
 class CategoryCount(_Body):

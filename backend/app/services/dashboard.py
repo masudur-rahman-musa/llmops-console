@@ -73,9 +73,7 @@ def budgets(
     `spend` is the cost page's Postgres read, not the Redis counter: the
     counter still enforces the cap but starts at zero after a Redis restart. A tenant
     missing from it spent nothing; `spend` itself null (Postgres down or unconfigured)
-    is an unknown spend, `null` rather than zero. Pinned by
-    `test_budgets_show_the_ledger_month_spend` and
-    `test_budgets_are_null_when_postgres_is_down`.
+    is an unknown spend, `null` rather than zero. Tests pin both.
     """
     store: PolicyStore = request.app.state.policy
     budgets: list[Budget] = []
@@ -118,7 +116,7 @@ def gate_scores(baseline_path: Path, runs: tuple[EvalRunSummary, ...]) -> tuple[
     """The newest run's gated scores beside the baseline's thresholds.
 
     A baseline that cannot be read or is not valid never fails the page: its
-    thresholds are null. Pinned by tests/api/test_quality_gate.py.
+    thresholds are null. Tests pin this.
     """
     newest = max(runs, key=lambda run: run.started_at, default=None)
     return _gate_rows(baseline_path, None if newest is None else newest.metrics)
@@ -129,8 +127,8 @@ def gate_verdict(baseline_path: Path, metrics: Mapping[str, Any] | None) -> bool
 
     False when any gated score is below its threshold, true when none is and at least one
     passed, `None` when nothing could be checked (no baseline, no gated score). The run's
-    stored `passed` means "every stable case passed", a different question. Pinned by
-    tests/api/test_console_routes.py::test_home_verdict_matches_the_eval_gate.
+    stored `passed` means "every stable case passed", a different question. A test pins
+    that this matches the eval gate.
     """
     verdicts = [row.passed for row in _gate_rows(baseline_path, metrics) if row.passed is not None]
     if not verdicts:
@@ -149,8 +147,7 @@ def check_score_note(metrics: Mapping[str, Any] | None) -> str | None:
 
     The check score leaves out unstable cases (passed on some tries, failed on others), so
     it is passed over stable cases, not over all of them. With no unstable case it is a
-    plain "35 of 45 cases"; any count missing gives no note. Pinned by
-    tests/api/test_quality_gate.py::test_the_check_score_note_counts_stable_cases.
+    plain "35 of 45 cases"; any count missing gives no note. A test pins this.
     """
     if metrics is None:
         return None
@@ -196,7 +193,7 @@ def langfuse_traces_url(
     they are joined by commas: the day as two UTC-midnight bounds, then tenant, model, cache,
     errors and slow (latency in seconds). Nothing filtered is the bare `/traces` page. This
     is Langfuse's page address, not a stable API; the checks on tenant and model keep `;`
-    and `,` out of every value. Pinned by tests/api/test_console_filters.py."""
+    and `,` out of every value. Tests pin this."""
     if not project_url:
         return None
     parts: list[str] = []

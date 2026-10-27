@@ -53,12 +53,11 @@ deployment."""
 
 MIN_PROBE_CHARS: Final[int] = 16
 """The shortest final user message, spaces trimmed, that is looked up or stored.
-INCLUSIVE. Pinned by `test_a_final_message_of_15_characters_has_no_probe_text`."""
+INCLUSIVE. A test pins this."""
 
 PREVIOUS_TURN_CHARS: Final[int] = 1000
 """How much of the previous turn the probe keeps: its LAST characters, the part
-closest to the question. Pinned by
-`test_only_the_last_1000_characters_of_the_previous_turn_are_kept`."""
+closest to the question. A test pins this."""
 
 
 def probe_text(body: ChatCompletionRequest) -> str | None:
@@ -67,7 +66,7 @@ def probe_text(body: ChatCompletionRequest) -> str | None:
     The text is the previous turn, a blank line, then the FINAL user message. The
     previous turn counts only when it is a user or assistant turn with text: a
     tool result or a call-only turn adds nothing, and the final message is
-    embedded alone (`test_a_tool_turn_or_a_call_only_turn_before_adds_nothing`).
+    embedded alone.
 
     `None` means this request is not a semantic candidate at all: a body carrying
     no user turn, or a final message under `MIN_PROBE_CHARS`. Returning `""`

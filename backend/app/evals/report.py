@@ -143,9 +143,7 @@ def _failure_tags(line: CaseLine) -> tuple[str, ...]:
     """The checks one failed run broke, in `FAILURE_TAGS` order.
 
     A run that never answered (it has an `error`) gets none: the target failed, not a
-    check. A run with no `check` can still be `judge_low`. Pinned by
-    `test_a_case_that_never_answered_carries_no_tags` and
-    `test_a_conversation_case_stores_no_measurements`.
+    check. A run with no `check` can still be `judge_low`. Tests pin this.
     """
     if line.passed or line.error is not None:
         return ()

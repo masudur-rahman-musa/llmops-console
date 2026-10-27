@@ -100,7 +100,7 @@ def record_cost(
         ledger.write(row)
     except IdentifierInvalid:
         # A row failing a pre-check never reaches the writer, so it is counted
-        # here (`test_a_row_failing_its_pre_check_is_counted_dropped_invalid`).
+        # here.
         logger.exception("cost ledger row refused for tenant %s, model %s", tenant, model)
         record_ledger_write(result="dropped_invalid")
     except Exception:

@@ -242,7 +242,14 @@ def test_context_carries_the_authenticated_tenant(harness_client: TestClient) ->
     """The context's tenant is the one the key proved, and the shape is complete."""
     context = context_of(harness_client, session="session-1", data_class="internal")
 
-    assert set(context) == {"tenant", "data_class", "session", "trace_id", "prompt_version"}
+    assert set(context) == {
+        "tenant",
+        "data_class",
+        "session",
+        "trace_id",
+        "prompt_version",
+        "user_id",
+    }
     assert context["tenant"] == "nordlicht"
     assert context["session"] == "session-1"
     assert context["data_class"] == "internal"

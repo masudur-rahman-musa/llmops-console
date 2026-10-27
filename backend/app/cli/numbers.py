@@ -11,8 +11,7 @@ fails when a tab would show nothing. "Nothing" is spelled out per page in
 that is null. The fields in `ALLOWED_EMPTY` stay empty on a healthy local stack,
 because only a real failure fills them and `make numbers` stages none. The check
 retries for up to `CHECK_DEADLINE_SECONDS`, since Prometheus scrapes every five
-seconds and the first pass can land before the first scrape
-(`test_check_retries_until_full_then_passes`).
+seconds and the first pass can land before the first scrape.
 
 No row is written here. Both commands only talk to the gateway's HTTP API, and the
 keys come from the environment `make numbers` makes for one run. A missing key is
@@ -58,8 +57,7 @@ PROMPTS: Final[tuple[str, ...]] = (
 """Six requests: the first two are equal (a cache hit on the second), the third
 carries an email address (a redaction). Short on purpose: a few cents in all.
 Each carries `X-Gateway-Cache: allow`, the cache's opt-in, and no `temperature`:
-the cheap model refuses that field with a 400. Pinned by
-`test_traffic_opts_every_request_into_the_cache`."""
+the cheap model refuses that field with a 400. A test pins this."""
 
 PAGES: Final[tuple[str, ...]] = ("home", "requests", "cost", "quality")
 """The four console tabs, in nav order."""

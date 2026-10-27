@@ -150,7 +150,7 @@ def home(request: Request, store: PolicyDep, settings: SettingsDep) -> HomePage:
 
 def prompt_cache_share(tokens: tuple[ModelTokens, ...]) -> float | None:
     """Cache reads over all input (plain, cache reads and cache writes); null with no input,
-    since no traffic is not a 0% share. Pinned by tests/api/test_console_prompt_cache.py."""
+    since no traffic is not a 0% share. A test pins this."""
     reads = sum(row.cache_read for row in tokens)
     total = sum(row.input + row.cache_read + row.cache_write for row in tokens)
     return None if total == 0 else reads / total
@@ -159,8 +159,7 @@ def prompt_cache_share(tokens: tuple[ModelTokens, ...]) -> float | None:
 def checked_cost_range(start: date | None, end: date | None) -> None:
     """Refuse an upside-down range (naming `from`) or one over `MAX_DAYS` days (naming `to`).
 
-    Both ends count, so 2026-07-06 to 2026-10-03 is exactly 90 days and passes. Pinned by
-    tests/api/test_console_routes.py::test_a_cost_range_of_exactly_90_days_passes."""
+    Both ends count, so 2026-07-06 to 2026-10-03 is exactly 90 days and passes. A test pins this."""
     if start is None or end is None:
         return
     if start > end:
@@ -260,8 +259,7 @@ def trace_url(project_url: str | None, trace_id: str) -> str | None:
     """`<project_url>/traces/<trace_id>`, or `None` without a project URL or a 32-hex id.
 
     The id becomes a URL segment, so it is matched with `re.fullmatch` against the
-    ledger's own pattern: a trailing newline or a `../` gets no link. Pinned by
-    tests/api/test_console_requests.py."""
+    ledger's own pattern: a trailing newline or a `../` gets no link. Tests pin this."""
     if not project_url or TRACE_ID_PATTERN.fullmatch(trace_id) is None:
         return None
     return f"{project_url.rstrip('/')}/traces/{trace_id}"
@@ -279,7 +277,7 @@ def errors_by_day(client: PrometheusClient, days: int, now: datetime) -> dict[da
 
     One range query at a one-day step from the midnight after the first day to tomorrow's
     midnight; the point at midnight D+1 counts day D. A day with no point had no errors.
-    Pinned by tests/api/test_console_layout.py::test_errors_per_day_query_is_pinned."""
+    A test pins the query."""
     today = now.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     points = client.range_query(
         errors_per_day_query(),
@@ -329,7 +327,7 @@ def requests(
                 for labels, value in client.instant_query(redactions_query(days))
             ),
             # A reason with no refusals in the window is left out, so the table can say
-            # "None in this window." (test_a_reason_with_zero_refusals_is_left_out).
+            # "None in this window.".
             tuple(
                 RefusalCount(reason=labels.get("reason", ""), count=value)
                 for labels, value in client.instant_query(refusals_query(days))

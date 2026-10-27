@@ -193,7 +193,7 @@ class ProviderTransport:
         statuses log nothing, since a 401 body can quote part of the key.
 
         A body whose `error.code` names a content policy refusal is `refused` at
-        any status, and so never retried (`tests/providers/test_refusals.py`).
+        any status, and so never retried.
         """
         status = response.status_code
         payload = _parsed(response)

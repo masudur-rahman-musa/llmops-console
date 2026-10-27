@@ -270,8 +270,8 @@ def _usage(block: Mapping[str, Any]) -> Usage:
     `prompt_tokens_details.cached_tokens`. They become `cache_read_tokens`, and
     `prompt_tokens` keeps only the rest, the meaning Anthropic's count has, so the
     input rate never bills a cached token twice. Absent or `null` details read 0;
-    a cached count above the prompt count is unreadable. Pinned by
-    `test_openai_cache_tokens.py`.
+    a cached count above the prompt count is unreadable. Tests pin
+    this.
     """
     prompt_tokens = block["prompt_tokens"]
     completion_tokens = block["completion_tokens"]

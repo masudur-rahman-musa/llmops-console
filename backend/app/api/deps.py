@@ -300,8 +300,7 @@ def request_context(
 def _trace_is_public(request: Request, tenant: str) -> bool:
     """Whether this authenticated request's trace goes public.
 
-    The setting is the master switch; a tenant can only opt out
-    (`test_a_tenant_that_opts_out_stays_private`).
+    The setting is the master switch; a tenant can only opt out.
     """
     settings: Settings = request.app.state.settings
     if not settings.public_trace_langfuse:

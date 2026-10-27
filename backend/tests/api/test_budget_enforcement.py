@@ -67,6 +67,7 @@ from app.core.config import Settings
 from app.limits.budget import (
     InProcessBudgetStore,
     RedisBudgetStore,
+    SpendLoader,
     current_month,
     to_micro_usd,
 )
@@ -179,6 +180,10 @@ class RecordingBudgetStore:
         self.debits.append((tenant, month, micro_usd))
         return self.inner.debit(tenant, month, micro_usd)
 
+    def seeded_spend(self, tenant: str, month: str, loader: SpendLoader) -> int | None:
+        self.reads.append((tenant, month))
+        return self.inner.seeded_spend(tenant, month, loader)
+
     def arrange(self, tenant: str, month: str, micro_usd: int) -> None:
         """Put a month's spend on the counter without recording it as a debit."""
         self.inner.debit(tenant, month, micro_usd)
@@ -194,6 +199,12 @@ class UnreachableRedis:
         raise redis.ConnectionError("connection refused")
 
     def get(self, name: str) -> bytes | None:
+        raise redis.ConnectionError("connection refused")
+
+    def exists(self, *names: str) -> int:
+        raise redis.ConnectionError("connection refused")
+
+    def eval(self, script: str, numkeys: int, *keys_and_args: object) -> object:
         raise redis.ConnectionError("connection refused")
 
 

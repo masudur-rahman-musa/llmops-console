@@ -16,8 +16,7 @@ why each field has its own miss case at cosine 1.0 rather than a sample.
 **Near enough is `>= SEMANTIC_THRESHOLD`, inclusive**. The comparison
 is made here in Python only. Qdrant is asked for the one nearest comparable
 entry with no `score_threshold`, so a miss still says how near the best entry
-came, which the trace's `semantic` step shows
-(`test_nearest_reports_the_best_score_of_a_miss`).
+came, which the trace's `semantic` step shows.
 
 **A tenant is a COLLECTION, not a filter.** `cache_{tenant}`, created on the
 first write with the size of the vector being written (swapping
@@ -397,7 +396,7 @@ class QdrantSemanticCache:
 
         No `score_threshold` is sent: the threshold is checked here, which is the
         only way to learn the best score of a miss. It still asks for one entry,
-        so a lookup costs what it did (`test_a_search_asks_for_exactly_one_neighbour`).
+        so a lookup costs what it did.
         """
         _checked_tenant(tenant)
         now = self._clock()

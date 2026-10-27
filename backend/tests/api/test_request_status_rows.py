@@ -34,7 +34,7 @@ from app.api.deps import get_clients
 from app.cache import InProcessResponseCache
 from app.core.config import Settings
 from app.core.errors import ProviderError
-from app.limits.budget import InProcessBudgetStore
+from app.limits.budget import InProcessBudgetStore, SpendLoader
 from app.limits.ratelimit import InProcessRateLimitStore, RateDimension, Taken
 from app.providers.base import Adapter, ChatRequest, ChatResponse, StreamEvent, UsageTotal
 from app.services.chat_accounting import Clients
@@ -122,6 +122,9 @@ class RecordingBudgetStore:
     def debit(self, tenant: str, month: str, micro_usd: int) -> int | None:
         self.debits.append((tenant, month, micro_usd))
         return self.inner.debit(tenant, month, micro_usd)
+
+    def seeded_spend(self, tenant: str, month: str, loader: SpendLoader) -> int | None:
+        return self.inner.seeded_spend(tenant, month, loader)
 
 
 class RecordingRateStore:

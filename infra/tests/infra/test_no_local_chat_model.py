@@ -102,7 +102,8 @@ def test_the_embedding_server_still_ships() -> None:
 
     netpol = (REPO_ROOT / "infra/k8s/base/networkpolicies.yaml").read_text(encoding="utf-8")
     assert "llama-embed" in netpol and "8083" in netpol
-    assert "8082" not in netpol
+    # 8082 is the help desk scheduler's port now; the chat model's own pod is what must be gone.
+    assert "app.kubernetes.io/name: llama\n" not in netpol
 
 
 def load_provider_yaml(path: Path) -> dict[str, Any]:
@@ -166,6 +167,7 @@ PATH_EXEMPT_PREFIXES = ("dev/", "backend/evals/conversations/", "backend/app/eva
 #: Named on purpose, written by a run or filled in by the owner, so absent from a clean checkout.
 PATH_EXEMPT_EXACT = frozenset(
     {
+        "backend/evals/labels/calibration.json",
         "docs/aws-evidence/cost.json",
         "docs/tradeoff-run/cost.json",
         "docs/tradeoff.json",

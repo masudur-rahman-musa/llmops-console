@@ -165,7 +165,7 @@ resolves to, so it moves when that file does."""
 
 CHAT_PRICE_VERSION = f"{PROVIDER}/{POLICY_MODEL}@2026-10-26"
 EMBED_PRICE_VERSION = f"{EMBED_PROVIDER}/{EMBED_MODEL}@2025-01-01"
-FALLBACK_PRICE_VERSION = f"{OPENAI_PROVIDER}/{FALLBACK_MODEL}@2025-08-07"
+FALLBACK_PRICE_VERSION = f"{OPENAI_PROVIDER}/{FALLBACK_MODEL}@2026-10-27"
 """The entries in force in the shipped provider files, spelled as the literals the
 row must carry. A row that priced the ALIAS, or that fell through to `unpriced`,
 carries a different string and fails - which is what makes the zero-priced

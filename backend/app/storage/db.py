@@ -240,7 +240,7 @@ def apply_migrations_locked(
 
     Replicas that start together each call this. The first holds the lock and
     applies the files; the rest wait, then find every version recorded and answer
-    `()`. So each file runs once (`test_two_locked_runners_at_once_apply_each_file_once`).
+    `()`. So each file runs once.
 
     The pool's 2-second statement timeout is lifted for the call: waiting for the
     lock, or a slow file, is not a stuck query. `RESET` puts the pool's own value

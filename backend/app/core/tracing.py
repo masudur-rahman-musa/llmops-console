@@ -156,9 +156,7 @@ class SpanAttributes(BaseModel):
 
         `session` goes out as `langfuse.session.id`, the key Langfuse groups its
         Sessions page by; the field keeps its name so no call site changes.
-        Pinned by `test_the_session_goes_out_as_langfuse_session_id`. `user_id`
-        goes out as `langfuse.user.id` for its Users page, pinned by
-        `test_the_user_id_goes_out_as_langfuse_user_id`.
+        `user_id` goes out as `langfuse.user.id` for its Users page. Tests pin both.
         """
         return {
             WIRE_KEYS.get(key, key): value
@@ -198,8 +196,7 @@ class GenerationAttributes(BaseModel):
     Closed for the same reason `SpanAttributes` is: a prompt or an answer on a
     generation would be text on a trace backend outside this system's redaction,
     so an unknown key is a `ValidationError`. The Input and Output are set by
-    `Generation`, never through this class. Pinned by
-    `test_the_generation_label_set_is_closed`.
+    `Generation`, never through this class. A test pins this.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -238,7 +235,7 @@ FINISH_REASON_KEY = "langfuse.observation.metadata.finish_reason"
 CONTENT_LIMIT = 8000
 CUT_MARK = " [cut]"
 """Each message sent to Langfuse keeps at most `CONTENT_LIMIT` characters; a
-longer one ends in `CUT_MARK` (`test_a_message_at_8001_characters_is_cut`)."""
+longer one ends in `CUT_MARK`."""
 
 TAGS_KEY = "langfuse.trace.tags"
 """The root span label Langfuse reads a trace's tags from."""
@@ -254,11 +251,10 @@ STEP_INPUT_DEFAULT = "not recorded"
 STEP_OUTPUT_DEFAULT = "no decision recorded"
 """What a stage step (auth, route, cache, redact, semantic) says until it writes
 its own decision with `note_step`. The root and the provider step keep the
-`not sent` notes (`test_the_step_default_lines_are_the_published_ones`)."""
+`not sent` notes."""
 
 REFUSED_PREFIX = "refused: "
-"""A stage whose body raises a typed error says this and the code, never the message
-(`test_a_refused_auth_says_the_code`)."""
+"""A stage whose body raises a typed error says this and the code, never the message."""
 
 FINISH_REASON_PATTERN = re.compile(r"[a-z_]{1,32}")
 """What a finish reason must look like to be sent as given."""
@@ -272,13 +268,12 @@ class PreviewNote(BaseModel):
 
     Left empty, Langfuse shows `undefined`, which reads as a bug. A step whose
     text is not sent says so, plus a few safe facts, as ONE plain line: the
-    Formatted view shows a plain string whole, but only the first field of JSON
-    (`test_the_input_note_is_one_plain_line`). Closed like
-    `SpanAttributes`: a `prompt` or a `user` key is a `ValidationError`. Pinned by
-    `test_the_preview_note_field_set_is_closed`.
+    Formatted view shows a plain string whole, but only the first field of JSON. Closed like
+    `SpanAttributes`: a `prompt` or a `user` key is a `ValidationError`. A test
+    pins this.
 
     `finish_reason` is provider text, so anything that is not a short lower-case
-    word becomes `other` (`test_a_bad_finish_reason_is_sent_as_other`).
+    word becomes `other`.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -366,7 +361,7 @@ def note_step(span: Span | None, *, input: str | None = None, output: str | None
 
 def score_text(score: float) -> str:
     """A similarity score with 3 decimals, rounded DOWN, so a miss never reads as reaching
-    the threshold (`test_a_score_just_under_the_threshold_rounds_down`)."""
+    the threshold."""
     return str(Decimal(repr(score)).quantize(Decimal("0.001"), rounding=ROUND_DOWN))
 
 
@@ -385,19 +380,16 @@ class Generation:
     the request is not traced, so call sites stay unconditional.
 
     `root` is the request's root span, which carries the Output note of the call
-    that answered (`test_the_root_step_carries_the_provider_notes`).
+    that answered.
 
     The root, not this step, is the request's one Langfuse generation:
     `report` puts the model, tokens and cost on the root under `gen_ai.*`, and on
     this step only as metadata, so Langfuse counts the cost once. Each attempt
-    writes over the root, so the call that answered is the one it shows
-    (`test_exactly_one_span_per_request_carries_a_cost`,
-    `test_a_fallback_counts_the_cost_once`).
+    writes over the root, so the call that answered is the one it shows.
 
     With `content` on, the Output is the answer rather than a note, and the
     finish reason goes as metadata instead. A stream hands its text
-    pieces to `add_text`, and `end` writes them joined
-    (`test_a_streamed_answer_is_gathered_into_the_output`).
+    pieces to `add_text`, and `end` writes them joined.
     """
 
     def __init__(
@@ -487,7 +479,7 @@ def start_generation(
 
     `conversation` is the redacted role and text of each message, given only
     when the tenant's `trace_content` is on: it then becomes the Input here and
-    on the root (`test_the_root_input_is_the_redacted_conversation`).
+    on the root.
     """
     record = request_trace(scope)
     if record is None:
@@ -570,9 +562,7 @@ def root_span_name(scope: Scope) -> str:
     """The method and the matched route's template, e.g. `POST /v1/chat/completions`.
 
     The TEMPLATE, never the raw path: a path carries ids and whatever junk a
-    caller sends, and a trace name is shown and grouped on. Pinned by
-    `test_the_trace_is_named_from_the_matched_route` and
-    `test_an_unmatched_path_is_named_unmatched`.
+    caller sends, and a trace name is shown and grouped on. Tests pin this.
     """
     route = scope.get("route")
     template = getattr(route, "path", None)
@@ -610,8 +600,7 @@ def annotate(scope: Scope, attributes: SpanAttributes) -> None:
     """Put allowlisted labels on this request's root span.
 
     A tenant also goes out as the trace tag `tenant:<tenant>`, so Langfuse can
-    filter on it; it is the tenant auth already checked
-    (`test_the_tenant_is_a_trace_tag`).
+    filter on it; it is the tenant auth already checked.
     """
     record = request_trace(scope)
     if record is not None:
@@ -624,7 +613,7 @@ def mark_public(scope: Scope, step: Span | None = None) -> None:
     """Make this request's trace public in Langfuse, on every span.
 
     Labels the root and `step` (the span open now) and remembers the choice, so each
-    step span opened later copies it (`test_the_switch_on_marks_every_span_public`).
+    step span opened later copies it.
     The caller decides whether it may be public; this only sets the label.
     """
     record = request_trace(scope)

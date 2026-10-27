@@ -14,8 +14,7 @@ request list.
 **Cost days come straight from the ledger**: per UTC day, tenant and
 provider, the served rows (`status < 500`), cached ones counted, from `start` to
 `end` with both days kept. With no range, the last `days` days through today. So
-today shows the moment a request is booked. Pinned by
-tests/storage/test_dashboard_reads_postgres.py::test_today_shows_without_any_refresh.
+today shows the moment a request is booked. A test pins this.
 
 **Savings are estimated at read time**. A cache hit is booked at zero
 with the replayed answer's own token counts, so what it saved is what those tokens
@@ -268,7 +267,7 @@ def _prompt_cache_saving(prices: PriceTable, row: tuple[Any, ...]) -> Decimal:
     as plain input, minus its real price, at the price in force at its first row.
 
     Below zero when writes cost more than reads saved; 0 for an unpriced model or one
-    with no cache rates. Pinned by tests/storage/test_prompt_cache_reads_postgres.py.
+    with no cache rates. Tests pin this.
     """
     provider, model, input_tokens, output_tokens, reads, writes, first_ts = row
     key = f"{provider}/{model}"
@@ -349,8 +348,7 @@ class PostgresConsoleReader:
         """Cached ledger rows over all ledger rows in `[now - days, now]`; `None` with no rows.
 
         Counted from the ledger, not Prometheus: `increase()` reads 0 for a counter series
-        born at 1, so one cached request showed a 0% rate. Pinned by
-        tests/storage/test_dashboard_reads_postgres.py::test_hit_rate_counts_cached_rows_inside_the_window.
+        born at 1, so one cached request showed a 0% rate. A test pins this.
         """
         with self._pool.connection() as conn:
             row = conn.execute(
@@ -367,8 +365,7 @@ class PostgresConsoleReader:
     def daily_requests(self, days: int, now: datetime) -> tuple[tuple[date, int], ...]:
         """Ledger rows per UTC day for the last `days` UTC dates ending today, oldest first.
 
-        Every day is present, a day with no rows as 0, so the chart has no gaps. Pinned by
-        tests/storage/test_dashboard_reads_postgres.py::test_daily_requests_counts_each_utc_day_and_fills_zeros.
+        Every day is present, a day with no rows as 0, so the chart has no gaps. A test pins this.
         """
         today = now.astimezone(UTC).date()
         first = today - timedelta(days=days - 1)
@@ -392,8 +389,7 @@ class PostgresConsoleReader:
         """Tokens in and out per served model over `[now - days, now]`, by model name.
 
         Read from the ledger like Daily cost, so the two agree: the Prometheus counter
-        missed OpenAI rows. Pinned by
-        tests/storage/test_dashboard_reads_postgres.py::test_model_tokens_sum_the_window_by_model.
+        missed OpenAI rows. A test pins this.
         """
         with self._pool.connection() as conn:
             rows = conn.execute(
@@ -530,8 +526,7 @@ class PostgresConsoleReader:
         """USD per tenant from the not-cached ledger rows since the start of this UTC month.
 
         The budget bars' spend. A tenant with no rows is left out, so the
-        caller tells "spent nothing" from "unknown". Pinned by
-        `test_month_spend_sums_this_utc_month_not_cached`.
+        caller tells "spent nothing" from "unknown". A test pins this.
         """
         month_start = now.astimezone(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         where_tenant, tenant_params = _tenant_clause(tenant)
@@ -644,8 +639,7 @@ class PostgresConsoleReader:
         The filters narrow the list and its count only. `slow_ms` (the 95th percentile of
         the window's latencies), `tenants` and `models` are read over the whole window
         `[now - days, now]` and ignore the filters, so a filter list never shrinks to the
-        choice already made. Pinned by tests/storage/test_request_filters_postgres.py and
-        tests/storage/test_requests_ledger_postgres.py."""
+        choice already made. Tests pin this."""
         table = self._table("cost_ledger")
         since = now - timedelta(days=days)
         with self._pool.connection() as conn:

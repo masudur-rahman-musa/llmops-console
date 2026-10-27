@@ -99,7 +99,7 @@ class BudgetUnavailable(GatewayError):
 
     Raised by `services/chat_accounting.py::check_budget` only while the month's counter is
     not loaded yet; a Redis that cannot answer still serves. 503, because trying again
-    shortly can succeed. Pinned by `test_an_unreadable_ledger_refuses_with_budget_unavailable`.
+    shortly can succeed. A test pins this.
     """
 
     code: ClassVar[ErrorCode] = ErrorCode.BUDGET_UNAVAILABLE

@@ -149,16 +149,14 @@ def sse_frames(
     overtake the last of the answer and nothing the provider produced is dropped.
 
     `on_close` runs last in the `finally`, after every frame this generator
-    sends, which is what ends a stream's generation span with the stream itself
-    (`test_a_streamed_generation_carries_the_streams_usage`).
+    sends, which is what ends a stream's generation span with the stream itself.
 
     `on_finish` gets the provider's finish reason when its event arrives, for
-    the trace's Output note
-    (`test_a_streamed_provider_note_has_finish_reason_and_tokens`).
+    the trace's Output note.
 
     `on_text` gets each provider text piece BEFORE placeholders are put back,
     which is what a tenant with `trace_content` on sends to Langfuse as the
-    answer (`test_a_streamed_answer_is_gathered_into_the_output`).
+    answer.
 
     The wrap runs INSIDE this generator rather than around the iterator it is
     handed: the `finally` below closes `events` by name, and closing

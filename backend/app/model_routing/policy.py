@@ -67,7 +67,7 @@ class Alias(_Frozen):
 
     `purpose` is the one line the console's Models page shows beside the alias.
     It is optional, and an alias without one reads "no purpose given" there.
-    Pinned by `tests/model_routing/test_alias_purpose.py`.
+    A test pins this.
     """
 
     candidates: tuple[Candidate, ...]
@@ -102,15 +102,15 @@ class Tenant(_Frozen):
 
     A data class with no rule is not redacted. `trace_content` sends the redacted
     conversation and the answer to Langfuse; a tenant without the line
-    sends only the note (`test_a_tenant_without_the_switch_is_off`).
+    sends only the note.
 
     `trace_public: false` keeps the tenant's traces private when the gateway's
     `public_trace_langfuse` is on; no line follows that setting, and `true` alone
-    never makes a trace public (a design note, `test_a_tenant_cannot_turn_it_on_alone`).
+    never makes a trace public.
 
     `user_budget_usd_month` is the optional cap on one random user id's month,
     above zero and at most the tenant's own budget: a cap above it could never
-    bite (`test_a_user_cap_above_the_tenant_budget_is_refused`). No line, no cap.
+    bite. No line, no cap.
     """
 
     data_class_rules: Mapping[DataClass, DataClassRule]
@@ -225,7 +225,7 @@ class PolicyStore:
 
     `loaded_at` is when the live snapshot went in, read from `clock` (UTC by
     default). It moves only on a swap, so a failed reload keeps the old time.
-    Pinned by `tests/model_routing/test_policy_loaded_at.py`.
+    A test pins this.
     """
 
     def __init__(

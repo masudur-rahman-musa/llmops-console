@@ -167,7 +167,15 @@ def test_tokens_come_from_the_ledger_not_prometheus(wired: Wired) -> None:
 
     body = wired.body(days=7)
 
-    assert body["tokens"] == [{"model": "ledger-model", "input": 111.0, "output": 22.0}]
+    assert body["tokens"] == [
+        {
+            "model": "ledger-model",
+            "input": 111.0,
+            "output": 22.0,
+            "cache_read": 0.0,
+            "cache_write": 0.0,
+        }
+    ]
     assert not any("gateway_tokens_total" in query for query in wired.prom.queries)
     assert TOKENS_7D not in wired.prom.queries
     assert [days for days, _ in wired.reader.tokens_asked] == [7]

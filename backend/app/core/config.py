@@ -190,8 +190,7 @@ class Settings(BaseSettings):
 
     The master switch: off means no trace is public, whatever a tenant's
     `trace_public` says. On, a tenant opts out with `trace_public: false`. A trace
-    made public stays public in Langfuse after this is turned off
-    (`test_public_trace_langfuse_is_off_by_default`)."""
+    made public stays public in Langfuse after this is turned off."""
 
     grafana_url: str | None = None
     """The Grafana page the Overview tab links for health details, or `None` for no link.
@@ -200,8 +199,7 @@ class Settings(BaseSettings):
     host, checked here so a `javascript:` value never reaches a link; the console
     checks it again before it draws one. Empty counts as unset, which is the local
     value: no Grafana runs locally. On the cluster `gateway-config` points it at the
-    `gateway-overview` dashboard (infra/tests/infra/test_grafana_link.py). Pinned by
-    tests/core/test_config.py::test_grafana_url_accepts_http_and_https_only."""
+    `gateway-overview` dashboard. A test pins this."""
 
     @field_validator("grafana_url")
     @classmethod
@@ -218,7 +216,7 @@ class Settings(BaseSettings):
 
     Named in the `BUDGET_EXCEEDED` message. Empty, or one email address of at most 254
     characters; anything else stops the start, so a typo never reaches a refusal message.
-    Pinned by tests/core/test_config.py::test_budget_contact_refuses_what_is_not_one_email."""
+    A test pins this."""
 
     @field_validator("budget_contact")
     @classmethod

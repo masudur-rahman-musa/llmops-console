@@ -54,8 +54,7 @@ def masked_line(counts: Mapping[str, int]) -> str:
     """The `redact` step's Output: what was masked, as counts only, never the values.
 
     Kinds in the detector's own order, lower case, `_` read as a space, no plurals:
-    `masked: 1 email, 2 phone`. Nothing masked reads `nothing masked`
-    (`test_masked_line_follows_detector_order`).
+    `masked: 1 email, 2 phone`. Nothing masked reads `nothing masked`.
     """
     parts = [
         f"{counts[kind.value]} {kind.value.lower().replace('_', ' ')}"

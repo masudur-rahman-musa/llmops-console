@@ -164,6 +164,21 @@ def test_a_bad_file_names_the_file_and_the_field(
     assert "goodone.yaml" not in str(raised.value)
 
 
+def test_a_file_that_cannot_be_read_names_the_file(tmp_path: Path) -> None:
+    """Catches a loader that lets an `OSError` escape as a crash at startup: a
+    `*.yaml` entry it cannot read (here a folder of that name) must fail as
+    `PolicyInvalid` naming the entry, like every other bad file."""
+    folder = tmp_path / "providers"
+    write_provider(folder, provider_document("goodone"))
+    (folder / "badone.yaml").mkdir()
+
+    with pytest.raises(PolicyInvalid) as raised:
+        load_provider_files(folder)
+
+    assert "badone.yaml" in str(raised.value)
+    assert "cannot be read" in str(raised.value)
+
+
 def test_the_file_name_must_match_the_provider(tmp_path: Path) -> None:
     """Catches a loader that trusts the `provider:` line: `openai.yaml` saying
     `provider: anthropic` would silently replace the real anthropic file."""

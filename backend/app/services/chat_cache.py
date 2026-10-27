@@ -292,8 +292,7 @@ SEMANTIC_NEEDED = f"needed {SEMANTIC_THRESHOLD:g}"
 def semantic_note(found: Nearest, *, embedded: bool) -> str:
     """The `semantic` step's Output: hit or miss, with the score and the one needed.
 
-    Pinned by `test_semantic_miss_says_best_match_and_needed` and its neighbours in
-    `tests/api/test_trace_steps.py`.
+    Tests pin each wording.
     """
     if not embedded:
         return "miss (the question could not be embedded)"

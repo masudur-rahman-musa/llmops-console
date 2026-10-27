@@ -156,7 +156,7 @@ def note_route(
     """The `route` step's notes: the alias in; the pick and its fallbacks out.
 
     Called only after `resolve()` returned, so an unknown alias puts no caller
-    text on the trace (`test_an_unknown_alias_leaves_no_caller_text`).
+    text on the trace.
     """
     picked, *rest = candidates
     fallback = ", then ".join(f"{c.provider} {c.model}" for c in rest) or "none"
@@ -323,7 +323,7 @@ def traced_conversation(
 
     `None` unless the tenant's `trace_content` is on. Tool call
     details are not sent; a turn that is only a tool call goes as empty text.
-    Pinned by `test_a_switched_off_tenant_sends_only_the_note`.
+    A test pins this.
     """
     regime = policy.tenants.get(tenant)
     if regime is None or not regime.trace_content:
@@ -417,7 +417,7 @@ def walk_candidates[T](
     A content policy refusal is a `ProviderError` that is never retryable, so it
     stops at the candidate that refused. The console's own blocks (redaction, budget,
     rate limit, a bad request) are not `ProviderError`s and
-    pass straight through. Both are pinned in `tests/api/test_fallback.py`.
+    pass straight through. Tests pin both.
     """
     if not candidates:
         raise AllProvidersUnavailable("no candidates: the resolver answered an empty tuple")

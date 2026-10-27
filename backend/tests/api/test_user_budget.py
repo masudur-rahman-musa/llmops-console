@@ -38,6 +38,7 @@ from app.core.config import Settings
 from app.limits.budget import (
     BUDGET_OVERRIDE_HEADER,
     InProcessBudgetStore,
+    SpendLoader,
     current_month,
     to_micro_usd,
 )
@@ -108,6 +109,16 @@ class RecordingUserBudgetStore:
     def user_debit(self, tenant: str, user_id: str, month: str, micro_usd: int) -> int | None:
         self.user_debits.append((tenant, user_id, month, micro_usd))
         return self.inner.user_debit(tenant, user_id, month, micro_usd)
+
+    def seeded_spend(self, tenant: str, month: str, loader: SpendLoader) -> int | None:
+        return self.inner.seeded_spend(tenant, month, loader)
+
+    def seeded_user_spend(
+        self, tenant: str, user_id: str, month: str, loader: SpendLoader
+    ) -> int | None:
+        if self.user_unknown:
+            return None
+        return self.inner.seeded_user_spend(tenant, user_id, month, loader)
 
     def arrange(self, month: str, micro_usd: int) -> None:
         """Put a month's tenant spend on the counter without recording a debit."""

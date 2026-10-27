@@ -440,8 +440,8 @@ def record_closed_circuits(providers: Iterable[str]) -> None:
 
     The gateway reports a provider's circuit only once a route consults it, so
     after a start or a policy reload the gauge had no series and the dashboard
-    read "No data". Every provider in the policy starts closed, so say so. Pinned
-    by `test_every_policy_provider_reads_closed_before_any_call`.
+    read "No data". Every provider in the policy starts closed, so say so. A test
+    pins this.
     """
     for provider in providers:
         record_circuit_state(provider=provider, state=0)

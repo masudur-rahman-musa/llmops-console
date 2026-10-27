@@ -119,7 +119,8 @@ class Usage(_Contract):
 
     `prompt_tokens` is the input the provider charged at the plain input rate.
     Tokens read from or written to a provider's prompt cache are counted apart in
-    `cache_read_tokens` and `cache_write_tokens`, because each has its own price. Both default to 0 for a provider that reports no cache.
+    `cache_read_tokens` and `cache_write_tokens`, because each has its own price.
+    Both default to 0 for a provider that reports no cache.
     """
 
     prompt_tokens: int

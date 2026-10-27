@@ -21,7 +21,7 @@ HOMES = {
     "tradeoff_policy.py": Path("infra") / "scripts" / "tradeoff_policy.py",
     "redaction_report.py": Path("backend") / "scripts" / "redaction_report.py",
 }
-BUILD_ONLY = {"auto_lock.py", "env_keys.py", "git-pre-push-guard.sh"}
+BUILD_ONLY = {"auto_lock.py", "env_keys.py", "git-pre-push-guard.sh", "prompt_cache_run.py"}
 # History files that keep the old paths as written.
 HISTORY = (
     "dev/plans",

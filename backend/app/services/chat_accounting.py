@@ -70,7 +70,7 @@ class Clients:
     """The ledger's month spend, read once a month to load a budget counter."""
     clock: Callable[[], float] = time.monotonic
     """Seconds, monotonic. Read when a chat request starts and when its row is booked, so
-    `latency_ms` is the difference; tests/api/test_request_status_rows.py hands in a fake."""
+    `latency_ms` is the difference; a test hands in a fake."""
 
 
 @dataclass
@@ -218,8 +218,7 @@ def check_budget(clients: Clients, context: RequestContext, *, override: str | N
     A counter that cannot answer serves the request (see
     `limits/budget.py`): `seeded_spend` answering `None` returns here having warned
     nobody and refused nobody. A counter not loaded this month is first set from the
-    ledger, and a ledger that cannot be read refuses with `BudgetUnavailable` (a design note,
-    `tests/api/test_budget_from_ledger.py`).
+    ledger, and a ledger that cannot be read refuses with `BudgetUnavailable`.
 
     The warning covers the whole band at or above 80%, an overridden request
     included, because that is what criterion 2 says - it is emitted before the
@@ -270,7 +269,7 @@ BUDGET_UNAVAILABLE_MESSAGE = (
 def with_contact(message: str, contact: str) -> str:
     """A budget refusal, with whom to ask for more when `budget_contact` is set.
 
-    Pinned by `test_the_message_names_no_contact_when_the_setting_is_empty`."""
+    A test pins the message with no contact set."""
     return f"{message} Ask {contact} to allow more." if contact else message
 
 
@@ -282,8 +281,8 @@ def check_user_budget(
     Nothing to check with no `X-User` or no `user_budget_usd_month`. The cap is
     inclusive like the tenant's, a counter that cannot answer serves, and a valid
     override serves as it does for the tenant. The 429 names `X-User` in `param`
-    and never the id itself. Pinned by `test_a_user_over_its_cap_is_refused`
-    and `test_the_tenant_cap_still_refuses_first`.
+    and never the id itself. Tests pin this, and that the tenant cap
+    still refuses first.
     """
     tenant_policy = clients.policy.tenants.get(context.tenant)
     if context.user_id is None or tenant_policy is None:

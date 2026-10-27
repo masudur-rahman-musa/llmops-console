@@ -77,7 +77,7 @@ USER_ID_PATTERN = re.compile(r"u_[0-9a-f]{32}")
 """A random user id: `u_` and exactly 32 lowercase hex characters, with `re.fullmatch`.
 
 The shape is the whole check that the id says nothing about a person: a name or an
-email cannot match it. a design note. Pinned by `test_user_id_rejection_table`.
+email cannot match it. A test pins the rejections.
 """
 
 

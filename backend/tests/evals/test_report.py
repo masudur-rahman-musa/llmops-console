@@ -13,8 +13,8 @@ Contract these tests are written against:
   run_kind, git_sha, tenant, target, judge_prompt_version=None, calibration=None)
   -> RunReport`. `RunReport` keeps its header (`id` of 32 characters, times, set, run kind,
   git sha, tenant, target, `passed`, `metrics`, `calibration`) and holds one `CaseReport` per
-  line (`case_id`, `category`, `passed`, `tags` (the checks a failed case broke), the four measured fields
-  `latency_ms`, `cost_usd`, `provider` all `None`, `error`, `check`, `judged`).
+  line (`case_id`, `category`, `passed`, `tags` (the checks a failed case broke), the four
+  measured fields `latency_ms`, `cost_usd`, `provider` all `None`, `error`, `check`, `judged`).
   `RunReport.passed` is true when every case passed. `tenant` is `ALL_TENANTS = "all"`
   for a conversation run: the cases name their own tenants.
 * `report_json(report)`, `report_markdown(report)`, `write_reports(out, report)`.

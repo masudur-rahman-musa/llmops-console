@@ -165,8 +165,7 @@ def _mark_newest(turn: dict[str, Any]) -> None:
     whole chat history from cache instead of paying for it again. A plain string
     becomes one text block, since a marker sits only on a block. Only the LAST
     block is marked: with the system and last-tool markers that is three, under
-    Anthropic's limit of four. Pinned by
-    `test_system_tools_and_newest_message_make_three_marks`.
+    Anthropic's limit of four. A test pins this.
     """
     content = turn["content"]
     if isinstance(content, str):

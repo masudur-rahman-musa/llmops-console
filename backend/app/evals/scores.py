@@ -60,7 +60,7 @@ def wilson_range(passes: int, runs: int) -> tuple[float, float]:
     """The 95% Wilson score range of a pass rate, in percent at `SCORE_SCALE` places.
 
     Chosen over the plain normal range because at 3 runs that one has no width at 3 of 3
-    and runs past 0 or 100 elsewhere; `test_wilson_range_at_known_points` pins it.
+    and runs past 0 or 100 elsewhere; a test pins it at known points.
     """
     share = passes / runs
     z2 = WILSON_Z * WILSON_Z
