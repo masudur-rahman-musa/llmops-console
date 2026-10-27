@@ -30,9 +30,11 @@ data:
   # reaches the cluster unchallenged. `infra/tests/infra/test_k8s_alerting.py` parses
   # this value and asserts the route, the receiver and both channel configs.
   #
-  # Every credential is a `${VAR}` reference into the environment `envFrom`
-  # sets below, never a literal - a value typed in here would be
-  # a plaintext credential in a committed manifest.
+  # A template, not the config Alertmanager reads: Alertmanager does not fill in
+  # `${VAR}` values itself. The `render-config` init container runs
+  # `render.sh` below, which checks the four plain values and writes them in.
+  # The SMTP password and the bot token never pass through here: Alertmanager
+  # reads them from the files the `alertmanager-secrets` volume mounts.
   alertmanager.yml: |
     route:
       receiver: ops
@@ -45,7 +47,7 @@ data:
           - smarthost: ${SMTP_SMARTHOST}
             from: ${SMTP_FROM}
             auth_username: ${SMTP_AUTH_USERNAME}
-            auth_password: ${SMTP_AUTH_PASSWORD}
+            auth_password_file: /etc/alertmanager/secrets/SMTP_AUTH_PASSWORD
             # `alertmanager-secrets` contracts no separate recipient key, so
             # this notifies the same address it sends from - a mailbox this
             # ops setup already owns and reads, not a second address to
@@ -53,9 +55,76 @@ data:
             to: ${SMTP_FROM}
             send_resolved: true
         telegram_configs:
-          - bot_token: ${TELEGRAM_BOT_TOKEN}
+          - bot_token_file: /etc/alertmanager/secrets/TELEGRAM_BOT_TOKEN
             chat_id: ${TELEGRAM_CHAT_ID}
             send_resolved: true
+  # Run by `render-config` with busybox `sh` and `awk` from the Alertmanager
+  # image itself. Every value is checked before anything is written, so a bad
+  # secret leaves the pod stuck in its init step with the key named in the log,
+  # never the value. Each check matches the whole value (`case`, not a line
+  # based `grep`), so a trailing newline or space is refused too. The tests
+  # (`test_render_*` in `test_k8s_alerting.py`) run this script with `sh`, and
+  # point `TEMPLATE_FILE` and `OUTPUT_FILE` into a temp folder.
+  render.sh: |
+    # Values are read as `${KEY-}`, never through `$(...)`, which would drop a
+    # trailing newline before the check could see it.
+    set -u
+    template=${TEMPLATE_FILE:-/etc/alertmanager/template/alertmanager.yml}
+    output=${OUTPUT_FILE:-/etc/alertmanager-rendered/alertmanager.yml}
+
+    refuse() {
+      echo "render.sh: $1 is missing or not valid; nothing was written" >&2
+      exit 1
+    }
+
+    # host:port, port 1 to 65535.
+    check_smarthost() {
+      value=${SMTP_SMARTHOST-}
+      case $value in *:*) ;; *) refuse SMTP_SMARTHOST ;; esac
+      host=${value%:*}
+      port=${value##*:}
+      case $host in "" | *[!A-Za-z0-9.-]*) refuse SMTP_SMARTHOST ;; esac
+      case $port in "" | *[!0-9]*) refuse SMTP_SMARTHOST ;; esac
+      [ ${#port} -le 5 ] || refuse SMTP_SMARTHOST
+      [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || refuse SMTP_SMARTHOST
+    }
+
+    # An email address of at most 254 characters.
+    check_address() {
+      eval "value=\${$1-}"
+      [ ${#value} -le 254 ] || refuse "$1"
+      case $value in "" | *[!A-Za-z0-9.@_+-]*) refuse "$1" ;; esac
+      local_part=${value%%@*}
+      domain=${value#*@}
+      [ "$local_part" != "$value" ] || refuse "$1"
+      case $domain in "" | *@* | .* | *.) refuse "$1" ;; *.*) ;; *) refuse "$1" ;; esac
+      [ -n "$local_part" ] || refuse "$1"
+    }
+
+    # An optional minus, then 1 to 15 digits.
+    check_chat_id() {
+      value=${TELEGRAM_CHAT_ID-}
+      digits=${value#-}
+      case $digits in "" | *[!0-9]*) refuse TELEGRAM_CHAT_ID ;; esac
+      [ ${#digits} -le 15 ] || refuse TELEGRAM_CHAT_ID
+    }
+
+    check_smarthost
+    check_address SMTP_FROM
+    check_address SMTP_AUTH_USERNAME
+    check_chat_id
+
+    awk '
+      {
+        n = split("SMTP_SMARTHOST SMTP_FROM SMTP_AUTH_USERNAME TELEGRAM_CHAT_ID", keys, " ")
+        for (k = 1; k <= n; k++) {
+          token = "${" keys[k] "}"
+          while ((i = index($0, token)) > 0)
+            $0 = substr($0, 1, i - 1) ENVIRON[keys[k]] substr($0, i + length(token))
+        }
+        print
+      }
+    ' "$template" >"$output" || { rm -f "$output"; refuse TEMPLATE_FILE; }
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -77,24 +146,44 @@ spec:
       # No `serviceAccountName`. This pod never calls the API server: its
       # config is a mounted file and its two outbound calls (SMTP, Telegram)
       # are what `alertmanager-egress` exists to allow.
+      # Writes the four plain values into the config before Alertmanager starts
+      #. The only container that reads `alertmanager-secrets` as env.
+      # Until that Secret exists the pod waits here; a bad value stops it here,
+      # with the key named in this container's log.
+      initContainers:
+        - name: render-config
+          image: prom/alertmanager:v0.27.0
+          command: ["sh", "/etc/alertmanager/template/render.sh"]
+          envFrom:
+            - secretRef:
+                name: alertmanager-secrets
+          # Below Alertmanager's own row, so the pod is still charged 32Mi /
+          # 50m / 64Mi: a pod costs the larger of its biggest init step and its
+          # running containers, never the two added up.
+          resources:
+            requests:
+              memory: 16Mi
+              cpu: 10m
+            limits:
+              memory: 32Mi
+          volumeMounts:
+            - name: template
+              mountPath: /etc/alertmanager/template
+              readOnly: true
+            - name: config
+              mountPath: /etc/alertmanager-rendered
       containers:
         - name: alertmanager
           image: prom/alertmanager:v0.27.0
           args:
-            - --config.file=/etc/alertmanager/alertmanager.yml
+            - --config.file=/etc/alertmanager-rendered/alertmanager.yml
             - --storage.path=/alertmanager
           ports:
             - name: metrics
               containerPort: 9093
-          # The sixth Secret this repo contracts for and does not supply
-          # (`../../secrets/alertmanager-secrets.example.yaml`). Until it is
-          # applied the pod's receivers hold empty env vars and every
-          # notification fails at send time rather than the pod failing to
-          # start - Alertmanager does not validate an env-substituted value at
-          # load time the way it validates the YAML's own shape.
-          envFrom:
-            - secretRef:
-                name: alertmanager-secrets
+          # No `env` or `envFrom`: the password and token are files under
+          # `/etc/alertmanager/secrets`, and the plain values are already in the
+          # rendered config. `test_the_secret_values_never_reach_the_pod_env`.
           readinessProbe:
             httpGet:
               path: /-/ready
@@ -124,14 +213,27 @@ spec:
               memory: 64Mi
           volumeMounts:
             - name: config
-              mountPath: /etc/alertmanager
+              mountPath: /etc/alertmanager-rendered
+              readOnly: true
+            - name: secrets
+              mountPath: /etc/alertmanager/secrets
               readOnly: true
             - name: data
               mountPath: /alertmanager
       volumes:
-        - name: config
+        - name: template
           configMap:
             name: alertmanager-config
+        # The rendered config, written by `render-config`, read by Alertmanager.
+        - name: config
+          emptyDir: {}
+        # The sixth Secret this repo contracts for and does not supply
+        # (`../../secrets/alertmanager-secrets.example.yaml`). Each key becomes
+        # a file; Alertmanager reads only `SMTP_AUTH_PASSWORD` and
+        # `TELEGRAM_BOT_TOKEN` from here.
+        - name: secrets
+          secret:
+            secretName: alertmanager-secrets
         # `emptyDir`, not a claim (decision D). Losing silences and the
         # notification log across a restart of a single-replica internal tool
         # is a cost nothing in REQUIREMENTS or SPEC asks to avoid, and 23b's

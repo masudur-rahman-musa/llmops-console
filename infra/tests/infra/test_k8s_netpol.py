@@ -177,7 +177,11 @@ PUBLIC_CIDR = "0.0.0.0/0"
 PUBLIC_EXCEPT: frozenset[str] = frozenset(
     {"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"}
 )
-PUBLIC_PORTS: frozenset[tuple[str, int]] = frozenset({("TCP", 443)})
+GATEWAY_PORTS: frozenset[tuple[str, int]] = frozenset({("TCP", 443)})
+#: An earlier change / a design note: Alertmanager also sends mail, on 587 (STARTTLS) and 465.
+ALERTMANAGER_PORTS: frozenset[tuple[str, int]] = frozenset(
+    {("TCP", 443), ("TCP", 465), ("TCP", 587)}
+)
 
 #: Criterion 5: every destination the four Helpdesk workloads may reach, as
 #: `(workload, resolved port)`. The DNS allow is NOT here - it lives in `allow-dns`, which
@@ -635,7 +639,8 @@ def test_the_gateway_and_alertmanager_are_the_only_pods_with_a_route_to_the_publ
 
     Catches a later row granting the Helpdesk or llama a public egress. Catches an `except` list
     missing `169.254.0.0/16` on EITHER policy, which reopens the `169.254.169.254` metadata route
-    SSRF via `base_url` reaches. Catches port 80 or an unported rule beside 443 on either, and
+    SSRF via `base_url` reaches. Catches port 80 or an unported rule beside 443 on either, a mail
+    port (465, 587) on the gateway, 443 dropped or any other port added on Alertmanager, and
     catches a rule hung on a `podSelector` that is not the workload's own."""
     reaching = {
         (str(namespace_of(document)), name_of(document))
@@ -652,9 +657,9 @@ def test_the_gateway_and_alertmanager_are_the_only_pods_with_a_route_to_the_publ
     alertmanager_egress = policy(built, MONITORING, "alertmanager-egress")
     assert pod_selector(alertmanager_egress) == {"matchLabels": {NAME_LABEL: ALERTMANAGER}}
 
-    for label, document in (
-        (f"{APPS}/gateway-egress", gateway_egress),
-        (f"{MONITORING}/alertmanager-egress", alertmanager_egress),
+    for label, document, expected_ports in (
+        (f"{APPS}/gateway-egress", gateway_egress, GATEWAY_PORTS),
+        (f"{MONITORING}/alertmanager-egress", alertmanager_egress, ALERTMANAGER_PORTS),
     ):
         rules = rules_with_ip_block(document)
         assert len(rules) == 1, f"{label}: {len(rules)} rules carry an ipBlock, not 1"
@@ -669,7 +674,7 @@ def test_the_gateway_and_alertmanager_are_the_only_pods_with_a_route_to_the_publ
             f"missing: {sorted(PUBLIC_EXCEPT - excepted)}"
         )
         ports = numeric_ports(rules[0], label)
-        assert ports == PUBLIC_PORTS, f"{label}: public egress ports are {sorted(ports)}"
+        assert ports == expected_ports, f"{label}: public egress ports are {sorted(ports)}"
 
 
 def test_the_helpdesk_may_reach_exactly_six_destinations_and_no_ip_block(

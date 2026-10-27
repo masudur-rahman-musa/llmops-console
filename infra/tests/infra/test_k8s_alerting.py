@@ -60,9 +60,13 @@ plain document helpers (`name_of`, `namespace_of`, `objects_of_kind`, `object_na
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
+from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 from app.core.metrics import registry
@@ -124,19 +128,48 @@ REPEAT_INTERVAL = "4h"
 #: understands for "read from an env var, not a literal".
 ENV_PLACEHOLDER = re.compile(r"^\$\{(?P<name>[A-Z][A-Z0-9_]*)\}$")
 
-#: The `alertmanager-secrets` keys each `email_configs` field must read, by the env var name this
-#: scan requires (see `ENV_PLACEHOLDER`).
+#: The plain values `render.sh` writes into the template, by the env var each reads (an earlier change,
+#: a design note). The password and the bot token are NOT here: they are files, see below.
 EMAIL_FIELD_VARS: dict[str, str] = {
     "smarthost": "SMTP_SMARTHOST",
     "from": "SMTP_FROM",
     "auth_username": "SMTP_AUTH_USERNAME",
-    "auth_password": "SMTP_AUTH_PASSWORD",
+    "to": "SMTP_FROM",
 }
 
 #: The `telegram_configs` half of the same contract.
 TELEGRAM_FIELD_VARS: dict[str, str] = {
-    "bot_token": "TELEGRAM_BOT_TOKEN",
     "chat_id": "TELEGRAM_CHAT_ID",
+}
+
+#: Where the secret keys sit as files in the `alertmanager` container.
+SECRET_MOUNT = "/etc/alertmanager/secrets"
+PASSWORD_FILE = f"{SECRET_MOUNT}/SMTP_AUTH_PASSWORD"
+TOKEN_FILE = f"{SECRET_MOUNT}/TELEGRAM_BOT_TOKEN"
+
+#: The init container, its script, and the two folders it reads from and writes to.
+RENDER_CONFIG = "render-config"
+TEMPLATE_DIR = "/etc/alertmanager/template"
+RENDERED_DIR = "/etc/alertmanager-rendered"
+RENDERED_FILE = f"{RENDERED_DIR}/alertmanager.yml"
+RENDER_COMMAND = ["sh", f"{TEMPLATE_DIR}/render.sh"]
+ALERTMANAGER_IMAGE = "prom/alertmanager:v0.27.0"
+
+#: `render-config` asks for less than `alertmanager` on every line, so the pod's effective
+#: request (the larger of the init step and the running containers) stays the 32Mi / 50m / 64Mi.
+RENDER_CONFIG_RESOURCES: dict[str, str] = {
+    "requests.memory": "16Mi",
+    "requests.cpu": "10m",
+    "limits.memory": "32Mi",
+}
+
+#: Every `render.sh` input, in the order the script takes them.
+RENDER_KEYS = ("SMTP_SMARTHOST", "SMTP_FROM", "SMTP_AUTH_USERNAME", "TELEGRAM_CHAT_ID")
+VALID_VALUES: dict[str, str] = {
+    "SMTP_SMARTHOST": "smtp.example.com:587",
+    "SMTP_FROM": "alerts@example.com",
+    "SMTP_AUTH_USERNAME": "smtp-user@example.com",
+    "TELEGRAM_CHAT_ID": "-1001234567890",
 }
 
 ALERTMANAGER_SECRETS = "alertmanager-secrets"
@@ -148,7 +181,7 @@ PUBLIC_CIDR = "0.0.0.0/0"
 PUBLIC_EXCEPT: frozenset[str] = frozenset(
     {"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"}
 )
-PUBLIC_PORTS: frozenset[tuple[str, int]] = frozenset({("TCP", 443)})
+PUBLIC_PORTS: frozenset[tuple[str, int]] = frozenset({("TCP", 443), ("TCP", 465), ("TCP", 587)})
 
 #: Criterion: no named-inert alert. `BackupJobFailed` left this set with row 23d's CronJobs,
 #: which feed `kube_job_status_failed{job_name=~".*-backup.*"}` for real; an earlier change empties it
@@ -271,11 +304,67 @@ def containers_of(template: dict[str, Any]) -> list[dict[str, Any]]:
     return collected
 
 
-def sole_container(template: dict[str, Any], label: str) -> dict[str, Any]:
-    """The one container of a pod template, asserting there is exactly one."""
-    containers = containers_of(template)
-    assert len(containers) == 1, f"{label} declares {len(containers)} containers, not 1"
-    return containers[0]
+def named_container(template: dict[str, Any], section: str, name: str) -> dict[str, Any]:
+    """The one container called `name` in `spec.<section>` (`containers` or `initContainers`)."""
+    listed = template["spec"].get(section, [])
+    assert isinstance(listed, list)
+    found = [entry for entry in listed if isinstance(entry, dict) and entry.get("name") == name]
+    assert len(found) == 1, f"{len(found)} {section} named {name!r}: {listed}"
+    return found[0]
+
+
+def render_script(documents: list[dict[str, Any]]) -> tuple[str, str]:
+    """`ConfigMap/alertmanager-config`'s `render.sh` and `alertmanager.yml` texts."""
+    data = config_map_data(documents, "alertmanager-config")
+    assert set(data) == {"alertmanager.yml", "render.sh"}, (
+        f"alertmanager-config holds {sorted(data)}"
+    )
+    return data["render.sh"], data["alertmanager.yml"]
+
+
+def run_render(
+    documents: list[dict[str, Any]], tmp_path: Path, values: dict[str, str]
+) -> tuple[subprocess.CompletedProcess[str], Path]:
+    """Run the built `render.sh` with `sh` in `tmp_path`, with ONLY `values` (and PATH) in the env.
+
+    `TEMPLATE_FILE` and `OUTPUT_FILE` point inside `tmp_path`; the output file does not exist
+    beforehand. Returns the finished process and the output path.
+    """
+    script, template = render_script(documents)
+    script_path = tmp_path / "render.sh"
+    script_path.write_text(script)
+    template_path = tmp_path / "template.yml"
+    template_path.write_text(template)
+    output_path = tmp_path / "rendered.yml"
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "TEMPLATE_FILE": str(template_path),
+        "OUTPUT_FILE": str(output_path),
+        **values,
+    }
+    completed = subprocess.run(
+        ["sh", str(script_path)],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=tmp_path,
+        check=False,
+    )
+    return completed, output_path
+
+
+def assert_refused(
+    completed: subprocess.CompletedProcess[str], tmp_path: Path, key: str, value: str
+) -> None:
+    """The script exited non-zero, left only its two inputs behind, named `key`, never `value`."""
+    assert completed.returncode != 0, f"{key}={value!r} was accepted"
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["render.sh", "template.yml"], (
+        f"{key}={value!r} left files behind: {sorted(path.name for path in tmp_path.iterdir())}"
+    )
+    shown = completed.stdout + completed.stderr
+    assert key in shown, f"{key}={value!r}: the output does not name {key}: {shown!r}"
+    if value:
+        assert value not in shown, f"{key}: the output repeats the value: {shown!r}"
 
 
 def resource_quantities(container: dict[str, Any]) -> dict[str, str]:
@@ -639,7 +728,8 @@ def test_nightly_eval_regression_reads_the_seven_day_median_and_not_the_average(
 def test_alertmanager_fits_the_exact_remainder_23b_left_it(
     built: list[dict[str, Any]],
 ) -> None:
-    """The exact remainder an earlier change left: 32Mi/50m/64Mi by VALUE (the whole flattened mapping, so
+    """The exact remainder an earlier change left, on the container named `alertmanager` (the pod also has
+    an init container since an earlier change): 32Mi/50m/64Mi by VALUE (the whole flattened mapping, so
     an extra `limits.cpu` is a failure), `emptyDir` for its data volume, and no
     `PersistentVolumeClaim` named `alertmanager` anywhere in the build.
 
@@ -652,7 +742,7 @@ def test_alertmanager_fits_the_exact_remainder_23b_left_it(
     """
     templates = pod_templates(built, MONITORING)
     assert ALERTMANAGER in templates, f"monitoring has pod templates {sorted(templates)}"
-    container = sole_container(templates[ALERTMANAGER], f"{MONITORING}/{ALERTMANAGER}")
+    container = named_container(templates[ALERTMANAGER], "containers", ALERTMANAGER)
     quantities = resource_quantities(container)
     assert quantities == ALERTMANAGER_RESOURCES, f"alertmanager declares {quantities}"
 
@@ -675,18 +765,16 @@ def test_alertmanager_routes_every_alert_to_both_an_email_and_a_telegram_receive
     built: list[dict[str, Any]],
 ) -> None:
     """The one route, the one receiver, exactly one `email_configs` and one `telegram_configs`
-    entry each reading `alertmanager-secrets` through an env var placeholder rather than a
-    literal (see the module docstring for the `${VAR}` syntax this scan requires), and the three
-    duration values by exact string.
+    entry; the four plain fields are `${VAR}` placeholders the init step fills in (an earlier change, ADR
+    0060), and the three durations are exact strings.
 
     Catches a receiver with two `email_configs` entries or none, which is either a duplicate
-    notification for every alert or total silence on the one channel nothing else covers. Catches
-    a credential typed in literally (`smtp.gmail.com`, a real bot token) rather than read from the
-    Secret, which is the exact accident a project rule exists to keep out of a committed manifest.
-    Catches `group_wait`/`group_interval`/`repeat_interval` left at Alertmanager's own defaults,
-    which is a paging cadence nobody agreed to and that would not be a boundary this suite can
-    ever exercise. Catches `envFrom` naming a different Secret than the receiver's own values
-    imply, which reads clean here and fails at pod start with an env var that was never set.
+    notification for every alert or total silence. Catches a value typed in literally
+    (`smtp.gmail.com`, a real chat id) rather than left as a placeholder, which puts a real
+    account detail in a committed manifest and gives `render.sh` nothing to fill. Catches
+    `group_wait`/`group_interval`/`repeat_interval` left at Alertmanager's defaults. Catches a
+    placeholder that names the wrong variable (`auth_username` reading `${SMTP_FROM}`), which
+    reads clean here and sends mail as the wrong account.
     """
     config = alertmanager_config(built)
     route = config.get("route", {})
@@ -739,18 +827,259 @@ def test_alertmanager_routes_every_alert_to_both_an_email_and_a_telegram_receive
             f"telegram_configs.{field} reads {match.group('name')!r}, not {variable!r}"
         )
 
+
+def test_the_config_reads_the_password_and_token_from_files(
+    built: list[dict[str, Any]],
+) -> None:
+    """`auth_password_file` and `bot_token_file` point into the secret mount, no `auth_password`
+    or `bot_token` field exists, the `alertmanager` container mounts `alertmanager-secrets` at
+    that folder, and it starts on the config `render-config` wrote.
+
+    Catches the password or token left as `auth_password: ${...}` / `bot_token: ${...}`, which
+    Alertmanager reads as literal text, so mail and Telegram fail at the first alert. Catches a
+    `_file` path that points outside the mount, which is a file that is never there. Catches the
+    Secret mounted into `render-config` only, or under another folder, which leaves the path
+    pointing at nothing. Catches `--config.file` still on the unrendered template, which is the
+    config that never starts.
+    """
+    config = alertmanager_config(built)
+    receiver = config["receivers"][0]
+    email = receiver["email_configs"][0]
+    telegram = receiver["telegram_configs"][0]
+    assert email.get("auth_password_file") == PASSWORD_FILE, f"email: {sorted(email)}"
+    assert telegram.get("bot_token_file") == TOKEN_FILE, f"telegram: {sorted(telegram)}"
+    assert "auth_password" not in email, "email_configs still has an inline auth_password"
+    assert "bot_token" not in telegram, "telegram_configs still has an inline bot_token"
+
     template = pod_templates(built, MONITORING)[ALERTMANAGER]
-    container = sole_container(template, f"{MONITORING}/{ALERTMANAGER}")
-    env_from = container.get("envFrom", [])
-    assert isinstance(env_from, list)
-    secret_names = {
-        str(entry["secretRef"]["name"])
-        for entry in env_from
-        if isinstance(entry, dict) and isinstance(entry.get("secretRef"), dict)
+    running = named_container(template, "containers", ALERTMANAGER)
+    volumes = template["spec"].get("volumes", [])
+    secret_volumes = [
+        volume["name"]
+        for volume in volumes
+        if isinstance(volume.get("secret"), dict)
+        and volume["secret"].get("secretName") == ALERTMANAGER_SECRETS
+    ]
+    assert len(secret_volumes) == 1, f"volumes from {ALERTMANAGER_SECRETS}: {volumes}"
+    mounts = {
+        str(mount["mountPath"]): str(mount["name"]) for mount in running.get("volumeMounts", [])
     }
-    assert ALERTMANAGER_SECRETS in secret_names, (
-        f"alertmanager's envFrom names {sorted(secret_names)}, missing {ALERTMANAGER_SECRETS!r}"
+    assert mounts.get(SECRET_MOUNT) == secret_volumes[0], f"alertmanager mounts {mounts}"
+    assert f"--config.file={RENDERED_FILE}" in running.get("args", []), (
+        f"alertmanager args are {running.get('args')}"
     )
+
+
+def test_render_config_writes_the_config_alertmanager_reads(
+    built: list[dict[str, Any]],
+) -> None:
+    """The init container `render-config` runs `sh` on the script from the ConfigMap, on the same
+    image as `alertmanager`, reading the template folder and writing an `emptyDir` that both
+    containers mount, with the exact small resources.
+
+    Catches an init container on another image, which is one more image to pin and scan (ADR
+    0060). Catches the output folder not shared with the main container, or not writable
+    (`emptyDir` is, a ConfigMap is not), which runs the script and then starts Alertmanager on no
+    file. Catches the script not mounted, or run as an executable file (a ConfigMap file has no
+    execute bit unless set). Catches `render-config` asking for more than `alertmanager`, which
+    raises the pod's effective request over the quota sized for Alertmanager alone.
+    """
+    template = pod_templates(built, MONITORING)[ALERTMANAGER]
+    init = named_container(template, "initContainers", RENDER_CONFIG)
+    running = named_container(template, "containers", ALERTMANAGER)
+    assert init.get("image") == ALERTMANAGER_IMAGE == running.get("image")
+    assert init.get("command") == RENDER_COMMAND, f"command is {init.get('command')}"
+    assert resource_quantities(init) == RENDER_CONFIG_RESOURCES, resource_quantities(init)
+
+    volumes = {volume["name"]: volume for volume in template["spec"]["volumes"]}
+    init_mounts = {str(mount["mountPath"]): mount for mount in init.get("volumeMounts", [])}
+    assert TEMPLATE_DIR in init_mounts and RENDERED_DIR in init_mounts, sorted(init_mounts)
+    template_volume = volumes[str(init_mounts[TEMPLATE_DIR]["name"])]
+    assert template_volume.get("configMap", {}).get("name") == "alertmanager-config", (
+        template_volume
+    )
+    output_volume_name = str(init_mounts[RENDERED_DIR]["name"])
+    assert "emptyDir" in volumes[output_volume_name], volumes[output_volume_name]
+    assert init_mounts[RENDERED_DIR].get("readOnly") is not True
+    running_mounts = {
+        str(mount["mountPath"]): str(mount["name"]) for mount in running["volumeMounts"]
+    }
+    assert running_mounts.get(RENDERED_DIR) == output_volume_name, running_mounts
+
+
+def test_the_rendered_config_parses_with_a_numeric_chat_id(
+    built: list[dict[str, Any]], tmp_path: Path
+) -> None:
+    """`render.sh` with a host and port, two different addresses and a negative chat id writes a
+    config whose `chat_id` is the int `-1001234567890`, `smarthost` is the host and port, `from`
+    and `auth_username` are their own addresses, `to` is the `from` address, no `${` is left, and
+    the file still holds the password and token file paths.
+
+    Catches a chat id written quoted, which Alertmanager rejects (`chat_id` must be a number).
+    Catches `from` and `auth_username` swapped, or `to` left as `${SMTP_FROM}`. Catches a
+    substitution that stops after the first match on a line or a file, leaving one placeholder
+    behind.
+    """
+    completed, output = run_render(built, tmp_path, VALID_VALUES)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    text = output.read_text()
+    assert "${" not in text, text
+    config = yaml.safe_load(text)
+    receiver = config["receivers"][0]
+    email = receiver["email_configs"][0]
+    telegram = receiver["telegram_configs"][0]
+    assert telegram["chat_id"] == -1001234567890
+    assert isinstance(telegram["chat_id"], int)
+    assert email["smarthost"] == "smtp.example.com:587"
+    assert email["from"] == "alerts@example.com"
+    assert email["auth_username"] == "smtp-user@example.com"
+    assert email["to"] == "alerts@example.com"
+    assert email["auth_password_file"] == PASSWORD_FILE
+    assert telegram["bot_token_file"] == TOKEN_FILE
+
+
+ADDRESS_254 = "a" * 242 + "@example.com"
+ADDRESS_255 = "a" * 243 + "@example.com"
+
+
+def test_render_accepts_values_at_the_limits(built: list[dict[str, Any]], tmp_path: Path) -> None:
+    """Port 65535, a 15-digit chat id and a 254-character address render, and so do port 1 and a
+    one-digit chat id.
+
+    Catches an off-by-one that refuses the limit itself (port below 65535, 14 digits, 253
+    characters). Catches a digit count read as the whole width with the minus sign counted in
+    it, which refuses `-123456789012345`.
+    """
+    for port in ("1", "65535"):
+        values = {**VALID_VALUES, "SMTP_SMARTHOST": f"smtp.example.com:{port}"}
+        completed, output = run_render(built, tmp_path, values)
+        assert completed.returncode == 0, f"port {port}: {completed.stdout + completed.stderr}"
+        email = yaml.safe_load(output.read_text())["receivers"][0]["email_configs"][0]
+        assert email["smarthost"] == f"smtp.example.com:{port}"
+        output.unlink()
+    for chat in ("123456789012345", "-123456789012345", "7"):
+        completed, output = run_render(built, tmp_path, {**VALID_VALUES, "TELEGRAM_CHAT_ID": chat})
+        assert completed.returncode == 0, f"chat {chat}: {completed.stdout + completed.stderr}"
+        telegram = yaml.safe_load(output.read_text())["receivers"][0]["telegram_configs"][0]
+        assert telegram["chat_id"] == int(chat)
+        output.unlink()
+    values = {**VALID_VALUES, "SMTP_FROM": ADDRESS_254, "SMTP_AUTH_USERNAME": ADDRESS_254}
+    completed, output = run_render(built, tmp_path, values)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    email = yaml.safe_load(output.read_text())["receivers"][0]["email_configs"][0]
+    assert email["from"] == ADDRESS_254 and email["auth_username"] == ADDRESS_254
+
+
+REFUSED_VALUES = [
+    ("SMTP_SMARTHOST", "smtp.example.com:65536"),
+    ("SMTP_SMARTHOST", "smtp.example.com:0"),
+    ("SMTP_SMARTHOST", "smtp.example.com"),
+    ("SMTP_SMARTHOST", "smtp.example.com:http"),
+    ("SMTP_SMARTHOST", ":587"),
+    ("TELEGRAM_CHAT_ID", "1234567890123456"),
+    ("TELEGRAM_CHAT_ID", "-1234567890123456"),
+    ("TELEGRAM_CHAT_ID", "abc"),
+    ("TELEGRAM_CHAT_ID", "-"),
+    ("SMTP_FROM", ADDRESS_255),
+    ("SMTP_AUTH_USERNAME", ADDRESS_255),
+    ("SMTP_FROM", "not-an-address"),
+    ("SMTP_AUTH_USERNAME", "not-an-address"),
+]
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    REFUSED_VALUES,
+    ids=[f"{key}-{value[:24]}" for key, value in REFUSED_VALUES],
+)
+def test_render_refuses_values_past_the_limits(
+    built: list[dict[str, Any]], tmp_path: Path, key: str, value: str
+) -> None:
+    """Each value one past a limit, or in the wrong shape, exits non-zero, writes no file, prints
+    the key name and never the value; the other three values are valid, so only this check can
+    be what refuses it.
+
+    Catches a limit one too wide (port 65536, a 16-digit chat id, a 255-character address).
+    Catches a port 0 that passes as "digits". Catches a missing check on `SMTP_AUTH_USERNAME`
+    (the same shape as `SMTP_FROM`, easy to validate once and forget). Catches an error line
+    that prints the value, which puts a bad but possibly real account detail in the pod log.
+    Catches a script that writes the file first and checks after.
+    """
+    completed, _ = run_render(built, tmp_path, {**VALID_VALUES, key: value})
+    assert_refused(completed, tmp_path, key, value)
+
+
+TRAILING = [("newline", "\n"), ("crlf", "\r\n"), ("space", " ")]
+TRAILING_KEYS = {
+    "SMTP_SMARTHOST": "smtp.example.com:587",
+    "SMTP_FROM": "alerts@example.com",
+    "SMTP_AUTH_USERNAME": "smtp-user@example.com",
+    "TELEGRAM_CHAT_ID": "-1001234567890",
+}
+
+
+@pytest.mark.parametrize("key", sorted(TRAILING_KEYS))
+@pytest.mark.parametrize(("label", "suffix"), TRAILING, ids=[row[0] for row in TRAILING])
+def test_render_refuses_a_trailing_newline_crlf_or_space(
+    built: list[dict[str, Any]], tmp_path: Path, key: str, label: str, suffix: str
+) -> None:
+    """A valid value with a trailing newline, CRLF or space is refused, naming the key.
+
+    Catches a check built on `$` or a line-based `grep`/`case`, which sees the first line only and
+    lets a chat id with a newline on the end through; such a value splits the rendered YAML line
+    or breaks the number. Every other value is valid, so only this check can refuse it.
+    """
+    value = TRAILING_KEYS[key] + suffix
+    completed, _ = run_render(built, tmp_path, {**VALID_VALUES, key: value})
+    assert completed.returncode != 0, f"{key} with a trailing {label} was accepted"
+    assert key in completed.stdout + completed.stderr
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["render.sh", "template.yml"]
+
+
+@pytest.mark.parametrize("key", RENDER_KEYS)
+@pytest.mark.parametrize("state", ["unset", "empty"])
+def test_render_refuses_a_missing_value(
+    built: list[dict[str, Any]], tmp_path: Path, key: str, state: str
+) -> None:
+    """With one of the four values unset, or set to the empty string, the script exits non-zero,
+    names that key and writes no file.
+
+    Catches a script that reads an unset variable as empty and writes `chat_id: ` (a null) or
+    `smarthost: ` into the config. Catches a `${VAR:-}` default, and a check that only tests
+    "is set" and lets the empty string through. One check per key, so a key nobody validated is
+    named by the failing row.
+    """
+    values = {k: v for k, v in VALID_VALUES.items() if k != key}
+    if state == "empty":
+        values[key] = ""
+    completed, _ = run_render(built, tmp_path, values)
+    assert_refused(completed, tmp_path, key, "")
+
+
+def test_the_secret_values_never_reach_the_pod_env(built: list[dict[str, Any]]) -> None:
+    """Only `render-config` reads `alertmanager-secrets` as env; the `alertmanager` container has
+    no `env` and no `envFrom` at all, and no container holds a `secretKeyRef` to it. The init
+    step is in `initContainers`, Alertmanager in `containers`.
+
+    Catches `envFrom` left on the `alertmanager` container (the old shape), which puts the SMTP
+    password and bot token in the running pod's env. Catches the secret read by `env` entries
+    with `secretKeyRef` instead of `envFrom`, which a scan of `envFrom` alone misses. Catches the
+    init step moved into `containers`, where it would run beside Alertmanager and never before.
+    """
+    template = pod_templates(built, MONITORING)[ALERTMANAGER]
+    init = named_container(template, "initContainers", RENDER_CONFIG)
+    running = named_container(template, "containers", ALERTMANAGER)
+    assert [entry["secretRef"]["name"] for entry in init.get("envFrom", [])] == [
+        ALERTMANAGER_SECRETS
+    ]
+    assert "envFrom" not in running, f"alertmanager envFrom: {running.get('envFrom')}"
+    assert "env" not in running, f"alertmanager env: {running.get('env')}"
+    for container in containers_of(template):
+        for entry in container.get("env", []):
+            source = entry.get("valueFrom", {}).get("secretKeyRef", {})
+            assert source.get("name") != ALERTMANAGER_SECRETS, (
+                f"{container['name']} reads {ALERTMANAGER_SECRETS} through env {entry}"
+            )
 
 
 def test_alertmanager_is_the_second_and_last_pod_with_internet_egress(
@@ -767,8 +1096,8 @@ def test_alertmanager_is_the_second_and_last_pod_with_internet_egress(
     build-wide rather than by opening `alertmanager-egress` by name. Catches an `except` list
     missing `169.254.0.0/16`, which reopens the `169.254.169.254` metadata route the threat model
     names under SSRF via `base_url` - the same exposure `gateway-egress` closes, now open a
-    second way if the two lists are allowed to diverge. Catches a second port beside 443, or the
-    rule hung on a `podSelector` that is not Alertmanager's own, which would open the public
+    second way if the two lists are allowed to diverge. Catches a port beside 443, 465 and 587, or
+    the rule hung on a `podSelector` that is not Alertmanager's own, which would open the public
     internet to every pod `monitoring` runs rather than to Alertmanager alone.
     """
     reaching = {
@@ -798,6 +1127,22 @@ def test_alertmanager_is_the_second_and_last_pod_with_internet_egress(
     )
     ports = numeric_ports(rules[0], f"{MONITORING}/alertmanager-egress")
     assert ports == PUBLIC_PORTS, f"alertmanager's public egress ports are {sorted(ports)}"
+
+
+def test_alertmanager_egress_allows_smtp_and_https_only(built: list[dict[str, Any]]) -> None:
+    """The one `ipBlock` rule of `alertmanager-egress` lists exactly three entries, TCP 443, 465
+    and 587, written as numbers: no duplicates, no UDP, no port 25 or 80.
+
+    Catches port 587 opened without 465 (implicit-TLS mail refused) or the reverse. Catches
+    plain SMTP on 25 or HTTP on 80 added, which lets the pod send mail in the clear or reach
+    plain web. Catches a UDP entry, which `numeric_ports` as a set would hide behind the TCP
+    ones; the list is counted here.
+    """
+    document = policy(built, MONITORING, "alertmanager-egress")
+    rules = rules_with_ip_block(document)
+    assert len(rules) == 1, f"{len(rules)} egress rules carry an ipBlock, not 1"
+    declared = declared_ports(rules[0], "alertmanager-egress")
+    assert sorted(declared, key=str) == [("TCP", 443), ("TCP", 465), ("TCP", 587)], declared
 
 
 def test_prometheus_can_reach_alertmanager_and_cert_manager_and_nothing_new_besides(

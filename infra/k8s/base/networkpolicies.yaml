@@ -856,6 +856,9 @@ spec:
 # unreachable from either pod for the same reason, most sharply the
 # `169.254.169.254` cloud metadata endpoint a leaked credential could
 # otherwise reach.
+#
+# Ports: 443 for Telegram's API, 465 and 587 for SMTP (TLS and STARTTLS),
+# since mail relays do not listen on 443. The gateway stays on 443.
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -880,3 +883,7 @@ spec:
       ports:
         - protocol: TCP
           port: 443
+        - protocol: TCP
+          port: 465
+        - protocol: TCP
+          port: 587

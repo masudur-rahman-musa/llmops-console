@@ -1288,11 +1288,19 @@ def test_grafana_fits_what_the_scrape_plane_left_and_leaves_alertmanager_its_row
     totals = {"requests.memory": 0, "requests.cpu": 0, "limits.memory": 0}
     for owner in pod_owners(built, MONITORING):
         pods = pods_of(owner)
-        for member in containers_of(owner["spec"]["template"]):
-            declared = resource_quantities(member)
-            totals["requests.memory"] += pods * memory_bytes(declared["requests.memory"])
-            totals["requests.cpu"] += pods * cpu_millicores(declared["requests.cpu"])
-            totals["limits.memory"] += pods * memory_bytes(declared["limits.memory"])
+        spec = owner["spec"]["template"]["spec"]
+        # A pod is charged the larger of its biggest init step and its running containers
+        # added up, as the quota admits it - never the two together.
+        running = [resource_quantities(member) for member in spec.get("containers", [])]
+        init = [resource_quantities(member) for member in spec.get("initContainers", [])]
+        for key, unit in (
+            ("requests.memory", memory_bytes),
+            ("requests.cpu", cpu_millicores),
+            ("limits.memory", memory_bytes),
+        ):
+            summed = sum(unit(declared[key]) for declared in running)
+            biggest_init = max((unit(declared[key]) for declared in init), default=0)
+            totals[key] += pods * max(summed, biggest_init)
 
     assert totals["requests.memory"] == EXPECTED_REQUEST_MEMORY_BYTES, (
         f"monitoring requests {totals['requests.memory']} bytes, not "

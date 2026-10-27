@@ -292,7 +292,7 @@ provider keys is the one closed both ways.
 | `prometheus-ingress-from-gateway` | `monitoring` | `prometheus` | ingress from `gateway` in `apps` on its `metrics` port (9090), and from no other `apps` pod |
 | `grafana-ingress` | `monitoring` | `grafana` | ingress from `kube-system` (Traefik) on its serving port, and from nowhere else |
 | `grafana-egress` | `monitoring` | `grafana` | egress to `prometheus:9090` - and no route off the cluster at all |
-| `alertmanager-egress` | `monitoring` | `alertmanager` | egress to the public internet on TCP 443 only |
+| `alertmanager-egress` | `monitoring` | `alertmanager` | egress to the public internet on TCP 443 (Telegram) and 465 and 587 (SMTP) only |
 
 The gateway and Alertmanager are the only two pods in the cluster with a route
 to the internet, and that is the point of the whole file:
@@ -302,7 +302,8 @@ The Langfuse pair in `helpdesk-secrets` is dead config for the same reason,
 until an in-cluster collector relays it.
 
 Both public destinations are `0.0.0.0/0` minus `10.0.0.0/8`, `172.16.0.0/12`,
-`192.168.0.0/16` and `169.254.0.0/16`, on TCP 443 only - `alertmanager-egress`
+`192.168.0.0/16` and `169.254.0.0/16`. The gateway gets TCP 443 only;
+Alertmanager gets 443 plus the SMTP ports 465 and 587 - `alertmanager-egress`
 copies the gateway's excluded ranges exactly rather than re-deriving them. The
 link-local carve-out is the one worth naming: it closes `169.254.169.254`, the
 metadata endpoint an SSRF through a provider `base_url`, or a leaked credential
@@ -393,7 +394,7 @@ are asserted equal, and equal to the names the build references, by
 | `ghcr-pull` | `apps` | `.dockerconfigjson` | the four Helpdesk Deployments, by `imagePullSecrets` |
 | `console-secrets` | `apps` | `CONSOLE_PASSWORD_SHA256`, `CONSOLE_SESSION_SECRET`, `CONSOLE_ADMIN_KEY` | the console Deployment, by `envFrom`; `CONSOLE_ADMIN_KEY` must hash to `gateway-secrets`' `OPSCONSOLE_ADMIN_KEY_SHA256` |
 | `grafana-admin` | `monitoring` | `GF_SECURITY_ADMIN_USER`, `GF_SECURITY_ADMIN_PASSWORD` | the Grafana Deployment, by `envFrom` |
-| `alertmanager-secrets` | `monitoring` | `SMTP_SMARTHOST`, `SMTP_FROM`, `SMTP_AUTH_USERNAME`, `SMTP_AUTH_PASSWORD`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | the Alertmanager Deployment, by `envFrom` |
+| `alertmanager-secrets` | `monitoring` | `SMTP_SMARTHOST`, `SMTP_FROM`, `SMTP_AUTH_USERNAME`, `SMTP_AUTH_PASSWORD`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | the Alertmanager Deployment: its `render-config` start step by `envFrom` (the four plain values), Alertmanager itself as mounted files (the password and token) |
 | `backup-secrets` | `platform` | `RCLONE_CONFIG_HETZNER_ACCESS_KEY_ID`, `RCLONE_CONFIG_HETZNER_SECRET_ACCESS_KEY`, `RCLONE_CONFIG_HETZNER_ENDPOINT`, `BACKUP_BUCKET` | both backup CronJobs' `rclone-sync` container, by `envFrom` |
 
 `traefik-basic-auth` is supplied once per routing namespace, not once per
@@ -534,8 +535,8 @@ It carries `base`, the platform data stores, the staging issuer, the
 middlewares, the backups (suspended until the node has a bucket), the
 ledger-maintenance CronJob (`rollup-refresh`, which runs live
 here because Postgres is on the node - an earlier change, a design note), the gateway
-and the console. Left out: llama-embed, `monitoring` and `evals`, which
-do not fit; our own `letsencrypt-prod`, so the live one is never overwritten;
+and the console, and `monitoring` (Prometheus, Grafana, the two exporters and
+Alertmanager). Left out: llama-embed and `evals`, which do not fit; our own `letsencrypt-prod`, so the live one is never overwritten;
 and the Helpdesk's workloads, config and images, which its own repo deploys. The gateway runs one replica with no HPA. Its two Ingresses answer on
 `gateway.example.com`, the console's three on `llmops.example.com`,
 the Helpdesk's two on `helpdesk.example.com`. The Helpdesk's Ingresses and
@@ -549,8 +550,8 @@ their tag to the deployed commit SHA, then applies the overlay with
 `kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/server | kubectl apply -f -`
 and runs the gateway's migrations.
 
-Limits are not oversubscribed here. `test_k8s_server.py` sums them from the
-built objects, adds the Helpdesk's share (704Mi, 300m,
+Limits are oversubscribed by about 700Mi once k3s's own memory is counted;
+requests still fit. `test_k8s_server.py` sums them from the built objects, adds the Helpdesk's share (704Mi, 300m,
 1408Mi limits) and compares them with these quotas.
 
 | namespace | requests.memory | requests.cpu | limits.memory | holds |
@@ -558,8 +559,8 @@ built objects, adds the Helpdesk's share (704Mi, 300m,
 | `platform` | 640Mi | 800m | 1Gi | Postgres 384Mi, Qdrant 320Mi, Redis 128Mi, one backup job at 192Mi |
 | `apps` | 1088Mi | 550m | 2048Mi | the gateway 384Mi, the console 256Mi, a share for the Helpdesk's four, 1408Mi |
 | `evals` | 0 | 0 | 0 | nothing on this node |
-| `monitoring` | 0 | 0 | 0 | nothing on this node |
-| **total** | **1728Mi** | **1350m** | **3072Mi** | |
+| `monitoring` | 376Mi | 250m | 688Mi | Prometheus 320Mi, Grafana 192Mi, kube-state-metrics 64Mi, node-exporter 48Mi, Alertmanager 64Mi |
+| **total** | **2104Mi** | **1600m** | **3760Mi** | |
 
 The two backup jobs run at 03:00 and 04:00 and the two maintenance jobs at 01:00
 and 02:00, all at their own hours, so the platform quota pays for one job at a
