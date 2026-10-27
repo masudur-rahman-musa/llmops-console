@@ -1177,6 +1177,7 @@ def test_a_fallback_is_recorded_on_the_trace_as_a_count(
 GENERATION = "generation"
 COST_HEADER = "x-gateway-cost-usd"
 PROVIDER_SPAN = f"provider:{REMOTE_PROVIDER}"
+OPENAI_PROVIDER_SPAN = f"provider:{OPENAI_PROVIDER}"
 MODEL_KEY = "gen_ai.request.model"
 INPUT_TOKENS_KEY = "gen_ai.usage.input_tokens"
 OUTPUT_TOKENS_KEY = "gen_ai.usage.output_tokens"
@@ -1539,9 +1540,10 @@ def test_every_step_has_an_input_and_output_note(
     openai_chat_client: TestClient, spans: InMemorySpanExporter, tmp_path: Path
 ) -> None:
     """Catches an implementation that adds the notes to the root and the provider only:
-    Langfuse would still show `undefined` on every other step. Redaction is on so the
-    `redact` step is among the spans checked; `evals` is switched off so the provider
-    step shows its note and not the conversation."""
+    Langfuse would still show `undefined` on every other step. Only the root and the
+    provider step say `not sent`; a stage step that still starts with it has not been given
+    its decision. Redaction is on so the `redact` step is among the spans checked; `evals`
+    is switched off so the provider step shows its note and not the conversation."""
     with evals_switched_off(tmp_path, openai_chat_client):
         response = post_chat(
             openai_chat_client,
@@ -1551,32 +1553,56 @@ def test_every_step_has_an_input_and_output_note(
     assert response.status_code == 200, response.text
 
     recorded = finished(spans)
+    root = root_of(recorded)
 
     assert REDACT_SPAN in {span.name for span in recorded}, "the redact step must be in play"
     for span in recorded:
-        assert note_of(span, INPUT_NOTE_KEY).startswith("not sent"), span.name
-        assert note_of(span, OUTPUT_NOTE_KEY).startswith("not sent"), span.name
+        for key in (INPUT_NOTE_KEY, OUTPUT_NOTE_KEY):
+            note = note_of(span, key)
+            if span is root or span.name == OPENAI_PROVIDER_SPAN:
+                assert note.startswith("not sent"), (span.name, key)
+            else:
+                assert note != "", (span.name, key)
+                assert not note.startswith("not sent"), (span.name, key)
 
 
 def test_a_stage_step_carries_only_the_plain_notes(
     openai_chat_client: TestClient, spans: InMemorySpanExporter
 ) -> None:
-    """Catches the alias, a message count or a finish reason leaking onto a stage step
-    that knows none of them yet (or copying the provider's facts onto every step), and
-    any text other than the two bare lines."""
+    """Catches a stage step left on the starting lines, one that copies the provider's
+    facts (finish reason, tokens) or another stage's decision onto itself, and a redact
+    line that names a value or a placeholder instead of a count."""
     response = post_chat(
         openai_chat_client,
-        chat_body(model=ALIAS, messages=[{"role": "user", "content": TEXT_WITH_PII}]),
+        chat_body(
+            model=ALIAS,
+            messages=[
+                {"role": "system", "content": "be brief"},
+                {"role": "user", "content": TEXT_WITH_PII},
+            ],
+        ),
         data_class=REDACT_CLASS,
     )
     assert response.status_code == 200, response.text
 
     recorded = finished(spans)
-
-    for name in (AUTH_SPAN, ROUTE_SPAN, REDACT_SPAN, CACHE_SPAN):
+    expected = {
+        AUTH_SPAN: ("API key and X-Tenant", "accepted: tenant evals"),
+        ROUTE_SPAN: (
+            f"alias {ALIAS}, data class {REDACT_CLASS}",
+            "picked openai gpt-5-mini; fallback none",
+        ),
+        REDACT_SPAN: ("2 messages", "masked: 1 email"),
+        CACHE_SPAN: (f"same request answered before, alias {ALIAS}", "miss"),
+        SEMANTIC_SPAN: (
+            f"nearest stored answer, alias {ALIAS}",
+            "miss (the question could not be embedded)",
+        ),
+    }
+    for name, (want_input, want_output) in expected.items():
         span = span_named(recorded, name)
-        assert note_of(span, INPUT_NOTE_KEY) == PLAIN_INPUT, name
-        assert note_of(span, OUTPUT_NOTE_KEY) == PLAIN_OUTPUT, name
+        assert note_of(span, INPUT_NOTE_KEY) == want_input, name
+        assert note_of(span, OUTPUT_NOTE_KEY) == want_output, name
 
 
 def test_the_provider_step_notes_say_alias_messages_finish_and_tokens(

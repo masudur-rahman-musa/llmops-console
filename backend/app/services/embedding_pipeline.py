@@ -16,7 +16,9 @@ from app.core.tracing import (
     GenerationAttributes,
     SpanAttributes,
     annotate,
+    counted,
     note_request,
+    note_step,
     stage_span,
     start_generation,
 )
@@ -44,12 +46,14 @@ from app.services.chat_headers import gateway_headers, label_candidate
 from app.services.chat_pipeline import (
     COST_HEADER,
     ROUTE_SPAN,
+    note_route,
     provider_span_name,
     record_served,
     walk_candidates,
 )
 from app.services.redaction_flow import (
     REDACT_SPAN,
+    masked_line,
     redact_or_reject,
     redaction_applies,
     tenant_directory,
@@ -90,7 +94,7 @@ def embed_texts(
     check_rate_limit(clients, context)
     check_budget(clients, context, override=budget_override)
 
-    with stage_span(scope, ROUTE_SPAN):
+    with stage_span(scope, ROUTE_SPAN) as span:
         candidates = resolve(
             clients.policy,
             context.tenant,
@@ -101,6 +105,7 @@ def embed_texts(
                 lambda provider: isinstance(clients.adapters.get(provider), EmbeddingAdapter),
             ),
         )
+        note_route(span, body.model, context.data_class.value, candidates)
     label_candidate(scope, body.model, candidates[0])
     note_request(scope, alias=body.model)
 
@@ -108,8 +113,9 @@ def embed_texts(
     redacted = False
     if redaction_applies(clients.policy, context.tenant, context.data_class):
         directory = tenant_directory(clients.directory_store, context.tenant)
-        with stage_span(scope, REDACT_SPAN):
+        with stage_span(scope, REDACT_SPAN) as span:
             batch = redact_or_reject(texts, param="input", directory=directory)
+            note_step(span, input=counted(len(texts), "text"), output=masked_line(batch.counts))
         texts, redacted = batch.texts, batch.redacted
         record_redactions(tenant=context.tenant, counts=batch.counts)
     annotate(scope, SpanAttributes(redacted=redacted))

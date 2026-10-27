@@ -65,6 +65,7 @@ from app.cache.store import RESPONSE_CACHE_TTL_SECONDS
 from app.cache.vectors import (
     SEMANTIC_COLLECTION_PREFIX,
     InProcessSemanticCache,
+    Nearest,
     QdrantSemanticCache,
     SemanticCache,
 )
@@ -596,8 +597,8 @@ def test_a_search_asks_for_exactly_one_neighbour() -> None:
     Qdrant's default page size decides it: this class returns the top hit of the answer, so
     a query asking for many neighbours pays for a page of vectors and payloads on every
     request and throws all but one away - and one asking for none would make every request a
-    miss. The threshold travels with it, so a server-side comparison is what filters the
-    index and the Python-side one is what pins the published number."""
+    miss. No threshold travels with it: a server-side cut would hide the score of
+    a near miss, which the trace shows, so the comparison is made in Python."""
     cache, transport = qdrant_cache()
 
     cache.search(
@@ -613,7 +614,7 @@ def test_a_search_asks_for_exactly_one_neighbour() -> None:
     assert len(transport.requests) == 1
     sent = json.loads(transport.requests[0].content)
     assert sent["limit"] == 1
-    assert sent["score_threshold"] == SEMANTIC_THRESHOLD
+    assert "score_threshold" not in sent
 
 
 # --------------------------------------------------------------------------
@@ -745,3 +746,127 @@ def test_the_semantic_ttl_is_the_exact_tiers_ttl() -> None:
     from app.cache.vectors import RESPONSE_CACHE_TTL_SECONDS as semantic_ttl
 
     assert semantic_ttl == exact_ttl
+
+
+# --------------------------------------------------------------------------
+# `nearest`: the best score of a miss
+# --------------------------------------------------------------------------
+
+
+class ScoredTransport(httpx.BaseTransport):
+    """A Qdrant stand-in that answers every search with the hits it was given.
+
+    It cuts nothing by score and ignores the filter, so a threshold can only come from the
+    cache class itself. `hits` is empty for the "nothing comparable" answer."""
+
+    def __init__(self, hits: list[dict[str, object]]) -> None:
+        self.hits = hits
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"result": self.hits}, request=request)
+
+
+def qdrant_hit(score: float, answer: ChatResponse) -> dict[str, object]:
+    """One search hit the way Qdrant sends it: a score and the stored answer as JSON."""
+    return {"id": "point-1", "score": score, "payload": {"answer": answer.model_dump_json()}}
+
+
+def qdrant_nearest(hits: list[dict[str, object]]) -> Nearest:
+    """One `nearest` call on a Qdrant cache whose server answers with these hits."""
+    client = httpx.Client(transport=ScoredTransport(hits), base_url="http://qdrant.invalid:6333")
+    return QdrantSemanticCache(client).nearest(
+        TENANT,
+        PROBE,
+        alias=ALIAS,
+        system_hash=SYSTEM_HASH,
+        tools_hash=TOOLS_HASH,
+        provider=PROVIDER,
+        data_class=DATA_CLASS,
+    )
+
+
+def in_process_nearest(cache: InProcessSemanticCache, **changed: str) -> Nearest:
+    """One `nearest` call on the in-process cache, with the filters the row changes."""
+    filters = {
+        "alias": ALIAS,
+        "system_hash": SYSTEM_HASH,
+        "tools_hash": TOOLS_HASH,
+        "provider": PROVIDER,
+        "data_class": DATA_CLASS,
+    }
+    filters.update(changed)
+    return cache.nearest(TENANT, PROBE, **filters)
+
+
+def test_nearest_reports_the_best_score_of_a_miss_in_process() -> None:
+    """Catches a `nearest` that returns no score for a miss (only the hit's), so the trace
+    could not say how close the question came; and one that returns the below-threshold
+    answer instead of leaving it out."""
+    result = in_process_nearest(stored(vector=BELOW_THRESHOLD))
+
+    assert result.answer is None
+    assert result.score == 0.96
+
+
+def test_nearest_reports_the_best_score_of_a_miss_on_qdrant() -> None:
+    """Catches a Qdrant `nearest` that returns no score when the entry is under the
+    threshold, or that serves the answer anyway because the server no longer cuts it."""
+    result = qdrant_nearest([qdrant_hit(0.96, cached_answer())])
+
+    assert result.answer is None
+    assert result.score == 0.96
+
+
+def test_nearest_at_the_threshold_gives_the_answer_and_its_score() -> None:
+    """Catches the in-Python threshold written `>` (the boundary hit lost) now that the
+    server no longer applies it, on both stores; the score comes back with the answer."""
+    answer = cached_answer()
+
+    in_process = in_process_nearest(stored(vector=AT_THRESHOLD, answer=answer))
+    qdrant = qdrant_nearest([qdrant_hit(SEMANTIC_THRESHOLD, answer)])
+
+    assert in_process == Nearest(answer=answer, score=0.97)
+    assert qdrant == Nearest(answer=answer, score=SEMANTIC_THRESHOLD)
+
+
+def test_search_still_equals_the_answer_of_nearest() -> None:
+    """Catches a `search` that drifted from `nearest(...).answer`: callers of `search` are
+    meant not to change."""
+    answer = cached_answer()
+    cache = stored(vector=ABOVE_THRESHOLD, answer=answer)
+
+    assert search(cache) == in_process_nearest(cache).answer == answer
+    assert search(stored(vector=BELOW_THRESHOLD)) is None
+
+
+FILTER_MISMATCH_ROWS: list[tuple[str, dict[str, str]]] = [
+    ("another alias", {"alias": OTHER_ALIAS}),
+    ("another system hash", {"system_hash": OTHER_SYSTEM_HASH}),
+    ("another tools hash", {"tools_hash": OTHER_TOOLS_HASH}),
+    ("another provider", {"provider": OTHER_PROVIDER}),
+    ("another data class", {"data_class": OTHER_DATA_CLASS}),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "changed"), FILTER_MISMATCH_ROWS, ids=[row[0] for row in FILTER_MISMATCH_ROWS]
+)
+def test_nearest_with_nothing_comparable_has_no_score(case: str, changed: dict[str, str]) -> None:
+    """Catches a `nearest` that scores an entry from another conversation (the identical
+    vector, cosine 1.0, would show a score of 1.0 for a question that has nothing to be
+    compared with), so the trace would claim a near match that is not comparable."""
+    result = in_process_nearest(stored(vector=PROBE), **changed)
+
+    assert result == Nearest(answer=None, score=None), case
+
+
+def test_nearest_on_an_empty_cache_has_no_score() -> None:
+    """Catches a score of 0.0 for a cache with nothing in it: the trace would then say
+    `best match 0.000` instead of `no stored answer to compare`."""
+    assert in_process_nearest(InProcessSemanticCache()) == Nearest(answer=None, score=None)
+
+
+def test_nearest_on_qdrant_with_no_hit_has_no_score() -> None:
+    """Catches a Qdrant `nearest` that invents a score of 0.0 when the server finds no
+    comparable entry (an empty result, as for a tenant with no collection yet)."""
+    assert qdrant_nearest([]) == Nearest(answer=None, score=None)

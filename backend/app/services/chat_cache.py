@@ -6,6 +6,9 @@ from collections.abc import Callable, Mapping
 from typing import cast
 
 from app.cache import (
+    NOTHING_NEAR,
+    SEMANTIC_THRESHOLD,
+    Nearest,
     ResponseCache,
     SemanticCache,
     cache_key,
@@ -13,6 +16,7 @@ from app.cache import (
 )
 from app.core.errors import ProviderError
 from app.core.metrics import record_circuit_state, record_tokens
+from app.core.tracing import score_text
 from app.model_routing.policy import DataClass, Policy
 from app.model_routing.resolver import Resolved, resolve
 from app.providers.base import Adapter, ChatResponse, EmbeddingAdapter, EmbeddingRequest
@@ -248,8 +252,8 @@ def semantic_answer(
     tools_hash: str,
     provider: str,
     data_class: str,
-) -> ChatResponse | None:
-    """The stored answer to a question near enough to this one, or `None`.
+) -> Nearest:
+    """The stored answer to a question near enough to this one, and the best score.
 
     `vector` is `None` for a request that was never eligible and for one whose
     embedding did not happen, which is a miss without a lookup - the same shape
@@ -266,9 +270,9 @@ def semantic_answer(
     wiring is settings-driven.
     """
     if vector is None:
-        return None
+        return NOTHING_NEAR
     try:
-        return cache.search(
+        return cache.nearest(
             tenant,
             vector,
             alias=alias,
@@ -278,7 +282,26 @@ def semantic_answer(
             data_class=data_class,
         )
     except Exception:
-        return None
+        return NOTHING_NEAR
+
+
+SEMANTIC_NEEDED = f"needed {SEMANTIC_THRESHOLD:g}"
+"""The threshold as the `semantic` step shows it."""
+
+
+def semantic_note(found: Nearest, *, embedded: bool) -> str:
+    """The `semantic` step's Output: hit or miss, with the score and the one needed.
+
+    Pinned by `test_semantic_miss_says_best_match_and_needed` and its neighbours in
+    `tests/api/test_trace_steps.py`.
+    """
+    if not embedded:
+        return "miss (the question could not be embedded)"
+    if found.score is None:
+        return f"miss (no stored answer to compare, {SEMANTIC_NEEDED})"
+    if found.answer is not None:
+        return f"hit (score {score_text(found.score)}, {SEMANTIC_NEEDED})"
+    return f"miss (best match {score_text(found.score)}, {SEMANTIC_NEEDED})"
 
 
 def store_probe(

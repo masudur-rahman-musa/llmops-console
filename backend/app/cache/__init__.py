@@ -56,8 +56,10 @@ from app.cache.store import (
     ResponseCache,
 )
 from app.cache.vectors import (
+    NOTHING_NEAR,
     SEMANTIC_COLLECTION_PREFIX,
     InProcessSemanticCache,
+    Nearest,
     QdrantSemanticCache,
     SemanticCache,
 )
@@ -67,12 +69,14 @@ __all__ = [
     "CACHE_HEADER",
     "CACHE_ID_PATTERN",
     "CACHE_KEY_PREFIX",
+    "NOTHING_NEAR",
     "NO_TOOL_CHOICE",
     "RESPONSE_CACHE_TTL_SECONDS",
     "SEMANTIC_COLLECTION_PREFIX",
     "SEMANTIC_THRESHOLD",
     "InProcessResponseCache",
     "InProcessSemanticCache",
+    "Nearest",
     "QdrantSemanticCache",
     "RedisResponseCache",
     "ResponseCache",

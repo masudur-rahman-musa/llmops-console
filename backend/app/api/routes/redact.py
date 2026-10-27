@@ -6,9 +6,15 @@ from fastapi import APIRouter, Request
 
 from app.api.deps import Context, DirectoryStoreDep, RedactionMapStoreDep
 from app.core.metrics import record_redactions
-from app.core.tracing import SpanAttributes, annotate, stage_span
+from app.core.tracing import SpanAttributes, annotate, counted, note_step, stage_span
 from app.schemas.redact import RedactMessage, RedactRequest, RedactResponse
-from app.services.redaction_flow import REDACT_SPAN, filed_map_id, redact_batch, tenant_directory
+from app.services.redaction_flow import (
+    REDACT_SPAN,
+    filed_map_id,
+    masked_line,
+    redact_batch,
+    tenant_directory,
+)
 
 REDACT = "/v1/redact"
 """The published route path."""
@@ -44,11 +50,12 @@ def create_redaction(
     directory = tenant_directory(directory_store, context.tenant)
     data_class = body.data_class if body.data_class is not None else context.data_class
 
-    with stage_span(request.scope, REDACT_SPAN):
+    with stage_span(request.scope, REDACT_SPAN) as span:
         if body.text is not None:
             batch = redact_batch((body.text,), directory)
             text: str | None = batch.texts[0]
             messages: tuple[RedactMessage, ...] | None = None
+            note_step(span, input=counted(1, "text"), output=masked_line(batch.counts))
         else:
             turns = body.messages or ()
             batch = redact_batch(tuple(turn.content for turn in turns), directory)
@@ -57,6 +64,7 @@ def create_redaction(
                 turn.model_copy(update={"content": content})
                 for turn, content in zip(turns, batch.texts, strict=True)
             )
+            note_step(span, input=counted(len(turns), "message"), output=masked_line(batch.counts))
     annotate(request.scope, SpanAttributes(redacted=batch.redacted, data_class=data_class.value))
     record_redactions(tenant=context.tenant, counts=batch.counts)
 

@@ -8,7 +8,16 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.tracing import INPUT_NOTE_KEY, OUTPUT_NOTE_KEY, PreviewNote, plain_notes
+from app.core.tracing import (
+    INPUT_NOTE_KEY,
+    OUTPUT_NOTE_KEY,
+    STEP_INPUT_DEFAULT,
+    STEP_OUTPUT_DEFAULT,
+    PreviewNote,
+    plain_notes,
+    score_text,
+)
+from app.services.redaction_flow import masked_line
 
 INPUT_ROWS: list[tuple[str, int | None, str | None, str]] = [
     (
@@ -84,3 +93,55 @@ def test_a_stage_step_starts_with_the_bare_lines() -> None:
         INPUT_NOTE_KEY: "not sent: prompts stay inside the gateway",
         OUTPUT_NOTE_KEY: "not sent",
     }
+
+
+def test_the_step_default_lines_are_the_published_ones() -> None:
+    """Catches a reworded default: a stage that never records a decision shows these two
+    lines in Langfuse, and the plan names them word for word."""
+    assert STEP_INPUT_DEFAULT == "not recorded"
+    assert STEP_OUTPUT_DEFAULT == "no decision recorded"
+
+
+MASKED_ROWS: list[tuple[str, dict[str, int], str]] = [
+    (
+        "kinds in the detector's own order, not the caller's",
+        {"PHONE": 2, "EMAIL": 1, "STEUER_ID": 1},
+        "masked: 1 email, 2 phone, 1 steuer id",
+    ),
+    ("one kind", {"EMAIL": 1}, "masked: 1 email"),
+    ("a zero count is left out", {"EMAIL": 0, "PHONE": 2}, "masked: 2 phone"),
+    ("no counts", {}, "nothing masked"),
+    ("only zero counts", {"EMAIL": 0, "PHONE": 0}, "nothing masked"),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "counts", "expected"), MASKED_ROWS, ids=[row[0] for row in MASKED_ROWS]
+)
+def test_masked_line_follows_detector_order(
+    case: str, counts: dict[str, int], expected: str
+) -> None:
+    """Catches a line in the caller's order (or alphabetical), a kind written upper case
+    or with its underscore, a plural, a zero count printed as `0 email`, and an empty line
+    where `nothing masked` belongs."""
+    assert masked_line(counts) == expected, case
+
+
+SCORE_ROWS: list[tuple[str, float, str]] = [
+    ("just under the threshold rounds down", 0.9699, "0.969"),
+    ("the threshold itself", 0.97, "0.970"),
+    ("a perfect match", 1.0, "1.000"),
+    ("a long tail is cut, not rounded up", 0.9569999, "0.956"),
+    ("zero", 0.0, "0.000"),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "score", "expected"), SCORE_ROWS, ids=[row[0] for row in SCORE_ROWS]
+)
+def test_a_score_just_under_the_threshold_rounds_down(
+    case: str, score: float, expected: str
+) -> None:
+    """Catches `round()` or an f-string `:.3f`, which turn 0.9699 into `0.970`: a miss would
+    then read as if it had reached the 0.97 it needed."""
+    assert score_text(score) == expected, case

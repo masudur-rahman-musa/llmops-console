@@ -36,6 +36,7 @@ import re
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from decimal import ROUND_DOWN, Decimal
 
 from opentelemetry.context import Context
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -56,6 +57,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 from starlette.types import Scope
 
 from app.core.config import Settings
+from app.core.errors import GatewayError
 
 TRACER_NAME = "app.gateway"
 """The instrumentation scope every span here is created under."""
@@ -225,6 +227,16 @@ TAGS_KEY = "langfuse.trace.tags"
 INPUT_NOT_SENT = "not sent: prompts stay inside the gateway"
 OUTPUT_NOT_SENT = "not sent"
 
+STEP_INPUT_DEFAULT = "not recorded"
+STEP_OUTPUT_DEFAULT = "no decision recorded"
+"""What a stage step (auth, route, cache, redact, semantic) says until it writes
+its own decision with `note_step`. The root and the provider step keep the
+`not sent` notes (`test_the_step_default_lines_are_the_published_ones`)."""
+
+REFUSED_PREFIX = "refused: "
+"""A stage whose body raises a typed error says this and the code, never the message
+(`test_a_refused_auth_says_the_code`)."""
+
 FINISH_REASON_PATTERN = re.compile(r"[a-z_]{1,32}")
 """What a finish reason must look like to be sent as given."""
 
@@ -308,6 +320,36 @@ def plain_notes() -> dict[str, str]:
         INPUT_NOTE_KEY: PreviewNote.input().as_text(),
         OUTPUT_NOTE_KEY: PreviewNote.output().as_text(),
     }
+
+
+def step_notes() -> dict[str, str]:
+    """The Input and Output every stage step starts with."""
+    return {INPUT_NOTE_KEY: STEP_INPUT_DEFAULT, OUTPUT_NOTE_KEY: STEP_OUTPUT_DEFAULT}
+
+
+def note_step(span: Span | None, *, input: str | None = None, output: str | None = None) -> None:
+    """Write a stage step's decision as its Input and Output, each one plain line.
+
+    The callers pass only facts the gateway decided (a tenant auth accepted, an
+    alias that resolved, counts), never text a caller sent.
+    """
+    if span is None or not span.is_recording():
+        return
+    if input is not None:
+        span.set_attribute(INPUT_NOTE_KEY, input)
+    if output is not None:
+        span.set_attribute(OUTPUT_NOTE_KEY, output)
+
+
+def score_text(score: float) -> str:
+    """A similarity score with 3 decimals, rounded DOWN, so a miss never reads as reaching
+    the threshold (`test_a_score_just_under_the_threshold_rounds_down`)."""
+    return str(Decimal(repr(score)).quantize(Decimal("0.001"), rounding=ROUND_DOWN))
+
+
+def counted(count: int, unit: str) -> str:
+    """`1 message`, `3 messages`: a count and its unit, plural past one."""
+    return f"{count} {unit}{'' if count == 1 else 's'}"
 
 
 class Generation:
@@ -582,8 +624,14 @@ def stage_span(scope: Scope, name: str) -> Iterator[Span | None]:
     with tracer().start_as_current_span(
         name, context=record.context, record_exception=False, set_status_on_exception=False
     ) as span:
-        span.set_attributes(plain_notes())
-        yield span
+        span.set_attributes(step_notes())
+        try:
+            yield span
+        except GatewayError as exc:
+            code = getattr(exc, "code", None)
+            if code is not None:
+                span.set_attribute(OUTPUT_NOTE_KEY, f"{REFUSED_PREFIX}{code.value}")
+            raise
 
 
 def otlp_headers(raw: str | None) -> dict[str, str] | None:

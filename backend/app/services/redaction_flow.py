@@ -50,6 +50,21 @@ class RedactedBatch:
         return bool(self.mapping)
 
 
+def masked_line(counts: Mapping[str, int]) -> str:
+    """The `redact` step's Output: what was masked, as counts only, never the values.
+
+    Kinds in the detector's own order, lower case, `_` read as a space, no plurals:
+    `masked: 1 email, 2 phone`. Nothing masked reads `nothing masked`
+    (`test_masked_line_follows_detector_order`).
+    """
+    parts = [
+        f"{counts[kind.value]} {kind.value.lower().replace('_', ' ')}"
+        for kind in Kind
+        if counts.get(kind.value, 0) > 0
+    ]
+    return f"masked: {', '.join(parts)}" if parts else "nothing masked"
+
+
 REDACT_SPAN = "redact"
 """The stage span around a redaction pass. Emitted only where redaction actually
 runs, which on the model routes is inside the `redaction_applies` branch and not

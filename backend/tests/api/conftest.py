@@ -55,6 +55,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from prometheus_client import CollectorRegistry
 
 from app.api.deps import MAX_KEY_LENGTH, request_context
+from app.cache.vectors import Nearest
 from app.core.config import Settings
 from app.core.context import RequestContext
 from app.core.errors import ProviderError, TenantMismatch
@@ -1051,6 +1052,19 @@ class SilentSemanticCache:
         data_class: str,
     ) -> ChatResponse | None:
         return None
+
+    def nearest(
+        self,
+        tenant: str,
+        vector: Sequence[float],
+        *,
+        alias: str,
+        system_hash: str,
+        tools_hash: str,
+        provider: str,
+        data_class: str,
+    ) -> Nearest:
+        return Nearest(answer=None, score=None)
 
     def put(
         self,

@@ -67,6 +67,7 @@ from app.cache import (
     InProcessSemanticCache,
     QdrantSemanticCache,
 )
+from app.cache.vectors import Nearest
 from app.core.clients import PROBE_TIMEOUT_SECONDS
 from app.core.config import Settings
 from app.core.errors import ProviderError
@@ -359,6 +360,22 @@ class BrokenSemanticCache:
         if self.on_search:
             raise RuntimeError(STORE_FAILURE_TEXT)
         return None
+
+    def nearest(
+        self,
+        tenant: str,
+        vector: Sequence[float],
+        *,
+        alias: str,
+        system_hash: str,
+        tools_hash: str,
+        provider: str,
+        data_class: str,
+    ) -> Nearest:
+        self.searches += 1
+        if self.on_search:
+            raise RuntimeError(STORE_FAILURE_TEXT)
+        return Nearest(answer=None, score=None)
 
     def put(
         self,

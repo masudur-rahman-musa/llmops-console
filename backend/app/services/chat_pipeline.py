@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 
+from opentelemetry.trace import Span
 from starlette.types import Scope
 
 from app.cache import (
@@ -27,7 +28,9 @@ from app.core.tracing import (
     GenerationAttributes,
     SpanAttributes,
     annotate,
+    counted,
     note_request,
+    note_step,
     stage_span,
     start_generation,
 )
@@ -56,6 +59,7 @@ from app.services.chat_cache import (
     embedded_probe,
     health_seam,
     requested_key,
+    semantic_note,
     store_answer,
     store_probe,
 )
@@ -73,6 +77,7 @@ from app.services.chat_headers import (
 )
 from app.services.redaction_flow import (
     REDACT_SPAN,
+    masked_line,
     redact_or_reject,
     redaction_applies,
     tenant_directory,
@@ -143,6 +148,23 @@ exists to answer."""
 def provider_span_name(provider: str) -> str:
     """The stage span name for one resolved provider."""
     return f"{PROVIDER_SPAN_PREFIX}{provider}"
+
+
+def note_route(
+    span: Span | None, alias: str, data_class: str, candidates: Sequence[Resolved]
+) -> None:
+    """The `route` step's notes: the alias in; the pick and its fallbacks out.
+
+    Called only after `resolve()` returned, so an unknown alias puts no caller
+    text on the trace (`test_an_unknown_alias_leaves_no_caller_text`).
+    """
+    picked, *rest = candidates
+    fallback = ", then ".join(f"{c.provider} {c.model}" for c in rest) or "none"
+    note_step(
+        span,
+        input=f"alias {alias}, data class {data_class}",
+        output=f"picked {picked.provider} {picked.model}; fallback {fallback}",
+    )
 
 
 def record_served(
@@ -359,11 +381,14 @@ def _redacted(
         return body, False
 
     directory = tenant_directory(directory_store, context.tenant)
-    with stage_span(scope, REDACT_SPAN):
+    with stage_span(scope, REDACT_SPAN) as span:
         batch = redact_or_reject(
             tuple(message.content or "" for message in body.messages),
             param="messages",
             directory=directory,
+        )
+        note_step(
+            span, input=counted(len(body.messages), "message"), output=masked_line(batch.counts)
         )
     record_redactions(tenant=context.tenant, counts=batch.counts)
     rebuilt = tuple(
@@ -442,7 +467,7 @@ def complete_chat(
     allowed = allowed_by_header(cache_header)
     mapping = requested_mapping(clients.redaction_map_store, context.tenant, rehydrate_header)
 
-    with stage_span(scope, ROUTE_SPAN):
+    with stage_span(scope, ROUTE_SPAN) as span:
         candidates = resolve(
             clients.policy,
             context.tenant,
@@ -450,6 +475,7 @@ def complete_chat(
             context.data_class.value,
             is_healthy=health_seam(clients.breaker, lambda provider: provider in clients.adapters),
         )
+        note_route(span, body.model, context.data_class.value, candidates)
     try:
         return _serve(
             clients,
@@ -490,7 +516,7 @@ def _serve(
     label_candidate(scope, body.model, candidates[0])
     note_request(scope, alias=body.model, messages=len(body.messages))
 
-    with stage_span(scope, CACHE_SPAN):
+    with stage_span(scope, CACHE_SPAN) as span:
         key = requested_key(
             body,
             context.tenant,
@@ -499,6 +525,11 @@ def _serve(
             data_class=context.data_class.value,
         )
         hit = cached_answer(clients.response_cache, context.tenant, key)
+        note_step(
+            span,
+            input=f"same request answered before, alias {body.model}",
+            output="miss" if hit is None else "hit",
+        )
     if hit is not None:
         label_candidate(scope, body.model, candidates[0], cache=CACHE_STATUS_HIT)
         record_cache_hit(tenant=context.tenant, kind=EXACT_CACHE_KIND)
@@ -521,7 +552,7 @@ def _serve(
 
     vector: tuple[float, ...] | None = None
     if semantic_eligible(body, alias=clients.policy.aliases[body.model]):
-        with stage_span(scope, SEMANTIC_SPAN):
+        with stage_span(scope, SEMANTIC_SPAN) as span:
             vector = embedded_probe(
                 probe_text(outbound),
                 policy=clients.policy,
@@ -530,7 +561,7 @@ def _serve(
                 tenant=context.tenant,
                 data_class=context.data_class,
             )
-            near = _semantic_answer(
+            found = _semantic_answer(
                 clients.semantic_cache,
                 context.tenant,
                 vector,
@@ -540,6 +571,12 @@ def _serve(
                 provider=candidates[0].provider,
                 data_class=context.data_class.value,
             )
+            note_step(
+                span,
+                input=f"nearest stored answer, alias {body.model}",
+                output=semantic_note(found, embedded=vector is not None),
+            )
+        near = found.answer
         if near is not None:
             label_candidate(scope, body.model, candidates[0], cache=CACHE_STATUS_SEMANTIC)
             record_cache_hit(tenant=context.tenant, kind=SEMANTIC_CACHE_KIND)

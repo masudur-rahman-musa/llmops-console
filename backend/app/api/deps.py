@@ -40,6 +40,7 @@ from app.core.metrics import label_tenant
 from app.core.tracing import (
     SpanAttributes,
     annotate,
+    note_step,
     request_trace,
     stage_span,
 )
@@ -253,7 +254,7 @@ def request_context(
     """
     store: KeyStore = request.app.state.key_store
 
-    with stage_span(request.scope, AUTH_SPAN):
+    with stage_span(request.scope, AUTH_SPAN) as span:
         key = bearer_key(authorization)
         tenant = store.tenant_for(key) if key is not None else None
         if tenant is None:
@@ -274,6 +275,7 @@ def request_context(
             if x_prompt_version is not None
             else None,
         )
+        note_step(span, input="API key and X-Tenant", output=f"accepted: tenant {tenant}")
 
     annotate(
         request.scope,

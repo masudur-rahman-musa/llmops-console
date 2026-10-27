@@ -14,9 +14,10 @@ conversation's answer, and the nearest neighbour will happily be one, which is
 why each field has its own miss case at cosine 1.0 rather than a sample.
 
 **Near enough is `>= SEMANTIC_THRESHOLD`, inclusive**. The comparison
-is made here in Python as well as sent to Qdrant as a `score_threshold`, so the
-published number is the shipped one whichever way the server rounds its own
-comparison.
+is made here in Python only. Qdrant is asked for the one nearest comparable
+entry with no `score_threshold`, so a miss still says how near the best entry
+came, which the trace's `semantic` step shows
+(`test_nearest_reports_the_best_score_of_a_miss`).
 
 **A tenant is a COLLECTION, not a filter.** `cache_{tenant}`, created on the
 first write with the size of the vector being written (swapping
@@ -47,6 +48,7 @@ import math
 import time
 import uuid
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import Final, Protocol
 
 import httpx
@@ -87,6 +89,23 @@ every entry is written and then found unreadable - a tier that stores everything
 and serves nothing, with no failure anywhere to see."""
 
 
+@dataclass(frozen=True, slots=True)
+class Nearest:
+    """What one lookup found: the answer to serve, and the best comparable score.
+
+    `answer` is set only at or above `SEMANTIC_THRESHOLD`. `score` is set whenever
+    a comparable entry existed, even one below it, and is `None` when nothing
+    comparable was stored or the store could not answer.
+    """
+
+    answer: ChatResponse | None
+    score: float | None
+
+
+NOTHING_NEAR: Final[Nearest] = Nearest(answer=None, score=None)
+"""No comparable entry, no score."""
+
+
 class SemanticCache(Protocol):
     """Put an answer away under a tenant and a probe vector; find it again from a near one.
 
@@ -109,6 +128,20 @@ class SemanticCache(Protocol):
     and a search that swapped two of them would filter on values no entry carries
     and simply never hit.
     """
+
+    def nearest(
+        self,
+        tenant: str,
+        vector: Sequence[float],
+        *,
+        alias: str,
+        system_hash: str,
+        tools_hash: str,
+        provider: str,
+        data_class: str,
+    ) -> Nearest:
+        """The nearest comparable entry's score, and its answer when near enough."""
+        ...
 
     def search(
         self,
@@ -180,7 +213,29 @@ class InProcessSemanticCache:
         provider: str,
         data_class: str,
     ) -> ChatResponse | None:
-        """The nearest comparable entry at or above `SEMANTIC_THRESHOLD`, or `None`.
+        """The nearest comparable entry at or above `SEMANTIC_THRESHOLD`, or `None`."""
+        return self.nearest(
+            tenant,
+            vector,
+            alias=alias,
+            system_hash=system_hash,
+            tools_hash=tools_hash,
+            provider=provider,
+            data_class=data_class,
+        ).answer
+
+    def nearest(
+        self,
+        tenant: str,
+        vector: Sequence[float],
+        *,
+        alias: str,
+        system_hash: str,
+        tools_hash: str,
+        provider: str,
+        data_class: str,
+    ) -> Nearest:
+        """The best comparable score, and its answer when at or above the threshold.
 
         Comparable means all five filters match exactly; near means
         `>= SEMANTIC_THRESHOLD`, inclusive. The best score is tracked rather than
@@ -214,11 +269,12 @@ class InProcessSemanticCache:
             ) != (alias, system_hash, tools_hash, provider, data_class):
                 continue
             score = _cosine(vector, stored_vector)
-            if score < SEMANTIC_THRESHOLD:
-                continue
             if best is None or score > best[0]:
                 best = (score, answer)
-        return None if best is None else best[1]
+        if best is None:
+            return NOTHING_NEAR
+        score, answer = best
+        return Nearest(answer=answer if score >= SEMANTIC_THRESHOLD else None, score=score)
 
     def put(
         self,
@@ -309,18 +365,39 @@ class QdrantSemanticCache:
         provider: str,
         data_class: str,
     ) -> ChatResponse | None:
-        """The nearest comparable answer at or above the threshold, or `None`.
+        """The nearest comparable answer at or above the threshold, or `None`."""
+        return self.nearest(
+            tenant,
+            vector,
+            alias=alias,
+            system_hash=system_hash,
+            tools_hash=tools_hash,
+            provider=provider,
+            data_class=data_class,
+        ).answer
 
-        `None` covers a tenant with no collection yet, a collection with no
+    def nearest(
+        self,
+        tenant: str,
+        vector: Sequence[float],
+        *,
+        alias: str,
+        system_hash: str,
+        tools_hash: str,
+        provider: str,
+        data_class: str,
+    ) -> Nearest:
+        """The one nearest comparable entry: its score, and its answer when near enough.
+
+        No answer covers a tenant with no collection yet, a collection with no
         comparable entry, a neighbour under the threshold, a payload this build
         cannot read and a Qdrant that is not answering at all. A caller cannot
         tell those apart, and for a cache there is nothing it could do
         differently if it could.
 
-        The threshold is sent to the server AND applied here: Qdrant's
-        `score_threshold` does the filtering in the index, and the comparison
-        below is what makes the published `SEMANTIC_THRESHOLD` the shipped one
-        whichever way the server rounds its own.
+        No `score_threshold` is sent: the threshold is checked here, which is the
+        only way to learn the best score of a miss. It still asks for one entry,
+        so a lookup costs what it did (`test_a_search_asks_for_exactly_one_neighbour`).
         """
         _checked_tenant(tenant)
         now = self._clock()
@@ -330,7 +407,6 @@ class QdrantSemanticCache:
                 "vector": [float(component) for component in vector],
                 "limit": _SEARCH_LIMIT,
                 "with_payload": True,
-                "score_threshold": SEMANTIC_THRESHOLD,
                 "filter": {
                     "must": [
                         {"key": "alias", "match": {"value": alias}},
@@ -347,11 +423,16 @@ class QdrantSemanticCache:
             },
         )
         if found is None:
-            return None
+            return NOTHING_NEAR
         hits = found.get("result")
         if not isinstance(hits, list) or not hits:
-            return None
-        return _answer_of(hits[0])
+            return NOTHING_NEAR
+        top = hits[0]
+        score = top.get("score") if isinstance(top, dict) else None
+        if not isinstance(score, int | float) or isinstance(score, bool):
+            return NOTHING_NEAR
+        answer = _answer_of(top) if score >= SEMANTIC_THRESHOLD else None
+        return Nearest(answer=answer, score=float(score))
 
     def put(
         self,
