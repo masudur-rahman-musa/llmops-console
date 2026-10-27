@@ -43,8 +43,8 @@ function dateAnchor(x: number): "start" | "middle" | "end" {
  * shown has its UTC time under it. The svg has no fixed size, so the `chart` class
  * fills the page width. A fixed `range` with its `steps` keeps the score axis
  * still (steps read as whole percents, a score past the range sits on its edge),
- * and a finite `baseline` adds one `chart-baseline` line whose label sits in the band
- * above the plot, right-anchored, so no point (always inside the plot) can lie under it.
+ * and a finite `baseline` adds one `chart-baseline` line, named in a key under the chart
+ * beside the scored line, so its label sits by its own line style and never on a point.
  * Dates at either end anchor inward. Pinned by
  * tests/chart.test.tsx.
  */
@@ -119,9 +119,6 @@ export function LineChart({
         {level !== undefined && (
           <g>
             <line x1={LEFT} x2={WIDTH - PAD} y1={toY(level.value)} y2={toY(level.value)} className="chart-baseline" />
-            <text x={WIDTH - PAD} y={TOP - 6} textAnchor="end" className="chart-text">
-              {level.label}
-            </text>
           </g>
         )}
         {shown.map((marker, index) => {
@@ -137,6 +134,14 @@ export function LineChart({
           <circle key={`p${index}`} cx={x} cy={y} r={3} fill="currentColor" />
         ))}
       </svg>
+      {level !== undefined && (
+        <p className="chart-key">
+          <span className="chart-key-line" aria-hidden="true" />
+          {title}
+          <span className="chart-key-line chart-key-baseline" aria-hidden="true" />
+          {level.label}
+        </p>
+      )}
     </figure>
   );
 }

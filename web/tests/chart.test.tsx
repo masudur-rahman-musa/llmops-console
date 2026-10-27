@@ -301,9 +301,7 @@ describe("LineChart", () => {
       const y2 = Number(baseline[0].match(/\by2="([^"]*)"/)?.[1]);
       expect(y1).toBeCloseTo(expected, 1);
       expect(y2).toBeCloseTo(expected, 1);
-      const label = textElements(html).filter((item) => item.body === "Baseline 48.48%");
-      expect(label).toHaveLength(1);
-      expect(label[0].anchor).toBe("end");
+      expect(html).toMatch(/<p class="chart-key">.*Check score.*Baseline 48\.48%<\/p>/);
     });
 
     it("the baseline label never covers a point", () => {
@@ -322,11 +320,8 @@ describe("LineChart", () => {
       const radius = Number(html.match(/<circle\b[^>]*\br="([^"]*)"/)?.[1]);
       expect(radius).toBe(3);
       expect(Math.min(...circleHeights(html))).toBe(top);
-      const label = textElements(html).filter((item) => item.body === "Baseline 48.48%");
-      expect(label).toHaveLength(1);
-      expect(Number(label[0].y)).toBeLessThan(top - radius);
-      expect(Number(label[0].y)).toBeGreaterThan(0);
-      expect(label[0].anchor).toBe("end");
+      expect(textElements(html).filter((item) => item.body === "Baseline 48.48%")).toEqual([]);
+      expect(html.split("</svg>")[1]).toContain("Baseline 48.48%");
     });
 
     it("a baseline that is not a number draws nothing", () => {

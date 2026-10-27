@@ -213,6 +213,29 @@ svg {
   font-size: 11px;
 }
 
+/* The key under a chart: a line sample before each name. */
+.chart-key {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chart-key-line {
+  width: 20px;
+  border-top: 2px solid currentColor;
+}
+
+.chart-key-line ~ .chart-key-line {
+  margin-left: 12px;
+}
+
+.chart-key-baseline {
+  border-top: 2px dotted var(--accent);
+}
+
 /* A clear area over each bar part; hover or focus shows its value above the bar. */
 .chart-hit {
   fill: transparent;
