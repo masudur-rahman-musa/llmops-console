@@ -98,6 +98,81 @@ describe("paged panels", () => {
     expect(pagerTexts(html)).toEqual(["Page 3 of 3"]);
   });
 
+  it("cost pages top users and budgets", async () => {
+    // Catches a top users or budgets list that shows every row, reads the other list's page number, counts the wrong total, or a pager link that drops the other list's page.
+    const body = fixture("cost");
+    body.top_users = Array.from({ length: 45 }, (_, i) => ({
+      tenant: "acme-eu",
+      user_id: `usr${i}`,
+      requests: 1,
+      cost_usd: 1,
+    }));
+    body.budgets = Array.from({ length: 45 }, (_, i) => ({
+      tenant: `bt${String(i).padStart(2, "0")}`,
+      cap_usd: 100,
+      spent_usd: 1,
+      ratio: 1 - i / 100,
+    }));
+    stubFetch(body);
+
+    const html = renderToStaticMarkup(await CostPage(props({ users_page: "3", budgets_page: "2" })));
+
+    expect(rowsMatching(html, /\busr\d+\b/)).toHaveLength(5);
+    expect(rowsMatching(html, /\busr4[0-4]\b/)).toHaveLength(5);
+    const budgets = Array.from(text(html).matchAll(/\bbt(\d{2})\b/g), (m) => Number(m[1]));
+    expect(new Set(budgets)).toEqual(new Set(Array.from({ length: 20 }, (_, i) => 20 + i)));
+    expect(pagerTexts(html).toSorted()).toEqual(["Page 2 of 3", "Page 3 of 3"]);
+    const next = Array.from(html.matchAll(/<a\b[^>]*\bhref="([^"]*)"[^>]*>Next<\/a>/g), (m) =>
+      new URLSearchParams(m[1].replace(/&amp;/g, "&").replace(/^\?/, "")),
+    );
+    expect(next).toHaveLength(1);
+    expect(next[0].get("budgets_page")).toBe("3");
+    expect(next[0].get("users_page")).toBe("3");
+  });
+
+  it("twenty budgets get no pager", async () => {
+    // Catches a pager drawn, or a row dropped, when the lists fill exactly one page (20 rows).
+    const body = fixture("cost");
+    body.top_users = Array.from({ length: 20 }, (_, i) => ({
+      tenant: "acme-eu",
+      user_id: `usr${i}`,
+      requests: 1,
+      cost_usd: 1,
+    }));
+    body.budgets = Array.from({ length: 20 }, (_, i) => ({
+      tenant: `bt${String(i).padStart(2, "0")}`,
+      cap_usd: 100,
+      spent_usd: 1,
+      ratio: 0.5,
+    }));
+    stubFetch(body);
+
+    const html = renderToStaticMarkup(await CostPage(props({})));
+
+    expect(rowsMatching(html, /\busr\d+\b/)).toHaveLength(20);
+    expect(new Set(text(html).match(/\bbt\d{2}\b/g)).size).toBe(20);
+    expect(pagerTexts(html)).toEqual([]);
+  });
+
+  it("a bad users page shows page 1", async () => {
+    // Catches a users page that fails, or shows an empty page, on a value that is not a whole number above zero.
+    const body = fixture("cost");
+    body.top_users = Array.from({ length: 25 }, (_, i) => ({
+      tenant: "acme-eu",
+      user_id: `usr${String(i).padStart(2, "0")}`,
+      requests: 1,
+      cost_usd: 1,
+    }));
+    for (const bad of ["abc", "0"]) {
+      stubFetch(body);
+      const html = renderToStaticMarkup(await CostPage(props({ users_page: bad })));
+      const rows = rowsMatching(html, /\busr\d+\b/);
+      expect(rows, bad).toHaveLength(20);
+      expect(rows.join(" "), bad).toContain("usr00");
+      expect(pagerTexts(html), bad).toEqual(["Page 1 of 2"]);
+    }
+  });
+
   it("quality pages taxonomy and blocked releases", async () => {
     // Catches a taxonomy or blocked list that shows every row, reads the wrong URL name, or pages one panel with the other's number.
     const body = fixture("quality");

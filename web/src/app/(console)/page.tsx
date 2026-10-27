@@ -2,7 +2,7 @@ import { consolePage } from "@/components/layout/console-page";
 import { ExternalLink } from "@/components/ui/external-link";
 import { StatCards } from "@/components/ui/stat-cards";
 import { Table } from "@/components/ui/table";
-import { NA, ms, percent, points, usd, utcTime } from "@/lib/format";
+import { NA, ms, percent, points, smallUsd, utcTime } from "@/lib/format";
 import { WINDOW_LINES } from "@/lib/labels";
 
 export const dynamic = "force-dynamic";
@@ -21,7 +21,7 @@ export default consolePage(
       <StatCards
         cards={[
           { label: "Requests today", value: body.requests_today?.toLocaleString("en-US") ?? NA },
-          { label: "Cost today", value: usd(body.cost_usd_today) },
+          { label: "Cost today", value: smallUsd(body.cost_usd_today) },
           { label: "p95 latency", value: ms(body.p95_seconds) },
           { label: "Error rate", value: percent(body.error_rate) },
           {

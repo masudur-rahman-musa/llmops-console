@@ -78,8 +78,18 @@ function labels(html: string): string[] {
 
 function formOf(html: string): string {
   const forms = Array.from(html.matchAll(/<form\b[\s\S]*?<\/form>/g), (match) => match[0]);
-  expect(forms).toHaveLength(1);
-  return forms[0];
+  if (forms.length === 1) {
+    return forms[0];
+  }
+  // The Cost page has two forms: the daily cost form is the one whose `from` is a date field
+  // (the top users form carries `from` only as a hidden field).
+  const daily = forms.filter((form) => /<input\b[^>]*\btype="date"[^>]*\bname="from"/.test(form));
+  expect(daily).toHaveLength(1);
+  return daily[0];
+}
+
+function formsOf(html: string): string[] {
+  return Array.from(html.matchAll(/<form\b[\s\S]*?<\/form>/g), (match) => match[0]);
 }
 
 function controlNames(form: string): string[] {
@@ -448,5 +458,95 @@ describe("daily cost filters", () => {
 
     expect(text(html)).toContain("None in this window.");
     expect(text(html)).not.toContain("NaN");
+  });
+
+  describe("top users tenant filter", () => {
+    const USER = (tenant: string, id: string) => ({ tenant, user_id: id, requests: 2, cost_usd: 1 });
+
+    function usersBody(): Fixture {
+      const body = costBody();
+      body.top_users = [USER("globex-eu", "u_g1"), USER("initech-eu", "u_i1"), USER("globex-eu", "u_g2")];
+      return body;
+    }
+
+    function usersForm(html: string): string {
+      // The daily cost form carries users_tenant as a hidden field; only the top users form has it as a select.
+      const found = formsOf(html).filter((form) => /<select\b[^>]*\bname="users_tenant"/.test(form));
+      expect(found).toHaveLength(1);
+      return found[0];
+    }
+
+    function userRows(html: string): string[][] {
+      return bodyRows(tableWithHeader(html, "User"));
+    }
+
+    it("the top users tenant filter narrows its table only", async () => {
+      // Catches a users filter that is ignored, that also narrows Daily cost, that builds its choices from the daily rows instead of top_users, or that does not show the chosen tenant.
+      stubFetch(usersBody());
+
+      const html = renderToStaticMarkup(await CostPage(props({ users_tenant: "globex-eu" })));
+
+      expect(userRows(html).map((row) => row[1])).toEqual(["u_g1", "u_g2"]);
+      expect(new Set(userRows(html).map((row) => row[0]))).toEqual(new Set(["globex-eu"]));
+      expect(new Set(dayRows(html).map((row) => row[1]))).toEqual(new Set(["acme-eu", "globex-eu"]));
+      const form = usersForm(html);
+      expect(optionValues(form, "users_tenant").sort()).toEqual(["", "globex-eu", "initech-eu"]);
+      expect(selectedOption(form, "users_tenant")).toBe("globex-eu");
+    });
+
+    it("each cost form keeps the other form's values", async () => {
+      // Catches a form that clears the other form's filters when applied, carries them under the wrong name, or carries a page number (a new filter would open on a page that may not exist).
+      stubFetch(usersBody());
+
+      const html = renderToStaticMarkup(
+        await CostPage(
+          props({
+            from: "2026-08-05",
+            to: "2026-08-24",
+            tenant: "acme-eu",
+            users_tenant: "globex-eu",
+            days_page: "2",
+            users_page: "2",
+            budgets_page: "2",
+          }),
+        ),
+      );
+
+      const users = usersForm(html);
+      const hidden = (form: string, name: string): string => {
+        const tag = inputTag(form, name);
+        expect(tag).toContain('type="hidden"');
+        return tag;
+      };
+      expect(hidden(users, "from")).toContain('value="2026-08-05"');
+      expect(hidden(users, "to")).toContain('value="2026-08-24"');
+      expect(hidden(users, "tenant")).toContain('value="acme-eu"');
+      const daily = formOf(html);
+      expect(daily).not.toBe(users);
+      expect(hidden(daily, "users_tenant")).toContain('value="globex-eu"');
+      for (const form of [users, daily]) {
+        expect(controlNames(form).filter((name) => /page/i.test(name))).toEqual([]);
+      }
+    });
+
+    it("a users tenant of 64 characters is kept and 65 dropped", async () => {
+      // Catches a users tenant limit off by one in either direction, and a bad value (space, trailing space, newline, CRLF, 65 characters) that filters the list to nothing instead of being ignored.
+      const long = "a".repeat(64);
+      const body = (): Fixture => {
+        const b = usersBody();
+        b.top_users = [USER(long, "u_long"), USER("globex-eu", "u_g1")];
+        return b;
+      };
+      stubFetch(body());
+      const kept = renderToStaticMarkup(await CostPage(props({ users_tenant: long })));
+      expect(userRows(kept).map((row) => row[1])).toEqual(["u_long"]);
+
+      for (const bad of [`${long}a`, "globex eu", "globex-eu ", "globex-eu\n", "globex-eu\r\n"]) {
+        stubFetch(body());
+        const html = renderToStaticMarkup(await CostPage(props({ users_tenant: bad })));
+        expect(userRows(html).map((row) => row[1]), JSON.stringify(bad)).toEqual(["u_long", "u_g1"]);
+        expect(text(html)).not.toContain("Console data unavailable");
+      }
+    });
   });
 });

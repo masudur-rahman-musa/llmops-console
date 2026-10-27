@@ -2,12 +2,25 @@ import type { ReactNode } from "react";
 
 /**
  * The one filter form every tab uses: a plain GET form with an Apply button and a Clear link
- * back to the bare page. It carries no page field, so a new filter starts on page 1. No
- * browser script. Pinned by tests/filters.test.tsx.
+ * back to the bare page. It carries no page field, so a new filter starts on page 1. When a
+ * page has two forms, `keep` carries the other form's set values as hidden fields, so applying
+ * one never clears the other; an unset value is left out. No browser script. Pinned by
+ * tests/filters.test.tsx.
  */
-export function FilterForm({ clearHref, children }: { clearHref: string; children: ReactNode }) {
+export function FilterForm({
+  clearHref,
+  keep = {},
+  children,
+}: {
+  clearHref: string;
+  keep?: Readonly<Record<string, string | undefined>>;
+  children: ReactNode;
+}) {
   return (
     <form className="filters" method="get">
+      {Object.entries(keep).map(([name, value]) =>
+        value === undefined ? null : <input key={name} type="hidden" name={name} value={value} />,
+      )}
       {children}
       <button type="submit">Apply</button>
       <a href={clearHref}>Clear</a>

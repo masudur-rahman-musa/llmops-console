@@ -14,6 +14,10 @@ export const dynamic = "force-dynamic";
 /** Short enough that two release labels never touch on the chart. */
 const MARKER_LABEL_LENGTH = 7;
 
+/** The check score axis runs 0% to 100% with these marked steps, so a flat line still shows its place. */
+const SCORE_RANGE = [0, 100] as const;
+const SCORE_STEPS = [0, 25, 50, 75, 100];
+
 function seconds(iso: string): number {
   return Date.parse(iso) / 1000;
 }
@@ -42,6 +46,9 @@ export default consolePage("quality", "Quality", "Does the help desk still answe
     const at = marker.eval_run_id === null ? undefined : runTimes.get(marker.eval_run_id);
     return at === undefined ? [] : [{ at, label: marker.git_sha.slice(0, MARKER_LABEL_LENGTH) }];
   });
+  // The baseline is the gate's own check score threshold; none set draws no line.
+  const threshold = body.gate.find((row) => row.name === "check_score")?.threshold ?? null;
+  const baseline = threshold === null ? undefined : { value: threshold, label: `Baseline ${points(threshold)}` };
   return (
     <>
       <StatCards cards={body.gate.map(gateCard)} />
@@ -59,6 +66,9 @@ export default consolePage("quality", "Quality", "Does the help desk still answe
         points={scores}
         markers={markers}
         yFormat={points}
+        range={SCORE_RANGE}
+        steps={SCORE_STEPS}
+        baseline={baseline}
       />
 
       <h2>Categories</h2>

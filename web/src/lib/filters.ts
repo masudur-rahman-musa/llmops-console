@@ -22,7 +22,8 @@ export type RequestFilters = {
   cached: boolean;
 };
 
-export type CostFilters = { from?: string; to?: string; tenant?: string };
+/** `usersTenant` narrows only the Top users by cost table, read from `users_tenant`. */
+export type CostFilters = { from?: string; to?: string; tenant?: string; usersTenant?: string };
 
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -62,5 +63,10 @@ export function readCostFilters(params: Params): CostFilters {
   const a = checkedDay(first(params.from));
   const b = checkedDay(first(params.to));
   const [from, to] = a !== undefined && b !== undefined && a > b ? [b, a] : [a, b];
-  return { from, to, tenant: checkedTenant(first(params.tenant)) };
+  return {
+    from,
+    to,
+    tenant: checkedTenant(first(params.tenant)),
+    usersTenant: checkedTenant(first(params.users_tenant)),
+  };
 }

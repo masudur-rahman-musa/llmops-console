@@ -38,6 +38,14 @@ function costByTenant(rows: CostBody["days"]): { days: BarDay[]; tenants: string
   return { days, tenants };
 }
 
+/** Highest share of budget used first; a budget with no known share last; ties by tenant name. */
+function worstFirst(budgets: CostBody["budgets"]): CostBody["budgets"] {
+  return budgets.toSorted(
+    (a, b) =>
+      (b.ratio ?? Number.NEGATIVE_INFINITY) - (a.ratio ?? Number.NEGATIVE_INFINITY) || a.tenant.localeCompare(b.tenant),
+  );
+}
+
 /** `min(ratio, 1)` as a whole-page percentage, rounded so float noise never reaches the style. */
 function barWidth(ratio: number): string {
   return `${Math.round(Math.min(Math.max(ratio, 0), 1) * 10000) / 100}%`;
@@ -85,12 +93,19 @@ export default consolePage(
     );
     const days = pageOf(newestFirst(filtered), params, PAGE_PARAMS.days);
     const tenants = [...new Set(body.days.map((row) => row.tenant))].sort();
+    const userTenants = [...new Set(body.top_users.map((user) => user.tenant))].sort();
+    const users = pageOf(
+      body.top_users.filter((user) => filters.usersTenant === undefined || user.tenant === filters.usersTenant),
+      params,
+      PAGE_PARAMS.users,
+    );
+    const budgets = pageOf(worstFirst(body.budgets), params, PAGE_PARAMS.budgets);
     const chart = costByTenant(body.days);
     return (
       <>
         <StatCards
           cards={[
-            { label: "This month's spend", value: usd(body.month_spend_usd) },
+            { label: "This month's spend", value: smallUsd(body.month_spend_usd) },
             { label: "Cache saved", value: smallUsd(body.savings_usd_total) },
             ...body.cost_per_request.map((alias) => ({
               label: alias.alias,
@@ -102,13 +117,13 @@ export default consolePage(
           Cache saved is estimated: what the cached answers would have cost. Each alias card is the average cost of one
           request.
         </p>
-        <BarChart title="Cost per day by tenant" days={chart.days} series={chart.tenants} yFormat={(value) => usd(value)} />
+        <BarChart title="Cost per day by tenant" days={chart.days} series={chart.tenants} yFormat={smallUsd} />
 
         <h2>Budgets this month</h2>
-        {body.budgets.map((budget) => (
+        {budgets.rows.map((budget) => (
           <div key={budget.tenant}>
             <p>
-              {budget.tenant}: {usd(budget.spent_usd)} of {usd(budget.cap_usd)}
+              {budget.tenant}: {smallUsd(budget.spent_usd)} of {smallUsd(budget.cap_usd)}
               {budget.ratio !== null && budget.ratio > 1 && ", over"}
             </p>
             {budget.ratio === null ? (
@@ -120,23 +135,36 @@ export default consolePage(
             )}
           </div>
         ))}
+        <Pager name={PAGE_PARAMS.budgets} page={budgets.page} pages={budgets.pages} params={params} />
 
         <h2>Top users by cost</h2>
         {body.top_users.length === 0 ? (
           <p className="note">No user ids recorded in this window.</p>
         ) : (
-          <Table
-            columns={["Tenant", "User", "Requests", "Cost"]}
-            rows={body.top_users.map((user) => ({
-              key: `${user.tenant}/${user.user_id}`,
-              cells: [user.tenant, user.user_id, user.requests, usd(user.cost_usd)],
-            }))}
-          />
+          <>
+            <FilterForm clearHref="/cost" keep={{ from: filters.from, to: filters.to, tenant: filters.tenant }}>
+              <SelectField
+                name="users_tenant"
+                label="Tenant"
+                options={userTenants}
+                value={filters.usersTenant}
+                any="All tenants"
+              />
+            </FilterForm>
+            <Table
+              columns={["Tenant", "User", "Requests", "Cost"]}
+              rows={users.rows.map((user) => ({
+                key: `${user.tenant}/${user.user_id}`,
+                cells: [user.tenant, user.user_id, user.requests, smallUsd(user.cost_usd)],
+              }))}
+            />
+            <Pager name={PAGE_PARAMS.users} page={users.page} pages={users.pages} params={params} />
+          </>
         )}
 
         <h2>Daily cost</h2>
         {body.rollup_populated === false && <p className="note">Daily rollup not yet populated.</p>}
-        <FilterForm clearHref="/cost">
+        <FilterForm clearHref="/cost" keep={{ users_tenant: filters.usersTenant }}>
           <DateField name="from" label="From" value={filters.from} />
           <DateField name="to" label="To" value={filters.to} />
           <SelectField name="tenant" label="Tenant" options={tenants} value={filters.tenant} any="All tenants" />
@@ -146,11 +174,11 @@ export default consolePage(
           rows={[
             ...days.rows.map((day) => ({
               key: `${day.day}/${day.tenant}/${day.provider}`,
-              cells: [day.day, day.tenant, day.provider, day.requests, day.cached_requests, usd(day.cost_usd)],
+              cells: [day.day, day.tenant, day.provider, day.requests, day.cached_requests, smallUsd(day.cost_usd)],
             })),
             ...(filtered.length === 0
               ? []
-              : [{ key: "total", cells: ["Total", "", "", total.requests, total.cached, usd(total.cost)] }]),
+              : [{ key: "total", cells: ["Total", "", "", total.requests, total.cached, smallUsd(total.cost)] }]),
           ]}
         />
         <Pager name={PAGE_PARAMS.days} page={days.page} pages={days.pages} params={params} />

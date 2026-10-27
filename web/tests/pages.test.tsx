@@ -222,7 +222,7 @@ describe("console pages", () => {
     const qualityCharts = svgs(quality).filter((svg) => count(svg, /<circle\b/g) > 0);
     expect(qualityCharts).toHaveLength(1);
     expect(count(qualityCharts[0], /<circle\b/g)).toBe(3);
-    expect(count(qualityCharts[0], /<line[\s/>]/g)).toBe(2);
+    expect(count(qualityCharts[0], /<line[^>]*\bchart-marker\b/g)).toBe(2);
     expect(has(quality, "Refusal 18 of 20")).toBe(true);
     expect(has(quality, "Citation 9 of 12")).toBe(true);
     expect(has(quality, "Wrong tool 4")).toBe(true);
@@ -361,6 +361,69 @@ describe("console pages", () => {
     expect(has(emptyHtml, "u_8f3a1c0e5b7d4a2f9e6c3b1a0d8f7e6c")).toBe(false);
   });
 
+  it("costs under a cent keep their decimals on the cost tab", async () => {
+    // Catches a cost tab that still rounds a top user, a daily row, the total, a chart tip, this month's spend or a budget's spend under a cent to $0.00.
+    const body = fixture("cost");
+    const row = (tenant: string, cost: number) => ({
+      day: "2026-09-15",
+      tenant,
+      provider: "mistral",
+      requests: 1,
+      cached_requests: 0,
+      cost_usd: cost,
+    });
+    body.days = [row("acme-eu", 0.000412), row("globex-eu", 0.000412)];
+    body.top_users = [{ tenant: "acme-eu", user_id: "u_cuan", requests: 7, cost_usd: 0.001934 }];
+    body.month_spend_usd = 0.0042;
+    body.budgets = [{ tenant: "acme-eu", cap_usd: 50, spent_usd: 0.0031, ratio: 0.000062 }];
+    const html = await render("cost", body);
+    expect(has(html, "acme-eu u_cuan 7 $0.001934")).toBe(true);
+    expect(has(html, "2026-09-15 acme-eu mistral 1 0 $0.000412")).toBe(true);
+    expect(has(html, "Total 2 0 $0.000824")).toBe(true);
+    expect(cardTexts(html)).toContain("This month's spend $0.004200");
+    expect(has(html, "$0.003100 of $50.00")).toBe(true);
+
+    const tip = fixture("cost");
+    tip.days = [row("cuan", 0.001934)];
+    expect(has(svgs(await render("cost", tip)).join(" "), "cuan: $0.001934")).toBe(true);
+  });
+
+  it("costs of a cent or more and zero keep two decimals", async () => {
+    // Catches an over-eager fix that prints six decimals everywhere: a cent, twelve fifty and zero must read $0.01, $12.50 and $0.00.
+    const body = fixture("cost");
+    const user = (id: string, cost: number) => ({ tenant: "acme-eu", user_id: id, requests: 3, cost_usd: cost });
+    body.top_users = [user("u_cent", 0.01), user("u_big", 12.5)];
+    body.days = [
+      { day: "2026-09-15", tenant: "acme-eu", provider: "local", requests: 2, cached_requests: 0, cost_usd: 0 },
+    ];
+    const html = await render("cost", body);
+    expect(has(html, "acme-eu u_cent 3 $0.01")).toBe(true);
+    expect(has(html, "acme-eu u_big 3 $12.50")).toBe(true);
+    expect(has(html, "2026-09-15 acme-eu local 2 0 $0.00")).toBe(true);
+    expect(text(html)).not.toMatch(/\$0\.010000|\$12\.500000|\$0\.000000/);
+  });
+
+  it("cost today under a cent keeps its decimals", async () => {
+    // Catches the Overview card still rounding a day's cost under a cent to $0.00.
+    const body = fixture("home");
+    body.cost_usd_today = 0.0019;
+    expect(cardTexts(await render("home", body))).toContain("Cost today $0.001900");
+  });
+
+  it("budgets show worst first", async () => {
+    // Catches budgets left in console-api's order, sorted lowest first, a null share placed first, or a tie not broken by tenant name.
+    const body = fixture("cost");
+    const budget = (tenant: string, ratio: number | null) => ({ tenant, cap_usd: 10, spent_usd: 1, ratio });
+    body.budgets = [
+      budget("low-tn", 0.25),
+      budget("none-tn", null),
+      budget("over-tn", 1.5),
+      budget("tn-b", 0.62),
+      budget("tn-a", 0.62),
+    ];
+    expectInOrder(await render("cost", body), ["over-tn:", "tn-a:", "tn-b:", "low-tn:", "none-tn:"]);
+  });
+
   it("cost renders rollup not populated", async () => {
     // Catches a false rollup_populated rendered as an empty table with no explanation.
     const body = fixture("cost");
@@ -400,7 +463,7 @@ describe("console pages", () => {
     const html = await render("quality");
     const chart = svgs(html).filter((svg) => count(svg, /<circle\b/g) > 0)[0];
     const circles = Array.from(chart.matchAll(/<circle\b[^>]*\bcx="([^"]*)"/g), (m) => Number(m[1]));
-    const lines = Array.from(chart.matchAll(/<line\b[^>]*\bx1="([^"]*)"/g), (m) => Number(m[1]));
+    const lines = Array.from(chart.matchAll(/<line\b[^>]*\bx1="([^"]*)"[^>]*\bchart-marker\b/g), (m) => Number(m[1]));
     // Runs by time: 09-12, 09-14, 09-15. Markers name the 09-14 and 09-15 runs.
     expect(circles).toHaveLength(3);
     expect(circles[0]).toBe(48);
@@ -416,7 +479,7 @@ describe("console pages", () => {
     markers[1].eval_run_id = "run-not-in-window";
     const html = await render("quality", body);
     const chart = svgs(html).filter((svg) => count(svg, /<circle\b/g) > 0)[0];
-    expect(count(chart, /<line[\s/>]/g)).toBe(0);
+    expect(count(chart, /<line[^>]*\bchart-marker\b/g)).toBe(0);
     expect(count(chart, /<circle\b/g)).toBe(3);
   });
 

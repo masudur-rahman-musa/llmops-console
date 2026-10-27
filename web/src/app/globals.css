@@ -175,6 +175,11 @@ svg {
   stroke: var(--muted);
 }
 
+.chart-baseline {
+  stroke: var(--accent);
+  stroke-dasharray: 2 3;
+}
+
 .chart-axis {
   stroke: var(--muted);
 }

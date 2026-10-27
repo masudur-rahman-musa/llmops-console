@@ -251,4 +251,129 @@ describe("LineChart", () => {
     const rule = css.match(/(?:^|\})\s*\.chart\s*\{([^}]*)\}/)?.[1] ?? "";
     expect(rule).toMatch(/width:\s*100%/);
   });
+
+  describe("fixed score range", () => {
+    const STEPS = [0, 25, 50, 75, 100];
+    const RANGE: [number, number] = [0, 100];
+
+    /** The y of a step label's mark: the label sits 4 px below the height it names. */
+    function stepHeight(html: string, label: string): number {
+      const found = textElements(html).filter((item) => item.body === label);
+      expect(found, label).toHaveLength(1);
+      return Number(found[0].y) - 4;
+    }
+
+    function circleHeights(html: string): number[] {
+      return Array.from(html.matchAll(/<circle\b[^>]*\bcy="([^"]*)"/g), (match) => Number(match[1]));
+    }
+
+    it("a fixed range keeps its steps on a flat line", () => {
+      // Catches a chart that ignores range and steps and so shows only the one score the runs share, repeats a step, writes the steps in yFormat (0.00%) instead of whole percents, or draws a flat line anywhere but at its place on the 0 to 100 scale.
+      const html = renderToStaticMarkup(
+        <LineChart
+          title="Check score"
+          points={[[utc(12, 6), 57.14], [utc(13, 6), 57.14], [utc(14, 6), 57.14]]}
+          yFormat={formatPoints}
+          range={RANGE}
+          steps={STEPS}
+        />,
+      );
+      const heights = ["0%", "25%", "50%", "75%", "100%"].map((label) => stepHeight(html, label));
+      for (let i = 1; i < heights.length; i += 1) {
+        expect(heights[i], "bottom to top").toBeLessThan(heights[i - 1]);
+      }
+      const flat = circleHeights(html);
+      expect(flat).toHaveLength(3);
+      for (const cy of flat) {
+        expect(cy).toBeLessThan(heights[2]);
+        expect(cy).toBeGreaterThan(heights[3]);
+      }
+      expect(textElements(html).map((item) => item.body)).not.toContain("57.14%");
+    });
+
+    it("a score outside the fixed range stays on the plot", () => {
+      // Catches a score of 120 or -5 drawn past the top or bottom of the plot (off the axis) instead of at the nearest edge.
+      const html = renderToStaticMarkup(
+        <LineChart
+          title="Check score"
+          points={[[utc(12, 6), 120], [utc(14, 6), -5]]}
+          yFormat={formatPoints}
+          range={RANGE}
+          steps={STEPS}
+        />,
+      );
+      const top = stepHeight(html, "100%");
+      const bottom = stepHeight(html, "0%");
+      expect(circleHeights(html)).toEqual([top, bottom]);
+      expect(html).not.toMatch(/NaN|Infinity/);
+    });
+
+    it("the baseline draws one line with its label", () => {
+      // Catches a baseline that is not drawn, drawn as a plain marker (no chart-baseline class), at the wrong height, drawn once per marker, or labelled without its value or anchored middle.
+      const html = renderToStaticMarkup(
+        <LineChart
+          title="Check score"
+          points={[[utc(12, 6), 57.14], [utc(14, 6), 57.14], [utc(15, 6), 57.14]]}
+          yFormat={formatPoints}
+          range={RANGE}
+          steps={STEPS}
+          baseline={{ value: 48.48, label: "Baseline 48.48%" }}
+          markers={[
+            { at: utc(14, 6), label: "5e2d8c1" },
+            { at: utc(15, 6), label: "3f9c2a7" },
+          ]}
+        />,
+      );
+      const lines = html.match(/<line[\s/>][^>]*>/g) ?? [];
+      expect(lines).toHaveLength(3);
+      const baseline = lines.filter((tag) => /\bclass="[^"]*\bchart-baseline\b/.test(tag));
+      expect(baseline).toHaveLength(1);
+      const bottom = stepHeight(html, "0%");
+      const top = stepHeight(html, "100%");
+      const expected = bottom + (top - bottom) * 0.4848;
+      const y1 = Number(baseline[0].match(/\by1="([^"]*)"/)?.[1]);
+      const y2 = Number(baseline[0].match(/\by2="([^"]*)"/)?.[1]);
+      expect(y1).toBeCloseTo(expected, 1);
+      expect(y2).toBeCloseTo(expected, 1);
+      const label = textElements(html).filter((item) => item.body === "Baseline 48.48%");
+      expect(label).toHaveLength(1);
+      expect(label[0].anchor).toBe("end");
+    });
+
+    it("a baseline that is not a number draws nothing", () => {
+      // Catches a NaN baseline drawn as a line at NaN (or its label printed anyway) instead of being dropped like a marker at NaN.
+      const html = renderToStaticMarkup(
+        <LineChart
+          title="Check score"
+          points={[[utc(12, 6), 57.14], [utc(14, 6), 57.14]]}
+          yFormat={formatPoints}
+          range={RANGE}
+          steps={STEPS}
+          baseline={{ value: Number.NaN, label: "Baseline NaN%" }}
+        />,
+      );
+      expect(count(html, LINE)).toBe(0);
+      expect(html).not.toContain("Baseline");
+      expect(html).not.toMatch(/NaN/);
+    });
+  });
+
+  it("dates and times at the ends stay inside the chart", () => {
+    // Catches a first or last run date and time centred on its point, which the svg edge cuts in half ("Oct 2…"), or a middle one pushed to an edge anchor.
+    const html = renderToStaticMarkup(
+      <LineChart
+        title="Check score"
+        points={[[utc(12, 6), 0.91], [utc(14, 7), 0.93], [utc(15, 8), 0.88]]}
+        yFormat={formatPoints}
+      />,
+    );
+    const items = textElements(html);
+    const anchorOf = (body: string): string | null => items.find((item) => item.body === body)?.anchor ?? null;
+    expect(anchorOf("Sep 12")).toBe("start");
+    expect(anchorOf("06:00")).toBe("start");
+    expect(anchorOf("Sep 14")).toBe("middle");
+    expect(anchorOf("07:00")).toBe("middle");
+    expect(anchorOf("Sep 15")).toBe("end");
+    expect(anchorOf("08:00")).toBe("end");
+  });
 });

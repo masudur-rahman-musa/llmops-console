@@ -122,9 +122,9 @@ describe("console clarity", () => {
     );
     expect(labels).toContain("5e2d8c1");
     expect(labels).toContain("3f9c2a7");
-    // The fixture scores are 0.88 to 0.93; the axis writes the lowest and highest as `points` does.
-    expect(labels).toContain("0.88%");
-    expect(labels).toContain("0.93%");
+    // The score axis is fixed at 0% to 100%, whatever the fixture scores are.
+    expect(labels).toContain("0%");
+    expect(labels).toContain("100%");
   });
 
   it("daily cost lists newest first", async () => {

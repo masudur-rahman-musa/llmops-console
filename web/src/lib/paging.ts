@@ -14,6 +14,8 @@ export const PAGE_PARAMS = {
   days: "days_page",
   taxonomy: "taxonomy_page",
   blocked: "blocked_page",
+  users: "users_page",
+  budgets: "budgets_page",
 } as const;
 
 /**
