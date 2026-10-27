@@ -60,6 +60,7 @@ from app.schemas.dashboard import (
     ReleaseMarker,
     Saving,
     TagCount,
+    UserCost,
 )
 from app.services.dashboard import JUDGE_NOTE
 from app.services.prometheus_reads import (
@@ -352,6 +353,7 @@ POSTGRES_EMPTY: dict[str, dict[str, Any]] = {
         "savings_usd_total": None,
         "month_spend_usd": None,
         "cost_per_request": [],
+        "top_users": [],
     },
     QUALITY: {"runs": [], "release_markers": [], "categories": [], "taxonomy": [], "blocked": []},
 }
@@ -1081,3 +1083,62 @@ def test_a_regressed_metric_is_one_lower_than_the_previous_passed_run(wired: Wir
             "regressed": [],
         },
     ]
+
+
+# --- top users by cost --------------------------------------------------
+
+TOP_USERS = (
+    UserCost(tenant="cuan", user_id="u_8f3a1c0e5b7d4a2f9e6c3b1a0d8f7e6c", requests=7, cost_usd=1.5),
+    UserCost(
+        tenant="nordlicht", user_id="u_00000000000000000000000000000002", requests=2, cost_usd=0.25
+    ),
+)
+
+
+def answer_with_top_users(wired: Wired, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the stub reader's cost read carry `TOP_USERS` beside the fixed read."""
+    with_users = COST_READ.model_copy(update={"top_users": TOP_USERS})
+
+    def cost(*, days: int, tenant: str | None, now: datetime, prices: PriceTable) -> CostRead:
+        wired.reader.calls.append(("cost", {"days": days, "tenant": tenant}))
+        return with_users
+
+    monkeypatch.setattr(wired.reader, "cost", cost)
+
+
+def test_the_cost_body_carries_top_users(wired: Wired, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Catches a cost route that drops the reader's `top_users`, renames a field of a row
+    (`tenant`, `user_id`, `requests`, `cost_usd`), or reorders the reader's ranking."""
+    answer_with_top_users(wired, monkeypatch)
+
+    response = wired.get(COST, days=14)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["top_users"] == [
+        {
+            "tenant": "cuan",
+            "user_id": "u_8f3a1c0e5b7d4a2f9e6c3b1a0d8f7e6c",
+            "requests": 7,
+            "cost_usd": 1.5,
+        },
+        {
+            "tenant": "nordlicht",
+            "user_id": "u_00000000000000000000000000000002",
+            "requests": 2,
+            "cost_usd": 0.25,
+        },
+    ]
+
+
+def test_top_users_is_empty_when_postgres_is_down(wired: Wired) -> None:
+    """Catches a failing ledger read that leaves `top_users` out of the body or answers
+    null, which the console guard would refuse as a malformed page: the rows go empty
+    beside a 200 whose postgres source reads `error`, like the other ledger lists."""
+    wired.reader.error = psycopg.OperationalError("connection refused")
+
+    response = wired.get(COST)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["sources"]["postgres"] == ERROR
+    assert body["top_users"] == []

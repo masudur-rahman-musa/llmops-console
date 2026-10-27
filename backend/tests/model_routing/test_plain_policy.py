@@ -186,3 +186,74 @@ def test_a_rule_holds_only_redact(tenant: str) -> None:
     assert set(rules) == set(DataClass)
     for data_class, rule in rules.items():
         assert rule.redact is (data_class in REDACTED_CLASSES), (tenant, data_class)
+
+
+# --- the per-user monthly cap ---------------------------------------------
+
+USER_CAP_TENANT = "evals"
+"""The shipped tenant these rows edit. `evals` carries `budget_usd_month: "10.00"` and,
+by an earlier change, no per-user cap, so a line added to it is the only thing that changes."""
+
+
+def _policy_with_user_cap(tmp_path: Path, value: str | None) -> Path:
+    """The shipped policy with `user_budget_usd_month` set on `evals`, or left out."""
+    document = yaml.safe_load(SHIPPED_POLICY_PATH.read_text(encoding="utf-8"))
+    tenant = document["tenants"][USER_CAP_TENANT]
+    tenant.pop("user_budget_usd_month", None)
+    if value is not None:
+        tenant["user_budget_usd_month"] = value
+    path = tmp_path / "routing.yaml"
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    return path
+
+
+USER_CAP_REFUSED: list[tuple[str, str]] = [
+    ("one cent above the tenant budget", "10.01"),
+    ("zero", "0"),
+    ("zero with places", "0.00"),
+    ("below zero", "-1.00"),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "value"), USER_CAP_REFUSED, ids=[row[0] for row in USER_CAP_REFUSED]
+)
+def test_a_user_cap_above_the_tenant_budget_is_refused(
+    case: str, value: str, tmp_path: Path
+) -> None:
+    """Catches a policy that takes any number for the per-user cap: one above the tenant's
+    own budget could never bite, and zero or below would refuse every user from the first
+    request. The control loads the same file with the cap EQUAL to the budget (the limit),
+    so the value alone flips the result."""
+    accepted = load_policy(_policy_with_user_cap(tmp_path, "10.00"), SHIPPED_PROVIDERS_DIR)
+    assert accepted.tenants[USER_CAP_TENANT].user_budget_usd_month == Decimal("10.00")
+    assert accepted.tenants[USER_CAP_TENANT].budget_usd_month == Decimal("10.00")
+
+    with pytest.raises(PolicyInvalid):
+        load_policy(_policy_with_user_cap(tmp_path, value), SHIPPED_PROVIDERS_DIR)
+
+
+def test_a_user_cap_below_the_tenant_budget_is_carried_exactly(tmp_path: Path) -> None:
+    """Catches a cap that is read but dropped or rounded on the way into the model."""
+    policy = load_policy(_policy_with_user_cap(tmp_path, "3.00"), SHIPPED_PROVIDERS_DIR)
+
+    assert policy.tenants[USER_CAP_TENANT].user_budget_usd_month == Decimal("3.00")
+
+
+def test_a_tenant_without_a_user_cap_has_none(tmp_path: Path) -> None:
+    """Catches a default of zero (every user refused) or of the tenant budget (a cap nobody
+    asked for): no line gives `None`, which is what 'no per-user cap' reads as."""
+    policy = load_policy(_policy_with_user_cap(tmp_path, None), SHIPPED_PROVIDERS_DIR)
+
+    assert policy.tenants[USER_CAP_TENANT].user_budget_usd_month is None
+
+
+def test_the_shipped_demo_user_caps() -> None:
+    """Pins the demo values the budget route tests arrange against: nordlicht 3.00, cuan
+    10.00, evals none. An edit to `routing.yaml` fails here rather than making every
+    over-cap arrangement elsewhere meaningless."""
+    tenants = load_policy(SHIPPED_POLICY_PATH, SHIPPED_PROVIDERS_DIR).tenants
+
+    assert tenants["nordlicht"].user_budget_usd_month == Decimal("3.00")
+    assert tenants["cuan"].user_budget_usd_month == Decimal("10.00")
+    assert tenants["evals"].user_budget_usd_month is None

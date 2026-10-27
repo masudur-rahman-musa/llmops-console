@@ -45,6 +45,7 @@ from app.schemas.dashboard import (
     ReleaseMarker,
     Saving,
     TagCount,
+    UserCost,
 )
 from app.storage.dashboard_reads import (
     BlockedRelease,
@@ -876,3 +877,94 @@ def test_model_tokens_sum_the_window_by_model(pool: Pool, migrated_schema: str) 
         ModelTokens(model=SHIPPED_MODEL, input=130.0, output=70.0),
         ModelTokens(model="gpt-5-mini", input=1000.0, output=400.0),
     )
+
+
+# --- top users by cost ----------------------------------------------------
+
+
+def insert_user_cost(
+    pool: Pool,
+    schema: str,
+    /,
+    *,
+    ts: datetime,
+    tenant: str,
+    user_id: str | None,
+    cost_usd: str,
+    status: int = 200,
+) -> None:
+    """One `cost_ledger` row that names a user (or none) and a status."""
+    with pool.connection() as conn:
+        conn.execute(
+            sql.SQL(
+                "INSERT INTO {} (ts, tenant, alias, provider, model, input_tokens, "
+                "output_tokens, cached, cost_usd, price_version, estimated, session, trace_id, "
+                "user_id, status) "
+                "VALUES (%s, %s, 'agent-default', %s, %s, 10, 5, false, %s, %s, false, null, "
+                "%s, %s, %s)"
+            ).format(sql.Identifier(schema, "cost_ledger")),
+            (
+                ts,
+                tenant,
+                SHIPPED_PROVIDER,
+                SHIPPED_MODEL,
+                Decimal(cost_usd),
+                "anthropic/claude-haiku-4-5@2025-10-15",
+                "0af7651916cd43dd8448eb211c80319c",
+                user_id,
+                status,
+            ),
+        )
+
+
+def user_of(number: int) -> str:
+    """A well-formed user id that differs from every other in its last digits."""
+    return f"u_{number:032x}"
+
+
+@pytest.mark.db
+def test_top_users_ranks_per_tenant_and_keeps_ten(
+    pool: Pool, migrated_schema: str, shipped_prices: PriceTable
+) -> None:
+    """Catches a read with no per-tenant limit (11 users come back), a limit applied over
+    all tenants together (`nordlicht` loses its two to `cuan`'s ten), a wrong order (the
+    lowest first), and each filter the plan names: a no-user row (ranked as one user), a
+    5xx row (money that was never spent), a row before the window, and, with `tenant=cuan`,
+    a `nordlicht` row. Every distractor satisfies every OTHER condition, so removing that
+    one filter is what changes the answer. User N spends N cents, so the order is set by
+    the cost alone and the 11th user (the cheapest) is the one cut."""
+    schema = migrated_schema
+    recent = NOW - timedelta(hours=1)
+    for number in range(1, 12):
+        cents = f"0.{number:02d}0000"
+        user = user_of(number)
+        insert_user_cost(pool, schema, ts=recent, tenant="cuan", user_id=user, cost_usd=cents)
+        insert_user_cost(pool, schema, ts=recent, tenant="cuan", user_id=user, cost_usd="0.000001")
+    for number in (101, 102):
+        insert_user_cost(
+            pool, schema, ts=recent, tenant="nordlicht", user_id=user_of(number), cost_usd="0.001"
+        )
+    # Distractors: each would rank first for `cuan` if its filter were missing.
+    insert_user_cost(pool, schema, ts=recent, tenant="cuan", user_id=None, cost_usd="9.000000")
+    insert_user_cost(
+        pool, schema, ts=recent, tenant="cuan", user_id=user_of(50), cost_usd="9.000000", status=503
+    )
+    insert_user_cost(
+        pool, schema, ts=WINDOW_30 - SECOND, tenant="cuan", user_id=user_of(51), cost_usd="9.000000"
+    )
+    reader = PostgresConsoleReader(pool, schema=schema)
+
+    everyone = reader.cost(days=30, tenant=None, now=NOW, prices=shipped_prices).top_users
+    only_cuan = reader.cost(days=30, tenant="cuan", now=NOW, prices=shipped_prices).top_users
+
+    cuan_rows = [row for row in everyone if row.tenant == "cuan"]
+    nordlicht_rows = [row for row in everyone if row.tenant == "nordlicht"]
+    assert len(cuan_rows) == 10
+    assert len(nordlicht_rows) == 2
+    assert [row.user_id for row in cuan_rows] == [user_of(number) for number in range(11, 1, -1)]
+    assert isinstance(cuan_rows[0], UserCost)
+    assert cuan_rows[0].requests == 2
+    assert cuan_rows[0].cost_usd == pytest.approx(0.110001)
+    assert user_of(1) not in {row.user_id for row in everyone}
+    assert {row.user_id for row in nordlicht_rows} == {user_of(101), user_of(102)}
+    assert only_cuan == tuple(cuan_rows)

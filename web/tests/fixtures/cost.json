@@ -20,5 +20,10 @@
   "cost_per_request": [
     { "alias": "support-fast", "cost_usd": 0.0042 },
     { "alias": "support-smart", "cost_usd": 0.0187 }
+  ],
+  "top_users": [
+    { "tenant": "acme-eu", "user_id": "u_8f3a1c0e5b7d4a2f9e6c3b1a0d8f7e6c", "requests": 120, "cost_usd": 12.5 },
+    { "tenant": "acme-eu", "user_id": "u_00000000000000000000000000000002", "requests": 45, "cost_usd": 3.75 },
+    { "tenant": "globex-eu", "user_id": "u_00000000000000000000000000000003", "requests": 30, "cost_usd": 0.5 }
   ]
 }

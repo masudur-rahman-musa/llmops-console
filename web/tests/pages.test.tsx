@@ -335,6 +335,32 @@ describe("console pages", () => {
     expect(svgs(qualityHtml).filter((svg) => count(svg, /<circle\b/g) > 0)).toHaveLength(0);
   });
 
+  it("cost page shows top users by cost", async () => {
+    // Catches a cost page that does not draw `top_users` (no table, wrong columns, rows in another order or without the dollar format), one that draws the table before "Budgets this month", and one that shows an empty table instead of the plain empty-state line.
+    const html = await render("cost");
+    const tables = html.match(/<table\b[\s\S]*?<\/table>/g) ?? [];
+    const users = tables.filter((table) => table.includes("<th") && text(table).startsWith("Tenant User Requests Cost"));
+    expect(users).toHaveLength(1);
+    const header = (users[0].match(/<tr\b[\s\S]*?<\/tr>/) ?? [""])[0];
+    const columns = Array.from(header.matchAll(/<t[hd]\b[^>]*>([\s\S]*?)<\/t[hd]>/g), (match) => text(match[1]));
+    expect(columns).toEqual(["Tenant", "User", "Requests", "Cost"]);
+    expectInOrder(html, [
+      "Budgets this month",
+      "Top users by cost",
+      "acme-eu u_8f3a1c0e5b7d4a2f9e6c3b1a0d8f7e6c 120 $12.50",
+      "acme-eu u_00000000000000000000000000000002 45 $3.75",
+      "globex-eu u_00000000000000000000000000000003 30 $0.50",
+    ]);
+    expect(has(html, "No user ids recorded in this window.")).toBe(false);
+
+    const empty = fixture("cost");
+    empty.top_users = [];
+    const emptyHtml = await render("cost", empty);
+    expect(has(emptyHtml, "Top users by cost")).toBe(true);
+    expect(has(emptyHtml, "No user ids recorded in this window.")).toBe(true);
+    expect(has(emptyHtml, "u_8f3a1c0e5b7d4a2f9e6c3b1a0d8f7e6c")).toBe(false);
+  });
+
   it("cost renders rollup not populated", async () => {
     // Catches a false rollup_populated rendered as an empty table with no explanation.
     const body = fixture("cost");

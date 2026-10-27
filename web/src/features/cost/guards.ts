@@ -10,6 +10,7 @@ export type CostBody = {
   budgets: Array<{ tenant: string; cap_usd: number; spent_usd: number | null; ratio: number | null }>;
   month_spend_usd: number | null;
   cost_per_request: Array<{ alias: string; cost_usd: number }>;
+  top_users: Array<{ tenant: string; user_id: string; requests: number; cost_usd: number }>;
 };
 
 const check = shape({
@@ -20,6 +21,7 @@ const check = shape({
   budgets: listOf(shape({ tenant: str, cap_usd: num, spent_usd: nullable(num), ratio: nullable(num) })),
   month_spend_usd: nullable(num),
   cost_per_request: listOf(shape({ alias: str, cost_usd: num })),
+  top_users: listOf(shape({ tenant: str, user_id: str, requests: int, cost_usd: num })),
 });
 
 export function costGuard(value: unknown): value is CostBody {

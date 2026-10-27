@@ -26,11 +26,14 @@ Every request to the gateway sends one trace to Langfuse. This page says what yo
 - **What redaction misses.** Only text the model provider already got goes to Langfuse. But redaction does not catch names outside the tenant's directory, street addresses or secrets written as free text. A data class the tenant does not redact goes as written. With the switch on, that text is in Langfuse too.
 - **How long it stays.** Traces are kept 30 days, the most the Langfuse Hobby plan keeps. Text sent cannot be pulled back before then.
 
+## Users
+
+The help desk may send a random user id in `X-User`: `u_` and 32 lowercase hex characters, never a name or an email. The gateway puts it on the root trace as `langfuse.user.id`, so the Users page shows cost, tokens and traces per id. Only the help desk can tell which person an id belongs to. A request with no `X-User` has no user on its trace.
+
 ## What stays empty on purpose
 
 - **Text for a tenant with the switch off.** It never leaves the gateway.
 - **Alerts.** None are set up in Langfuse. Alerts live in Prometheus.
-- **Users.** There is no user on any trace.
 - **Prompts, Playground, Datasets, Experiments, Evaluators, Human Annotation.** Not used. Prompts and evals live in git and run in CI (`make eval`).
 
 ## What is not traced

@@ -49,6 +49,7 @@ from app.core.validation import (
     MAX_IDENTIFIER_LENGTH,
     IdentifierInvalid,
     checked_identifier,
+    checked_user_id,
 )
 from app.limits.prices import PriceStore
 from app.model_routing.policy import DataClass, PolicyStore
@@ -233,6 +234,7 @@ def request_context(
     x_data_class: Annotated[str | None, Header()] = None,
     x_session: Annotated[str | None, Header()] = None,
     x_prompt_version: Annotated[str | None, Header()] = None,
+    x_user: Annotated[str | None, Header()] = None,
 ) -> RequestContext:
     """Authenticate the request and build its context, in a fixed order.
 
@@ -241,7 +243,8 @@ def request_context(
     3. the two agreeing, or `TENANT_MISMATCH`;
     4. `X-Data-Class`, defaulting to the most restrictive class, and `X-Session`
        and `X-Prompt-Version`, both optional and slug-checked (a SHA-256 hex digest
-       is exactly the 64-character cap);
+       is exactly the 64-character cap), and `X-User`, optional and held to the
+       random id shape `u_` and 32 lowercase hex characters;
     5. the trace id, read off the root span `TracingMiddleware` started.
 
     Auth comes first so an unauthenticated caller learns nothing about which of
@@ -274,6 +277,7 @@ def request_context(
             prompt_version=_checked_identifier(x_prompt_version, "X-Prompt-Version")
             if x_prompt_version is not None
             else None,
+            user_id=checked_user_id(x_user, param="X-User") if x_user is not None else None,
         )
         note_step(span, input="API key and X-Tenant", output=f"accepted: tenant {tenant}")
 
@@ -282,6 +286,7 @@ def request_context(
         SpanAttributes(
             tenant=context.tenant,
             session=context.session,
+            user_id=context.user_id,
             data_class=context.data_class.value,
         ),
     )

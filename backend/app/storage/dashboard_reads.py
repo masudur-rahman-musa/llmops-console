@@ -55,6 +55,7 @@ from app.schemas.dashboard import (
     RequestRow,
     Saving,
     TagCount,
+    UserCost,
 )
 from app.schemas.provider import Usage
 from app.storage.db import DEFAULT_SCHEMA, checked_schema
@@ -64,6 +65,9 @@ ROW_LIMIT: Final[int] = 100
 
 PAGE_SIZE: Final[int] = 20
 """The rows one page of the request list carries."""
+
+TOP_USERS_PER_TENANT: Final[int] = 10
+"""How many users the Cost tab ranks for each tenant."""
 
 COST_ROLLUP: Final[str] = "cost_ledger_daily"
 """The materialised view `migrations/002_cost_ledger.sql` creates."""
@@ -124,6 +128,7 @@ class CostRead(_Read):
     savings: tuple[Saving, ...]
     savings_usd_total: float
     cost_per_request: tuple[AliasCost, ...]
+    top_users: tuple[UserCost, ...] = ()
 
 
 class BlockedRelease(_Read):
@@ -404,6 +409,19 @@ class PostgresConsoleReader:
                 ).format(self._table("cost_ledger"), where_tenant),
                 (since, *tenant_params),
             ).fetchall()
+            # Per tenant, the users with the highest served cost; rows with no user left out.
+            user_rows = conn.execute(
+                sql.SQL(
+                    "SELECT tenant, user_id, requests, cost_usd FROM ("
+                    "SELECT tenant, user_id, count(*) AS requests, sum(cost_usd) AS cost_usd, "
+                    "row_number() OVER (PARTITION BY tenant "
+                    "ORDER BY sum(cost_usd) DESC, user_id) AS rank FROM {} "
+                    "WHERE user_id IS NOT NULL AND status < 500 AND ts >= %s{} "
+                    "GROUP BY tenant, user_id) AS ranked "
+                    "WHERE rank <= %s ORDER BY tenant, rank"
+                ).format(self._table("cost_ledger"), where_tenant),
+                (since, *tenant_params, TOP_USERS_PER_TENANT),
+            ).fetchall()
 
         saved: defaultdict[tuple[date, str], Decimal] = defaultdict(Decimal)
         for day, row_tenant, provider, model, input_tokens, output_tokens, first_ts in cached_rows:
@@ -434,6 +452,12 @@ class PostgresConsoleReader:
             savings_usd_total=float(sum(saved.values(), Decimal(0))),
             cost_per_request=tuple(
                 AliasCost(alias=row[0], cost_usd=float(row[1])) for row in alias_rows
+            ),
+            top_users=tuple(
+                UserCost(
+                    tenant=row[0], user_id=row[1], requests=int(row[2]), cost_usd=float(row[3])
+                )
+                for row in user_rows
             ),
         )
 

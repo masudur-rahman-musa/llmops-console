@@ -56,7 +56,7 @@ from typing import Final, Protocol
 
 import redis
 
-from app.core.validation import IdentifierInvalid, checked_identifier
+from app.core.validation import IdentifierInvalid, checked_identifier, checked_user_id
 from app.limits.cost import COST_QUANTUM
 
 BUDGET_KEY_PREFIX: Final[str] = "budget"
@@ -156,6 +156,21 @@ def month_key(tenant: str, month: str, *, prefix: str = BUDGET_KEY_PREFIX) -> st
     if MONTH_PATTERN.fullmatch(month) is None:
         raise IdentifierInvalid(f"month: {month!r} is not a YYYY-MM period")
     return f"{prefix}:{tenant}:{month}"
+
+
+def user_month_key(
+    tenant: str, user_id: str, month: str, *, prefix: str = BUDGET_KEY_PREFIX
+) -> str:
+    """The key one user's spend for one month is counted under, every segment checked.
+
+    `{prefix}-user:{tenant}:{user_id}:{YYYY-MM}`, apart from the tenant's own key so a
+    user's debit never adds to the tenant total. The tenant and month get the
+    `month_key` checks and the user id `checked_user_id`, all before the key exists:
+    a colon in any of them would forge a segment. Pinned by `test_user_month_key_shape`.
+    """
+    month_key(tenant, month, prefix=prefix)
+    checked_user_id(user_id)
+    return f"{prefix}-user:{tenant}:{user_id}:{month}"
 
 
 def to_micro_usd(usd: Decimal) -> int:
@@ -344,6 +359,14 @@ class BudgetStore(Protocol):
         """Add `micro_usd` and answer the new total, or `None` if it could not be added."""
         ...
 
+    def user_spend(self, tenant: str, user_id: str, month: str) -> int | None:
+        """One user's spend for `month`, with the same `None` rule as `spend`."""
+        ...
+
+    def user_debit(self, tenant: str, user_id: str, month: str, micro_usd: int) -> int | None:
+        """Add to one user's counter and answer its new total, or `None`."""
+        ...
+
 
 class InProcessBudgetStore:
     """A `BudgetStore` counting in one process's memory.
@@ -372,7 +395,17 @@ class InProcessBudgetStore:
         A debit of zero is a debit: it books nothing and still answers the total,
         which is what a cache hit needs.
         """
-        key = month_key(tenant, month)
+        return self._add(month_key(tenant, month), micro_usd)
+
+    def user_spend(self, tenant: str, user_id: str, month: str) -> int | None:
+        """One user's spend so far, 0 for a month it has not spent anything in."""
+        return self._totals.get(user_month_key(tenant, user_id, month), 0)
+
+    def user_debit(self, tenant: str, user_id: str, month: str, micro_usd: int) -> int | None:
+        """Add to one user's month and answer its running total."""
+        return self._add(user_month_key(tenant, user_id, month), micro_usd)
+
+    def _add(self, key: str, micro_usd: int) -> int:
         total = self._totals.get(key, 0) + micro_usd
         self._totals[key] = total
         return total
@@ -418,7 +451,32 @@ class RedisBudgetStore:
         A missing key really is zero spend and is reported as such; only a Redis that
         could not answer, or a value that is not an integer, is unknown.
         """
-        stored = self.key(tenant, month)
+        return self._read(self.key(tenant, month), tenant, month)
+
+    def debit(self, tenant: str, month: str, micro_usd: int) -> int | None:
+        """Add `micro_usd` to this month's counter and answer the new total.
+
+        `None` when Redis could not be reached, which the route reads as "serve,
+        and move no gauge".
+        """
+        return self._add(self.key(tenant, month), tenant, month, micro_usd)
+
+    def user_key(self, tenant: str, user_id: str, month: str) -> str:
+        """The Redis key one user's month is counted under, every segment checked."""
+        return user_month_key(tenant, user_id, month, prefix=self._key_prefix)
+
+    def user_spend(self, tenant: str, user_id: str, month: str) -> int | None:
+        """One user's spend so far, read the way `spend` reads the tenant's."""
+        return self._read(self.user_key(tenant, user_id, month), tenant, month)
+
+    def user_debit(self, tenant: str, user_id: str, month: str, micro_usd: int) -> int | None:
+        """Add to one user's counter, with the same expiry and `None` rule as `debit`.
+
+        The logs name the tenant and month only, never the user id.
+        """
+        return self._add(self.user_key(tenant, user_id, month), tenant, month, micro_usd)
+
+    def _read(self, stored: str, tenant: str, month: str) -> int | None:
         try:
             raw = self._client.get(stored)
         except redis.RedisError:
@@ -432,13 +490,7 @@ class RedisBudgetStore:
             _log.error("budget counter for tenant %s, month %s holds %r", tenant, month, raw)
             return None
 
-    def debit(self, tenant: str, month: str, micro_usd: int) -> int | None:
-        """Add `micro_usd` to this month's counter and answer the new total.
-
-        `None` when Redis could not be reached, which the route reads as "serve,
-        and move no gauge".
-        """
-        stored = self.key(tenant, month)
+    def _add(self, stored: str, tenant: str, month: str, micro_usd: int) -> int | None:
         try:
             total = int(self._client.incrby(stored, micro_usd))
             self._client.expire(stored, BUDGET_KEY_TTL_SECONDS)

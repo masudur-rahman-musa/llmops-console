@@ -121,6 +121,19 @@ export default consolePage(
           </div>
         ))}
 
+        <h2>Top users by cost</h2>
+        {body.top_users.length === 0 ? (
+          <p className="note">No user ids recorded in this window.</p>
+        ) : (
+          <Table
+            columns={["Tenant", "User", "Requests", "Cost"]}
+            rows={body.top_users.map((user) => ({
+              key: `${user.tenant}/${user.user_id}`,
+              cells: [user.tenant, user.user_id, user.requests, usd(user.cost_usd)],
+            }))}
+          />
+        )}
+
         <h2>Daily cost</h2>
         {body.rollup_populated === false && <p className="note">Daily rollup not yet populated.</p>}
         <FilterForm clearHref="/cost">

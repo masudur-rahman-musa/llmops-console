@@ -62,6 +62,7 @@ from app.limits.budget import (
     decide,
     month_key,
     to_micro_usd,
+    user_month_key,
     verify_override,
 )
 from app.limits.cost import COST_QUANTUM
@@ -514,3 +515,45 @@ def test_the_override_signature_pattern_admits_a_minted_signature_and_nothing_el
     assert (
         verify_override(f"{MONTH}:{'é' * 64}", tenant=TENANT, month=MONTH, secret=SECRET) is False
     )
+
+
+# --------------------------------------------------------------------------
+# the per-user key
+# --------------------------------------------------------------------------
+
+USER_ID = "u_8f3a1c0e5b7d4a2f9e6c3b1a0d8f7e6c"
+"""A well-formed random user id: `u_` and exactly 32 lowercase hex characters."""
+
+REJECTED_USER_IDS: list[tuple[str, str]] = [
+    ("a colon, which would forge a fifth key segment", USER_ID[:-1] + ":"),
+    ("33 hex characters", USER_ID + "a"),
+    ("31 hex characters", USER_ID[:-1]),
+    ("an email", "alice@example.com"),
+    ("upper-case hex", USER_ID.upper()),
+    ("empty", ""),
+    ("a trailing newline", USER_ID + "\n"),
+    ("a trailing CRLF", USER_ID + "\r\n"),
+    ("a trailing space", USER_ID + " "),
+]
+
+
+def test_user_month_key_shape() -> None:
+    """Catches a user counter filed under the tenant's own key shape (or with its segments
+    swapped), which would add every user's spend into the tenant total, and a prefix other
+    than the published `budget-user`, which would orphan live counters on a rename."""
+    key = user_month_key(OTHER_TENANT, USER_ID, "2026-10")
+
+    assert key == "budget-user:cuan:u_8f3a1c0e5b7d4a2f9e6c3b1a0d8f7e6c:2026-10"
+    assert key != month_key(OTHER_TENANT, "2026-10")
+
+
+@pytest.mark.parametrize(
+    ("label", "user_id"), REJECTED_USER_IDS, ids=[row[0] for row in REJECTED_USER_IDS]
+)
+def test_user_month_key_refuses_a_bad_user_id(label: str, user_id: str) -> None:
+    """Catches a key function that interpolates the user id unchecked: a colon forges a
+    segment and addresses another user's counter, and a `.match` with `$` lets a trailing
+    newline into a Redis key. The 33-hex row is one over the exact width, the 32-hex id in
+    `test_user_month_key_shape` is the limit that passes."""
+    with pytest.raises(IdentifierInvalid):
+        user_month_key(OTHER_TENANT, user_id, MONTH)

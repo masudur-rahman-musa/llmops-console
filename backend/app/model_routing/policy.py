@@ -103,6 +103,10 @@ class Tenant(_Frozen):
     A data class with no rule is not redacted. `trace_content` sends the redacted
     conversation and the answer to Langfuse; a tenant without the line
     sends only the note (`test_a_tenant_without_the_switch_is_off`).
+
+    `user_budget_usd_month` is the optional cap on one random user id's month,
+    above zero and at most the tenant's own budget: a cap above it could never
+    bite (`test_a_user_cap_above_the_tenant_budget_is_refused`). No line, no cap.
     """
 
     data_class_rules: Mapping[DataClass, DataClassRule]
@@ -110,6 +114,16 @@ class Tenant(_Frozen):
     rate_limit: RateLimit
     overrides: Mapping[str, tuple[Candidate, ...]] = {}
     trace_content: StrictBool = False
+    user_budget_usd_month: Decimal | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def _user_cap_within_budget(self) -> Self:
+        cap = self.user_budget_usd_month
+        if cap is not None and cap > self.budget_usd_month:
+            raise ValueError(
+                f"user_budget_usd_month: {cap} is above budget_usd_month {self.budget_usd_month}"
+            )
+        return self
 
 
 class Policy(_Frozen):

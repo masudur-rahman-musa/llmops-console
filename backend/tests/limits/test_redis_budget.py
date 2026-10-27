@@ -62,6 +62,7 @@ from app.limits.budget import (
     InProcessBudgetStore,
     RedisBudgetStore,
     month_key,
+    user_month_key,
 )
 
 TENANT = "evals"
@@ -560,3 +561,80 @@ def test_a_second_debit_does_not_drop_the_expiry(
 
     assert ttl != -1, "the second debit left the counter with no expiry"
     assert ttl == BUDGET_KEY_TTL_SECONDS
+
+
+# --------------------------------------------------------------------------
+# the per-user counters
+# --------------------------------------------------------------------------
+
+USER_A = "u_8f3a1c0e5b7d4a2f9e6c3b1a0d8f7e6c"
+USER_B = "u_00000000000000000000000000000001"
+
+
+@pytest.mark.db
+def test_user_counters_are_apart_per_user_and_from_the_tenant(
+    live_store: RedisBudgetStore, redis_client: redis.Redis
+) -> None:
+    """Catches a user key that drops the user segment (every user of a tenant shares one
+    cap), one that reuses the tenant's key (a user's debit raises the tenant total, so the
+    tenant is billed twice), and a user counter written without the 62-day expiry, which
+    keeps one key per user per month for ever. TTL is read off the server, not slept for."""
+    live_store.debit(TENANT, MONTH, CHAT_MICRO)
+
+    assert live_store.user_debit(TENANT, USER_A, MONTH, STREAM_MICRO) == STREAM_MICRO
+    assert live_store.user_debit(TENANT, USER_A, MONTH, STREAM_MICRO) == 2 * STREAM_MICRO
+    assert live_store.user_debit(TENANT, USER_B, MONTH, CHAT_MICRO) == CHAT_MICRO
+
+    assert live_store.user_spend(TENANT, USER_A, MONTH) == 2 * STREAM_MICRO
+    assert live_store.user_spend(TENANT, USER_B, MONTH) == CHAT_MICRO
+    assert live_store.spend(TENANT, MONTH) == CHAT_MICRO
+    assert live_store.user_key(TENANT, USER_A, MONTH) != live_store.key(TENANT, MONTH)
+    assert redis_client.ttl(live_store.user_key(TENANT, USER_A, MONTH)) == BUDGET_KEY_TTL_SECONDS
+
+
+def test_the_user_key_is_the_one_the_user_month_key_function_renders() -> None:
+    """Catches a store with a user key format of its own, and a `key_prefix` ignored for
+    users (every test would then share one live user key): the default is the published
+    `budget-user`, a prefixed store files its users under `{prefix}-user`."""
+    store, client = fake_store()
+
+    store.user_debit(TENANT, USER_A, MONTH, CHAT_MICRO)
+
+    assert store.user_key(TENANT, USER_A, MONTH) == user_month_key(TENANT, USER_A, MONTH)
+    assert client.calls[0] == ("incrby", (user_month_key(TENANT, USER_A, MONTH), CHAT_MICRO))
+    prefixed = RedisBudgetStore(as_client(RecordingRedis()), key_prefix="test-x")
+    assert prefixed.user_key(TENANT, USER_A, MONTH) == f"test-x-user:{TENANT}:{USER_A}:{MONTH}"
+
+
+def test_a_bad_user_id_reaches_no_command_on_either_user_method() -> None:
+    """Catches a user pre-check that lives only in the key function but is bypassed by a
+    method that renders its own key: Redis must see no call at all."""
+    store, client = fake_store()
+
+    with pytest.raises(IdentifierInvalid):
+        store.user_debit(TENANT, USER_A + "\n", MONTH, CHAT_MICRO)
+    with pytest.raises(IdentifierInvalid):
+        store.user_spend(TENANT, USER_A + "\n", MONTH)
+
+    assert client.calls == []
+
+
+def test_an_unreachable_redis_answers_unknown_on_the_user_methods() -> None:
+    """Catches user methods that let `redis.RedisError` escape (a Redis blip becomes a 5xx)
+    or answer 0 (a cap that reads as unspent): unknown is `None`, as for the tenant."""
+    store, _ = fake_store(error=redis.ConnectionError("connection refused"))
+
+    assert store.user_spend(TENANT, USER_A, MONTH) is None
+    assert store.user_debit(TENANT, USER_A, MONTH, CHAT_MICRO) is None
+
+
+def test_the_in_process_twin_counts_users_apart() -> None:
+    """Catches a twin that keys users on the tenant alone, or lets a user's debit raise
+    the tenant's own total."""
+    store = InProcessBudgetStore()
+
+    assert store.user_debit(TENANT, USER_A, MONTH, CHAT_MICRO) == CHAT_MICRO
+
+    assert store.user_spend(TENANT, USER_B, MONTH) == 0
+    assert store.user_spend(TENANT, USER_A, OTHER_MONTH) == 0
+    assert store.spend(TENANT, MONTH) == 0

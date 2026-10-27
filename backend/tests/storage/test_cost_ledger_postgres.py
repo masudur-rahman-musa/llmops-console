@@ -367,3 +367,32 @@ def test_cache_token_columns_round_trip(pool: Pool, migrated_schema: str) -> Non
         ("cache_read_tokens", "NO", "integer"),
         ("cache_write_tokens", "NO", "integer"),
     ]
+
+
+USER_ID = "u_8f3a1c0e5b7d4a2f9e6c3b1a0d8f7e6c"
+
+
+def stored_user_ids(pool: Pool, schema: str) -> list[object]:
+    """The `user_id` column of every row, oldest first, read by name."""
+    with pool.connection() as conn:
+        rows = conn.execute(
+            sql.SQL("select user_id from {} order by ts").format(
+                sql.Identifier(schema, COST_LEDGER)
+            )
+        ).fetchall()
+    return [row[0] for row in rows]
+
+
+@pytest.mark.db
+@requires_postgres
+def test_the_user_id_column_is_written_and_nullable(pool: Pool, migrated_schema: str) -> None:
+    """Catches an INSERT that leaves `user_id` out of its column list (every row reads back
+    `None`), a column declared NOT NULL (every request without `X-User` becomes a lost
+    ledger row), and a writer that coerces `None` into an empty string, which the top-users
+    read would rank as one user. The id and a `None` are written in the same run."""
+    writer = PostgresCostLedgerWriter(pool, schema=migrated_schema)
+    writer.write(a_row(ts=WHEN, user_id=USER_ID))
+    writer.write(a_row(ts=NEXT_DAY, user_id=None))
+    writer.flush()
+
+    assert stored_user_ids(pool, migrated_schema) == [USER_ID, None]

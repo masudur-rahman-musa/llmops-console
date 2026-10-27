@@ -42,6 +42,7 @@ def record_cost(
     prompt_version: str | None = None,
     status: int = 200,
     latency_ms: int | None = None,
+    user_id: str | None = None,
     now: Callable[[], datetime] = _utcnow_cost,
 ) -> CostLedgerRow:
     """Price one request, write its row, and answer the row. Never raises.
@@ -93,6 +94,7 @@ def record_cost(
         cache_write_tokens=cache_write_tokens,
         status=status,
         latency_ms=latency_ms,
+        user_id=user_id,
     )
     try:
         ledger.write(row)

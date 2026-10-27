@@ -225,24 +225,53 @@ def check_budget(clients: Clients, context: RequestContext, *, override: str | N
         return
     budget_store: BudgetStore = clients.budget_store
     month = current_month()
-    spent = budget_store.spend(context.tenant, month)
-    if spent is None:
-        return
-    cap = to_micro_usd(tenant_policy.budget_usd_month)
-    decision = decide(spend_micro_usd=spent, cap_micro_usd=cap)
-    if decision is BudgetDecision.SERVE:
-        return
-    warn_budget(tenant=context.tenant, spend_micro_usd=spent, cap_micro_usd=cap)
-    if decision is not BudgetDecision.REJECT:
-        return
     settings: Settings = clients.settings
-    if verify_override(
-        override, tenant=context.tenant, month=month, secret=settings.budget_override_secret
-    ):
+
+    def overridden() -> bool:
+        return verify_override(
+            override, tenant=context.tenant, month=month, secret=settings.budget_override_secret
+        )
+
+    spent = budget_store.spend(context.tenant, month)
+    if spent is not None:
+        cap = to_micro_usd(tenant_policy.budget_usd_month)
+        decision = decide(spend_micro_usd=spent, cap_micro_usd=cap)
+        if decision is not BudgetDecision.SERVE:
+            warn_budget(tenant=context.tenant, spend_micro_usd=spent, cap_micro_usd=cap)
+        if decision is BudgetDecision.REJECT and not overridden():
+            raise BudgetExceeded(
+                f"tenant {context.tenant!r} has reached its monthly budget of "
+                f"{tenant_policy.budget_usd_month} USD"
+            )
+    check_user_budget(clients, context, month=month, overridden=overridden)
+
+
+def check_user_budget(
+    clients: Clients, context: RequestContext, *, month: str, overridden: Callable[[], bool]
+) -> None:
+    """Refuse a user who has spent its per-user cap, after the tenant cap has passed.
+
+    Nothing to check with no `X-User` or no `user_budget_usd_month`. The cap is
+    inclusive like the tenant's, a counter that cannot answer serves, and a valid
+    override serves as it does for the tenant. The 429 names `X-User` in `param`
+    and never the id itself. Pinned by `test_a_user_over_its_cap_is_refused`
+    and `test_the_tenant_cap_still_refuses_first`.
+    """
+    tenant_policy = clients.policy.tenants.get(context.tenant)
+    if context.user_id is None or tenant_policy is None:
+        return
+    user_cap = tenant_policy.user_budget_usd_month
+    if user_cap is None:
+        return
+    budget_store: BudgetStore = clients.budget_store
+    spent = budget_store.user_spend(context.tenant, context.user_id, month)
+    if spent is None or spent < to_micro_usd(user_cap):
+        return
+    if overridden():
         return
     raise BudgetExceeded(
-        f"tenant {context.tenant!r} has reached its monthly budget of "
-        f"{tenant_policy.budget_usd_month} USD"
+        f"this user of tenant {context.tenant!r} has reached its monthly budget of {user_cap} USD",
+        param="X-User",
     )
 
 
@@ -272,7 +301,10 @@ def debit_budget(clients: Clients, context: RequestContext, *, usd: Decimal) -> 
     """
     policy: Policy = clients.policy
     budget_store: BudgetStore = clients.budget_store
-    total = budget_store.debit(context.tenant, current_month(), to_micro_usd(usd))
+    month = current_month()
+    total = budget_store.debit(context.tenant, month, to_micro_usd(usd))
+    if context.user_id is not None:
+        budget_store.user_debit(context.tenant, context.user_id, month, to_micro_usd(usd))
     tenant_policy = policy.tenants.get(context.tenant)
     if total is None or tenant_policy is None:
         return
@@ -351,6 +383,7 @@ def book_cost(
         session=context.session,
         trace_id=context.trace_id,
         prompt_version=context.prompt_version,
+        user_id=context.user_id,
         price_key=adapters[chosen.provider].price_key(chosen.model),
         latency_ms=latency_ms,
     )
@@ -390,6 +423,7 @@ def book_failure(
         session=context.session,
         trace_id=context.trace_id,
         prompt_version=context.prompt_version,
+        user_id=context.user_id,
         price_key=adapters[chosen.provider].price_key(chosen.model),
         status=status,
         latency_ms=latency_ms,

@@ -71,3 +71,22 @@ def checked_identifier(value: str, field: str, *, param: str | None = None) -> s
     if IDENTIFIER_PATTERN.fullmatch(value) is None:
         raise IdentifierInvalid(f"{field}: not a lowercase slug", param=param)
     return value
+
+
+USER_ID_PATTERN = re.compile(r"u_[0-9a-f]{32}")
+"""A random user id: `u_` and exactly 32 lowercase hex characters, with `re.fullmatch`.
+
+The shape is the whole check that the id says nothing about a person: a name or an
+email cannot match it. a design note. Pinned by `test_user_id_rejection_table`.
+"""
+
+
+def checked_user_id(value: str, *, param: str | None = None) -> str:
+    """Validate one random user id before it reaches a key, a cost row or a trace.
+
+    The message never repeats the value: a caller that sent an email by mistake
+    must not see it echoed back, or logged with the error.
+    """
+    if USER_ID_PATTERN.fullmatch(value) is None:
+        raise IdentifierInvalid("user id: not u_ and 32 lowercase hex characters", param=param)
+    return value

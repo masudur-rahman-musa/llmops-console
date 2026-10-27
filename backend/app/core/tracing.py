@@ -115,16 +115,17 @@ def tracer() -> Tracer:
 class SpanAttributes(BaseModel):
     """Everything a span in this system is allowed to say, and nothing else.
 
-    Ten optional fields, rendered onto a span as only the ones actually set, so an
+    Eleven optional fields, rendered onto a span as only the ones actually set, so an
     unresolved request does not claim a provider and an unpriced one does not
     claim a cost. `extra="forbid"` is the point of the class: it is what makes "no
     user identity on a trace" a property of the type rather than a promise in a
     review, and tests pin both
     halves - the exact field set, and that an unknown key raises.
 
-    `session` is here and there is no user field to omit: a session is a
-    conversation, not a person, and it is what an operator needs to follow one
-    caller's traffic through the gateway.
+    `session` is a conversation, not a person, and it is what an operator needs to
+    follow one caller's traffic through the gateway. `user_id` is the one random id
+    the help desk sends in `X-User`, never a name or an email; only the help desk
+    can map it to a person.
 
     `cache` and `cost_usd` are named in the design and nothing sets them yet.
     They are declared here so the plans that need them add a value rather than a
@@ -141,6 +142,7 @@ class SpanAttributes(BaseModel):
 
     tenant: str | None = None
     session: str | None = None
+    user_id: str | None = None
     alias: str | None = None
     provider: str | None = None
     data_class: str | None = None
@@ -154,7 +156,9 @@ class SpanAttributes(BaseModel):
 
         `session` goes out as `langfuse.session.id`, the key Langfuse groups its
         Sessions page by; the field keeps its name so no call site changes.
-        Pinned by `test_the_session_goes_out_as_langfuse_session_id`.
+        Pinned by `test_the_session_goes_out_as_langfuse_session_id`. `user_id`
+        goes out as `langfuse.user.id` for its Users page, pinned by
+        `test_the_user_id_goes_out_as_langfuse_user_id`.
         """
         return {
             WIRE_KEYS.get(key, key): value
@@ -163,7 +167,10 @@ class SpanAttributes(BaseModel):
         }
 
 
-WIRE_KEYS: dict[str, str] = {"session": "langfuse.session.id"}
+WIRE_KEYS: dict[str, str] = {
+    "session": "langfuse.session.id",
+    "user_id": "langfuse.user.id",
+}
 """A `SpanAttributes` field whose key on the wire differs from its name."""
 
 

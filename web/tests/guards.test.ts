@@ -200,6 +200,16 @@ describe("page body guards", () => {
     expect(passes("cost", withValue("cost", ["savings_usd_total"], "4.55"))).toBe(false);
   });
 
+  it("top_users is required and shape-checked", () => {
+    // Catches a cost guard that ignores `top_users` (a body without it, or with a row lacking `user_id`, would reach the page and crash it), one that lets a text count or cost through, and one that refuses an empty list (a tenant with no user ids yet is a normal body).
+    expect(passes("cost", without("cost", ["top_users"])), "key missing").toBe(false);
+    expect(passes("cost", without("cost", ["top_users", -1, "user_id"])), "row without user_id").toBe(false);
+    expect(passes("cost", without("cost", ["top_users", -1, "tenant"])), "row without tenant").toBe(false);
+    expect(passes("cost", withValue("cost", ["top_users", -1, "requests"], "30")), "text requests").toBe(false);
+    expect(passes("cost", withValue("cost", ["top_users", -1, "cost_usd"], "0.5")), "text cost").toBe(false);
+    expect(passes("cost", withValue("cost", ["top_users"], [])), "empty list").toBe(true);
+  });
+
   it("requests guard checks the per day types", () => {
     // Catches a guard that lets a text count or a text day through as a per day entry.
     expect(passes("requests", withValue("requests", ["per_day", -1, "requests"], "7"))).toBe(false);

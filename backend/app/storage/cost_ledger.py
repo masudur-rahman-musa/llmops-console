@@ -48,7 +48,7 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.metrics import record_ledger_write
-from app.core.validation import IdentifierInvalid, checked_identifier
+from app.core.validation import IdentifierInvalid, checked_identifier, checked_user_id
 from app.limits.cost import COST_QUANTUM
 from app.storage.db import DEFAULT_SCHEMA, checked_schema
 
@@ -163,7 +163,8 @@ class CostLedgerRow(BaseModel):
 
     `session` and `prompt_version` are the nullable fields. A request with no
     session or prompt version header is still a request that cost money, and
-    refusing it here would lose exactly those rows.
+    refusing it here would lose exactly those rows. `user_id` is nullable for the
+    same reason: a request with no `X-User` is booked under no user.
 
     `status` is the HTTP answer (200 for a served request, 5xx for one that failed after
     routing) and `latency_ms` the time it took, null when it was not measured.
@@ -189,6 +190,7 @@ class CostLedgerRow(BaseModel):
     cache_write_tokens: int = Field(default=0, ge=0)
     status: int = 200
     latency_ms: int | None = None
+    user_id: str | None = None
 
 
 class CostLedgerWriter(Protocol):
@@ -293,6 +295,8 @@ class PostgresCostLedgerWriter:
             checked_identifier(row.session, "session")
         if row.prompt_version is not None:
             checked_identifier(row.prompt_version, "prompt_version")
+        if row.user_id is not None:
+            checked_user_id(row.user_id)
         _checked_model(row.model)
         _checked_trace_id(row.trace_id)
         _checked_price_version(row.price_version)
@@ -409,9 +413,9 @@ class PostgresCostLedgerWriter:
                         "ts, tenant, alias, provider, model, input_tokens, "
                         "output_tokens, cached, cost_usd, price_version, estimated, "
                         "session, trace_id, prompt_version, cache_read_tokens, cache_write_tokens, "
-                        "status, latency_ms) "
+                        "status, latency_ms, user_id) "
                         "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
-                        "%s, %s)"
+                        "%s, %s, %s)"
                     ).format(sql.Identifier(self._schema, COST_LEDGER)),
                     (
                         row.ts,
@@ -432,6 +436,7 @@ class PostgresCostLedgerWriter:
                         row.cache_write_tokens,
                         row.status,
                         row.latency_ms,
+                        row.user_id,
                     ),
                 )
                 stage = "commit"

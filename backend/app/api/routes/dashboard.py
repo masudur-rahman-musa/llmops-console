@@ -170,6 +170,7 @@ def cost(
         budgets=budgets(request, tenant, spend),
         month_spend_usd=None if spend is None else sum(spend.values()),
         cost_per_request=() if read is None else read.cost_per_request,
+        top_users=() if read is None else read.top_users,
     )
 
 

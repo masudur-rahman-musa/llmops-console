@@ -10,7 +10,7 @@ The contract these tests are written against, before it exists:
 * `app.core.tracing.tracer_provider()` - the process-wide provider, built
   once, the one the exporter fixture attaches to.
 * `app.core.tracing.SpanAttributes` - the closed, typed attribute model
-  whose field set is exactly the ten names in `ALLOWED_ATTRIBUTE_KEYS`.
+  whose field set is exactly the names in `ALLOWED_ATTRIBUTE_KEYS`.
 * `app.core.tracing.build_exporter(settings)` - the OTLP/HTTP exporter
   switch: `None` when no endpoint is configured (decision D).
 * `app.core.config.Settings.otlp_endpoint` - optional, absent by
@@ -184,11 +184,15 @@ ALLOWED_ATTRIBUTE_KEYS = frozenset(
         "cost_usd",
         "redacted",
         "fallback_count",
+        "user_id",
     }
 )
 
 SESSION_WIRE_KEY = "langfuse.session.id"
 """The key Langfuse reads a session from; the bare `session` key is no longer sent."""
+
+USER_WIRE_KEY = "langfuse.user.id"
+"""The key Langfuse reads a user from; the bare `user_id` key is never sent."""
 
 OBSERVATION_TYPE_KEY = "langfuse.observation.type"
 GENERATION_WIRE_KEYS = frozenset(
@@ -207,8 +211,8 @@ TAGS_KEY = "langfuse.trace.tags"
 FINISH_REASON_KEY = "langfuse.observation.metadata.finish_reason"
 PREVIEW_WIRE_KEYS = frozenset({INPUT_NOTE_KEY, OUTPUT_NOTE_KEY, TAGS_KEY})
 ALLOWED_WIRE_KEYS = (
-    (ALLOWED_ATTRIBUTE_KEYS - {"session"})
-    | {SESSION_WIRE_KEY}
+    (ALLOWED_ATTRIBUTE_KEYS - {"session", "user_id"})
+    | {SESSION_WIRE_KEY, USER_WIRE_KEY}
     | GENERATION_WIRE_KEYS
     | PREVIEW_WIRE_KEYS
     | {FINISH_REASON_KEY}
@@ -813,14 +817,14 @@ def test_the_provider_span_names_the_resolved_provider(
 def test_the_attribute_key_set_is_exactly_the_allowlist(
     chat_client: TestClient, spans: InMemorySpanExporter
 ) -> None:
-    """Catches a field added to the typed model (an `api_key`, a `user`, a `prompt`)
+    """Catches a field added to the typed model (an `api_key`, an `email`, a `prompt`)
     and an attribute written straight onto a span past the model, either of which turns
-    "never user identity" back into a review promise. The rejected `user` row is the half
+    "never user identity" back into a review promise. The rejected `email` row is the half
     that pins the set as CLOSED rather than merely as the current shape."""
     assert set(SpanAttributes.model_fields) == ALLOWED_ATTRIBUTE_KEYS
 
     with pytest.raises(ValidationError):
-        SpanAttributes.model_validate({"user": "alice"})
+        SpanAttributes.model_validate({"email": "alice@example.com"})
 
     response: Response = chat_client.post(
         CHAT,

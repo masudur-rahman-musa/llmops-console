@@ -61,6 +61,15 @@ class AliasCost(_Body):
     cost_usd: float
 
 
+class UserCost(_Body):
+    """One random user id's served spend in the window. Never a name or an email."""
+
+    tenant: str
+    user_id: str
+    requests: int
+    cost_usd: float
+
+
 class EvalRunSummary(_Body):
     id: str
     started_at: datetime
@@ -181,6 +190,7 @@ class CostPage(_Body):
     budgets: tuple[Budget, ...]
     month_spend_usd: float | None
     cost_per_request: tuple[AliasCost, ...]
+    top_users: tuple[UserCost, ...]
 
 
 class BlockedItem(_Body):
