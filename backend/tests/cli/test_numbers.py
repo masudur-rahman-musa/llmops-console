@@ -183,7 +183,6 @@ def full_pages() -> dict[str, dict[str, Any]]:
         },
         "cost": {
             "sources": dict(SOURCES),
-            "rollup_populated": True,
             "days": [
                 {
                     "day": "2026-10-26",

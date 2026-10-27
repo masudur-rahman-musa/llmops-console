@@ -45,7 +45,6 @@ dependencies = [
 # and CronJob that will call them all want one name that works inside the image.
 [project.scripts]
 ops-migrate = "app.cli.ledger:migrate"
-ops-refresh-rollup = "app.cli.ledger:refresh_rollup"
 # The two halves of `make numbers` that talk to the gateway.
 ops-send-traffic = "app.cli.numbers:send_traffic"
 ops-check-console = "app.cli.numbers:check_console"

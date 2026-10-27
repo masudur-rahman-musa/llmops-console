@@ -98,15 +98,14 @@ def test_the_gateway_migrates_and_reads_prometheus_in_compose() -> None:
     assert env["OPSCONSOLE_PROMETHEUS_URL"] == "http://prometheus:9090"
 
 
-def test_the_numbers_target_runs_eval_traffic_release_rollup_check_in_order() -> None:
+def test_the_numbers_target_runs_eval_traffic_release_check_in_order() -> None:
     """Catches a `make numbers` that skips a step or runs them in the wrong order (for
-    example checking before the traffic or the rollup exists)."""
+    example checking before the traffic exists)."""
     recipe = numbers_recipe()
     steps = [
         "$(MAKE) eval",
         "ops-send-traffic",
         "/admin/releases",
-        "ops-refresh-rollup",
         "ops-check-console",
     ]
     positions = [recipe.find(step) for step in steps]

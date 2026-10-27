@@ -192,7 +192,6 @@ describe("console pages", () => {
     expect(cost).toMatch(/style="[^"]*width:\s*62%/);
     expect(cost).toMatch(/style="[^"]*width:\s*25%/);
     expect(has(cost, "What one request costs")).toBe(false);
-    expect(cost).not.toContain("Daily rollup not yet populated.");
     // The null ratio is the only difference between these two bodies, so only its n/a can separate them.
     const knownRatio = fixture("cost");
     list(knownRatio, "budgets")[2].ratio = 0.25;
@@ -425,15 +424,6 @@ describe("console pages", () => {
     expectInOrder(await render("cost", body), ["over-tn:", "tn-a:", "tn-b:", "low-tn:", "none-tn:"]);
   });
 
-  it("cost renders rollup not populated", async () => {
-    // Catches a false rollup_populated rendered as an empty table with no explanation.
-    const body = fixture("cost");
-    body.rollup_populated = false;
-    body.days = [];
-    expect(has(await render("cost", body), "Daily rollup not yet populated.")).toBe(true);
-    expect(await render("cost")).not.toContain("Daily rollup not yet populated.");
-  });
-
   it("cost renders not measured yet and the rest of the page", async () => {
     // Catches a missing or broken tradeoff file that blanks or crashes the whole cost page.
     for (const path of [undefined, "", join(ROOT, "tests", "fixtures", "absent-tradeoff.json")]) {
@@ -505,6 +495,29 @@ describe("console pages", () => {
     expect(section(html, "Taxonomy")).toContain("None in this window.");
     expect(section(html, "Blocked releases")).toContain("None in this window.");
     expect(section(html, "Categories")).not.toContain("None in this window.");
+  });
+
+  it("shows the check score note beside the cards", async () => {
+    // Catches a quality page that drops the check score's own note (the 57.14% card would sit beside "20 of 45 passed" with no word on the 10 unstable cases), or prints it away from the cards, after the fixed check score sentence.
+    const body = fixture("quality");
+    (list(body, "gate")[0] as Fixture).note = "20 of 35 stable cases; 10 unstable, not counted";
+    const html = await render("quality", body);
+    const note = "Check score: 20 of 35 stable cases; 10 unstable, not counted";
+    expect(has(html, note)).toBe(true);
+    const visible = text(html);
+    expect(visible.indexOf(text(note))).toBeGreaterThan(visible.indexOf(text("Judge score")));
+    expect(occurrences(visible, text(note))).toBe(1);
+  });
+
+  it("the Categories note says unstable cases count as not passed", async () => {
+    // Catches a Categories panel that leaves the 20 of 45 total unexplained next to a 20 of 35 check score; the sentence must sit under the Categories heading, not elsewhere on the page.
+    const html = await render("quality");
+    const start = html.indexOf("<h2>Categories</h2>");
+    expect(start).toBeGreaterThan(-1);
+    const next = html.indexOf("<h2", start + 1);
+    const categories = text(html.slice(start, next === -1 ? undefined : next));
+    expect(categories).toContain("Unstable cases count as not passed here.");
+    expect(occurrences(text(html), "Unstable cases count as not passed here.")).toBe(1);
   });
 
   it("blocked with empty regressed renders no regression recorded", async () => {

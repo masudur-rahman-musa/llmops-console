@@ -244,9 +244,6 @@ export default consolePage(
         </Panel>
 
         <Panel title="Daily cost">
-          {body.rollup_populated === false && (
-            <p className="note">Daily rollup not yet populated.</p>
-          )}
           <FilterForm
             clearHref="/cost"
             keep={{ users_tenant: filters.usersTenant }}

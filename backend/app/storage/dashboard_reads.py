@@ -7,15 +7,15 @@ implementation over the app's one pool, and a stand-in for a gateway with no
 without calling it at all.
 
 **Windows.** A page's window starts at `now - timedelta(days=days)`, compared with
-`>=` on a timestamp and with `day >= since.date()` on the daily rollup, whose days
-are UTC dates. "Today" on the home page is `[UTC midnight, +1 day)` over the live
-ledger rather than the rollup: the rollup refreshes only on
-`make refresh-rollup`. Every query is bounded
-by its window, by `ROW_LIMIT`, or by `PAGE_SIZE` for the paged request list.
+`>=` on a timestamp. "Today" on the home page is `[UTC midnight, +1 day)`. Every
+query is bounded by its window, by `ROW_LIMIT`, or by `PAGE_SIZE` for the paged
+request list.
 
-**The rollup may be unpopulated.** PostgreSQL refuses a SELECT from a materialised
-view that was never refreshed, so `cost` asks `pg_matviews.ispopulated` first and
-answers `rollup_populated: False` with no days rather than raising.
+**Cost days come straight from the ledger**: per UTC day, tenant and
+provider, the served rows (`status < 500`), cached ones counted, from `start` to
+`end` with both days kept. With no range, the last `days` days through today. So
+today shows the moment a request is booked. Pinned by
+tests/storage/test_dashboard_reads_postgres.py::test_today_shows_without_any_refresh.
 
 **Savings are estimated at read time**. A cache hit is booked at zero
 with the replayed answer's own token counts, so what it saved is what those tokens
@@ -32,7 +32,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Mapping
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any, Final, Protocol
 
@@ -68,9 +68,6 @@ PAGE_SIZE: Final[int] = 20
 
 TOP_USERS_PER_TENANT: Final[int] = 10
 """How many users the Cost tab ranks for each tenant."""
-
-COST_ROLLUP: Final[str] = "cost_ledger_daily"
-"""The materialised view `migrations/002_cost_ledger.sql` creates."""
 
 HIGHER_IS_BETTER_METRICS: Final[tuple[str, ...]] = ("check_score", "judge_score")
 """The eval metrics where lower is worse, in `evals.scores.METRIC_NAMES` order.
@@ -123,7 +120,6 @@ class HomeRead(_Read):
 
 
 class CostRead(_Read):
-    rollup_populated: bool
     days: tuple[CostDay, ...]
     savings: tuple[Saving, ...]
     savings_usd_total: float
@@ -188,7 +184,14 @@ class ConsoleReader(Protocol):
     def home(self, *, now: datetime) -> HomeRead: ...
 
     def cost(
-        self, *, days: int, tenant: str | None, now: datetime, prices: PriceTable
+        self,
+        *,
+        days: int,
+        tenant: str | None,
+        now: datetime,
+        prices: PriceTable,
+        start: date | None = None,
+        end: date | None = None,
     ) -> CostRead: ...
 
     def month_spend(self, *, tenant: str | None, now: datetime) -> dict[str, float]: ...
@@ -222,10 +225,17 @@ class UnconfiguredConsoleReader:
             last_eval=None,
         )
 
-    def cost(self, *, days: int, tenant: str | None, now: datetime, prices: PriceTable) -> CostRead:
-        return CostRead(
-            rollup_populated=False, days=(), savings=(), savings_usd_total=0.0, cost_per_request=()
-        )
+    def cost(
+        self,
+        *,
+        days: int,
+        tenant: str | None,
+        now: datetime,
+        prices: PriceTable,
+        start: date | None = None,
+        end: date | None = None,
+    ) -> CostRead:
+        return CostRead(days=(), savings=(), savings_usd_total=0.0, cost_per_request=())
 
     def month_spend(self, *, tenant: str | None, now: datetime) -> dict[str, float]:
         return {}
@@ -407,27 +417,34 @@ class PostgresConsoleReader:
             for row in rows
         )
 
-    def cost(self, *, days: int, tenant: str | None, now: datetime, prices: PriceTable) -> CostRead:
+    def cost(
+        self,
+        *,
+        days: int,
+        tenant: str | None,
+        now: datetime,
+        prices: PriceTable,
+        start: date | None = None,
+        end: date | None = None,
+    ) -> CostRead:
         since = now - timedelta(days=days)
+        first_day = since.astimezone(UTC).date() if start is None else start
+        last_day = now.astimezone(UTC).date() if end is None else end
         where_tenant, tenant_params = _tenant_clause(tenant)
         with self._pool.connection() as conn:
-            populated = conn.execute(
-                "SELECT ispopulated FROM pg_matviews WHERE schemaname = %s AND matviewname = %s",
-                (self._schema, COST_ROLLUP),
-            ).fetchone()
-            rollup_populated = populated is not None and bool(populated[0])
-            day_rows = (
-                conn.execute(
-                    sql.SQL(
-                        "SELECT day, tenant, provider, sum(requests), sum(cached_requests), "
-                        "sum(cost_usd) FROM {} WHERE day >= %s{} "
-                        "GROUP BY day, tenant, provider ORDER BY day, tenant, provider"
-                    ).format(self._table(COST_ROLLUP), where_tenant),
-                    (since.astimezone(UTC).date(), *tenant_params),
-                ).fetchall()
-                if rollup_populated
-                else []
-            )
+            day_rows = conn.execute(
+                sql.SQL(
+                    "SELECT (ts AT TIME ZONE 'UTC')::date, tenant, provider, count(*), "
+                    "count(*) FILTER (WHERE cached), sum(cost_usd) FROM {} "
+                    "WHERE status < 500 AND ts >= %s AND ts < %s{} "
+                    "GROUP BY 1, tenant, provider ORDER BY 1, tenant, provider"
+                ).format(self._table("cost_ledger"), where_tenant),
+                (
+                    datetime.combine(first_day, time.min, UTC),
+                    datetime.combine(last_day + timedelta(days=1), time.min, UTC),
+                    *tenant_params,
+                ),
+            ).fetchall()
             cached_rows = conn.execute(
                 sql.SQL(
                     "SELECT (ts AT TIME ZONE 'UTC')::date, tenant, provider, model, "
@@ -484,7 +501,6 @@ class PostgresConsoleReader:
             for (day, row_tenant), usd in sorted(saved.items())
         )
         return CostRead(
-            rollup_populated=rollup_populated,
             days=tuple(
                 CostDay(
                     day=row[0],

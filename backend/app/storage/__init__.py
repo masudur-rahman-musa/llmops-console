@@ -3,12 +3,12 @@
 This package holds the project's Postgres writes: the connection pool, the
 migration runner and the schema convention.
 
-The modules: `db` is the seam and the runner, `cost_ledger` is the spend row and
-its daily rollup, `console_events` is the
+The modules: `db` is the seam and the runner, `cost_ledger` is the spend row,
+`console_events` is the
 release record CI writes by hand through `/admin/releases`, `eval_store` is
 the eval run and case rows, and `dashboard_reads` is the console's read side. The
 command-line entry points are not re-exported - they live in `app.cli.ledger`,
-which `make migrate` and `make refresh-rollup` call.
+which `make migrate` calls.
 """
 
 from app.storage.console_events import (

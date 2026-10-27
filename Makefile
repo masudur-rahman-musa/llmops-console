@@ -1,4 +1,4 @@
-.PHONY: help setup run up embed-model down rebuild all gateway console test test-infra fast test-slowest lint typecheck format verify security eval infra-check k8s-check k8s-aws-check k8s-server-check server-secrets server-helpdesk-data k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate refresh-rollup secrets-encrypt secrets-decrypt secrets-check load numbers grafana-check
+.PHONY: help setup run up embed-model down rebuild all gateway console test test-infra fast test-slowest lint typecheck format verify security eval infra-check k8s-check k8s-aws-check k8s-server-check server-secrets server-helpdesk-data k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate secrets-encrypt secrets-decrypt secrets-check load numbers grafana-check
 
 # The console's checks run through pnpm, and are skipped only in a checkout that
 # has no web, so the intended gate stays visible in this file. The
@@ -126,13 +126,11 @@ security:   ## Secret scan over all history, Python and console dependency audit
 verify: format lint typecheck test security   ## The full gate, in order
 # The ledger's schema is applied by a deploy STEP, never on app start: replicas
 # coming up together would otherwise race each other over the same DDL, and
-# nobody would get to read the migration before it ran. Both targets answer a
+# nobody would get to read the migration before it ran. It answers a
 # non-zero code when OPSCONSOLE_DATABASE_URL is unset, so a pipeline cannot
 # mistake "nothing was configured" for "nothing needed doing".
 migrate:    ## Apply the ledger migrations (safe to run twice)
 	$(UV_ROOT) ops-migrate
-refresh-rollup: ## Refresh the daily cost rollup the console reads
-	$(UV_ROOT) ops-refresh-rollup
 # The eval gate: the help desk's 45 conversation cases, each played
 # EVAL_REPEATS times, against the real help desk agent, with this gateway beside
 # it and the real cheap model (`agent-default`) answering, so `ANTHROPIC_API_KEY` must be set (in the shell,
@@ -192,7 +190,7 @@ eval:       ## The eval gate: the help desk's 45 conversations on the real cheap
 # throwaway keys made for this run, a `nordlicht` tenant key and an admin key:
 # the digests go to the gateway, the keys stay in this shell, nothing is stored.
 # Then six real chat requests on the cheap model, one release for HEAD naming
-# the eval run, a rollup refresh, and a check of all eight console pages that
+# the eval run, and a check of all eight console pages that
 # fails on a source in error or unconfigured, or a tab with nothing to show.
 # A gate that fails by chance does not stop the run: the eval still stored its
 # run, and `make eval` removes old reports first, so only a run that wrote no
@@ -223,7 +221,6 @@ numbers:    ## Fill every console tab through the real app (eval, traffic, relea
 	  -H "Authorization: Bearer $$admin" -H 'Content-Type: application/json' \
 	  -d "{\"git_sha\": \"$$(git rev-parse HEAD)\", \"deployed_at\": \"$$(date -u +%Y-%m-%dT%H:%M:%SZ)\", \"status\": \"deployed\", \"eval_run_id\": \"$$run_id\"}" \
 	  >/dev/null || exit $$?; \
-	$$stack exec -T gateway ops-refresh-rollup || exit $$?; \
 	$(UV_ROOT) ops-check-console
 # The published comparison (the design). Pure: it reads a manifest and the
 # report.json each option names, so it needs no stack and no key. MANIFEST and

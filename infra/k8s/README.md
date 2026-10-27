@@ -89,15 +89,11 @@ a row raised in isolation fails there rather than at `helm install`. Row 23d's t
 CronJobs leave the namespace 448Mi / 95m / 32Mi of headroom - the limits column is
 now the tight one.
 
-An earlier change adds one more `platform` CronJob on the gateway image - `rollup-refresh`
-(`app/cli/ledger.py`) - but the table above does not grow,
-and the headroom does not shrink. A CronJob costs the quota only while its Job pod
-exists, so jobs at different hours never coexist. The two backups share 03:00 and
-are counted together (the peak); the maintenance job runs at 02:00,
-alone at its hour and no larger than a backup job, so they add nothing to the
-peak the quota is sized for. That is why the subtotals test counts the costliest
-single hour rather than the sum of every CronJob, and a maintenance job moved onto
-03:00 would make the peak three pods and fail it.
+A CronJob costs the quota only while its Job pod exists, so jobs at different
+hours never coexist. The two backups share 03:00 and are counted together (the
+peak). That is why the subtotals test counts the costliest single hour rather
+than the sum of every CronJob. The console works out cost per day straight from
+the ledger, so `platform` runs no ledger job.
 
 ## The apps budget
 
@@ -532,9 +528,7 @@ make k8s-server-check
 ```
 
 It carries `base`, the platform data stores, the staging issuer, the
-middlewares, the backups (suspended until the node has a bucket), the
-ledger-maintenance CronJob (`rollup-refresh`, which runs live
-here because Postgres is on the node - an earlier change, a design note), the gateway
+middlewares, the backups (suspended until the node has a bucket), the gateway
 and the console, and `monitoring` (Prometheus, Grafana, the two exporters and
 Alertmanager). Left out: llama-embed and `evals`, which do not fit; our own `letsencrypt-prod`, so the live one is never overwritten;
 and the Helpdesk's workloads, config and images, which its own repo deploys. The gateway runs one replica with no HPA. Its two Ingresses answer on
@@ -562,9 +556,8 @@ requests still fit. `test_k8s_server.py` sums them from the built objects, adds 
 | `monitoring` | 376Mi | 250m | 688Mi | Prometheus 320Mi, Grafana 192Mi, kube-state-metrics 64Mi, node-exporter 48Mi, Alertmanager 64Mi |
 | **total** | **2104Mi** | **1600m** | **3760Mi** | |
 
-The two backup jobs run at 03:00 and 04:00 and the two maintenance jobs at 01:00
-and 02:00, all at their own hours, so the platform quota pays for one job at a
-time and the maintenance jobs add nothing to it. Redis is capped at 96mb and
+The two backup jobs run at 03:00 and 04:00, each at its own hour, so the
+platform quota pays for one job at a time. Redis is capped at 96mb and
 evicts only keys with a TTL, so the budget and rate-limit counters stay.
 
 The Helpdesk runs beside this build and depends on what it ships: Postgres, Redis

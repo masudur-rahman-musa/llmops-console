@@ -1,15 +1,14 @@
-r"""The two commands that own the ledger's schema and its rollup.
+r"""The command that owns the ledger's schema.
 
-`make migrate` applies the SQL files; `make refresh-rollup` recomputes the materialised
-view the console's cost page reads. The gateway can also migrate as it starts, when
+`make migrate` applies the SQL files. The gateway can also migrate as it starts, when
 `OPSCONSOLE_MIGRATE_ON_START` is on: `app.main.migrate_at_start` runs
 the same files under a Postgres advisory lock, so replicas starting together
 apply each file once. This command stays for a deploy that wants to run the DDL
 as its own step, and with the switch off `/readyz`'s `postgres` probe is still
 the only thing that says whether the server is reachable.
 
-Both entry points read `OPSCONSOLE_DATABASE_URL` through `Settings` and
-answer a process exit code. An unconfigured database is a non-zero code with a message,
+The entry point reads `OPSCONSOLE_DATABASE_URL` through `Settings` and
+answers a process exit code. An unconfigured database is a non-zero code with a message,
 never a quiet success: in a deploy pipeline "migrated nothing, exit 0" is the
 worst available answer, because the next step starts the gateway against a
 database with no table in it.
@@ -22,17 +21,15 @@ import sys
 from collections.abc import Sequence
 
 from app.core.config import Settings
-from app.storage.cost_ledger import COST_LEDGER_DAILY, refresh_daily_rollup
 from app.storage.db import DEFAULT_SCHEMA, apply_migrations, build_pool
 
 NO_DATABASE_URL = 2
 """The exit code for "nothing is configured", distinct from 1 so a CronJob's
-alerting can tell a misconfiguration from a failed statement. One case per entry
-point, because each reads the setting for itself."""
+alerting can tell a misconfiguration from a failed statement."""
 
 
 def _parser(description: str) -> argparse.ArgumentParser:
-    """The one option all three commands share."""
+    """The one option the command takes."""
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument(
         "--schema",
@@ -71,29 +68,4 @@ def migrate(argv: Sequence[str] | None = None) -> int:
         print(f"applied {len(applied)} migration(s): {', '.join(applied)}")
     else:
         print("already up to date; nothing was applied")
-    return 0
-
-
-def refresh_rollup(argv: Sequence[str] | None = None) -> int:
-    """Recompute the daily cost rollup. `make refresh-rollup`.
-
-    Safe to run at any time and as often as an operator likes: the view is
-    derived entirely from `cost_ledger`, so a refresh answers the same rows as
-    the one before it unless a request was served in between. The CronJob that
-    calls this on a schedule belongs to the platform plan.
-    """
-    options = _parser(f"Refresh the {COST_LEDGER_DAILY} materialised view.").parse_args(argv)
-    url = _database_url()
-    if url is None:
-        print("OPSCONSOLE_DATABASE_URL is not set; nothing was refreshed", file=sys.stderr)
-        return NO_DATABASE_URL
-
-    pool = build_pool(url)
-    try:
-        concurrently = refresh_daily_rollup(pool, schema=options.schema)
-    finally:
-        pool.close()
-
-    how = "concurrently" if concurrently else "for the first time, exclusively"
-    print(f"refreshed {options.schema}.{COST_LEDGER_DAILY} {how}")
     return 0

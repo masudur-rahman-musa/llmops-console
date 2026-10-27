@@ -138,6 +138,30 @@ def gate_verdict(baseline_path: Path, metrics: Mapping[str, Any] | None) -> bool
     return all(verdicts)
 
 
+def _count(metrics: Mapping[str, Any], name: str) -> int | None:
+    """A stored case count, or `None` when the run never stored it."""
+    raw = metrics.get(name)
+    return raw if isinstance(raw, int) and not isinstance(raw, bool) else None
+
+
+def check_score_note(metrics: Mapping[str, Any] | None) -> str | None:
+    """What the check score counts: "20 of 35 stable cases; 10 unstable, not counted".
+
+    The check score leaves out unstable cases (passed on some tries, failed on others), so
+    it is passed over stable cases, not over all of them. With no unstable case it is a
+    plain "35 of 45 cases"; any count missing gives no note. Pinned by
+    tests/api/test_quality_gate.py::test_the_check_score_note_counts_stable_cases.
+    """
+    if metrics is None:
+        return None
+    cases, passed, unstable = (_count(metrics, name) for name in ("cases", "passed", "unstable"))
+    if cases is None or passed is None or unstable is None:
+        return None
+    if unstable == 0:
+        return f"{passed} of {cases} cases"
+    return f"{passed} of {cases - unstable} stable cases; {unstable} unstable, not counted"
+
+
 def _gate_rows(baseline_path: Path, metrics: Mapping[str, Any] | None) -> tuple[GateScore, ...]:
     """One gate row per gated score: the value from `metrics`, the threshold from the baseline."""
     try:
@@ -157,7 +181,7 @@ def _gate_rows(baseline_path: Path, metrics: Mapping[str, Any] | None) -> tuple[
                 value=value,
                 threshold=threshold,
                 passed=None if value is None or threshold is None else value >= threshold,
-                note=JUDGE_NOTE if name == "judge_score" else None,
+                note=JUDGE_NOTE if name == "judge_score" else check_score_note(metrics),
             )
         )
     return tuple(rows)

@@ -642,3 +642,35 @@ def test_postgres_down_is_one_empty_page(wired: Wired) -> None:
     assert body["sources"]["postgres"] == "error"
     assert (body["requests_page"], body["requests_pages"]) == (1, 1)
     assert body["requests"] == []
+
+
+def test_a_reason_with_zero_refusals_is_left_out(
+    wired: Wired, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Catches a route that passes Prometheus's zero-count series straight through, so the
+    page shows a row `Internal | 0` instead of "None in this window."."""
+    monkeypatch.setitem(
+        ANSWERS,
+        REFUSALS_7D,
+        [series({"reason": "internal"}, "0"), series({"reason": "out_of_scope"}, "2")],
+    )
+
+    body = wired.body(days=7)
+
+    assert body["refusals"] == [{"reason": "out_of_scope", "count": 2}]
+
+
+def test_only_zero_refusals_leave_an_empty_list(
+    wired: Wired, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Catches a filter that keeps the last zero row or turns an all-zero window into null,
+    so the console's empty-table text would not show."""
+    monkeypatch.setitem(
+        ANSWERS,
+        REFUSALS_7D,
+        [series({"reason": "internal"}, "0"), series({"reason": "needs_approval"}, "0")],
+    )
+
+    body = wired.body(days=7)
+
+    assert body["refusals"] == []

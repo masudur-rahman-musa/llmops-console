@@ -208,17 +208,6 @@ def test_the_ledger_cli_runs_no_sql() -> None:
                 "app/cli/ledger.py must not call conn.execute; delegate to storage modules"
             )
 
-    refresh_from_cost = False
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module == "app.storage.cost_ledger":
-            for alias in node.names:
-                if alias.name == "refresh_daily_rollup":
-                    refresh_from_cost = True
-
-    assert refresh_from_cost, (
-        "app/cli/ledger.py must import refresh_daily_rollup from app.storage.cost_ledger"
-    )
-
 
 _DASHBOARD_MODEL_NAMES = (
     "LastEval",

@@ -74,17 +74,21 @@ export function apiIsConfigured(env: Record<string, string | undefined> = proces
 }
 
 /** The requests page's query: which page of the ledger to read, and the filters that narrow it. */
-export type PageQuery = { page: number; filters?: RequestFilters };
+export type PageQuery = { page?: number; filters?: RequestFilters; range?: { from: string; to: string } };
 
 /**
- * `?page=N` and then each filter that is set, for the requests call when asked, else nothing;
- * a page that is not a whole number above 0 reads as 1. Booleans are sent only when true.
+ * `?page=N` and then each filter that is set, for the requests call when asked; the Daily
+ * cost range as `?from=&to=` for the cost call when asked; else nothing. A page that is not
+ * a whole number above 0 reads as 1. Booleans are sent only when true.
  */
 function queryString(name: PageName, query: PageQuery | undefined): string {
+  if (name === "cost" && query?.range !== undefined) {
+    return `?${new URLSearchParams({ from: query.range.from, to: query.range.to })}`;
+  }
   if (name !== "requests" || query === undefined) {
     return "";
   }
-  const page = Number.isSafeInteger(query.page) && query.page >= 1 ? query.page : 1;
+  const page = query.page !== undefined && Number.isSafeInteger(query.page) && query.page >= 1 ? query.page : 1;
   const params = new URLSearchParams({ page: String(page) });
   const filters = query.filters;
   if (filters?.day) params.set("day", filters.day);

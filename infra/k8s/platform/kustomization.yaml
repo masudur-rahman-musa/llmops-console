@@ -1,8 +1,7 @@
 # The three data services the gateway depends on, the two cert-manager issuers
 # and the three Traefik middlewares every public router applies - held here as
 # the originals each routing namespace copies - plus the two
-# nightly backup CronJobs and their shared PVC, and the two
-# ledger-maintenance CronJobs on the gateway image.
+# nightly backup CronJobs and their shared PVC.
 #
 # No `namespace:` transformer here on purpose. It would stamp
 # `metadata.namespace` onto the two `ClusterIssuer`s as well - kustomize applies
@@ -19,16 +18,4 @@ resources:
   - cert-manager-issuers.yaml
   - traefik-middlewares.yaml
   - backup.yaml
-  - ledger-maintenance.yaml
 
-# The gateway image, for the two ledger-maintenance CronJobs' bare `gateway` name.
-# This transformer reaches only the resources above, so in the root (Hetzner) build
-# the maintenance jobs name the published image at the placeholder tag, which
-# `deploy.yml` does not rewrite (the same gap STATUS names for the eval and Helpdesk
-# images). The server overlay includes `ledger-maintenance.yaml` as a raw file, not
-# this kustomization, so its own `images:` block - the one `deploy.yml` sets to the
-# deployed SHA - is what rewrites the tag there.
-images:
-  - name: gateway
-    newName: ghcr.io/masudur-rahman-musa/ai-operations-console/gateway
-    newTag: 0.0.0-unbuilt

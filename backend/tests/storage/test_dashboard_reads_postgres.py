@@ -19,7 +19,8 @@ The contract these cases are written against, before it exists:
 * `PostgresConsoleReader(pool, *, schema)` with `home`, `cost` and `quality`,
   answering the frozen read models of `app.storage.dashboard_reads`;
 * a window of `now - timedelta(days=days)`, compared with `>=` on timestamps and
-  with `day >= since.date()` on the rollup; "today" is `[UTC midnight, +1 day)`.
+  with `day >= since.date()` on the cost days, which are summed from the ledger itself; "today" is `[UTC midnight, +1 day)`. A range is `start` and `end`, both
+  UTC dates with both ends kept, and it replaces the `days` window for the day rows.
 """
 
 from __future__ import annotations
@@ -87,14 +88,16 @@ def insert_cost(
     cached: bool = False,
     cost_usd: str = "0.001000",
     price_version: str = "anthropic/claude-haiku-4-5@2025-10-15",
+    status: int = 200,
 ) -> None:
     """One `cost_ledger` row."""
     with pool.connection() as conn:
         conn.execute(
             sql.SQL(
                 "INSERT INTO {} (ts, tenant, alias, provider, model, input_tokens, "
-                "output_tokens, cached, cost_usd, price_version, estimated, session, trace_id) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                "output_tokens, cached, cost_usd, price_version, estimated, session, trace_id, "
+                "status) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
             ).format(sql.Identifier(schema, "cost_ledger")),
             (
                 ts,
@@ -110,17 +113,8 @@ def insert_cost(
                 False,
                 None,
                 "0af7651916cd43dd8448eb211c80319c",
+                status,
             ),
-        )
-
-
-def refresh_rollup(pool: Pool, schema: str, /) -> None:
-    """Populate `cost_ledger_daily` from the rows inserted so far."""
-    with pool.connection() as conn:
-        conn.execute(
-            sql.SQL("REFRESH MATERIALIZED VIEW {}").format(
-                sql.Identifier(schema, "cost_ledger_daily")
-            )
         )
 
 
@@ -309,30 +303,14 @@ def test_hit_rate_counts_cached_rows_inside_the_window(pool: Pool, migrated_sche
 # --- cost ------------------------------------------------------------------------
 
 
-def test_an_unpopulated_rollup_is_empty_and_flagged(
+def test_days_sum_the_ledger_by_day_tenant_and_provider(
     pool: Pool, migrated_schema: str, shipped_prices: PriceTable
 ) -> None:
-    """Catches the rollup read without the `pg_matviews.ispopulated` check: PostgreSQL
-    refuses a SELECT from a never-refreshed materialised view, so the cost page would be a
-    500 on every fresh install until someone runs `make refresh-rollup`."""
-    insert_cost(pool, migrated_schema, ts=NOW - timedelta(hours=1))
-
-    read = PostgresConsoleReader(pool, schema=migrated_schema).cost(
-        days=30, tenant=None, now=NOW, prices=shipped_prices
-    )
-
-    assert read.rollup_populated is False
-    assert read.days == ()
-
-
-def test_days_sum_the_rollup_by_day_tenant_and_provider(
-    pool: Pool, migrated_schema: str, shipped_prices: PriceTable
-) -> None:
-    """Catches days not summed across the rollup's alias and model columns (two
-    rows for one day, tenant and provider), a window compared by instant instead of by
-    UTC date (the row at 01:00 on the window's first day would drop), a missing lower
-    bound (the day before it), a wrong order, and a read of the live ledger instead of the
-    rollup (a row inserted after the refresh must not appear)."""
+    """Catches days not summed across the alias and model columns (two rows for one day,
+    tenant and provider), a window compared by instant instead of by UTC date (the row at
+    01:00 on the window's first day would drop), a missing lower bound (the day before it),
+    a wrong order, and a stale copy (the `evals` row is booked last, with no refresh, and
+    must be there)."""
     schema = migrated_schema
     first_day = WINDOW_30.date()
     day_one = datetime(first_day.year, first_day.month, first_day.day, 1, 0, tzinfo=UTC)
@@ -351,14 +329,12 @@ def test_days_sum_the_rollup_by_day_tenant_and_provider(
     )
     insert_cost(pool, schema, ts=today, provider="local", model="qwen", cost_usd="0.000000")
     insert_cost(pool, schema, ts=today, tenant="cuan", cost_usd="0.125000")
-    refresh_rollup(pool, schema)
     insert_cost(pool, schema, ts=today, tenant="evals", cost_usd="1.000000")
 
     read = PostgresConsoleReader(pool, schema=schema).cost(
         days=30, tenant=None, now=NOW, prices=shipped_prices
     )
 
-    assert read.rollup_populated is True
     assert read.days == (
         CostDay(
             day=first_day,
@@ -378,6 +354,14 @@ def test_days_sum_the_rollup_by_day_tenant_and_provider(
         ),
         CostDay(
             day=NOW.date(),
+            tenant="evals",
+            provider="anthropic",
+            requests=1,
+            cached_requests=0,
+            cost_usd=1.0,
+        ),
+        CostDay(
+            day=NOW.date(),
             tenant="nordlicht",
             provider="anthropic",
             requests=2,
@@ -391,6 +375,81 @@ def test_days_sum_the_rollup_by_day_tenant_and_provider(
             requests=1,
             cached_requests=0,
             cost_usd=0.0,
+        ),
+    )
+
+
+RANGE_NOW = datetime(2026, 10, 5, 12, 0, tzinfo=UTC)
+
+
+def test_today_shows_without_any_refresh(
+    pool: Pool, migrated_schema: str, shipped_prices: PriceTable
+) -> None:
+    """Catches a day read from a copy that only a job refreshes (a view or table): a row
+    booked a minute ago is in `days` for today at once, with nothing run after the insert."""
+    insert_cost(pool, migrated_schema, ts=NOW - timedelta(minutes=1), cost_usd="0.250000")
+
+    read = PostgresConsoleReader(pool, schema=migrated_schema).cost(
+        days=30, tenant=None, now=NOW, prices=shipped_prices
+    )
+
+    assert [(day.day, day.requests, day.cost_usd) for day in read.days] == [(NOW.date(), 1, 0.25)]
+
+
+def test_days_keep_from_and_to_and_leave_out_failed_rows(
+    pool: Pool, migrated_schema: str, shipped_prices: PriceTable
+) -> None:
+    """Catches a range that ignores `start`/`end` and uses `days` (days=1 would show only
+    the fifth), an exclusive edge at either end (the rows at 00:00:00 on the first day and
+    at 23:59:59 on the last are kept), a missing upper bound (the 4 October row), a 502 row
+    counted as a request, and cached requests left out. Every distractor satisfies the
+    other conditions, so each removed condition changes the answer."""
+    schema = migrated_schema
+    insert_cost(pool, schema, ts=datetime(2026, 10, 1, 23, 59, 59, tzinfo=UTC), cost_usd="9.0")
+    insert_cost(pool, schema, ts=datetime(2026, 10, 2, 0, 0, 0, tzinfo=UTC), cost_usd="0.100000")
+    insert_cost(
+        pool,
+        schema,
+        ts=datetime(2026, 10, 2, 12, 0, 0, tzinfo=UTC),
+        cost_usd="5.000000",
+        status=502,
+    )
+    insert_cost(pool, schema, ts=datetime(2026, 10, 3, 9, 0, 0, tzinfo=UTC), cost_usd="0.200000")
+    insert_cost(
+        pool,
+        schema,
+        ts=datetime(2026, 10, 3, 23, 59, 59, tzinfo=UTC),
+        cached=True,
+        cost_usd="0",
+    )
+    insert_cost(pool, schema, ts=datetime(2026, 10, 4, 0, 0, 0, tzinfo=UTC), cost_usd="7.0")
+    insert_cost(pool, schema, ts=RANGE_NOW - timedelta(hours=1), cost_usd="3.0")
+
+    read = PostgresConsoleReader(pool, schema=schema).cost(
+        days=1,
+        tenant=None,
+        now=RANGE_NOW,
+        prices=shipped_prices,
+        start=date(2026, 10, 2),
+        end=date(2026, 10, 3),
+    )
+
+    assert read.days == (
+        CostDay(
+            day=date(2026, 10, 2),
+            tenant="nordlicht",
+            provider="anthropic",
+            requests=1,
+            cached_requests=0,
+            cost_usd=0.1,
+        ),
+        CostDay(
+            day=date(2026, 10, 3),
+            tenant="nordlicht",
+            provider="anthropic",
+            requests=2,
+            cached_requests=1,
+            cost_usd=0.2,
         ),
     )
 
@@ -471,7 +530,6 @@ def test_savings_price_cached_rows_at_the_price_in_force(pool: Pool, migrated_sc
         cost_usd="270.000000",
         price_version=f"{TWO_PRICE_KEY}@2026-09-10",
     )
-    refresh_rollup(pool, schema)
 
     read = PostgresConsoleReader(pool, schema=schema).cost(
         days=30, tenant=None, now=NOW, prices=TWO_PRICES
@@ -505,7 +563,6 @@ def test_a_cached_row_of_a_shipped_priced_provider_saves_more_than_zero(
         output_tokens=10_000,
         price_version=f"{key}@2025-10-15",
     )
-    refresh_rollup(pool, migrated_schema)
 
     read = PostgresConsoleReader(pool, schema=migrated_schema).cost(
         days=30, tenant=None, now=NOW, prices=shipped_prices
@@ -530,7 +587,6 @@ def test_cost_per_request_excludes_cached_rows(
     insert_cost(pool, schema, ts=recent, alias="agent-default", cached=True, cost_usd="0")
     insert_cost(pool, schema, ts=recent, alias="embed", cached=True, cost_usd="0")
     insert_cost(pool, schema, ts=WINDOW_30 - SECOND, alias="agent-default", cost_usd="10.000000")
-    refresh_rollup(pool, schema)
 
     read = PostgresConsoleReader(pool, schema=schema).cost(
         days=30, tenant=None, now=NOW, prices=shipped_prices
@@ -757,7 +813,7 @@ def test_blocked_releases_carry_their_regressions(pool: Pool, migrated_schema: s
 def test_a_tenant_filter_narrows_cost(
     pool: Pool, migrated_schema: str, shipped_prices: PriceTable
 ) -> None:
-    """Catches `tenant` applied to one cost query and not the others - the rollup days, the
+    """Catches `tenant` applied to one cost query and not the others - the day rows, the
     savings and the per-request average each carry a `nordlicht` row that would leak into
     `cuan`'s page -"""
     schema = migrated_schema
@@ -774,7 +830,6 @@ def test_a_tenant_filter_narrows_cost(
             input_tokens=10_000,
             output_tokens=10_000,
         )
-    refresh_rollup(pool, schema)
     reader = PostgresConsoleReader(pool, schema=schema)
 
     everyone = reader.cost(days=30, tenant=None, now=NOW, prices=shipped_prices)

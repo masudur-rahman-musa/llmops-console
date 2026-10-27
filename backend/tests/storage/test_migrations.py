@@ -1,7 +1,7 @@
 r"""The migration runner: what it applies, what it refuses, and what the table becomes.
 
 Most of this file needs a real PostgreSQL, because the claims are PostgreSQL's
-own: a dropped table, a rebuilt rollup, and a second run that
+own: a dropped table, a dropped view, and a second run that
 changes nothing. Those cases carry `requires_postgres` from
 tests/storage/conftest.py, which skips with `OPSCONSOLE_TEST_DATABASE_URL` named
 in the reason. Per-test isolation is a throwaway
@@ -52,6 +52,7 @@ SEVENTH_VERSION = "007_drop_incidents"
 EIGHTH_VERSION = "008_ledger_cache_tokens"
 NINTH_VERSION = "009_ledger_status_latency"
 TENTH_VERSION = "010_ledger_user_id"
+ELEVENTH_VERSION = "011_drop_daily_rollup"
 ALL_VERSIONS = (
     FIRST_VERSION,
     SECOND_VERSION,
@@ -63,6 +64,7 @@ ALL_VERSIONS = (
     EIGHTH_VERSION,
     NINTH_VERSION,
     TENTH_VERSION,
+    ELEVENTH_VERSION,
 )
 """Every migration that ships, in the order the runner applies them. A stem is
 the version string, so a file renamed after it has been applied somewhere would
@@ -104,7 +106,7 @@ def test_the_default_schema_is_the_published_one() -> None:
     assert DEFAULT_SCHEMA == "opsconsole"
 
 
-def test_the_runner_applies_all_ten_sql_files_from_backend_migrations() -> None:
+def test_the_runner_applies_all_eleven_sql_files_from_backend_migrations() -> None:
     """The runner reads `backend/migrations/` (outside the package, shipped by the
     image's COPY), found from the module position rather than the working directory,
     so `make migrate` works both at the repo root and inside the container. Reading
@@ -124,6 +126,7 @@ def test_the_runner_applies_all_ten_sql_files_from_backend_migrations() -> None:
         "008_ledger_cache_tokens.sql",
         "009_ledger_status_latency.sql",
         "010_ledger_user_id.sql",
+        "011_drop_daily_rollup.sql",
     ]
     assert (MIGRATIONS / f"{FIRST_VERSION}.sql").read_text(encoding="utf-8").strip() != ""
 
@@ -366,24 +369,68 @@ def test_migration_007_drops_incidents_and_keeps_releases(pool: Pool, schema: st
 
 @requires_postgres
 def test_the_ledger_and_eval_cases_have_no_region(pool: Pool, migrated_schema: str) -> None:
-    """Catches a migration that drops `region` from the ledger but not from the rollup or
-    `eval_cases`, or that rebuilds the rollup without its unique key: `REFRESH ... CONCURRENTLY`
-    is refused by PostgreSQL without one, so the refresh at the end is what proves the key
-    came back over the new group. A real column (`tenant`) is asserted on each relation, so
-    an empty column read cannot pass."""
-    for relation in ("cost_ledger", "eval_cases", "cost_ledger_daily"):
+    """Catches a migration that drops `region` from the ledger but not from `eval_cases`.
+    A real column (`tenant`) is asserted on the ledger, so an empty column read cannot
+    pass."""
+    for relation in ("cost_ledger", "eval_cases"):
         columns = relation_columns(pool, migrated_schema, relation)
         assert "tenant" in columns or relation == "eval_cases", relation
         assert columns, relation
         assert "region" not in columns, relation
 
+
+def matview_names(pool: Pool, schema: str) -> list[str]:
+    """Every materialised view in one schema."""
     with pool.connection() as conn:
-        # A view built WITH NO DATA takes a plain refresh first; only then is
-        # CONCURRENTLY legal, and that needs the rebuilt unique key.
-        conn.execute(f'refresh materialized view "{migrated_schema}".cost_ledger_daily')
+        rows = conn.execute(
+            "select matviewname from pg_matviews where schemaname = %s", (schema,)
+        ).fetchall()
+    return [str(row[0]) for row in rows]
+
+
+@requires_postgres
+@pytest.mark.db
+def test_migration_011_drops_the_daily_rollup(pool: Pool, schema: str) -> None:
+    """Catches a migration 011 that never drops `cost_ledger_daily`, and one that drops the
+    ledger itself (a `CASCADE` on the wrong object): the view is there with a refreshed row
+    before 011 runs, and after it the view is gone while the ledger row stays."""
+    version_table = sql.Identifier(schema, "schema_migrations")
+    with pool.connection() as conn:
         conn.execute(
-            f'refresh materialized view concurrently "{migrated_schema}".cost_ledger_daily'
+            sql.SQL(
+                "CREATE TABLE {} (version text PRIMARY KEY, "
+                "applied_at timestamptz NOT NULL DEFAULT now())"
+            ).format(version_table)
         )
+        # Pretend 011 ran, so the runner builds the schema as it stood before it.
+        conn.execute(
+            sql.SQL("INSERT INTO {} (version) VALUES (%s)").format(version_table),
+            (ELEVENTH_VERSION,),
+        )
+        apply_migrations(conn, schema=schema)
+        conn.execute(
+            f'insert into "{schema}".cost_ledger '
+            "(ts, tenant, alias, provider, model, input_tokens, output_tokens, cached, "
+            "cost_usd, price_version, estimated, trace_id) "
+            "values (now(), 'evals', 'agent-default', 'local', 'm', 1, 1, false, "
+            "0, 'v1', false, 't')"
+        )
+        conn.execute(f'refresh materialized view "{schema}".cost_ledger_daily')
+    assert matview_names(pool, schema) == ["cost_ledger_daily"]
+
+    with pool.connection() as conn:
+        conn.execute(
+            sql.SQL("DELETE FROM {} WHERE version = %s").format(version_table),
+            (ELEVENTH_VERSION,),
+        )
+        applied = apply_migrations(conn, schema=schema)
+
+    assert applied == (ELEVENTH_VERSION,)
+    assert matview_names(pool, schema) == []
+    with pool.connection() as conn:
+        count = conn.execute(f'select count(*) from "{schema}".cost_ledger').fetchone()
+    assert count is not None
+    assert count[0] == 1
 
 
 # --------------------------------------------------------------------------

@@ -70,7 +70,6 @@ const RENDERED: Record<PageName, Path[]> = {
   ],
   cost: [
     ["sources"],
-    ["rollup_populated"],
     ["days"],
     ["savings_usd_total"],
     ["month_spend_usd"],
@@ -182,7 +181,7 @@ describe("page body guards", () => {
     Object.assign((nullGate.gate as Array<Record<string, unknown>>)[0], { value: null, threshold: null, passed: null });
     expect(passes("quality", nullGate), "gate nulls").toBe(true);
 
-    const nullCost = withValue("cost", ["rollup_populated"], null);
+    const nullCost = fixture("cost");
     nullCost.savings_usd_total = null;
     nullCost.month_spend_usd = null;
     expect(passes("cost", nullCost), "cost nulls").toBe(true);

@@ -134,7 +134,6 @@ HOME_READ = HomeRead(
 )
 
 COST_READ = CostRead(
-    rollup_populated=True,
     days=(
         CostDay(
             day=date(2026, 9, 14),
@@ -196,8 +195,17 @@ class StubReader:
         self._record("home", now=now)
         return self.home_read
 
-    def cost(self, *, days: int, tenant: str | None, now: datetime, prices: PriceTable) -> CostRead:
-        self._record("cost", days=days, tenant=tenant, now=now, prices=prices)
+    def cost(
+        self,
+        *,
+        days: int,
+        tenant: str | None,
+        now: datetime,
+        prices: PriceTable,
+        start: date | None = None,
+        end: date | None = None,
+    ) -> CostRead:
+        self._record("cost", days=days, tenant=tenant, now=now, prices=prices, start=start, end=end)
         return COST_READ
 
     def month_spend(self, *, tenant: str | None, now: datetime) -> dict[str, float]:
@@ -347,7 +355,6 @@ POSTGRES_EMPTY: dict[str, dict[str, Any]] = {
         "last_eval": None,
     },
     COST: {
-        "rollup_populated": None,
         "days": [],
         "savings": [],
         "savings_usd_total": None,
@@ -817,7 +824,6 @@ def test_the_cost_body_carries_the_reader_answer_and_is_estimated(wired: Wired) 
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["sources"] == {"postgres": OK, "prometheus": None}
-    assert body["rollup_populated"] is True
     assert body["days"] == [row.model_dump(mode="json") for row in COST_READ.days]
     assert body["savings"] == [row.model_dump(mode="json") for row in COST_READ.savings]
     assert body["savings_usd_total"] == 0.5
@@ -1100,7 +1106,15 @@ def answer_with_top_users(wired: Wired, monkeypatch: pytest.MonkeyPatch) -> None
     """Make the stub reader's cost read carry `TOP_USERS` beside the fixed read."""
     with_users = COST_READ.model_copy(update={"top_users": TOP_USERS})
 
-    def cost(*, days: int, tenant: str | None, now: datetime, prices: PriceTable) -> CostRead:
+    def cost(
+        *,
+        days: int,
+        tenant: str | None,
+        now: datetime,
+        prices: PriceTable,
+        start: date | None = None,
+        end: date | None = None,
+    ) -> CostRead:
         wired.reader.calls.append(("cost", {"days": days, "tenant": tenant}))
         return with_users
 
@@ -1143,3 +1157,83 @@ def test_top_users_is_empty_when_postgres_is_down(wired: Wired) -> None:
     body = response.json()
     assert body["sources"]["postgres"] == ERROR
     assert body["top_users"] == []
+
+
+# --- the cost range -------------------------------------------------------
+
+
+def cost_range(wired: Wired, start: str, end: str) -> httpx.Response:
+    """One cost call with the `from` and `to` query names, which are Python keywords."""
+    return wired.get(COST, **{"from": start, "to": end})
+
+
+def cost_ranges_sent(wired: Wired) -> list[tuple[date | None, date | None]]:
+    """The (start, end) each cost read was asked for, off the stub."""
+    return [
+        (kwargs["start"], kwargs["end"]) for name, kwargs in wired.reader.calls if name == "cost"
+    ]
+
+
+def test_cost_passes_from_and_to_to_the_reader(wired: Wired) -> None:
+    """Catches a cost route that drops `from`/`to` (the reader would still get only `days`
+    and the table would ignore the chosen range), or swaps the two dates."""
+    response = cost_range(wired, "2026-10-01", "2026-10-03")
+
+    assert response.status_code == 200, response.text
+    assert cost_ranges_sent(wired) == [(date(2026, 10, 1), date(2026, 10, 3))]
+
+
+def test_no_cost_range_reaches_the_reader_as_none(wired: Wired) -> None:
+    """Catches a route that invents a range from `days` itself, so the reader could not
+    tell "the last days through today" from a range the owner picked."""
+    response = wired.get(COST, days=14)
+
+    assert response.status_code == 200, response.text
+    assert cost_ranges_sent(wired) == [(None, None)]
+
+
+def test_a_cost_range_of_exactly_90_days_passes(wired: Wired) -> None:
+    """Catches a span check that counts the two end days wrongly (`>=` or an exclusive count
+    refuses 2026-07-06 to 2026-10-03, which is 90 days with both ends kept)."""
+    assert console.MAX_DAYS == 90
+
+    response = cost_range(wired, "2026-07-06", "2026-10-03")
+
+    assert response.status_code == 200, response.text
+    assert cost_ranges_sent(wired) == [(date(2026, 7, 6), date(2026, 10, 3))]
+
+
+def test_a_cost_range_over_90_days_is_422(wired: Wired) -> None:
+    """Catches a missing span cap (a ledger scan of any length), or a cap of 91: one day more
+    than the passing row must be refused, naming `to`, before any read."""
+    response = cost_range(wired, "2026-07-05", "2026-10-03")
+
+    assert_error_body(response, status=422, code="VALIDATION")
+    assert response.json()["error"]["param"] == "to"
+    assert wired.reader.calls == []
+
+
+def test_from_after_to_is_422(wired: Wired) -> None:
+    """Catches a route that lets an upside-down range through (an empty table with no
+    reason); the span is two days, so only the order check can refuse it, naming `from`."""
+    response = cost_range(wired, "2026-10-03", "2026-10-01")
+
+    assert_error_body(response, status=422, code="VALIDATION")
+    assert response.json()["error"]["param"] == "from"
+    assert wired.reader.calls == []
+
+
+def test_a_one_day_cost_range_passes(wired: Wired) -> None:
+    """Catches an order check written `from >= to`, which would refuse a single day."""
+    response = cost_range(wired, "2026-10-03", "2026-10-03")
+
+    assert response.status_code == 200, response.text
+    assert cost_ranges_sent(wired) == [(date(2026, 10, 3), date(2026, 10, 3))]
+
+
+def test_the_cost_body_has_no_rollup_flag(wired: Wired) -> None:
+    """Catches a cost body that still carries `rollup_populated` after the rollup is gone."""
+    response = wired.get(COST)
+
+    assert response.status_code == 200, response.text
+    assert "rollup_populated" not in response.json()

@@ -142,7 +142,7 @@ class Settings(BaseSettings):
 
     Read by two things beside the probe: `create_app` builds ONE pool from it when
     it is set and hands that pool to the Postgres writer, the cost ledger,
-    and `make migrate` and `make refresh-rollup` read it through this same
+    and `make migrate` reads it through this same
     field. A probe for a store nothing writes to would still be worth having,
     because #5 names Postgres and a readiness endpoint that silently omits a
     configured dependency is a readiness endpoint that lies."""

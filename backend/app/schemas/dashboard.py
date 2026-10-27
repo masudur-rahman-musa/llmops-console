@@ -183,7 +183,6 @@ class CostPage(_Body):
     `prompt_cache_saved_usd` is what the provider's prompt cache saved, null likewise."""
 
     sources: Sources
-    rollup_populated: bool | None
     days: tuple[CostDay, ...]
     savings: tuple[Saving, ...]
     savings_usd_total: float | None

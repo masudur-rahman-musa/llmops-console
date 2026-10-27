@@ -67,7 +67,6 @@ from app.storage import (
 )
 from app.storage.cost_ledger import (
     COST_LEDGER,
-    COST_LEDGER_DAILY,
     MAX_MODEL_LENGTH,
     MAX_PRICE_VERSION_LENGTH,
     MODEL_PATTERN,
@@ -83,7 +82,7 @@ SHIPPED_PROVIDERS_DIR = SHIPPED_POLICY_PATH.parent / "providers"
 
 # One fixed instant, with a time of day far from both midnights so a writer that
 # stamped the row in local time would land on a different DAY here - which is the
-# day `cost_ledger_daily` groups by.
+# day the cost page groups by.
 WHEN = datetime(2026, 9, 7, 22, 45, 13, tzinfo=UTC)
 
 TENANT = "nordlicht"
@@ -256,12 +255,10 @@ def policy() -> Policy:
 
 def test_the_table_names_are_the_ones_the_migration_creates() -> None:
     """Catches a name that drifts between the module and `002_cost_ledger.sql`: the
-    INSERT and the refresh both build their identifiers from these, so a renamed table
-    is an `UndefinedTable` on every served request and a rollup nothing refreshes.
-    Asserted as literals, because comparing them to each other would agree with any
-    pair of wrong names."""
+    INSERT builds its identifier from it, so a renamed table is an `UndefinedTable` on
+    every served request. Asserted as a literal, because comparing it to the migration's
+    own text would agree with any wrong name."""
     assert COST_LEDGER == "cost_ledger"
-    assert COST_LEDGER_DAILY == "cost_ledger_daily"
 
 
 def test_the_model_and_price_version_caps_are_pinned() -> None:

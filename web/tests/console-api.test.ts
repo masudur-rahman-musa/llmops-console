@@ -115,6 +115,29 @@ describe("getConsolePage", () => {
     expect(fetchedUrl(cost.fetch)).toBe(`${BASE}/console/cost`);
   });
 
+  it("sends the cost range as from and to", async () => {
+    // Catches a client that drops the Daily cost range (the page would ignore the From and To the owner chose), swaps the two dates, names them anything but `from` and `to`, or adds a query when no range is given.
+    const ranged = harness(okResponse(fixture("cost")));
+    const result = await getConsolePage("cost", ranged.deps, { range: { from: "2026-10-01", to: "2026-10-03" } });
+    expect(result.ok).toBe(true);
+    expect(fetchedUrl(ranged.fetch)).toBe(`${BASE}/console/cost?from=2026-10-01&to=2026-10-03`);
+
+    const none = harness(okResponse(fixture("cost")));
+    await getConsolePage("cost", none.deps);
+    expect(fetchedUrl(none.fetch)).toBe(`${BASE}/console/cost`);
+
+    const empty = harness(okResponse(fixture("cost")));
+    await getConsolePage("cost", empty.deps, {});
+    expect(fetchedUrl(empty.fetch)).toBe(`${BASE}/console/cost`);
+  });
+
+  it("a cost range does not leak onto the other pages", async () => {
+    // Catches a query builder that appends the range to every call instead of the cost call alone.
+    const home = harness(okResponse(fixture("home")));
+    await getConsolePage("home", home.deps, { range: { from: "2026-10-01", to: "2026-10-03" } });
+    expect(fetchedUrl(home.fetch)).toBe(`${BASE}/console/home`);
+  });
+
   it("an unset url or key makes no fetch and is unconfigured with an error log", async () => {
     // Catches a client that fetches, or answers anything but unconfigured, or stays silent, when either variable is unset or empty.
     const envs: Array<Record<string, string | undefined>> = [

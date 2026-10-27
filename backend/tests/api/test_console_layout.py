@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import psycopg
@@ -186,20 +186,27 @@ def test_tokens_read_the_ledger_when_prometheus_is_down(wired: Wired) -> None:
 
 # --- /console/cost -------------------------------------------------------------------
 
-EMPTY_COST = CostRead(
-    rollup_populated=True, days=(), savings=(), savings_usd_total=0.0, cost_per_request=()
-)
+EMPTY_COST = CostRead(days=(), savings=(), savings_usd_total=0.0, cost_per_request=())
 
 
 class CostReader:
-    """A configured reader for the cost route: an empty rollup and a chosen month spend."""
+    """A configured reader for the cost route: no days and a chosen month spend."""
 
     def __init__(self, month_spend: dict[str, float]) -> None:
         self.configured = True
         self.month = month_spend
         self.error: Exception | None = None
 
-    def cost(self, *, days: int, tenant: str | None, now: datetime, prices: PriceTable) -> CostRead:
+    def cost(
+        self,
+        *,
+        days: int,
+        tenant: str | None,
+        now: datetime,
+        prices: PriceTable,
+        start: date | None = None,
+        end: date | None = None,
+    ) -> CostRead:
         if self.error is not None:
             raise self.error
         return EMPTY_COST

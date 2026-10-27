@@ -55,10 +55,18 @@ class StubReader:
         if self.error is not None:
             raise self.error
 
-    def cost(self, *, days: int, tenant: str | None, now: datetime, prices: PriceTable) -> CostRead:
+    def cost(
+        self,
+        *,
+        days: int,
+        tenant: str | None,
+        now: datetime,
+        prices: PriceTable,
+        start: date | None = None,
+        end: date | None = None,
+    ) -> CostRead:
         self._check()
         return CostRead(
-            rollup_populated=True,
             days=(),
             savings=(),
             savings_usd_total=0.0,

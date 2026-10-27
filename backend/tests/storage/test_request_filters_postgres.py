@@ -17,7 +17,7 @@ The contract these cases are written against, before it exists:
   and its page count; errors is `status >= 500`; slow is `latency_ms > slow_ms`; day is the
   UTC date of `ts`;
 * home requests today, the hit rate, requests per day, tokens per model, cost per alias and
-  the rollup count rows with `status < 500` only.
+  the cost days count rows with `status < 500` only.
 """
 
 from __future__ import annotations
@@ -105,15 +105,6 @@ def insert_row(
         )
 
 
-def refresh_rollup(pool: Pool, schema: str) -> None:
-    with pool.connection() as conn:
-        conn.execute(
-            sql.SQL("REFRESH MATERIALIZED VIEW {}").format(
-                sql.Identifier(schema, "cost_ledger_daily")
-            )
-        )
-
-
 def ids_of(pool: Pool, schema: str, filters: RequestFilters, *, page: int = 1) -> list[int]:
     """The `input_tokens` (used as a row id) of one page under the filters, sorted."""
     read = PostgresConsoleReader(pool, schema=schema).recent_requests(
@@ -125,13 +116,15 @@ def ids_of(pool: Pool, schema: str, filters: RequestFilters, *, page: int = 1) -
 # --- the migration ---------------------------------------------------------------------
 
 
-def test_migration_keeps_old_rows_as_served(pool: Pool, schema: str) -> None:
+def test_migration_keeps_old_rows_as_served(
+    pool: Pool, schema: str, shipped_prices: PriceTable
+) -> None:
     """Catches a migration that adds `status` without the default 200 (an old row reads
     null or fails the NOT NULL), makes `latency_ms` NOT NULL or gives it a default (old rows
-    would read a made-up latency), types the columns wrongly, rebuilds the rollup WITH NO DATA
-    (Daily cost would go empty until the next refresh), or leaves 5xx rows in it. A row is
-    written under files 001 to 008 only, then 009 runs: the row must read 200 and null and
-    its day must still be in the rollup. A 499 row is counted and a 500 row is not."""
+    would read a made-up latency), types the columns wrongly, or lets 5xx rows into the cost
+    days. A row is written under files 001 to 008 only, then 009 runs: the row must read 200
+    and null and its day must still show in the cost days, read from the ledger. A 499 row is
+    counted and a 500 row is not."""
     version_table = sql.Identifier(schema, "schema_migrations")
     with pool.connection() as conn:
         conn.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(sql.Identifier(schema)))
@@ -171,34 +164,19 @@ def test_migration_keeps_old_rows_as_served(pool: Pool, schema: str) -> None:
                 sql.Identifier(schema, "cost_ledger")
             )
         ).fetchall()
-        populated = conn.execute(
-            "select ispopulated from pg_matviews where schemaname = %s "
-            "and matviewname = 'cost_ledger_daily'",
-            (schema,),
-        ).fetchone()
-        kept = conn.execute(
-            sql.SQL("select day, requests from {}").format(
-                sql.Identifier(schema, "cost_ledger_daily")
-            )
-        ).fetchall()
     assert [tuple(c) for c in columns] == [
         ("latency_ms", "integer", "YES", None),
         ("status", "smallint", "NO", "200"),
     ]
     assert [tuple(r) for r in old] == [(200, None)]
-    assert populated is not None and populated[0] is True
-    assert [tuple(r) for r in kept] == [(DAY, 1)]
+    reader = PostgresConsoleReader(pool, schema=schema)
+    kept = reader.cost(days=WINDOW, tenant=None, now=NOW, prices=shipped_prices).days
+    assert [(day.day, day.requests) for day in kept] == [(DAY, 1)]
 
     insert_row(pool, schema, ts=DAY_START, status=499)
     insert_row(pool, schema, ts=DAY_START, status=500)
-    refresh_rollup(pool, schema)
-    with pool.connection() as conn:
-        counted = conn.execute(
-            sql.SQL("select sum(requests) from {}").format(
-                sql.Identifier(schema, "cost_ledger_daily")
-            )
-        ).fetchone()
-    assert counted is not None and counted[0] == 2
+    counted = reader.cost(days=WINDOW, tenant=None, now=NOW, prices=shipped_prices).days
+    assert [(day.day, day.requests) for day in counted] == [(DAY, 2)]
 
 
 # --- the writer ------------------------------------------------------------------------
@@ -412,7 +390,7 @@ class Served(NamedTuple):
     last_day: tuple[date, int]
     models: list[tuple[str, float, float]]
     per_alias: list[tuple[str, float]]
-    rollup: list[tuple[int, int]]
+    days: list[tuple[int, int]]
 
 
 def test_failed_rows_change_no_served_number(
@@ -421,7 +399,7 @@ def test_failed_rows_change_no_served_number(
     """Catches any served-only read that still counts a 502 row: requests today, the cache
     hit rate (the failed row is not cached, so a count of all rows moves it), requests per
     day, tokens per model (a failed row on a model nothing served would list it with zeros),
-    cost per request (a count of all rows lowers the average) and the rollup's requests.
+    cost per request (a count of all rows lowers the average) and the cost days' requests.
     Every number is read before the failed row is stored and again after, and must not
     change; the first read is checked to hold real numbers so the equality is not empty."""
     insert_row(
@@ -446,7 +424,6 @@ def test_failed_rows_change_no_served_number(
     reader = PostgresConsoleReader(pool, schema=migrated_schema)
 
     def snapshot() -> Served:
-        refresh_rollup(pool, migrated_schema)
         cost = reader.cost(days=WINDOW, tenant=None, now=NOW, prices=shipped_prices)
         return Served(
             today=reader.home(now=NOW).requests_today,
@@ -454,7 +431,7 @@ def test_failed_rows_change_no_served_number(
             last_day=reader.daily_requests(WINDOW, NOW)[-1],
             models=[(t.model, t.input, t.output) for t in reader.model_tokens(WINDOW, NOW)],
             per_alias=[(c.alias, c.cost_usd) for c in cost.cost_per_request],
-            rollup=[(day.requests, day.cached_requests) for day in cost.days],
+            days=[(day.requests, day.cached_requests) for day in cost.days],
         )
 
     before = snapshot()
@@ -464,7 +441,7 @@ def test_failed_rows_change_no_served_number(
         last_day=(DAY, 2),
         models=[("claude-haiku-5-5", 110.0, 55.0)],
         per_alias=[("agent-default", 0.002)],
-        rollup=[(2, 1)],
+        days=[(2, 1)],
     )
 
     insert_row(

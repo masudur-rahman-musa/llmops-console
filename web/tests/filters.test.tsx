@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import CostPage from "@/app/(console)/cost/page";
 import RequestsPage from "@/app/(console)/requests/page";
+import { costRange } from "@/components/layout/console-page";
 import { readCostFilters, readRequestFilters } from "@/lib/filters";
 
 type Fixture = Record<string, unknown>;
@@ -374,14 +375,14 @@ describe("daily cost filters", () => {
   }
 
   it("daily cost range and tenant narrow the table with a total row", async () => {
-    // Catches a range that is ignored or off by one at either end, a tenant filter that is ignored, a total that sums only the page shown (20 rows of 40), and filters sent to console-api (which reads the 30 days itself).
+    // Catches a range that is ignored or off by one at either end, a tenant filter that is ignored, a total that sums only the page shown (20 rows of 40), and a From and To not sent to console-api (which sums the days from the ledger for that range); the tenant stays a browser filter.
     const fetch = stubFetch(costBody());
 
     const narrow = renderToStaticMarkup(
       await CostPage(props({ from: "2026-08-05", to: "2026-08-24", tenant: "acme-eu" })),
     );
 
-    expect(requestedUrl(fetch)).toBe(`${API}/console/cost`);
+    expect(requestedUrl(fetch)).toBe(`${API}/console/cost?from=2026-08-05&to=2026-08-24`);
     const rows = dayRows(narrow);
     expect(rows).toHaveLength(20);
     expect(new Set(rows.map((row) => row[1]))).toEqual(new Set(["acme-eu"]));
@@ -394,7 +395,7 @@ describe("daily cost filters", () => {
 
     const both = stubFetch(costBody());
     const wide = renderToStaticMarkup(await CostPage(props({ from: "2026-08-05", to: "2026-08-24" })));
-    expect(requestedUrl(both)).toBe(`${API}/console/cost`);
+    expect(requestedUrl(both)).toBe(`${API}/console/cost?from=2026-08-05&to=2026-08-24`);
     expect(dayRows(wide)).toHaveLength(20);
     expect(text(wide)).toContain("Page 1 of 2");
     // 40 rows across two pages, 20 shown: the total still covers all 40.
@@ -548,5 +549,26 @@ describe("daily cost filters", () => {
         expect(text(html)).not.toContain("Console data unavailable");
       }
     });
+  });
+});
+
+describe("the Daily cost range sent to console-api", () => {
+  const today = "2026-10-28";
+
+  it("sends nothing when neither end is chosen", () => {
+    // Catches a range invented from today, which would hide console-api's own default window.
+    expect(costRange({}, today)).toBeUndefined();
+  });
+
+  it("fills a missing end from today or the 30-day window", () => {
+    // Catches a missing `to` left out (console-api would then refuse or guess) and a missing `from` read as one day.
+    expect(costRange({ from: "2026-10-01" }, today)).toEqual({ from: "2026-10-01", to: today });
+    expect(costRange({ to: "2026-10-03" }, today)).toEqual({ from: "2026-09-04", to: "2026-10-03" });
+  });
+
+  it("keeps the newest 90 days of a wider pick", () => {
+    // Catches a wide pick sent as is, which console-api answers 422 and the whole Cost page goes unavailable; 90 days with both ends kept passes untouched.
+    expect(costRange({ from: "2026-07-06", to: "2026-10-03" }, today)).toEqual({ from: "2026-07-06", to: "2026-10-03" });
+    expect(costRange({ from: "2026-01-01", to: "2026-10-03" }, today)).toEqual({ from: "2026-07-06", to: "2026-10-03" });
   });
 });

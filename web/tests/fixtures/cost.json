@@ -1,6 +1,5 @@
 {
   "sources": { "postgres": "ok", "prometheus": null },
-  "rollup_populated": true,
   "days": [
     { "day": "2026-09-15", "tenant": "acme-eu", "provider": "mistral", "requests": 412, "cached_requests": 37, "cost_usd": 18.25 },
     { "day": "2026-09-14", "tenant": "globex-eu", "provider": "local", "requests": 268, "cached_requests": 54, "cost_usd": 0.0 }

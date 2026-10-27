@@ -1,4 +1,4 @@
-"""`make migrate` and `make refresh-rollup`: the entry points.
+"""`make migrate`: the entry point.
 
 Skipped without `OPSCONSOLE_TEST_DATABASE_URL`, except
 the cases about an UNCONFIGURED database, which are the whole point of the
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.cli.ledger import migrate, refresh_rollup
+from app.cli.ledger import migrate
 
 from .conftest import DATABASE_URL, requires_postgres
 
@@ -35,22 +35,6 @@ def test_migrate_refuses_without_a_database_url(
     monkeypatch.delenv(DATABASE_URL_ENV, raising=False)
 
     code = migrate([])
-
-    assert code != 0
-    printed = capsys.readouterr()
-    assert (printed.out + printed.err).strip() != ""
-
-
-def test_refresh_rollup_refuses_without_a_database_url(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """The same claim for the second entry point. This one runs on a schedule rather than
-    in a deploy, so an unconfigured refresh reporting success is a console cost page that
-    silently stops moving while every CronJob run is recorded as a success - the failure
-    mode nobody looks for, because there is nothing to look at."""
-    monkeypatch.delenv(DATABASE_URL_ENV, raising=False)
-
-    code = refresh_rollup([])
 
     assert code != 0
     printed = capsys.readouterr()

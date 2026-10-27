@@ -185,3 +185,57 @@ def test_the_default_path_is_the_committed_baseline(monkeypatch: pytest.MonkeyPa
 
     assert path == SHIPPED_BASELINE
     assert path.is_file()
+
+
+# --- the check score note -------------------------------------------------
+
+
+def run_with_counts(counts: dict[str, int]) -> EvalRunSummary:
+    """One run whose stored metrics hold the two scores and the given case counts."""
+    return EvalRunSummary(
+        id="run-new",
+        started_at=NEWEST,
+        run_kind="ci",
+        git_sha=None,
+        passed=True,
+        metrics={"check_score": 57.14, "judge_score": 30.0, **counts},
+    )
+
+
+def test_the_check_score_note_counts_stable_cases(baseline: Path) -> None:
+    """Catches a note that divides by all 45 cases (the figure beside the 57.14% card would
+    read 20 of 45 and contradict it), or one that hides how many unstable cases were left out."""
+    _, rows = gate(baseline, (run_with_counts({"cases": 45, "passed": 20, "unstable": 10}),))
+
+    assert rows[0]["name"] == "check_score"
+    assert rows[0]["note"] == "20 of 35 stable cases; 10 unstable, not counted"
+
+
+def test_no_unstable_cases_gives_a_plain_count(baseline: Path) -> None:
+    """Catches a note that still says "0 unstable, not counted" when every case was stable."""
+    _, rows = gate(baseline, (run_with_counts({"cases": 45, "passed": 35, "unstable": 0}),))
+
+    assert rows[0]["note"] == "35 of 45 cases"
+
+
+@pytest.mark.parametrize("missing", ["cases", "passed", "unstable"])
+def test_missing_counts_give_no_note(baseline: Path, missing: str) -> None:
+    """Catches a note built from a default of 0 for a count the run never stored (an old run
+    would read "0 of 0 cases"); each count missing on its own must give `None`."""
+    counts = {"cases": 45, "passed": 20, "unstable": 10}
+    del counts[missing]
+
+    _, rows = gate(baseline, (run_with_counts(counts),))
+
+    assert rows[0]["note"] is None
+
+
+def test_the_note_is_read_from_the_newest_run(baseline: Path) -> None:
+    """Catches a note taken from the older run when two runs are in the window."""
+    older = run_with_counts({"cases": 10, "passed": 9, "unstable": 0}).model_copy(
+        update={"id": "run-old", "started_at": NEWEST - timedelta(days=2)}
+    )
+
+    _, rows = gate(baseline, (older, run_with_counts({"cases": 45, "passed": 20, "unstable": 10})))
+
+    assert rows[0]["note"] == "20 of 35 stable cases; 10 unstable, not counted"

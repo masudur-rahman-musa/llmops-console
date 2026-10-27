@@ -73,7 +73,10 @@ export default consolePage("quality", "Quality", "Does the help desk still answe
       />
 
       <Panel title="Categories">
-        <p>How many help desk cases passed in each kind of conversation, in the newest run.</p>
+        <p>
+          How many help desk cases passed in each kind of conversation, in the newest run.
+          Unstable cases count as not passed here.
+        </p>
         <Table
           columns={["Category", "Cases passed"]}
           rows={body.categories.map((category) => ({

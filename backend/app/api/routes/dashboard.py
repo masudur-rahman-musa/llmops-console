@@ -3,7 +3,7 @@
 Four routes, one per console tab, all behind `app.api.deps.admin_key`:
 
     GET /console/home          today's traffic, spend, latency, the last eval, the live routing
-    GET /console/cost          the daily rollup, estimated cache savings, budgets
+    GET /console/cost          cost per day from the ledger, estimated cache savings, budgets
     GET /console/quality       the eval gate, runs, categories, taxonomy, blocked releases
     GET /console/requests      redactions, refusals, blocks, tokens, hit rate, per day, newest
 
@@ -16,7 +16,9 @@ route's `page` one from `MIN_PAGE` to `MAX_PAGE`; either is refused as 422
 `VALIDATION` naming itself by the request validation handler before the route body
 runs. `tenant` is pre-checked by
 `app.api.deps.checked_tenant` before any query, because it is interpolated into a
-PromQL label matcher.
+PromQL label matcher. The cost route's `from` and `to` are dates checked by
+`checked_cost_range`: `from` after `to` is 422 naming `from`, a span over `MAX_DAYS`
+days (both ends kept) is 422 naming `to`.
 """
 
 from __future__ import annotations
@@ -81,6 +83,8 @@ CONSOLE_PATHS: Final[tuple[str, ...]] = (
 """All four, spelled as literals and kept off every public router."""
 
 DAYS_PARAM: Final[str] = "days"
+FROM_PARAM: Final[str] = "from"
+TO_PARAM: Final[str] = "to"
 MIN_DAYS: Final[int] = 1
 MAX_DAYS: Final[int] = 90
 DEFAULT_DAYS: Final[int] = 30
@@ -152,26 +156,49 @@ def prompt_cache_share(tokens: tuple[ModelTokens, ...]) -> float | None:
     return None if total == 0 else reads / total
 
 
+def checked_cost_range(start: date | None, end: date | None) -> None:
+    """Refuse an upside-down range (naming `from`) or one over `MAX_DAYS` days (naming `to`).
+
+    Both ends count, so 2026-07-06 to 2026-10-03 is exactly 90 days and passes. Pinned by
+    tests/api/test_console_routes.py::test_a_cost_range_of_exactly_90_days_passes."""
+    if start is None or end is None:
+        return
+    if start > end:
+        raise IdentifierInvalid("from: after to", param=FROM_PARAM)
+    if (end - start).days + 1 > MAX_DAYS:
+        raise IdentifierInvalid(f"to: more than {MAX_DAYS} days after from", param=TO_PARAM)
+
+
 @router.get(CONSOLE_COST)
 def cost(
-    request: Request, prices: PricesDep, days: Days = DEFAULT_DAYS, tenant: str | None = None
+    request: Request,
+    prices: PricesDep,
+    days: Days = DEFAULT_DAYS,
+    tenant: str | None = None,
+    start: Annotated[date | None, Query(alias=FROM_PARAM)] = None,
+    end: Annotated[date | None, Query(alias=TO_PARAM)] = None,
 ) -> CostPage:
-    """The rollup's days, estimated cache savings, budgets and cost per request."""
+    """Cost per day from the ledger, estimated cache savings, budgets and cost per request.
+
+    `from` and `to` pick the days of the Daily cost table (UTC, both kept); without them it
+    is the last `days` days through today. The rest of the body keeps the `days` window."""
     if tenant is not None:
         checked_tenant(tenant)
+    checked_cost_range(start, end)
     now = datetime.now(UTC)
     pg, both = postgres(
         request,
         "cost",
         lambda reader: (
-            reader.cost(days=days, tenant=tenant, now=now, prices=prices.table),
+            reader.cost(
+                days=days, tenant=tenant, now=now, prices=prices.table, start=start, end=end
+            ),
             reader.month_spend(tenant=tenant, now=now),
         ),
     )
     read, spend = (None, None) if both is None else both
     return CostPage(
         sources=Sources(postgres=pg, prometheus=None),
-        rollup_populated=None if read is None else read.rollup_populated,
         days=() if read is None else read.days,
         savings=() if read is None else read.savings,
         savings_usd_total=None if read is None else read.savings_usd_total,
@@ -301,9 +328,12 @@ def requests(
                 RedactionCount(kind=labels.get("kind", ""), count=value)
                 for labels, value in client.instant_query(redactions_query(days))
             ),
+            # A reason with no refusals in the window is left out, so the table can say
+            # "None in this window." (test_a_reason_with_zero_refusals_is_left_out).
             tuple(
                 RefusalCount(reason=labels.get("reason", ""), count=value)
                 for labels, value in client.instant_query(refusals_query(days))
+                if value != 0
             ),
             first(client.instant_query(guardrail_blocks_query(days))),
             errors_by_day(client, days, now),

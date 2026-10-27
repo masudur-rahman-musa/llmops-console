@@ -58,10 +58,6 @@ logger = logging.getLogger(__name__)
 COST_LEDGER: Final[str] = "cost_ledger"
 """The table `migrations/002_cost_ledger.sql` creates."""
 
-COST_LEDGER_DAILY: Final[str] = "cost_ledger_daily"
-"""The materialised view the console reads, refreshed by `make refresh-rollup`.
-Pinned by the same case."""
-
 MAX_MODEL_LENGTH: Final[int] = 128
 """The cap on a provider's model id, and deliberately not the resolver's 64.
 
@@ -553,54 +549,3 @@ class PostgresMonthSpendReader:
             raise LedgerUnreadable(f"{type(exc).__name__}: {exc}") from exc
         total = Decimal(row[0]) if row is not None else Decimal(0)
         return to_micro_usd(total)
-
-
-def refresh_daily_rollup(
-    pool: ConnectionPool[Connection[TupleRow]],
-    *,
-    schema: str = DEFAULT_SCHEMA,
-) -> bool:
-    """Refresh `cost_ledger_daily`, and answer whether it went CONCURRENTLY.
-
-    Two shapes, and which one runs is not a preference. A materialised view that
-    has never been populated CANNOT be refreshed concurrently, so a command that
-    always used `CONCURRENTLY` would fail on exactly the database where it is run
-    for the first time; one that never used it takes an `ACCESS EXCLUSIVE` lock
-    for the length of every later refresh, and the console reads nothing while it
-    is held. So the first refresh is the plain one and every later refresh is
-    concurrent, decided from `pg_class.relispopulated` rather than from a flag
-    someone has to set. Both are idempotent - the second answers the same rows as
-    the first.
-
-    Takes the POOL rather than a connection:
-    `REFRESH MATERIALIZED VIEW CONCURRENTLY` cannot run inside a transaction
-    block and psycopg opens one on the first statement, so the code that borrows
-    the connection has to be the code that sets autocommit.
-
-    The concurrent refresh is also what a UNIQUE index over the whole group key
-    buys: without one PostgreSQL refuses it at runtime, and only at runtime.
-    """
-    checked = checked_schema(schema)
-    with pool.connection() as conn:
-        conn.autocommit = True
-        row = conn.execute(
-            """
-            select c.relispopulated
-            from pg_class c
-            join pg_namespace n on n.oid = c.relnamespace
-            where n.nspname = %s and c.relname = %s
-            """,
-            (checked, COST_LEDGER_DAILY),
-        ).fetchone()
-        if row is None:
-            raise RuntimeError(
-                f"{checked}.{COST_LEDGER_DAILY} does not exist; run `make migrate` first"
-            )
-        concurrently = bool(row[0])
-        statement = (
-            "REFRESH MATERIALIZED VIEW CONCURRENTLY {}"
-            if concurrently
-            else "REFRESH MATERIALIZED VIEW {}"
-        )
-        conn.execute(sql.SQL(statement).format(sql.Identifier(checked, COST_LEDGER_DAILY)))
-    return concurrently
