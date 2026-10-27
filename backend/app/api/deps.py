@@ -40,6 +40,7 @@ from app.core.metrics import label_tenant
 from app.core.tracing import (
     SpanAttributes,
     annotate,
+    mark_public,
     note_step,
     request_trace,
     stage_span,
@@ -291,7 +292,23 @@ def request_context(
         ),
     )
     label_tenant(request.scope, context.tenant)
+    if _trace_is_public(request, context.tenant):
+        mark_public(request.scope)
     return context
+
+
+def _trace_is_public(request: Request, tenant: str) -> bool:
+    """Whether this authenticated request's trace goes public.
+
+    The setting is the master switch; a tenant can only opt out
+    (`test_a_tenant_that_opts_out_stays_private`).
+    """
+    settings: Settings = request.app.state.settings
+    if not settings.public_trace_langfuse:
+        return False
+    store: PolicyStore = request.app.state.policy
+    regime = store.policy.tenants.get(tenant)
+    return regime is None or regime.trace_public is not False
 
 
 Context = Annotated[RequestContext, Depends(request_context)]

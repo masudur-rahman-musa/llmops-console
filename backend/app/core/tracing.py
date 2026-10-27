@@ -243,6 +243,9 @@ longer one ends in `CUT_MARK` (`test_a_message_at_8001_characters_is_cut`)."""
 TAGS_KEY = "langfuse.trace.tags"
 """The root span label Langfuse reads a trace's tags from."""
 
+PUBLIC_KEY = "langfuse.trace.public"
+"""The root span label that makes a trace readable by anyone with its link."""
+
 INPUT_NOT_SENT = "not sent: prompts stay inside the gateway"
 OUTPUT_NOT_SENT = "not sent"
 
@@ -610,6 +613,17 @@ def annotate(scope: Scope, attributes: SpanAttributes) -> None:
         record.span.set_attributes(attributes.as_attributes())
         if attributes.tenant is not None:
             record.span.set_attribute(TAGS_KEY, (f"tenant:{attributes.tenant}",))
+
+
+def mark_public(scope: Scope) -> None:
+    """Make this request's trace public in Langfuse, on the root span only.
+
+    The caller decides whether it may be public; this only sets the label
+    (`test_the_switch_on_marks_the_root_span_public`).
+    """
+    record = request_trace(scope)
+    if record is not None:
+        record.span.set_attribute(PUBLIC_KEY, True)
 
 
 def note_request(scope: Scope, *, alias: str, messages: int | None = None) -> None:

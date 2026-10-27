@@ -132,3 +132,30 @@ def test_a_switch_that_is_not_a_bool_is_refused(tmp_path: Path, value: object) -
 
     with pytest.raises(PolicyInvalid):
         policy_with_trace_content(tmp_path, value)
+
+
+@pytest.mark.parametrize("tenant", DEMO_TENANTS)
+def test_the_demo_tenants_follow_the_switch(policy: Policy, tenant: str) -> None:
+    """Catches a demo tenant with `trace_public` written in the shipped file, which would
+    pin it on or off whatever the gateway setting says."""
+    assert policy.tenants[tenant].trace_public is None
+
+
+def policy_with_trace_public(directory: Path, value: object) -> Policy:
+    """Load a copy of the shipped policy where `evals` has the given `trace_public`."""
+    document: dict[str, Any] = yaml.safe_load(SHIPPED_POLICY_PATH.read_text(encoding="utf-8"))
+    document["tenants"]["evals"]["trace_public"] = value
+    copy = directory / "routing-public-copy.yaml"
+    copy.write_text(yaml.safe_dump(document), encoding="utf-8")
+    return load_policy(copy, SHIPPED_PROVIDERS_DIR)
+
+
+@pytest.mark.parametrize("value", ["yes", "true", 1], ids=repr)
+def test_a_trace_public_that_is_not_a_bool_is_refused(tmp_path: Path, value: object) -> None:
+    """Catches a field that coerces text or numbers (`"yes"` or `1` making a tenant's chats
+    public by typo). Real bools load first on the same copy, so the refusal is this field's."""
+    assert policy_with_trace_public(tmp_path, False).tenants["evals"].trace_public is False
+    assert policy_with_trace_public(tmp_path, True).tenants["evals"].trace_public is True
+
+    with pytest.raises(PolicyInvalid):
+        policy_with_trace_public(tmp_path, value)

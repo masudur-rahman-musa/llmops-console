@@ -176,6 +176,14 @@ class Settings(BaseSettings):
     `<this>/traces/<trace_id>` when it is set. Unset on the cluster until the real
     project is known."""
 
+    public_trace_langfuse: bool = False
+    """Mark every trace public in Langfuse, so anyone with a trace's link can read it.
+
+    The master switch: off means no trace is public, whatever a tenant's
+    `trace_public` says. On, a tenant opts out with `trace_public: false`. A trace
+    made public stays public in Langfuse after this is turned off
+    (`test_public_trace_langfuse_is_off_by_default`)."""
+
     grafana_url: str | None = None
     """The Grafana page the Overview tab links for health details, or `None` for no link.
 

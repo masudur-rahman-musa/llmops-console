@@ -112,3 +112,17 @@ def test_grafana_url_accepts_http_and_https_only(monkeypatch: pytest.MonkeyPatch
         with pytest.raises(ValidationError) as caught:
             Settings()
         assert "grafana_url" in str(caught.value), value
+
+
+def test_public_trace_langfuse_is_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Catches a default of on (every trace public with nobody choosing it), an env name
+    without the `OPSCONSOLE_` prefix, and text such as `maybe` read as a bool."""
+    monkeypatch.delenv("OPSCONSOLE_PUBLIC_TRACE_LANGFUSE", raising=False)
+    assert Settings().public_trace_langfuse is False
+
+    monkeypatch.setenv("OPSCONSOLE_PUBLIC_TRACE_LANGFUSE", "true")
+    assert Settings().public_trace_langfuse is True
+
+    monkeypatch.setenv("OPSCONSOLE_PUBLIC_TRACE_LANGFUSE", "maybe")
+    with pytest.raises(ValidationError):
+        Settings()
