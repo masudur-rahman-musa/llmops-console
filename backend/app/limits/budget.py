@@ -49,6 +49,7 @@ import hashlib
 import hmac
 import logging
 import re
+from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
@@ -171,6 +172,47 @@ def user_month_key(
     month_key(tenant, month, prefix=prefix)
     checked_user_id(user_id)
     return f"{prefix}-user:{tenant}:{user_id}:{month}"
+
+
+def budget_seeded_key(tenant: str, month: str, *, prefix: str = BUDGET_KEY_PREFIX) -> str:
+    """The marker saying one tenant's month counter was loaded from the ledger.
+
+    `{prefix}-seeded:{tenant}:{YYYY-MM}`, checked the way `month_key` checks the counter's
+    key, before any command. Pinned by `test_the_marker_keys_are_checked_before_any_command`.
+    """
+    month_key(tenant, month, prefix=prefix)
+    return f"{prefix}-seeded:{tenant}:{month}"
+
+
+def user_seeded_key(
+    tenant: str, user_id: str, month: str, *, prefix: str = BUDGET_KEY_PREFIX
+) -> str:
+    """The marker for one user's month counter.
+
+    `{prefix}-seeded-user:{tenant}:{user_id}:{YYYY-MM}`, every segment checked first.
+    """
+    user_month_key(tenant, user_id, month, prefix=prefix)
+    return f"{prefix}-seeded-user:{tenant}:{user_id}:{month}"
+
+
+SpendLoader = Callable[[], int | None]
+"""Reads one month's spend from the ledger in micro-USD, or `None` with no database.
+
+It may raise `app.storage.cost_ledger.LedgerUnreadable`; the stores let that out, so the
+route refuses rather than counting the month from zero."""
+
+SEED_SCRIPT: Final[str] = """
+if redis.call('SET', KEYS[1], '1', 'NX', 'EX', ARGV[2]) then
+  redis.call('SET', KEYS[2], ARGV[1], 'EX', ARGV[2])
+end
+return tonumber(redis.call('GET', KEYS[2]) or '0')
+"""
+"""Load a counter from the ledger once: the replica that sets the marker sets the counter.
+
+One script, so two replicas loading at once cannot interleave: the second finds the
+marker and only reads. The counter is SET, not added to, so a debit that landed before
+the load is replaced by the ledger total, which holds or will hold that row. Pinned by
+`test_two_replicas_loading_at_once_count_the_spend_once`."""
 
 
 def to_micro_usd(usd: Decimal) -> int:
@@ -367,6 +409,16 @@ class BudgetStore(Protocol):
         """Add to one user's counter and answer its new total, or `None`."""
         ...
 
+    def seeded_spend(self, tenant: str, month: str, loader: SpendLoader) -> int | None:
+        """`spend`, after loading the counter from `loader` once this month."""
+        ...
+
+    def seeded_user_spend(
+        self, tenant: str, user_id: str, month: str, loader: SpendLoader
+    ) -> int | None:
+        """`user_spend`, after loading the user's counter from `loader` once this month."""
+        ...
+
 
 class InProcessBudgetStore:
     """A `BudgetStore` counting in one process's memory.
@@ -384,6 +436,7 @@ class InProcessBudgetStore:
 
     def __init__(self) -> None:
         self._totals: dict[str, int] = {}
+        self._seeded: set[str] = set()
 
     def spend(self, tenant: str, month: str) -> int | None:
         """This tenant's spend so far, 0 for a month it has not spent anything in."""
@@ -404,6 +457,28 @@ class InProcessBudgetStore:
     def user_debit(self, tenant: str, user_id: str, month: str, micro_usd: int) -> int | None:
         """Add to one user's month and answer its running total."""
         return self._add(user_month_key(tenant, user_id, month), micro_usd)
+
+    def seeded_spend(self, tenant: str, month: str, loader: SpendLoader) -> int | None:
+        """This tenant's spend, the counter set from the ledger the first time it is read."""
+        return self._seed(budget_seeded_key(tenant, month), month_key(tenant, month), loader)
+
+    def seeded_user_spend(
+        self, tenant: str, user_id: str, month: str, loader: SpendLoader
+    ) -> int | None:
+        """One user's spend, loaded from the ledger the same way."""
+        return self._seed(
+            user_seeded_key(tenant, user_id, month),
+            user_month_key(tenant, user_id, month),
+            loader,
+        )
+
+    def _seed(self, marker: str, key: str, loader: SpendLoader) -> int:
+        if marker not in self._seeded:
+            loaded = loader()
+            if loaded is not None:
+                self._totals[key] = loaded
+                self._seeded.add(marker)
+        return self._totals.get(key, 0)
 
     def _add(self, key: str, micro_usd: int) -> int:
         total = self._totals.get(key, 0) + micro_usd
@@ -475,6 +550,53 @@ class RedisBudgetStore:
         The logs name the tenant and month only, never the user id.
         """
         return self._add(self.user_key(tenant, user_id, month), tenant, month, micro_usd)
+
+    def seeded_spend(self, tenant: str, month: str, loader: SpendLoader) -> int | None:
+        """This tenant's spend, the counter set from the ledger once a month by `SEED_SCRIPT`.
+
+        A Redis that cannot answer is unknown before the ledger is asked, so an outage
+        costs no ledger read. `LedgerUnreadable` from `loader` is let out on purpose.
+        """
+        return self._seed(
+            budget_seeded_key(tenant, month, prefix=self._key_prefix),
+            self.key(tenant, month),
+            tenant,
+            month,
+            loader,
+        )
+
+    def seeded_user_spend(
+        self, tenant: str, user_id: str, month: str, loader: SpendLoader
+    ) -> int | None:
+        """One user's spend, loaded the same way under the user's own marker."""
+        return self._seed(
+            user_seeded_key(tenant, user_id, month, prefix=self._key_prefix),
+            self.user_key(tenant, user_id, month),
+            tenant,
+            month,
+            loader,
+        )
+
+    def _seed(
+        self, marker: str, stored: str, tenant: str, month: str, loader: SpendLoader
+    ) -> int | None:
+        try:
+            loaded_already = bool(self._client.exists(marker))
+        except redis.RedisError:
+            _log.exception("budget marker unreadable for tenant %s, month %s", tenant, month)
+            return None
+        if loaded_already:
+            return self._read(stored, tenant, month)
+        ledger = loader()
+        if ledger is None:
+            return self._read(stored, tenant, month)
+        try:
+            return int(
+                self._client.eval(SEED_SCRIPT, 2, marker, stored, ledger, BUDGET_KEY_TTL_SECONDS)
+            )
+        except redis.RedisError:
+            _log.exception("budget load failed for tenant %s, month %s", tenant, month)
+            return None
 
     def _read(self, stored: str, tenant: str, month: str) -> int | None:
         try:

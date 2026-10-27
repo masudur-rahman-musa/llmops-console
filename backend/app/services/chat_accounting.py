@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 
 from app.cache import ResponseCache, SemanticCache
 from app.core.config import Settings
 from app.core.context import RequestContext
-from app.core.errors import BudgetExceeded, RateLimited
+from app.core.errors import BudgetExceeded, BudgetUnavailable, RateLimited
 from app.core.metrics import (
     record_budget_ratio,
     record_cost_usd,
@@ -39,6 +39,9 @@ from app.services.ledger import record_cost
 from app.storage import (
     CostLedgerRow,
     CostLedgerWriter,
+    LedgerUnreadable,
+    MonthSpendReader,
+    NoDatabaseMonthSpendReader,
 )
 
 
@@ -63,6 +66,8 @@ class Clients:
     semantic_cache: SemanticCache
     redaction_map_store: RedactionMapStore
     directory_store: DirectoryStore
+    month_spend: MonthSpendReader = field(default_factory=NoDatabaseMonthSpendReader)
+    """The ledger's month spend, read once a month to load a budget counter."""
     clock: Callable[[], float] = time.monotonic
     """Seconds, monotonic. Read when a chat request starts and when its row is booked, so
     `latency_ms` is the difference; tests/api/test_request_status_rows.py hands in a fake."""
@@ -211,8 +216,10 @@ def check_budget(clients: Clients, context: RequestContext, *, override: str | N
     then hide the tenant refusal that is the correct answer.
 
     A counter that cannot answer serves the request (see
-    `limits/budget.py`): `spend` answering `None` returns here having warned
-    nobody and refused nobody.
+    `limits/budget.py`): `seeded_spend` answering `None` returns here having warned
+    nobody and refused nobody. A counter not loaded this month is first set from the
+    ledger, and a ledger that cannot be read refuses with `BudgetUnavailable` (a design note,
+    `tests/api/test_budget_from_ledger.py`).
 
     The warning covers the whole band at or above 80%, an overridden request
     included, because that is what criterion 2 says - it is emitted before the
@@ -232,7 +239,13 @@ def check_budget(clients: Clients, context: RequestContext, *, override: str | N
             override, tenant=context.tenant, month=month, secret=settings.budget_override_secret
         )
 
-    spent = budget_store.spend(context.tenant, month)
+    reader: MonthSpendReader = clients.month_spend
+    try:
+        spent = budget_store.seeded_spend(
+            context.tenant, month, lambda: reader.tenant_month_spend(context.tenant, month)
+        )
+    except LedgerUnreadable as exc:
+        raise BudgetUnavailable(BUDGET_UNAVAILABLE_MESSAGE) from exc
     if spent is not None:
         cap = to_micro_usd(tenant_policy.budget_usd_month)
         decision = decide(spend_micro_usd=spent, cap_micro_usd=cap)
@@ -240,10 +253,25 @@ def check_budget(clients: Clients, context: RequestContext, *, override: str | N
             warn_budget(tenant=context.tenant, spend_micro_usd=spent, cap_micro_usd=cap)
         if decision is BudgetDecision.REJECT and not overridden():
             raise BudgetExceeded(
-                f"tenant {context.tenant!r} has reached its monthly budget of "
-                f"{tenant_policy.budget_usd_month} USD"
+                with_contact(
+                    f"Your tenant {context.tenant} has used its monthly budget of "
+                    f"{tenant_policy.budget_usd_month:.2f} USD.",
+                    settings.budget_contact,
+                )
             )
     check_user_budget(clients, context, month=month, overridden=overridden)
+
+
+BUDGET_UNAVAILABLE_MESSAGE = (
+    "The monthly budget cannot be checked right now. Please try again in a moment."
+)
+
+
+def with_contact(message: str, contact: str) -> str:
+    """A budget refusal, with whom to ask for more when `budget_contact` is set.
+
+    Pinned by `test_the_message_names_no_contact_when_the_setting_is_empty`."""
+    return f"{message} Ask {contact} to allow more." if contact else message
 
 
 def check_user_budget(
@@ -264,13 +292,27 @@ def check_user_budget(
     if user_cap is None:
         return
     budget_store: BudgetStore = clients.budget_store
-    spent = budget_store.user_spend(context.tenant, context.user_id, month)
+    reader: MonthSpendReader = clients.month_spend
+    user_id = context.user_id
+    try:
+        spent = budget_store.seeded_user_spend(
+            context.tenant,
+            user_id,
+            month,
+            lambda: reader.user_month_spend(context.tenant, user_id, month),
+        )
+    except LedgerUnreadable as exc:
+        raise BudgetUnavailable(BUDGET_UNAVAILABLE_MESSAGE) from exc
     if spent is None or spent < to_micro_usd(user_cap):
         return
     if overridden():
         return
     raise BudgetExceeded(
-        f"this user of tenant {context.tenant!r} has reached its monthly budget of {user_cap} USD",
+        with_contact(
+            f"You have used your personal monthly limit of {user_cap:.2f} USD "
+            f"in tenant {context.tenant}.",
+            clients.settings.budget_contact,
+        ),
         param="X-User",
     )
 

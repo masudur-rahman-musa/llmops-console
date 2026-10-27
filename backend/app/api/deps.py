@@ -393,6 +393,7 @@ def get_clients(request: Request) -> Clients:
         semantic_cache=state.semantic_cache,
         redaction_map_store=state.redaction_map_store,
         directory_store=state.directory_store,
+        month_spend=state.month_spend,
     )
 
 

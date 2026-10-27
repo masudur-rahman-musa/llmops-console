@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -23,6 +24,14 @@ DEFAULT_EVAL_BASELINE_PATH = (
 )
 """The committed eval baseline, found the same way, with
 `OPSCONSOLE_EVAL_BASELINE_PATH` as the escape hatch."""
+
+
+MAX_EMAIL_LENGTH = 254
+"""The longest email address `budget_contact` takes, inclusive (RFC 5321's path limit)."""
+
+EMAIL_PATTERN = re.compile(r"[^@\s,]+@[^@\s,]+\.[^@\s,.]+")
+"""One address: no space, comma or second `@`, and a dot in the domain. `fullmatch`, so a
+trailing newline is refused."""
 
 
 class Settings(BaseSettings):
@@ -202,6 +211,20 @@ class Settings(BaseSettings):
         parts = urlsplit(value)
         if parts.scheme not in ("http", "https") or not parts.netloc:
             raise ValueError("must be an http or https URL")
+        return value
+
+    budget_contact: str = ""
+    """Who a tenant over its budget is told to ask for more, or empty for nobody.
+
+    Named in the `BUDGET_EXCEEDED` message. Empty, or one email address of at most 254
+    characters; anything else stops the start, so a typo never reaches a refusal message.
+    Pinned by tests/core/test_config.py::test_budget_contact_refuses_what_is_not_one_email."""
+
+    @field_validator("budget_contact")
+    @classmethod
+    def _budget_contact_is_one_email(cls, value: str) -> str:
+        if value and (len(value) > MAX_EMAIL_LENGTH or EMAIL_PATTERN.fullmatch(value) is None):
+            raise ValueError("must be empty or one email address")
         return value
 
     otel_service_name: str = "opsconsole-gateway"

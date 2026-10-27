@@ -37,6 +37,7 @@ ERROR_CONTRACT: dict[str, int] = {
     "PROVIDER_ERROR": 502,
     "ALL_PROVIDERS_FAILED": 503,
     "VALIDATION": 422,
+    "BUDGET_UNAVAILABLE": 503,
 }
 
 
@@ -63,7 +64,7 @@ def concrete_error_classes() -> list[type[GatewayError]]:
 
 
 def test_error_code_set_is_exhaustive() -> None:
-    """The whole set, exactly: eight codes, eight strings, eight statuses.
+    """The whole set, exactly: nine codes, nine strings, nine statuses.
 
     Both directions are asserted. A member added to `ErrorCode` fails the first
     assertion; a member renamed or dropped fails it too, because the comparison
@@ -212,7 +213,7 @@ def test_starlette_failures_use_the_error_contract(
 ) -> None:
     """Starlette raises these before any of our code runs, and they still keep the shape.
 
-    `code` is `null`, not one of the eight: an unrouted URL is not a failure the
+    `code` is `null`, not one of the nine: an unrouted URL is not a failure the
     gateway classifies, and bending `VALIDATION` onto a 404 would break the
     one-status-per-code table above.
     """

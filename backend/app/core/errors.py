@@ -1,6 +1,6 @@
 """The typed error contract every client-facing failure is drawn from.
 
-`ErrorCode` is closed on purpose: a caller writes code against these eight
+`ErrorCode` is closed on purpose: a caller writes code against these nine
 strings, so adding, renaming or dropping one is a change to the published API
 rather than an implementation detail. A test holds the whole table - each code's
 string, its HTTP status, and the requirement that exactly one concrete
@@ -24,6 +24,7 @@ class ErrorCode(StrEnum):
     ALIAS_UNKNOWN = "ALIAS_UNKNOWN"
     BUDGET_EXCEEDED = "BUDGET_EXCEEDED"
     RATE_LIMITED = "RATE_LIMITED"
+    BUDGET_UNAVAILABLE = "BUDGET_UNAVAILABLE"
     PROVIDER_ERROR = "PROVIDER_ERROR"
     ALL_PROVIDERS_FAILED = "ALL_PROVIDERS_FAILED"
     VALIDATION = "VALIDATION"
@@ -91,6 +92,18 @@ class BudgetExceeded(GatewayError):
 
     code: ClassVar[ErrorCode] = ErrorCode.BUDGET_EXCEEDED
     http_status: ClassVar[int] = 429
+
+
+class BudgetUnavailable(GatewayError):
+    """The tenant's month spend could not be learnt from the ledger, so it is not served.
+
+    Raised by `services/chat_accounting.py::check_budget` only while the month's counter is
+    not loaded yet; a Redis that cannot answer still serves. 503, because trying again
+    shortly can succeed. Pinned by `test_an_unreadable_ledger_refuses_with_budget_unavailable`.
+    """
+
+    code: ClassVar[ErrorCode] = ErrorCode.BUDGET_UNAVAILABLE
+    http_status: ClassVar[int] = 503
 
 
 class RateLimited(GatewayError):

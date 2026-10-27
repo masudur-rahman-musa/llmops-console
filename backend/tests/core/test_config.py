@@ -126,3 +126,77 @@ def test_public_trace_langfuse_is_off_by_default(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("OPSCONSOLE_PUBLIC_TRACE_LANGFUSE", "maybe")
     with pytest.raises(ValidationError):
         Settings()
+
+
+BUDGET_CONTACT = "OPSCONSOLE_BUDGET_CONTACT"
+BUDGET_CONTACT_MAX = 254
+
+
+def an_email_of(length: int) -> str:
+    """One address of exactly `length` characters, with a dot in the domain."""
+    domain = "@b.com"
+    return "a" * (length - len(domain)) + domain
+
+
+def test_budget_contact_accepts_an_email_or_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Catches a setting that insists on an address (the empty default, which means "name no
+    contact", would stop the gateway starting), one that is not read from
+    `OPSCONSOLE_BUDGET_CONTACT`, and a default that is not empty. The default is asserted
+    with the variable removed, so no environment can decide it."""
+    monkeypatch.delenv(BUDGET_CONTACT, raising=False)
+    assert Settings().budget_contact == ""
+
+    monkeypatch.setenv(BUDGET_CONTACT, "budget-owner@example.com")
+    assert Settings().budget_contact == "budget-owner@example.com"
+
+    monkeypatch.setenv(BUDGET_CONTACT, "")
+    assert Settings().budget_contact == ""
+
+
+BUDGET_CONTACT_REFUSED = [
+    ("no at sign", "musa"),
+    ("no dot in the domain", "a@b"),
+    ("two addresses", "a@b.com, c@d.com"),
+    ("a comma", "a@b.com,c@d.com"),
+    ("a space inside", "a b@c.com"),
+    ("a trailing newline", "a@b.com\n"),
+    ("a trailing CRLF", "a@b.com\r\n"),
+    ("a trailing space", "a@b.com "),
+    ("a leading space", " a@b.com"),
+    ("an embedded newline", "a@b.com\nc@d.com"),
+    ("an empty local part", "@b.com"),
+    ("an empty domain", "a@"),
+]
+
+
+@pytest.mark.parametrize(
+    ("label", "value"), BUDGET_CONTACT_REFUSED, ids=[row[0] for row in BUDGET_CONTACT_REFUSED]
+)
+def test_budget_contact_refuses_what_is_not_one_email(
+    label: str, value: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Catches a check that lets a malformed contact into the message shown to users (a
+    list of addresses, a value with a line break) and a pattern that ends in `$` and so lets
+    a trailing newline through. Each row is refused at start, naming the field."""
+    monkeypatch.setenv(BUDGET_CONTACT, value)
+
+    with pytest.raises(ValidationError) as caught:
+        Settings()
+
+    assert "budget_contact" in str(caught.value), label
+
+
+def test_budget_contact_length_limit_is_254_inclusive(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Catches a limit of 253 or 255, or none. 254 characters loads; 255 is refused."""
+    at_limit = an_email_of(BUDGET_CONTACT_MAX)
+    over = an_email_of(BUDGET_CONTACT_MAX + 1)
+    assert len(at_limit) == 254
+    assert len(over) == 255
+
+    monkeypatch.setenv(BUDGET_CONTACT, at_limit)
+    assert Settings().budget_contact == at_limit
+
+    monkeypatch.setenv(BUDGET_CONTACT, over)
+    with pytest.raises(ValidationError) as caught:
+        Settings()
+    assert "budget_contact" in str(caught.value)

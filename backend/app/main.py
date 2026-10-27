@@ -74,8 +74,10 @@ from app.services.routing_reload import RUNTIME_SCOPE_KEY, RoutingRuntimeStore
 from app.storage import (
     InMemoryConsoleEventWriter,
     InMemoryCostLedgerWriter,
+    NoDatabaseMonthSpendReader,
     PostgresConsoleEventWriter,
     PostgresCostLedgerWriter,
+    PostgresMonthSpendReader,
     build_pool,
 )
 from app.storage.dashboard_reads import (
@@ -228,6 +230,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     app.state.console_reader = (
         PostgresConsoleReader(pool) if pool is not None else UnconfiguredConsoleReader()
+    )
+    app.state.month_spend = (
+        PostgresMonthSpendReader(pool) if pool is not None else NoDatabaseMonthSpendReader()
     )
 
     prometheus = (

@@ -37,7 +37,7 @@ import queue
 import re
 import threading
 from collections import deque
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Final, Protocol
 
@@ -49,6 +49,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.metrics import record_ledger_write
 from app.core.validation import IdentifierInvalid, checked_identifier, checked_user_id
+from app.limits.budget import to_micro_usd
 from app.limits.cost import COST_QUANTUM
 from app.storage.db import DEFAULT_SCHEMA, checked_schema
 
@@ -477,6 +478,81 @@ def _checked_price_version(value: str) -> str:
     if len(value) > MAX_PRICE_VERSION_LENGTH:
         raise IdentifierInvalid(f"price_version: longer than {MAX_PRICE_VERSION_LENGTH} characters")
     return value
+
+
+class LedgerUnreadable(Exception):
+    """The ledger could not be read, so a month's spend is not known.
+
+    Raised by `PostgresMonthSpendReader` and turned into 503 `BUDGET_UNAVAILABLE` by the
+    budget check: counting from zero instead would hand the tenant a fresh budget."""
+
+
+class MonthSpendReader(Protocol):
+    """One UTC month's not-cached spend in micro-USD, the number a budget counter loads.
+
+    `None` means there is no ledger to read (no database). The same rows the console's
+    budget bars add up, so the two numbers agree."""
+
+    def tenant_month_spend(self, tenant: str, month: str) -> int | None: ...
+
+    def user_month_spend(self, tenant: str, user_id: str, month: str) -> int | None: ...
+
+
+class NoDatabaseMonthSpendReader:
+    """What a gateway with no database reads: nothing, so the counter stands alone."""
+
+    def tenant_month_spend(self, tenant: str, month: str) -> int | None:
+        return None
+
+    def user_month_spend(self, tenant: str, user_id: str, month: str) -> int | None:
+        return None
+
+
+class PostgresMonthSpendReader:
+    """Sums `cost_usd` over one tenant's (or user's) not-cached rows of one UTC month.
+
+    Any `psycopg.Error` becomes `LedgerUnreadable`. Pinned by
+    `tests/storage/test_ledger_month_spend_postgres.py` and `test_ledger_month_spend.py`.
+    """
+
+    def __init__(
+        self,
+        pool: ConnectionPool[Connection[TupleRow]],
+        *,
+        schema: str = DEFAULT_SCHEMA,
+    ) -> None:
+        self._pool = pool
+        self._schema = checked_schema(schema)
+
+    def tenant_month_spend(self, tenant: str, month: str) -> int | None:
+        checked_identifier(tenant, "tenant")
+        return self._sum(month, sql.SQL(""), (tenant,))
+
+    def user_month_spend(self, tenant: str, user_id: str, month: str) -> int | None:
+        checked_identifier(tenant, "tenant")
+        checked_user_id(user_id)
+        return self._sum(month, sql.SQL(" AND user_id = %s"), (tenant, user_id))
+
+    def _sum(self, month: str, extra: sql.Composable, params: tuple[str, ...]) -> int:
+        start = datetime.strptime(month, "%Y-%m").replace(tzinfo=UTC)
+        end = (
+            start.replace(year=start.year + 1, month=1)
+            if start.month == 12
+            else (start.replace(month=start.month + 1))
+        )
+        try:
+            with self._pool.connection() as conn:
+                row = conn.execute(
+                    sql.SQL(
+                        "SELECT coalesce(sum(cost_usd), 0) FROM {} "
+                        "WHERE NOT cached AND tenant = %s{} AND ts >= %s AND ts < %s"
+                    ).format(sql.Identifier(self._schema, COST_LEDGER), extra),
+                    (*params, start, end),
+                ).fetchone()
+        except psycopg.Error as exc:
+            raise LedgerUnreadable(f"{type(exc).__name__}: {exc}") from exc
+        total = Decimal(row[0]) if row is not None else Decimal(0)
+        return to_micro_usd(total)
 
 
 def refresh_daily_rollup(
