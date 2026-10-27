@@ -10,7 +10,7 @@ export type RequestsBody = {
   tokens: Array<{ model: string; input: number; output: number }>;
   cache_hit_rate: number | null;
   prompt_cache_share: number | null;
-  per_day: Array<{ day: string; requests: number; errors: number | null }>;
+  per_day: Array<{ day: string; requests: number; errors: number }>;
   requests: Array<{
     ts: string;
     tenant: string;
@@ -40,7 +40,7 @@ const check = shape({
   tokens: listOf(shape({ model: str, input: num, output: num })),
   cache_hit_rate: nullable(num),
   prompt_cache_share: nullable(num),
-  per_day: listOf(shape({ day: str, requests: int, errors: nullable(num) })),
+  per_day: listOf(shape({ day: str, requests: int, errors: int })),
   requests: listOf(
     shape({
       ts: str,

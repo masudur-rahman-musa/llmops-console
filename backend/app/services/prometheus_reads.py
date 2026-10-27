@@ -34,9 +34,6 @@ Prometheus costs a page load seconds rather than a hung worker."""
 RANGE_STEP_SECONDS: Final[int] = 3600
 """One point per hour on the reliability series."""
 
-DAY_STEP_SECONDS: Final[int] = 86400
-"""One point per UTC day, on the errors-per-day series."""
-
 QUERY_PATH: Final[str] = "/api/v1/query"
 QUERY_RANGE_PATH: Final[str] = "/api/v1/query_range"
 
@@ -100,13 +97,6 @@ def fallbacks_query(days: int) -> str:
 def redactions_query(days: int) -> str:
     """Placeholders minted over the window, by detector kind."""
     return f"sum by (kind) (increase(gateway_redactions_total[{days}d]))"
-
-
-def errors_per_day_query() -> str:
-    """5xx answers over the day before each point. Asked at a one-day step with every
-    point on a UTC midnight, the point at midnight D+1 counts day D. A failed request
-    writes no ledger row, so errors per day come from here and requests from the ledger."""
-    return 'sum(increase(gateway_requests_total{status=~"5.."}[1d]))'
 
 
 def refusals_query(days: int) -> str:

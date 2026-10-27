@@ -120,7 +120,7 @@ class StubReader:
         self.calls.append("cache_hit_rate")
         return None
 
-    def daily_requests(self, days: int, now: datetime) -> tuple[tuple[date, int], ...]:
+    def daily_requests(self, days: int, now: datetime) -> tuple[tuple[date, int, int], ...]:
         self.calls.append("daily_requests")
         return ()
 

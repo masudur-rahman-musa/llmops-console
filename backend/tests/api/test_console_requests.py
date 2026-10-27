@@ -11,9 +11,10 @@ The contract these cases are written against, before it exists:
 * `app.api.routes.dashboard.CONSOLE_REQUESTS == "/console/requests"`, admin key, `days`
   1 to 90 with a default of 30;
 * `app.services.prometheus_reads`: `redactions_query(days)`, `refusals_query(days)`,
-  `guardrail_blocks_query(days)` and `errors_per_day_query()` (an earlier change; `tokens_query` is
-  gone, tokens come from the ledger);
-* `ConsoleReader.daily_requests(days, now)` and `ConsoleReader.model_tokens(days, now)`: the per-day request counts and the per-model token sums of the ledger;
+  and `guardrail_blocks_query(days)` (`tokens_query` and `errors_per_day_query` are gone: tokens
+  and failed counts come from the ledger, an earlier change);
+* `ConsoleReader.daily_requests(days, now)` (one `(day, answered, failed)` per UTC
+  day) and `ConsoleReader.model_tokens(days, now)`: the per-day request counts and the per-model token sums of the ledger;
 * `ConsoleReader.cache_hit_rate(days, now) -> float | None`: cached ledger rows over all rows
   in the window, None when the window has no rows;
 * `ConsoleReader.recent_requests() -> tuple[RequestRow, ...]`, newest first, with
@@ -39,7 +40,6 @@ from app.schemas.dashboard import ModelTokens, RequestRow
 from app.services.prometheus_reads import (
     QUERY_RANGE_PATH,
     PrometheusClient,
-    errors_per_day_query,
     guardrail_blocks_query,
     redactions_query,
     refusals_query,
@@ -55,14 +55,13 @@ TRACE_ID = "0af7651916cd43dd8448eb211c80319c"
 OTHER_TRACE_ID = "b7ad6b7169203331b7ad6b7169203331"
 SAMPLE_TS = 1757980800
 
-# The four queries for a 7 day window, written out so no case reads its expectation from the
-# module under test. The errors query has a fixed one-day window whatever `days` is.
+# The three queries for a 7 day window, written out so no case reads its expectation from the
+# module under test.
 REDACTIONS_7D = "sum by (kind) (increase(gateway_redactions_total[7d]))"
 TOKENS_7D = "sum by (model, direction) (increase(gateway_tokens_total[7d]))"
 REFUSALS_7D = "sum by (reason) (increase(helpdesk_refusals_total[7d]))"
 BLOCKS_7D = "sum(increase(helpdesk_sod_blocks_total[7d]))"
-ERRORS_PER_DAY = 'sum(increase(gateway_requests_total{status=~"5.."}[1d]))'
-ALL_7D = {REDACTIONS_7D, REFUSALS_7D, BLOCKS_7D, ERRORS_PER_DAY}
+ALL_7D = {REDACTIONS_7D, REFUSALS_7D, BLOCKS_7D}
 DAY_SECONDS = 86400
 
 LEDGER_TOKENS = (
@@ -110,8 +109,8 @@ class StubReader:
     """A configured `ConsoleReader` that records calls and answers the rows above.
 
     `recent_requests`, `cache_hit_rate`, `daily_requests` and `model_tokens` are read by this
-    route. `daily` is the request count of each window day, oldest first (a short list is
-    zero filled); the dates come from the `now` the route passes, so no case depends on the
+    route. `daily` is the (answered, failed) count of each window day, oldest first (a short
+    list is zero filled); the dates come from the `now` the route passes, so no case depends on the
     clock. `tokens` is the per-model read. `error`, when set, is raised instead, which is how
     the Postgres failure case arranges a failing read without a database.
     """
@@ -130,19 +129,22 @@ class StubReader:
         self.answer_pages = 1
         self.hit_rate: float | None = 0.3125
         self.hit_rate_asked: list[tuple[int, datetime]] = []
-        self.daily: list[int] = [10, 0, 7]
+        self.daily: list[tuple[int, int]] = [(10, 0), (0, 3), (7, 0)]
         self.daily_asked: list[tuple[int, datetime]] = []
         self.tokens: tuple[ModelTokens, ...] = LEDGER_TOKENS
         self.tokens_asked: list[tuple[int, datetime]] = []
 
-    def daily_requests(self, days: int, now: datetime) -> tuple[tuple[date, int], ...]:
+    def daily_requests(self, days: int, now: datetime) -> tuple[tuple[date, int, int], ...]:
         self.calls.append("daily_requests")
         self.daily_asked.append((days, now))
         if self.error is not None:
             raise self.error
-        counts = [self.daily[i] if i < len(self.daily) else 0 for i in range(days)]
+        counts = [self.daily[i] if i < len(self.daily) else (0, 0) for i in range(days)]
         first = now.date() - timedelta(days=days - 1)
-        return tuple((first + timedelta(days=i), n) for i, n in enumerate(counts))
+        return tuple(
+            (first + timedelta(days=i), answered, failed)
+            for i, (answered, failed) in enumerate(counts)
+        )
 
     def model_tokens(self, days: int, now: datetime) -> tuple[ModelTokens, ...]:
         self.calls.append("model_tokens")
@@ -288,20 +290,19 @@ def wired(make_wired: Callable[[str | None], Wired]) -> Wired:
 
 def test_requests_queries_are_pinned(wired: Wired) -> None:
     """Catches a changed metric name, a missing `sum by`, a window that ignores `days`, and a
-    route that asks for more or fewer queries than the four: the sent set must equal the
-    literals (a hit-rate or tokens query still sent to Prometheus would be a fifth)."""
+    route that asks for more or fewer queries than the three: the sent set must equal the
+    literals (an errors, hit-rate or tokens query still sent to Prometheus would be a fourth)."""
     assert console.CONSOLE_REQUESTS == REQUESTS
     assert redactions_query(7) == REDACTIONS_7D
     assert refusals_query(7) == REFUSALS_7D
     assert guardrail_blocks_query(7) == BLOCKS_7D
-    assert errors_per_day_query() == ERRORS_PER_DAY
     for query in (REDACTIONS_7D, REFUSALS_7D, BLOCKS_7D):
         assert "[7d]" in query
 
     wired.body(days=7)
 
     assert set(wired.prom.queries) == ALL_7D
-    assert len(wired.prom.queries) == 4
+    assert len(wired.prom.queries) == 3
 
 
 def test_requests_body_maps_counts(wired: Wired) -> None:
@@ -384,12 +385,12 @@ def test_no_traffic_gives_null_rate_and_blocks(wired: Wired) -> None:
     assert body["redactions"] == []
     assert body["refusals"] == []
     assert body["tokens"] == []
-    assert [(row["requests"], row["errors"]) for row in body["per_day"]] == [(0, 0.0)] * 3
+    assert [(row["requests"], row["errors"]) for row in body["per_day"]] == [(0, 0)] * 3
 
 
 def test_the_default_window_is_30_days(wired: Wired) -> None:
     """Catches a default other than 30 days: the queries sent with no `days` must be the 30
-    day forms of the builders (the errors query is one day whatever the window), and the
+    day forms of the builders, and the
     ledger reads (hit rate, per day, tokens) must be asked for 30 days."""
     body = wired.body()
 
@@ -397,9 +398,8 @@ def test_the_default_window_is_30_days(wired: Wired) -> None:
         redactions_query(30),
         refusals_query(30),
         guardrail_blocks_query(30),
-        ERRORS_PER_DAY,
     }
-    assert all("[30d]" in query for query in wired.prom.queries if query != ERRORS_PER_DAY)
+    assert all("[30d]" in query for query in wired.prom.queries)
     assert [days for days, _ in wired.reader.hit_rate_asked] == [30]
     assert [days for days, _ in wired.reader.daily_asked] == [30]
     assert [days for days, _ in wired.reader.tokens_asked] == [30]
@@ -419,11 +419,9 @@ def test_hit_rate_comes_from_the_ledger_not_prometheus(wired: Wired) -> None:
     now = wired.reader.hit_rate_asked[0][1]
     assert now.tzinfo is not None
     assert not any("cache=" in query for query in wired.prom.queries)
-    # The errors per day query is the one that may name the requests counter, and it has no
-    # cache label; any other query naming it would be a hit-rate query sent to Prometheus.
-    assert not any(
-        "gateway_requests_total" in query for query in wired.prom.queries if query != ERRORS_PER_DAY
-    )
+    # No query may name the requests counter: it would be a hit-rate or errors query sent to
+    # Prometheus.
+    assert not any("gateway_requests_total" in query for query in wired.prom.queries)
 
 
 def test_an_empty_window_gives_a_null_hit_rate(wired: Wired) -> None:
@@ -498,7 +496,9 @@ def test_prometheus_down_keeps_the_request_list(wired: Wired) -> None:
     assert body["refusals"] == []
     assert body["tokens"] == [t.model_dump() for t in LEDGER_TOKENS]
     assert len(body["per_day"]) == 30
-    assert all(row["errors"] is None for row in body["per_day"])
+    # The failed counts come from the ledger, so a dead Prometheus changes none of them.
+    assert [row["errors"] for row in body["per_day"]] == [0, 3] + [0] * 28
+    assert all(type(row["errors"]) is int for row in body["per_day"])
     assert body["guardrail_blocks"] is None
     assert body["cache_hit_rate"] == 0.3125
     assert len(body["requests"]) == 2
@@ -574,7 +574,7 @@ def test_days_91_is_refused(wired: Wired) -> None:
     assert wired.prom.queries == []
 
     assert wired.get(days=90).status_code == 200
-    assert all("[90d]" in query for query in wired.prom.queries if query != ERRORS_PER_DAY)
+    assert all("[90d]" in query for query in wired.prom.queries)
 
 
 def test_days_0_is_refused(wired: Wired) -> None:

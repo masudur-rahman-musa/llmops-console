@@ -893,13 +893,39 @@ def test_daily_requests_counts_each_utc_day_and_fills_zeros(
     reader = PostgresConsoleReader(pool, schema=schema)
 
     assert reader.daily_requests(7, NOW) == (
-        (date(2026, 9, 10), 1),
-        (date(2026, 9, 11), 0),
-        (date(2026, 9, 12), 0),
-        (date(2026, 9, 13), 0),
-        (date(2026, 9, 14), 1),
-        (date(2026, 9, 15), 1),
-        (date(2026, 9, 16), 2),
+        (date(2026, 9, 10), 1, 0),
+        (date(2026, 9, 11), 0, 0),
+        (date(2026, 9, 12), 0, 0),
+        (date(2026, 9, 13), 0, 0),
+        (date(2026, 9, 14), 1, 0),
+        (date(2026, 9, 15), 1, 0),
+        (date(2026, 9, 16), 2, 0),
+    )
+
+
+def test_daily_requests_splits_answered_and_failed_at_500(pool: Pool, migrated_schema: str) -> None:
+    """Catches a split at the wrong status (499 counted as failed, or 500 as answered), a
+    failed count that ignores the UTC day edges (a 500 at 23:59 and one at 00:00 land on their
+    own days), failed rows outside the window counted (the one a second before the first
+    day), and an empty day dropped instead of `(day, 0, 0)`."""
+    schema = migrated_schema
+    first_day = datetime(2026, 9, 10, tzinfo=UTC)
+    busy = datetime(2026, 9, 12, 9, 0, tzinfo=UTC)
+    for status in (200, 499, 500, 503):
+        insert_cost(pool, schema, ts=busy, status=status)
+    insert_cost(pool, schema, ts=datetime(2026, 9, 13, 23, 59, tzinfo=UTC), status=500)
+    insert_cost(pool, schema, ts=datetime(2026, 9, 14, 0, 0, tzinfo=UTC), status=500)
+    insert_cost(pool, schema, ts=first_day - SECOND, status=500)
+    reader = PostgresConsoleReader(pool, schema=schema)
+
+    assert reader.daily_requests(7, NOW) == (
+        (date(2026, 9, 10), 0, 0),
+        (date(2026, 9, 11), 0, 0),
+        (date(2026, 9, 12), 2, 2),
+        (date(2026, 9, 13), 0, 1),
+        (date(2026, 9, 14), 0, 1),
+        (date(2026, 9, 15), 0, 0),
+        (date(2026, 9, 16), 0, 0),
     )
 
 

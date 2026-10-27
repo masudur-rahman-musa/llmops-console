@@ -246,13 +246,13 @@ class ModelTokens(_Body):
 
 
 class DayRequests(_Body):
-    """One UTC day: ledger rows that day, and the 5xx answers Prometheus counted.
+    """One UTC day from the ledger: `requests` answered below status 500, `errors` at 500 or above.
 
-    `errors` is null when Prometheus could not be read."""
+    Both are whole counts, so the chart matches the requests table."""
 
     day: date
     requests: int
-    errors: float | None
+    errors: int
 
 
 class RequestsPage(_Body):

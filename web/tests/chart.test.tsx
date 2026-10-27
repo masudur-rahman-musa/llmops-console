@@ -2,8 +2,9 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import QualityPage from "@/app/(console)/quality/page";
 import { LineChart } from "@/components/ui/line-chart";
 import { points as formatPoints } from "@/lib/format";
 
@@ -88,11 +89,7 @@ describe("LineChart", () => {
     // Catches markers dropped, drawn once for all, or axes and gridlines drawn as extra line elements.
     const points: Array<[number, number]> = [[1789545600, 0.93], [1789560000, 0.91], [1789574400, 0.88]];
     const three = renderToStaticMarkup(
-      <LineChart title="Decision accuracy" points={points} markers={[
-          { at: 1789550000, label: "aaaaaaa" },
-          { at: 1789565000, label: "bbbbbbb" },
-          { at: 1789570000, label: "ccccccc" },
-        ]} />,
+      <LineChart title="Decision accuracy" points={points} markers={[{ at: 1789550000 }, { at: 1789565000 }, { at: 1789570000 }]} />,
     );
     expect(count(three, LINE)).toBe(3);
 
@@ -100,6 +97,18 @@ describe("LineChart", () => {
     expect(count(none, LINE)).toBe(0);
     const empty = renderToStaticMarkup(<LineChart title="Decision accuracy" points={points} markers={[]} />);
     expect(count(empty, LINE)).toBe(0);
+  });
+
+  it("markers draw lines and no text", () => {
+    // Catches a marker that still prints something beside its dashed line (a sha, a time, an index), which a reader cannot use.
+    const points: Array<[number, number]> = [[utc(12, 6), 91], [utc(14, 6), 93], [utc(15, 6), 88]];
+    const bare = renderToStaticMarkup(<LineChart title="Check score" points={points} yFormat={formatPoints} />);
+    const marked = renderToStaticMarkup(
+      <LineChart title="Check score" points={points} yFormat={formatPoints} markers={[{ at: utc(14, 6) }, { at: utc(15, 6) }]} />,
+    );
+    const markerLines = (marked.match(/<line[\s/>][^>]*>/g) ?? []).filter((tag) => /\bclass="[^"]*\bchart-marker\b/.test(tag));
+    expect(markerLines).toHaveLength(2);
+    expect(textElements(marked)).toEqual(textElements(bare));
   });
 
   it("the score axis names the lowest middle and highest score", () => {
@@ -157,37 +166,17 @@ describe("LineChart", () => {
     }
   });
 
-  it("each marker carries its label", () => {
-    // Catches a marker drawn without its label, a label shared by all markers, or an axis drawn with extra line elements.
-    const html = renderToStaticMarkup(
-      <LineChart
-        title="Check score"
-        points={[[utc(12, 6), 0.91], [utc(14, 6), 0.93], [utc(15, 6), 0.88]]}
-        yFormat={formatPoints}
-        markers={[
-          { at: utc(14, 6), label: "5e2d8c1" },
-          { at: utc(15, 6), label: "3f9c2a7" },
-        ]}
-      />,
-    );
-    expect(count(html, LINE)).toBe(2);
-    const labels = textElements(html).map((item) => item.body);
-    expect(labels).toContain("5e2d8c1");
-    expect(labels).toContain("3f9c2a7");
-  });
-
-  it("a marker with a non finite position draws neither line nor label", () => {
-    // Catches a marker at NaN still drawing its label (or a line at NaN) after the finite check moved to the line only.
+  it("a marker with a non finite position draws no line", () => {
+    // Catches a marker at NaN still drawn as a line at NaN instead of being dropped.
     const html = renderToStaticMarkup(
       <LineChart
         title="Check score"
         points={[[utc(12, 6), 0.91], [utc(14, 6), 0.93]]}
         yFormat={formatPoints}
-        markers={[{ at: Number.NaN, label: "bad" }]}
+        markers={[{ at: Number.NaN }]}
       />,
     );
     expect(count(html, LINE)).toBe(0);
-    expect(html).not.toContain("bad");
     expect(html).not.toMatch(/NaN/);
   });
 
@@ -214,26 +203,6 @@ describe("LineChart", () => {
     const shownDates = thinned.filter((item) => DATE.test(item.body));
     expect(shownDates.length).toBeLessThan(30);
     expect(thinned.filter((item) => TIME.test(item.body))).toHaveLength(shownDates.length);
-  });
-
-  it("marker labels stay inside the chart", () => {
-    // Catches a label centred on a marker at the first or last run, which the svg edge cuts in half: the last anchors end, the first anchors start, one between stays centred.
-    const html = renderToStaticMarkup(
-      <LineChart
-        title="Check score"
-        points={[[utc(12, 6), 0.91], [utc(14, 6), 0.93], [utc(15, 6), 0.88]]}
-        yFormat={formatPoints}
-        markers={[
-          { at: utc(12, 6), label: "first00" },
-          { at: utc(14, 6), label: "middle0" },
-          { at: utc(15, 6), label: "last000" },
-        ]}
-      />,
-    );
-    const anchorOf = (label: string): string | null => textElements(html).find((item) => item.body === label)?.anchor ?? null;
-    expect(anchorOf("first00")).toBe("start");
-    expect(anchorOf("middle0")).toBe("middle");
-    expect(anchorOf("last000")).toBe("end");
   });
 
   it("the chart fills its width", () => {
@@ -318,10 +287,7 @@ describe("LineChart", () => {
           range={RANGE}
           steps={STEPS}
           baseline={{ value: 48.48, label: "Baseline 48.48%" }}
-          markers={[
-            { at: utc(14, 6), label: "5e2d8c1" },
-            { at: utc(15, 6), label: "3f9c2a7" },
-          ]}
+          markers={[{ at: utc(14, 6) }, { at: utc(15, 6) }]}
         />,
       );
       const lines = html.match(/<line[\s/>][^>]*>/g) ?? [];
@@ -337,6 +303,29 @@ describe("LineChart", () => {
       expect(y2).toBeCloseTo(expected, 1);
       const label = textElements(html).filter((item) => item.body === "Baseline 48.48%");
       expect(label).toHaveLength(1);
+      expect(label[0].anchor).toBe("end");
+    });
+
+    it("the baseline label never covers a point", () => {
+      // Catches a baseline label still drawn just above its line, where it sits on a point at the baseline score, or one moved into the plot where a point at 100% lies under it.
+      const html = renderToStaticMarkup(
+        <LineChart
+          title="Check score"
+          points={[[utc(12, 6), 100], [utc(15, 6), 48.48]]}
+          yFormat={formatPoints}
+          range={RANGE}
+          steps={STEPS}
+          baseline={{ value: 48.48, label: "Baseline 48.48%" }}
+        />,
+      );
+      const top = stepHeight(html, "100%");
+      const radius = Number(html.match(/<circle\b[^>]*\br="([^"]*)"/)?.[1]);
+      expect(radius).toBe(3);
+      expect(Math.min(...circleHeights(html))).toBe(top);
+      const label = textElements(html).filter((item) => item.body === "Baseline 48.48%");
+      expect(label).toHaveLength(1);
+      expect(Number(label[0].y)).toBeLessThan(top - radius);
+      expect(Number(label[0].y)).toBeGreaterThan(0);
       expect(label[0].anchor).toBe("end");
     });
 
@@ -375,5 +364,32 @@ describe("LineChart", () => {
     expect(anchorOf("07:00")).toBe("middle");
     expect(anchorOf("Sep 15")).toBe("end");
     expect(anchorOf("08:00")).toBe("end");
+  });
+});
+
+describe("Quality page chart", () => {
+  beforeEach(() => {
+    vi.stubEnv("CONSOLE_API_URL", "http://console-api.test");
+    vi.stubEnv("CONSOLE_ADMIN_KEY", "adminkey-sentinel-7c41e2d9f0");
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("the quality chart prints no commit hash", async () => {
+    // Catches a Quality page that still hands each release's short sha to the chart as a label, or one that drops the release lines along with the labels.
+    const body: unknown = JSON.parse(readFileSync(new URL("./fixtures/quality.json", import.meta.url), "utf8"));
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(body), { status: 200 })));
+    const html = renderToStaticMarkup(await QualityPage({ searchParams: Promise.resolve({}) }));
+    const chart = (html.match(/<svg\b[\s\S]*?<\/svg>/g) ?? []).filter((svg) => count(svg, CIRCLE) > 0);
+    expect(chart).toHaveLength(1);
+    expect(chart[0]).not.toContain("5e2d8c1");
+    expect(chart[0]).not.toContain("3f9c2a7");
+    const markerLines = (chart[0].match(/<line[\s/>][^>]*>/g) ?? []).filter((tag) => /\bclass="[^"]*\bchart-marker\b/.test(tag));
+    expect(markerLines).toHaveLength(2);
   });
 });

@@ -7,12 +7,9 @@ sources on `app.state` as tests/api/test_console_requests.py does, and reuses it
 The contract these cases are written against, before it exists:
 
 * `RequestsPage.per_day`: one `{day, requests, errors}` per window day, oldest first, every
-  day present. `requests` is the ledger's count for the UTC day (`daily_requests`); `errors`
-  is the 5xx count Prometheus holds for that day, `0.0` when Prometheus answered without a
-  point for the day, and `None` for every day when Prometheus failed;
-* `app.services.prometheus_reads.errors_per_day_query()`: one range query at a one-day step,
-  from the UTC midnight after the first window day to the UTC midnight of tomorrow, so the
-  point at midnight D+1 is the errors of day D;
+  day present. `requests` is the ledger's answered count for the UTC day and `errors` its
+  status 500 and above count (`daily_requests`, an earlier change); both are whole numbers whatever
+  Prometheus does;
 * `RequestsPage.tokens` comes from `ConsoleReader.model_tokens(days, now)`; Prometheus is not
   asked for tokens any more;
 * `CostPage.month_spend_usd`: the sum of the values `ConsoleReader.month_spend` answers,
@@ -36,13 +33,10 @@ from app.limits.prices import PriceTable
 from app.main import create_app
 from app.schemas.dashboard import ModelTokens
 from app.services.dashboard import JUDGE_NOTE
-from app.services.prometheus_reads import QUERY_RANGE_PATH, errors_per_day_query
 from app.storage.dashboard_reads import CostRead, UnconfiguredConsoleReader
 
 from .conftest import ADMIN_KEY, NO_PROVIDER_KEYS
 from .test_console_requests import (
-    DAY_SECONDS,
-    ERRORS_PER_DAY,
     LEDGER_TOKENS,
     TOKENS_7D,
     PromStub,
@@ -72,63 +66,30 @@ def midnight(moment: datetime) -> datetime:
     return datetime(moment.year, moment.month, moment.day, tzinfo=UTC)
 
 
-def test_errors_per_day_query_is_pinned(wired: Wired) -> None:
-    """Catches a changed metric, status filter or window in the query text, a step other than
-    one day (the point-to-day mapping breaks), and a start or end that is not a UTC midnight
-    one day after the first window day / tomorrow (every day's errors shift by one)."""
-    assert errors_per_day_query() == ERRORS_PER_DAY
-
-    wired.body(days=3)
-
-    ranges = [params for path, params in wired.prom.calls if path == QUERY_RANGE_PATH]
-    assert len(ranges) == 1
-    params = ranges[0]
-    assert params["query"] == ERRORS_PER_DAY
-    assert float(params["step"]) == DAY_SECONDS
-    today = midnight(wired.reader.daily_asked[0][1])
-    assert float(params["start"]) == (today - timedelta(days=2) + timedelta(days=1)).timestamp()
-    assert float(params["end"]) == (today + timedelta(days=1)).timestamp()
-    assert float(params["start"]) % DAY_SECONDS == 0
-    assert float(params["end"]) % DAY_SECONDS == 0
-
-
-@pytest.mark.parametrize("days", [1, 90])
-def test_errors_per_day_range_follows_the_window_edges(days: int, wired: Wired) -> None:
-    """Catches a range that ignores `days` (always three or 30 points): at the inclusive
-    edges 1 and 90 the range holds exactly `days` daily points, from the first window day's
-    next midnight to tomorrow's midnight."""
-    wired.body(days=days)
-
-    params = next(p for path, p in wired.prom.calls if path == QUERY_RANGE_PATH)
-    assert (float(params["end"]) - float(params["start"])) / DAY_SECONDS == days - 1
-    today = midnight(wired.reader.daily_asked[0][1])
-    assert float(params["end"]) == (today + timedelta(days=1)).timestamp()
-
-
-def test_per_day_joins_ledger_requests_and_prometheus_errors(wired: Wired) -> None:
-    """Catches errors shifted a day (the point at midnight D+1 filed under D+1 instead of D),
-    requests and errors zipped in the wrong order, a day with no point left null or dropped
-    instead of 0.0, a window with missing days, and a date written in another format. The
-    three days differ in both columns, and the middle day has no Prometheus point."""
-    wired.reader.daily = [10, 0, 7]
+def test_per_day_joins_ledger_answered_and_failed(wired: Wired) -> None:
+    """Catches answered and failed zipped in the wrong order, a failed count taken from
+    Prometheus (its answer here differs: 2.0 and 5.0), a day dropped or left null, a window
+    with missing days, and a date written in another format. The three days differ in both
+    columns."""
+    wired.reader.daily = [(10, 1), (0, 4), (7, 0)]
     wired.prom.errors = {0: 2.0, 2: 5.0}
 
     body = wired.body(days=3)
 
     today = midnight(wired.reader.daily_asked[0][1]).date()
     assert body["per_day"] == [
-        {"day": (today - timedelta(days=2)).isoformat(), "requests": 10, "errors": 2.0},
-        {"day": (today - timedelta(days=1)).isoformat(), "requests": 0, "errors": 0.0},
-        {"day": today.isoformat(), "requests": 7, "errors": 5.0},
+        {"day": (today - timedelta(days=2)).isoformat(), "requests": 10, "errors": 1},
+        {"day": (today - timedelta(days=1)).isoformat(), "requests": 0, "errors": 4},
+        {"day": today.isoformat(), "requests": 7, "errors": 0},
     ]
     assert [days for days, _ in wired.reader.daily_asked] == [3]
 
 
 def test_prometheus_down_keeps_per_day_requests(wired: Wired) -> None:
-    """Catches a Prometheus failure that blanks the per-day requests (they come from the
-    ledger), reports errors as 0 (a failed read looks like a quiet day), or turns the page
-    into an error: every errors value is null, the counts stay, the status is 200."""
-    wired.reader.daily = [10, 0, 7]
+    """Catches a Prometheus failure that blanks the per-day counts (both come from the
+    ledger), nulls the errors (they no longer depend on Prometheus), or turns the page into
+    an error: the counts stay, the status is 200."""
+    wired.reader.daily = [(10, 2), (0, 0), (7, 5)]
     wired.prom.mode = "500"
 
     response = wired.get(days=3)
@@ -137,9 +98,9 @@ def test_prometheus_down_keeps_per_day_requests(wired: Wired) -> None:
     body = response.json()
     assert body["sources"] == {"postgres": "ok", "prometheus": "error"}
     assert [(row["requests"], row["errors"]) for row in body["per_day"]] == [
-        (10, None),
-        (0, None),
-        (7, None),
+        (10, 2),
+        (0, 0),
+        (7, 5),
     ]
 
 

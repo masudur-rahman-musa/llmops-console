@@ -23,7 +23,7 @@ days (both ends kept) is 422 naming `to`.
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from typing import Annotated, Final
 
 from fastapi import APIRouter, Query, Request
@@ -57,11 +57,9 @@ from app.services.dashboard import (
     prometheus,
 )
 from app.services.prometheus_reads import (
-    DAY_STEP_SECONDS,
     ERROR_RATE_QUERY,
     P95_QUERY,
     PrometheusClient,
-    errors_per_day_query,
     guardrail_blocks_query,
     redactions_query,
     refusals_query,
@@ -250,9 +248,8 @@ RequestCounts = tuple[
     tuple[RedactionCount, ...],
     tuple[RefusalCount, ...],
     float | None,
-    dict[date, float],
 ]
-"""The Prometheus half of the requests page: redactions, refusals, blocks, errors per day."""
+"""The Prometheus half of the requests page: redactions, refusals, blocks."""
 
 
 def trace_url(project_url: str | None, trace_id: str) -> str | None:
@@ -272,24 +269,6 @@ def checked_model(value: str) -> str:
     return value
 
 
-def errors_by_day(client: PrometheusClient, days: int, now: datetime) -> dict[date, float]:
-    """5xx answers per UTC day for the last `days` days ending today.
-
-    One range query at a one-day step from the midnight after the first day to tomorrow's
-    midnight; the point at midnight D+1 counts day D. A day with no point had no errors.
-    A test pins the query."""
-    today = now.astimezone(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-    points = client.range_query(
-        errors_per_day_query(),
-        start=(today - timedelta(days=days - 2)).timestamp(),
-        end=(today + timedelta(days=1)).timestamp(),
-        step=DAY_STEP_SECONDS,
-    )
-    return {
-        datetime.fromtimestamp(ts, UTC).date() - timedelta(days=1): value for ts, value in points
-    }
-
-
 @router.get(CONSOLE_REQUESTS)
 def requests(
     request: Request,
@@ -303,11 +282,11 @@ def requests(
     slow: bool = False,
     cached: bool = False,
 ) -> RequestsPage:
-    """Counts and errors per day from Prometheus; a ledger page, the hit rate, requests per
-    day and tokens per model from Postgres.
+    """Redactions, refusals and blocks from Prometheus; a ledger page, the hit rate, answered
+    and failed requests per day and tokens per model from Postgres.
 
     A dead or missing ledger is page 1 of 1 with no rows, no days and no tokens. A dead
-    Prometheus leaves each day's `errors` null.
+    Prometheus leaves the per-day counts alone: they come from the ledger.
 
     `day`, `tenant`, `model`, `errors`, `slow` and `cached` narrow the request list and its
     page count only; a bad `tenant` or `model` is 422 naming itself."""
@@ -334,11 +313,10 @@ def requests(
                 if value != 0
             ),
             first(client.instant_query(guardrail_blocks_query(days))),
-            errors_by_day(client, days, now),
         )
 
     prom, counts = prometheus(request, "requests", read)
-    redactions, refusals, blocks, errors_by = counts if counts is not None else ((), (), None, None)
+    redactions, refusals, blocks = counts if counts is not None else ((), (), None)
     pg, ledger_read = postgres(
         request,
         "requests",
@@ -364,10 +342,10 @@ def requests(
         per_day=tuple(
             DayRequests(
                 day=day,
-                requests=count,
-                errors=None if errors_by is None else errors_by.get(day, 0.0),
+                requests=answered,
+                errors=failed,
             )
-            for day, count in daily
+            for day, answered, failed in daily
         ),
         requests=tuple(
             row.model_copy(update={"trace_url": trace_url(project_url, row.trace_id)})

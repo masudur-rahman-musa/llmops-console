@@ -88,7 +88,7 @@ class StubReader:
         self._check()
         return None
 
-    def daily_requests(self, days: int, now: datetime) -> tuple[tuple[date, int], ...]:
+    def daily_requests(self, days: int, now: datetime) -> tuple[tuple[date, int, int], ...]:
         self._check()
         return ()
 

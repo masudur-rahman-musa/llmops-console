@@ -1,4 +1,4 @@
-.PHONY: help setup run up embed-model down rebuild all gateway console test test-infra fast test-slowest lint typecheck format verify security eval infra-check k8s-check k8s-aws-check k8s-server-check server-secrets server-helpdesk-data k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate secrets-encrypt secrets-decrypt secrets-check load numbers grafana-check
+.PHONY: help setup run up embed-model down rebuild all gateway console test test-infra fast test-slowest lint typecheck format verify security eval infra-check k8s-check k8s-aws-check k8s-server-check server-secrets server-helpdesk-data k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate secrets-encrypt secrets-decrypt secrets-check load numbers grafana-check console-check
 
 # The console's checks run through pnpm, and are skipped only in a checkout that
 # has no web, so the intended gate stays visible in this file. The
@@ -203,6 +203,11 @@ NUMBERS_DATABASE_URL = postgresql://opsconsole:$${POSTGRES_PASSWORD:-opsconsole}
 grafana-check:    ## Check the local Grafana answers and holds the gateway dashboard (stack up)
 	curl -fsS http://localhost:3002/api/health
 	curl -fsS http://localhost:3002/api/dashboards/uid/gateway-overview > /dev/null
+
+# Fetches every console tab from the running console (`make up`), signed in with its own
+# session cookie, and fails naming the page and the bad text. Not in `verify` or CI.
+console-check:    ## Fetch every console tab from the running stack and fail on junk text
+	@set -a; . web/.env.local; set +a; pnpm -C web exec vitest run --config vitest.live.config.ts
 
 numbers:    ## Fill every console tab through the real app (eval, traffic, release), then check them
 	OPSCONSOLE_DATABASE_URL="$(NUMBERS_DATABASE_URL)" $(MAKE) eval || [ -f $(EVAL_REPORTS)/report.json ]

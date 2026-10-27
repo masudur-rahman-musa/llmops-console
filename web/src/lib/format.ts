@@ -38,6 +38,11 @@ export function points(value: number | null | undefined): string {
   return missing(value) ? NA : `${value.toFixed(2)}%`;
 }
 
+/** A score to at most 2 decimals, with no trailing zeros: 0.9 stays `0.9`, 48.484848 is `48.48`. */
+export function rounded(value: number): string {
+  return String(Number(value.toFixed(2)));
+}
+
 /** Seconds, shown as whole milliseconds. */
 export function ms(seconds: number | null | undefined): string {
   return missing(seconds) ? NA : `${Math.round(seconds * 1000)} ms`;

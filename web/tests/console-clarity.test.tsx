@@ -113,15 +113,15 @@ describe("console clarity", () => {
     }
   });
 
-  it("quality chart labels its markers and scores", async () => {
-    // Catches a quality page that leaves the chart bare: no short sha on each marker, or no score axis from yFormat.
+  it("quality chart shows its scores and no commit hash", async () => {
+    // Catches a quality page that still prints a short sha above each marker, or leaves the chart with no score axis.
     const html = await render("quality");
     const chart = (html.match(/<svg\b[\s\S]*?<\/svg>/g) ?? []).filter((svg) => count(svg, /<circle\b/g) > 0)[0];
     const labels = Array.from(chart.matchAll(/<text\b[^>]*>([\s\S]*?)<\/text>/g), (match) =>
       match[1].replace(/<!--[\s\S]*?-->/g, "").trim(),
     );
-    expect(labels).toContain("5e2d8c1");
-    expect(labels).toContain("3f9c2a7");
+    expect(labels).not.toContain("5e2d8c1");
+    expect(labels).not.toContain("3f9c2a7");
     // The score axis is fixed at 0% to 100%, whatever the fixture scores are.
     expect(labels).toContain("0%");
     expect(labels).toContain("100%");

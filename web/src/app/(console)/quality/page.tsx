@@ -6,14 +6,11 @@ import { Panel } from "@/components/ui/panel";
 import { StatCards, type StatCard } from "@/components/ui/stat-cards";
 import { NONE_IN_WINDOW, Table } from "@/components/ui/table";
 import type { GateScore } from "@/features/quality/guards";
-import { NA, points, shortSha } from "@/lib/format";
+import { NA, points, rounded, shortSha } from "@/lib/format";
 import { CHECK_SCORE_SENTENCE, WINDOW_LINES, plainName, scoreLabel } from "@/lib/labels";
 import { PAGE_PARAMS, pageOf } from "@/lib/paging";
 
 export const dynamic = "force-dynamic";
-
-/** Short enough that two release labels never touch on the chart. */
-const MARKER_LABEL_LENGTH = 7;
 
 /** The check score axis runs 0% to 100% with these marked steps, so a flat line still shows its place. */
 const SCORE_RANGE = [0, 100] as const;
@@ -45,7 +42,7 @@ export default consolePage("quality", "Quality", "Does the help desk still answe
   const runTimes = new Map(body.runs.map((run) => [run.id, seconds(run.started_at)]));
   const markers = body.release_markers.flatMap((marker) => {
     const at = marker.eval_run_id === null ? undefined : runTimes.get(marker.eval_run_id);
-    return at === undefined ? [] : [{ at, label: marker.git_sha.slice(0, MARKER_LABEL_LENGTH) }];
+    return at === undefined ? [] : [{ at }];
   });
   // The baseline is the gate's own check score threshold; none set draws no line.
   const threshold = body.gate.find((row) => row.name === "check_score")?.threshold ?? null;
@@ -115,7 +112,7 @@ export default consolePage("quality", "Quality", "Does the help desk still answe
                 <ul>
                   {item.regressed.map((regression) => (
                     <li key={regression.metric}>
-                      {`${scoreLabel(regression.metric)}: ${regression.value} (was ${regression.previous})`}
+                      {`${scoreLabel(regression.metric)}: ${rounded(regression.value)} (was ${rounded(regression.previous)})`}
                     </li>
                   ))}
                 </ul>

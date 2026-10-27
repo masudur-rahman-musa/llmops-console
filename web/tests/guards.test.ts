@@ -186,9 +186,15 @@ describe("page body guards", () => {
     nullCost.month_spend_usd = null;
     expect(passes("cost", nullCost), "cost nulls").toBe(true);
 
-    // Catches a requests guard that refuses a day whose errors are null (Prometheus down), which would blank the page.
-    expect(passes("requests", withValue("requests", ["per_day", -1, "errors"], null)), "errors null").toBe(true);
     expect(passes("requests", withValue("requests", ["per_day"], [])), "per_day empty").toBe(true);
+  });
+
+  it("errors per day is a whole number, never null", () => {
+    // Catches a requests guard that still lets a null or fractional failed count through (the old Prometheus estimate), so the chart could show 13.0128054 or nothing.
+    expect(passes("requests", withValue("requests", ["per_day", -1, "errors"], 3)), "errors 3").toBe(true);
+    expect(passes("requests", withValue("requests", ["per_day", -1, "errors"], 0)), "errors 0").toBe(true);
+    expect(passes("requests", withValue("requests", ["per_day", -1, "errors"], null)), "errors null").toBe(false);
+    expect(passes("requests", withValue("requests", ["per_day", -1, "errors"], 13.012805401607991)), "errors fraction").toBe(false);
   });
 
   it("cost guard no longer checks the savings rows", () => {

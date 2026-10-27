@@ -73,7 +73,6 @@ export default consolePage(
           },
         ]}
       />
-      {/* A null errors value (Prometheus down) draws no Failed part; the source notice says why. */}
       <BarChart
         title="Requests and errors per day"
         series={[ANSWERED, FAILED]}
@@ -81,7 +80,7 @@ export default consolePage(
           label: shortDay(day.day),
           parts: [
             { series: ANSWERED, value: day.requests },
-            { series: FAILED, value: day.errors ?? 0 },
+            { series: FAILED, value: day.errors },
           ],
         }))}
       />

@@ -428,7 +428,8 @@ def test_failed_rows_change_no_served_number(
         return Served(
             today=reader.home(now=NOW).requests_today,
             hit_rate=reader.cache_hit_rate(WINDOW, NOW),
-            last_day=reader.daily_requests(WINDOW, NOW)[-1],
+            # Answered side only: the failed row below adds to the failed count by design.
+            last_day=reader.daily_requests(WINDOW, NOW)[-1][:2],
             models=[(t.model, t.input, t.output) for t in reader.model_tokens(WINDOW, NOW)],
             per_alias=[(c.alias, c.cost_usd) for c in cost.cost_per_request],
             days=[(day.requests, day.cached_requests) for day in cost.days],

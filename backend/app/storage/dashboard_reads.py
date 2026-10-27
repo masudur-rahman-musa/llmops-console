@@ -203,7 +203,7 @@ class ConsoleReader(Protocol):
 
     def cache_hit_rate(self, days: int, now: datetime) -> float | None: ...
 
-    def daily_requests(self, days: int, now: datetime) -> tuple[tuple[date, int], ...]: ...
+    def daily_requests(self, days: int, now: datetime) -> tuple[tuple[date, int, int], ...]: ...
 
     def model_tokens(self, days: int, now: datetime) -> tuple[ModelTokens, ...]: ...
 
@@ -250,7 +250,7 @@ class UnconfiguredConsoleReader:
     def cache_hit_rate(self, days: int, now: datetime) -> float | None:
         return None
 
-    def daily_requests(self, days: int, now: datetime) -> tuple[tuple[date, int], ...]:
+    def daily_requests(self, days: int, now: datetime) -> tuple[tuple[date, int, int], ...]:
         return ()
 
     def model_tokens(self, days: int, now: datetime) -> tuple[ModelTokens, ...]:
@@ -362,10 +362,12 @@ class PostgresConsoleReader:
         cached, total = row
         return None if total == 0 else cached / total
 
-    def daily_requests(self, days: int, now: datetime) -> tuple[tuple[date, int], ...]:
-        """Ledger rows per UTC day for the last `days` UTC dates ending today, oldest first.
+    def daily_requests(self, days: int, now: datetime) -> tuple[tuple[date, int, int], ...]:
+        """`(day, answered, failed)` per UTC day for the last `days` UTC dates ending today,
+        oldest first: ledger rows below status 500, then rows at 500 or above.
 
-        Every day is present, a day with no rows as 0, so the chart has no gaps. A test pins this.
+        Every day is present, a day with no rows as `(day, 0, 0)`, so the chart has no gaps.
+        A test pins this.
         """
         today = now.astimezone(UTC).date()
         first = today - timedelta(days=days - 1)
@@ -374,15 +376,17 @@ class PostgresConsoleReader:
         with self._pool.connection() as conn:
             rows = conn.execute(
                 sql.SQL(
-                    "SELECT (ts AT TIME ZONE 'UTC')::date, count(*) FROM {} "
-                    "WHERE ts >= %s AND ts < %s AND status < 500 GROUP BY 1"
+                    "SELECT (ts AT TIME ZONE 'UTC')::date, "
+                    "count(*) FILTER (WHERE status < 500), "
+                    "count(*) FILTER (WHERE status >= 500) FROM {} "
+                    "WHERE ts >= %s AND ts < %s GROUP BY 1"
                 ).format(self._table("cost_ledger")),
                 (start, end),
             ).fetchall()
-        counts: dict[date, int] = {row[0]: row[1] for row in rows}
+        counts: dict[date, tuple[int, int]] = {row[0]: (row[1], row[2]) for row in rows}
         return tuple(
-            (first + timedelta(days=offset), counts.get(first + timedelta(days=offset), 0))
-            for offset in range(days)
+            (day, *counts.get(day, (0, 0)))
+            for day in (first + timedelta(days=offset) for offset in range(days))
         )
 
     def model_tokens(self, days: int, now: datetime) -> tuple[ModelTokens, ...]:
