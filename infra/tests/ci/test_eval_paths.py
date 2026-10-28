@@ -33,8 +33,6 @@ SCANNED = [
     REPO_ROOT / "README.md",
     REPO_ROOT / "dev" / "ops" / "runbook.md",
     REPO_ROOT / "dev" / "docs" / "ci-cd-deploy.md",
-    REPO_ROOT / ".claude" / "commands" / "project-evals.md",
-    REPO_ROOT / ".claude" / "settings.json",
     REPO_ROOT / "docs" / "tradeoff-run" / "README.md",
     *sorted((REPO_ROOT / "docs").glob("eval-*.md")),
     *sorted((REPO_ROOT / "infra" / "evals").rglob("*")),

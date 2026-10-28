@@ -98,20 +98,10 @@ extend-exclude = ["dev/**"]
 # a SyntaxError in a later Python.
 select = ["E", "W", "F", "I", "UP", "B", "SIM", "ANN", "RUF"]
 
-[tool.ruff.lint.per-file-ignores]
-# Agent hooks keep long rule strings on one line so the pattern stays readable.
-# Everything else (F, B, ...) still applies to them.
-".claude/**" = ["E501"]
-
 [tool.ruff.lint.isort]
 # The app imports as `app` from `backend/app/`; name it first-party so its
 # imports group apart from third-party ones and I001 stays correct.
 known-first-party = ["app"]
-
-[tool.ruff.format]
-# `.claude/` is agent tooling checked in as-is; linting it is useful, reflowing
-# it is a diff outside every plan's file list.
-exclude = [".claude/**"]
 
 [tool.mypy]
 files = ["app", "tests"]

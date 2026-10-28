@@ -33,8 +33,8 @@ CHANGED_DOCS = (
     "docs/media/README.md",
     "docs/eval-report.md",
 )
-ROOTS = ("backend/", "infra/", "docs/", "dev/", "web/", ".claude/", ".github/")
-ROOT_FILES = {"Makefile", "README.md", "CLAUDE.md", "ARCHITECTURE.md", "docker-compose.yml"}
+ROOTS = ("backend/", "infra/", "docs/", "dev/", "web/", ".github/")
+ROOT_FILES = {"Makefile", "README.md", "ARCHITECTURE.md", "docker-compose.yml"}
 # Gitignored or local-only: on the owner's disk, absent from a fresh clone.
 LOCAL_ONLY = ("dev/notes/", "dev/docs/REQUIREMENTS.md", "dev/disputes/")
 # Written by a run, or living in the companion repo.

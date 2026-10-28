@@ -20,7 +20,7 @@ from pathlib import Path
 #: The file sits at `infra/tests/infra/<file>`, so parents[3] is the repository root.
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
-ROOT_ALLOWLIST = REPO_ROOT / ".claude" / "root-allowlist"
+ROOT_ALLOWLIST = REPO_ROOT / ".github" / "root-allowlist"
 CHECK_ROOT = REPO_ROOT / ".github" / "scripts" / "check_root.py"
 PRECOMMIT = REPO_ROOT / ".pre-commit-config.yaml"
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"

@@ -1,19 +1,16 @@
 r"""An earlier change: ruff checks and formats the whole repo, with the project's own settings.
 
-The settings live in `backend/pyproject.toml` (line length 100, the selected rules, the
-`.claude/**` E501 ignore). Every place that runs ruff - the pre-commit hooks, the Makefile's
-`lint` and `format`, the CI format check and the Claude edit hook - passes
-`--config backend/pyproject.toml` and runs from the repo root over `.`, so `infra/`, `dev/`
-and `.claude/` are held to the same rules as `backend/`.
+The settings live in `backend/pyproject.toml` (line length 100, the selected rules).
+Every place that runs ruff - the pre-commit hooks, the Makefile's `lint` and `format`, and
+the CI format check - passes `--config backend/pyproject.toml` and runs from the repo root
+over `.`, so `infra/` and `dev/` are held to the same rules as `backend/`.
 
-Text and YAML reads of the four tooling files, plus ruff subprocesses run from the repo root
+Text and YAML reads of the three tooling files, plus ruff subprocesses run from the repo root
 through `uv run --project backend`. No services, no import of any `app` or `infra` module.
 """
 
 from __future__ import annotations
 
-import json
-import os
 import re
 import shlex
 import subprocess
@@ -29,13 +26,12 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PRE_COMMIT = REPO_ROOT / ".pre-commit-config.yaml"
 MAKEFILE = REPO_ROOT / "Makefile"
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
-EDIT_HOOK = REPO_ROOT / ".claude" / "hooks" / "format_and_lint.sh"
 
 #: The settings file every ruff call names, spelled from the repo root.
 CONFIG_PATH = "backend/pyproject.toml"
 
-#: The four files that run ruff.
-TOOLING_FILES = [PRE_COMMIT, MAKEFILE, CI_WORKFLOW, EDIT_HOOK]
+#: The three files that run ruff.
+TOOLING_FILES = [PRE_COMMIT, MAKEFILE, CI_WORKFLOW]
 
 #: The project's line length, from `backend/pyproject.toml`.
 LINE_LENGTH = 100
@@ -178,20 +174,6 @@ def _is_ruff_format(tokens: list[str]) -> bool:
     )
 
 
-def _run_hook(target: Path) -> subprocess.CompletedProcess[str]:
-    env = dict(os.environ)
-    env["CLAUDE_PROJECT_DIR"] = str(REPO_ROOT)
-    return subprocess.run(
-        ["bash", str(EDIT_HOOK)],
-        cwd=REPO_ROOT,
-        input=json.dumps({"tool_input": {"file_path": str(target)}}),
-        capture_output=True,
-        text=True,
-        env=env,
-        check=False,
-    )
-
-
 def test_pre_commit_ruff_hooks_use_backend_config() -> None:
     """Catches a pre-commit ruff hook that runs without `--config backend/pyproject.toml`
     (so files outside `backend/` get ruff's defaults) or a check hook that lost `--fix`."""
@@ -268,38 +250,10 @@ def test_dev_scripts_are_skipped_from_root() -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_claude_ignore_resolves_from_root() -> None:
-    """Catches a `.claude/**` E501 ignore that no longer matches when ruff runs from the
-    repo root (a glob resolved against `backend/`), so long hook lines would start failing."""
-    result = _check_stdin(".claude/hooks/x.py", _string_line(LINE_LENGTH + 1) + "\n")
-    assert result.returncode == 0, result.stdout + result.stderr
-
-
-def test_edit_hook_formats_python_file(tmp_path: Path) -> None:
-    """Catches an edit hook that still looks for a root `pyproject.toml` (gone since
-    an earlier change) and so exits 0 without formatting anything."""
-    target = tmp_path / "badly_spaced.py"
-    target.write_text("x=1\ny =  [1,2]\n", encoding="utf-8")
-    result = _run_hook(target)
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert target.read_text(encoding="utf-8") == "x = 1\ny = [1, 2]\n"
-
-
-def test_edit_hook_reports_unfixable_issue(tmp_path: Path) -> None:
-    """Catches an edit hook that never reaches `ruff check` (the root `pyproject.toml`
-    guard) or swallows its failure, so an over-long line is let through silently."""
-    target = tmp_path / "too_long.py"
-    target.write_text(_string_line(LINE_LENGTH + 1) + "\n", encoding="utf-8")
-    result = _run_hook(target)
-    assert result.returncode == 2, result.stdout + result.stderr
-    assert str(target) in result.stderr, result.stderr
-
-
 def test_named_config_paths_exist() -> None:
     """Catches a tooling file that names a `pyproject.toml` path which does not exist from
-    the repo root (the hook's bare `pyproject.toml`, or a misspelt `backend/` path)."""
+    the repo root (a bare `pyproject.toml`, or a misspelt `backend/` path)."""
     assert (REPO_ROOT / CONFIG_PATH).is_file()
-    assert EDIT_HOOK.is_file()
     for path in TOOLING_FILES:
         for line in path.read_text(encoding="utf-8").splitlines():
             if line.strip().startswith("#"):

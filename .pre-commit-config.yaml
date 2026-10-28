@@ -30,8 +30,8 @@ repos:
         args: [--config, backend/pyproject.toml]
   - repo: local
     hooks:
-      # Keeps the repo root to the names in .claude/root-allowlist. The same
-      # check runs in CI (ci.yml) and as a Claude PreToolUse hook.
+      # Keeps the repo root to the names in .github/root-allowlist. The same
+      # check runs in CI (ci.yml).
       - id: check-root
         name: check repo root against the allowlist
         entry: python3 .github/scripts/check_root.py

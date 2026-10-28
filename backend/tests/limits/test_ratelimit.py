@@ -9,7 +9,7 @@ whether a request is served and when a refused one may come back.
 NO TEST HERE SLEEPS. The clock is a parameter of `refill` and a constructor
 argument of both stores, so "half a token has refilled" is arranged by handing
 the store a different number, never by waiting for one. A rate-limit suite that
-sleeps is a tax on every future session (CLAUDE.md's conventions), and a sleeping
+sleeps is a tax on every future run (the project's fast-test rule), and a sleeping
 test also cannot express "exactly one whole token", only "at least".
 
 The contract these cases are written against, before it exists:

@@ -7,7 +7,6 @@ parts so this file is not a hit for its own search.
 
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 from pathlib import Path
@@ -35,18 +34,6 @@ OLD_DIR = "/".join(("dev", "scripts"))
 def _git(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args], cwd=REPO_ROOT, capture_output=True, text=True, check=False
-    )
-
-
-def _run_root_hook(file_path: Path) -> subprocess.CompletedProcess[str]:
-    payload = {"tool_name": "Write", "tool_input": {"file_path": str(file_path)}}
-    return subprocess.run(
-        ["python3", str(HOMES["check_root.py"]), "--claude-hook"],
-        cwd=REPO_ROOT,
-        input=json.dumps(payload),
-        capture_output=True,
-        text=True,
-        check=False,
     )
 
 
@@ -90,7 +77,6 @@ def test_every_caller_names_the_new_path() -> None:
     expectations = {
         Path(".github") / "workflows" / "ci.yml": (root_check, 1),
         Path(".pre-commit-config.yaml"): (root_check, 1),
-        Path(".claude") / "settings.json": (root_check, 2),
         Path("infra") / "scripts" / "tradeoff_run.sh": (HOMES["tradeoff_policy.py"].as_posix(), 1),
         Path("README.md"): (HOMES["redaction_report.py"].as_posix(), 1),
     }
@@ -111,17 +97,6 @@ def test_root_check_passes_from_its_new_home() -> None:
         check=False,
     )
     assert result.returncode == 0, (result.stdout, result.stderr)
-
-
-def test_root_hook_blocks_a_stray_root_file_and_names_its_new_home() -> None:
-    """Catches a moved hook whose BLOCKED message still names the old folder, or
-    that stops blocking a stray root file after the move.
-    """
-    result = _run_root_hook(REPO_ROOT / "stray.txt")
-    assert result.returncode == 2, (result.returncode, result.stderr)
-    # "BLOCKED" proves the script ran; a missing file also exits 2 and names the path.
-    assert "BLOCKED" in result.stderr, result.stderr
-    assert HOMES["check_root.py"].as_posix() in result.stderr, result.stderr
 
 
 def test_redaction_report_check_runs_as_a_fresh_process() -> None:

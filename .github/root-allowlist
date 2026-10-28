@@ -1,0 +1,16 @@
+# What may sit at the repo root. One name or glob per line; a trailing / means a folder.
+# Checked by .github/scripts/check_root.py (pre-commit and CI).
+.github/
+backend/
+web/
+dev/
+infra/
+docs/
+.*
+README.md
+LICENSE
+ARCHITECTURE.md
+SECURITY.md
+Makefile
+docker-compose.yml
+docker-compose.override.yml

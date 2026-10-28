@@ -36,7 +36,7 @@ TRADEOFF_OVERLAY = REPO_ROOT / "infra" / "tradeoff" / "compose.yml"
 OLD_TRADEOFF_OVERLAY = REPO_ROOT / "docker-compose.tradeoff.yml"
 SERVER_SECRETS = REPO_ROOT / "infra" / "scripts" / "server_secrets.sh"
 CHECK_ROOT = REPO_ROOT / ".github" / "scripts" / "check_root.py"
-ROOT_ALLOWLIST = REPO_ROOT / ".claude" / "root-allowlist"
+ROOT_ALLOWLIST = REPO_ROOT / ".github" / "root-allowlist"
 EDITORCONFIG = REPO_ROOT / ".editorconfig"
 
 #: The gateway's `env_file`, in this exact order: the demo values, then the owner's over them.
@@ -189,7 +189,6 @@ def test_server_secrets_default_env_file() -> None:
 def _check_root(repo: Path) -> subprocess.CompletedProcess[str]:
     """Run the real root check against `repo`."""
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
-    env["CLAUDE_PROJECT_DIR"] = str(repo)
     return subprocess.run(
         [sys.executable, str(CHECK_ROOT)],
         cwd=repo,
@@ -204,8 +203,8 @@ def test_root_check_refuses_root_env(tmp_path: Path) -> None:
     """Catches a root check that still sees only git's file list, so a gitignored root `.env`
     passes."""
     repo = tmp_path / "repo"
-    (repo / ".claude").mkdir(parents=True)
-    shutil.copyfile(ROOT_ALLOWLIST, repo / ".claude" / "root-allowlist")
+    (repo / ".github").mkdir(parents=True)
+    shutil.copyfile(ROOT_ALLOWLIST, repo / ".github" / "root-allowlist")
     (repo / ".gitignore").write_text(".env\n", encoding="utf-8")
     subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True)
 

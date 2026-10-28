@@ -16,8 +16,6 @@ MAKEFILE = REPO_ROOT / "Makefile"
 WEB = REPO_ROOT / "web"
 LIVE_CONFIG = WEB / "vitest.live.config.ts"
 NORMAL_CONFIG = WEB / "vitest.config.ts"
-CLOSE_SKILL = REPO_ROOT / ".claude" / "skills" / "close" / "SKILL.md"
-TEST_MODE_GUIDE = REPO_ROOT / ".claude" / "guides" / "test-mode.md"
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 DASHBOARD_ROUTES = REPO_ROOT / "backend" / "app" / "api" / "routes" / "dashboard.py"
 
@@ -36,13 +34,6 @@ def recipe(target: str) -> str:
         else:
             break
     return "\n".join(body)
-
-
-def paragraph_with(text: str, needle: str) -> str:
-    """The blank-line-separated paragraph of `text` that holds `needle`."""
-    found = [part for part in re.split(r"\n\s*\n", text) if needle in part]
-    assert found, f"no paragraph names {needle!r}"
-    return found[0]
 
 
 def test_console_check_target_runs_the_live_config() -> None:
@@ -78,21 +69,8 @@ def test_the_normal_run_skips_the_live_folder() -> None:
     assert re.search(r"include:\s*\[\s*[\"']tests/live/\*\*/\*\.test\.ts[\"']\s*\]", live), live
 
 
-def test_close_runs_console_check() -> None:
-    """Catches a close skill that never runs the check, runs it without saying when (a plan
-    touching `web/` or the console routes), lets a failure pass, or skips it under a fast
-    test-mode."""
-    part = paragraph_with(read(CLOSE_SKILL), "make console-check")
-    assert "web/" in part, part
-    assert "backend/app/api/routes/dashboard.py" in part, part
-    assert "every test-mode" in part, part
-    assert re.search(r"failure stops the close", part, re.IGNORECASE), part
-    guide = paragraph_with(read(TEST_MODE_GUIDE), "make console-check")
-    assert "every mode" in guide, guide
-
-
 def test_every_path_named_exists() -> None:
-    """Catches a path the new target, configs or skill line names that is not there, such as
+    """Catches a path the new target or configs name that is not there, such as
     a live test, the setup file or the shared junk check."""
     for path in (
         LIVE_CONFIG,
@@ -102,7 +80,6 @@ def test_every_path_named_exists() -> None:
         WEB / "tests" / "setup.ts",
         WEB / "tests" / "fixtures" / "messy.ts",
         DASHBOARD_ROUTES,
-        CLOSE_SKILL,
     ):
         assert path.is_file(), f"{path.relative_to(REPO_ROOT)} does not exist"
     setup = re.search(r"setupFiles:\s*\[\s*[\"']([^\"']+)[\"']", read(NORMAL_CONFIG))

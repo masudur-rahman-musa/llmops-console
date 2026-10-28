@@ -29,7 +29,6 @@ OLD_FOLDER_FILES = (
     RUNBOOK,
     REPO_ROOT / "dev" / "ops" / "README.md",
     REPO_ROOT / "dev" / "ops" / "slo.md",
-    REPO_ROOT / ".claude" / "skills" / "layout" / "SKILL.md",
 )
 
 

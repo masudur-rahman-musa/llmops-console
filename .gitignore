@@ -1,7 +1,6 @@
 .env
 .env.*
 !.env.example
-.claude/settings.local.json
 .DS_Store
 __pycache__/
 *.pyc
@@ -33,7 +32,6 @@ notes.md
 REQUIREMENTS.md
 his.md
 pl/
-.claude/hooks/local_*
 # AI
 backend/evals/reports/
 infra/load/results/

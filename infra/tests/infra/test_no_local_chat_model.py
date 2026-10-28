@@ -144,7 +144,6 @@ PATH_FILES = (
     "backend/Dockerfile",
     "docker-compose.yml",
     "Makefile",
-    "CLAUDE.md",
     "infra/k8s/kustomization.yaml",
     "infra/k8s/apps/kustomization.yaml",
     "infra/k8s/aws/kustomization.yaml",

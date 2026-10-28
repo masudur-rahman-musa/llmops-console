@@ -17,7 +17,7 @@ REPO = Path(__file__).resolve().parents[2]
 REMOVED = re.compile(r"residency|eu_regions|allow_regions|X-Gateway-Region|\b451\b", re.IGNORECASE)
 
 SCANNED_TREES = ("backend/app", "backend/config", "infra")
-SCANNED_FILES = ("Makefile", "CLAUDE.md")
+SCANNED_FILES = ("Makefile",)
 MIGRATION_GLOB = "backend/migrations/005*"
 # Migration 005 has to name the table it drops. That name is the one allowed word.
 DROPPED_TABLE = "residency_log"
@@ -46,7 +46,7 @@ def _shipped_files() -> Iterator[Path]:
 
 def test_no_shipped_file_names_residency() -> None:
     """Catches a leftover in any file that ships: a dashboard panel, a manifest comment, a
-    metric name, the Makefile, CLAUDE.md. The per-feature cases only look where the removed
+    metric name, the Makefile. The per-feature cases only look where the removed
     code was; this sweep finds the file nobody thought to list. Terraform `region` is
     untouched because the pattern never matches the bare word, and `infra/tests` (which
     state the absence) is outside the sweep. Files are counted so an empty walk fails."""
@@ -65,9 +65,9 @@ def test_no_shipped_file_names_residency() -> None:
     assert hits == []
 
 
-DOCS = ("README.md", "docs/customizing.md", "dev/ops/threat-model.md", "CLAUDE.md")
-ROOTS = ("backend/", "infra/", "docs/", "dev/", "web/", ".claude/", ".github/")
-ROOT_FILES = {"Makefile", "README.md", "CLAUDE.md", "ARCHITECTURE.md", "docker-compose.yml"}
+DOCS = ("README.md", "docs/customizing.md", "dev/ops/threat-model.md")
+ROOTS = ("backend/", "infra/", "docs/", "dev/", "web/", ".github/")
+ROOT_FILES = {"Makefile", "README.md", "ARCHITECTURE.md", "docker-compose.yml"}
 # Gitignored or local-only: present on the owner's disk, absent from a fresh clone.
 LOCAL_ONLY = ("dev/notes/", "dev/docs/REQUIREMENTS.md", "dev/disputes/")
 # Written by a run, or living in the companion repo: named in a doc, never in this tree.
@@ -116,7 +116,7 @@ def test_every_path_the_changed_docs_name_exists() -> None:
     """Catches a doc that still points at a file this plan deleted (`test_residency_property.py`,
     `ops-purge-residency`, the residency dashboard) or at a test the README guarantee should
     link (`backend/tests/api/test_fallback.py`). Moving a file updates every reference in the
-    same diff (CLAUDE.md rule 13). Each doc must name at least one path, so a parser that
+    same diff. Each doc must name at least one path, so a parser that
     finds nothing cannot pass."""
     missing: list[str] = []
 
