@@ -28,8 +28,8 @@ answered first (`test_the_merge_is_recursive_over_mappings`,
 The option id names both the overlay file and, in `tradeoff_run.sh`, the evidence
 directory, so it is a store-shaping input: it is checked with `re.fullmatch`
 against `opsconsole.evals.tradeoff.OPTION_ID_PATTERN` - the same constant the
-manifest validates its ids with - before any path is built (a project rule and
-4; `test_a_malformed_option_id_is_refused_before_any_file_is_touched`).
+manifest validates its ids with - before any path is built
+(`test_a_malformed_option_id_is_refused_before_any_file_is_touched`).
 
 A pattern refusal and a missing overlay both exit 2, and the MESSAGE is what tells
 them apart: the first prints the pattern, the second prints the path it looked for.

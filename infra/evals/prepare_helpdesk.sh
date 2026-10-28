@@ -3,7 +3,7 @@
 # run: `make eval` calls this, never by hand. Usage: prepare_helpdesk.sh <help desk dir>
 #
 # Runs the help desk's own reset (drop, migrate, checkpointer, seed, reviews),
-# minus its ingest step: that step still names a script the help desk has
+# minus its ingest step, which still names a script the help desk has
 # since removed. The ingest runs here instead, one tenant and corpus version at
 # a time, the way `infra/scripts/server_helpdesk_data.sh` does. It redacts each
 # chunk through this gateway's `/v1/redact`, so it needs the gateway up and the

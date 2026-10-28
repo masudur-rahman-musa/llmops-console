@@ -157,8 +157,8 @@ def test_the_fallback_alias_resolves_to_the_expected_candidates() -> None:
 def test_a_retryable_failure_is_served_by_the_next_candidate(
     fallback_client: TestClient, fallback_adapters: dict[str, FallbackStubAdapter]
 ) -> None:
-    """Catches a route that still returns `candidates[0]`'s failure - the 502 an earlier change
-    shipped - and a route that falls back but keeps answering the FIRST candidate's
+    """Catches a route that still returns `candidates[0]`'s failure - the 502 that used to
+    be shipped - and a route that falls back but keeps answering the FIRST candidate's
     identity: the body is compared against the second stub's own words and the headers
     against the second provider, so a fallback that served correctly while reporting
     `X-Gateway-Provider: anthropic` (which is what a copied header dict does) is caught
@@ -184,7 +184,7 @@ def test_a_stream_failing_before_its_first_event_falls_back(
     non-streamed one would have been served - and one whose fallback answers from the
     second provider under the first provider's header. Nothing has been sent when the
     first candidate fails here (the route pulls event one before it returns), which is
-    exactly the window decision C says is safe to retry elsewhere."""
+    exactly the window that is safe to retry elsewhere."""
     first = fallback_adapters[FIRST_PROVIDER]
     second = fallback_adapters[SECOND_PROVIDER]
     first.stream_error = retryable_error(FIRST_PROVIDER)
@@ -311,7 +311,7 @@ def test_an_open_breaker_skips_a_provider_on_the_next_request(
     fallback_adapters: dict[str, FallbackStubAdapter],
     fallback_breaker: CircuitBreaker,
 ) -> None:
-    """The end-to-end statement of the whole plan: catches a route that reads the breaker
+    """The end-to-end statement of the whole feature: catches a route that reads the breaker
     but never RECORDS the failures the loop absorbs, which is a breaker that never opens
     and a first candidate dialled on every request forever. The sixth request is the kill
     - the first stub's call count must not move - and it is why the count is asserted both
@@ -548,7 +548,7 @@ def test_rate_limit_5xx_and_timeout_still_fall_back(
 
 
 # --------------------------------------------------------------------------
-# an earlier change: chat runs on anthropic and openai, in either order
+# Chat runs on anthropic and openai, in either order
 # --------------------------------------------------------------------------
 
 SHIPPED_PROVIDERS_DIR = SHIPPED_POLICY_PATH.parent / "providers"

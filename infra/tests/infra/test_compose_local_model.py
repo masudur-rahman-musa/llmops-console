@@ -1,13 +1,14 @@
 r"""The local embedding server starts by default, from a model file one `make` step fetches.
 
-An earlier change put the llama.cpp servers behind a `local-model` profile. An earlier change removed the local
-chat model. An earlier change takes the profile off the one that is left, `llama-embed`:
+The llama.cpp servers used to sit behind a `local-model` profile. The local chat model is gone, and
+the profile is off the one that is left, `llama-embed`:
 the semantic cache needs it, so a plain `docker compose up -d` starts it. Its model file
 (`bge-small-en-v1.5-q8_0.gguf`) comes from `make embed-model`, which `make up` runs first.
 the server keeps the server off, so its manifests are not touched here.
 
 Most cases read files as TEXT or as parsed YAML (`yaml.safe_load`), through `read` and
-`load_yaml` from `test_hetzner_module.py`, spelled as the package `__init__` files make it. A file the plan has not changed yet fails the case that reads it, never
+`load_yaml` from `test_hetzner_module.py`, spelled as the package `__init__` files make it. A file
+that has not been changed yet fails the case that reads it, never
 the collection.
 
 One case asks Docker Compose itself which services start by default. That
@@ -35,9 +36,8 @@ COMPOSE_FILE = REPO_ROOT / "docker-compose.yml"
 TRADEOFF_SCRIPT = REPO_ROOT / "infra" / "scripts" / "tradeoff_run.sh"
 README = REPO_ROOT / "README.md"
 MAKEFILE = REPO_ROOT / "Makefile"
-HANDBOOK = REPO_ROOT / "dev" / "docs" / "ci-cd-deploy.md"
 
-#: The profile the embedding server used to sit behind. It is gone since an earlier change.
+#: The profile the embedding server used to sit behind. It is gone now.
 PROFILE = "local-model"
 
 #: The services that start with a plain `docker compose up -d`.
@@ -241,9 +241,9 @@ def test_make_up_fetches_the_model_first() -> None:
     assert "embed-model" in target_line(read(MAKEFILE), "up").split()
 
 
-@pytest.mark.parametrize("path", [README, HANDBOOK], ids=["README.md", "ci-cd-deploy.md"])
+@pytest.mark.parametrize("path", [README], ids=["README.md"])
 def test_the_docs_no_longer_name_the_local_model_profile(path: Path) -> None:
-    """Neither the README nor the handbook names `--profile local-model`.
+    """The README does not name `--profile local-model`.
 
     Catches a doc that still sends the reader to a profile that no longer exists, where
     the command would start nothing extra and say nothing.

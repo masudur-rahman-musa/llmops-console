@@ -1,4 +1,4 @@
-"""An earlier change: the Failed (5xx) line on `/console/requests` is counted from the cost ledger.
+"""The Failed (5xx) line on `/console/requests` is counted from the cost ledger.
 
 No backing service. The admin app is built as tests/api/test_console_layout.py builds it, with
 `StubReader` and `PromStub` swapped in after startup. The stub Prometheus answers fractions

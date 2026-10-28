@@ -1,8 +1,8 @@
 r"""Fixtures and scoring helpers for the redaction engine tests.
 
 Everything here is in-process: one JSON file read and pure CPU work. There is no
-backing service, so a project rule (session-scoped fixtures, isolation by
-namespace) has nothing to apply to. The case list is read once at session scope
+backing service, so session-scoped fixtures with isolation by
+namespace have nothing to do. The case list is read once at session scope
 anyway, because it is immutable data and re-reading it 57 times buys nothing.
 
 Two helpers carry the load-bearing claims:
@@ -20,7 +20,7 @@ Two helpers carry the load-bearing claims:
 kind, because a pooled number hides a kind the engine barely finds, and with every miss
 and false find listed, because a number alone does not say what to fix.
 
-`round_metric` is the ONE rounding in this plan: `test_fixture_accuracy.py` and
+`round_metric` is the ONE rounding: `test_fixture_accuracy.py` and
 `backend/scripts/redaction_report.py` both take their numbers through it, so the README
 table and the asserted floors cannot disagree by a half-ulp.
 """
@@ -280,7 +280,7 @@ def score_cases(
     A detection is a true positive only when `(kind, start, end)` equals an
     expected span exactly: a right span with the wrong kind label counts once as
     a false positive and once as a false negative, which is the whole reason
-    decision B stores spans rather than an expected output string.
+    the fixture stores spans rather than an expected output string.
 
     Each case is scored with ITS OWN compiled directory.
     Scoring `Kind.PERSON` against a directory pooled over the whole fixture would
@@ -343,7 +343,7 @@ def emitted_detections(text: str, directory: NameDirectory | None = None) -> tup
     space-grouped IBAN they legitimately include a `CARD` and a `PHONE` sub-span
     that the overlap merge then drops, so scoring them would report false
     positives for values the engine never emits and never stores. The resolved
-    list is what a caller sees, what the placeholder map holds and what an earlier change
+    list is what a caller sees, what the placeholder map holds and what rehydration
     persists, so it is the honest subject. `detect_all` keeps its own per-kind
     rejection rows in `test_detectors.py`; see
     `test_the_score_measures_what_the_engine_emits_not_raw_candidates`.

@@ -138,7 +138,7 @@ class AdminApp:
 def admin_app_on(tmp_path: Path, environ: dict[str, str] | None = None) -> Iterator[AdminApp]:
     """An app over a private copy of the shipped `routing.yaml`, closed at exit.
 
-    The one documented exception to a project rule: these cases rewrite the file
+    The one documented exception to sharing a session-scoped client: these cases rewrite the file
     the app was built from, so they cannot share a session-scoped client. It costs
     a YAML parse and no backing service.
     """
@@ -201,8 +201,7 @@ def test_the_admin_paths_and_statuses_are_pinned(admin_client: TestClient) -> No
     renders a refused caller as 403/404 and a rejected filter as 400/500 rather
     than the exact 401 UNAUTHORIZED and 422 VALIDATION the contract fixes.
 
-    a project rule: both paths and both statuses are values this plan
-    introduces, so they are asserted exactly rather than by shape.
+    Both paths and both statuses are new values, so they are asserted exactly rather than by shape.
     """
     assert admin.ADMIN_ROUTING == ADMIN_ROUTING == "/admin/routing"
     assert admin.ADMIN_ROUTING_RELOAD == ADMIN_ROUTING_RELOAD == "/admin/routing/reload"
@@ -393,7 +392,7 @@ def test_the_tenant_filter_length_boundary_is_inclusive(
     check answers 200 to the over-cap row (neither name is a policy tenant, so
     without the check both would simply be an empty view).
 
-    a project rule: the cap is the store's own `MAX_IDENTIFIER_LENGTH`, not a
+    The cap is the store's own `MAX_IDENTIFIER_LENGTH`, not a
     number copied here.
     """
     response = admin_get(admin_client, tenant=tenant)
@@ -428,7 +427,7 @@ def test_the_tenant_filter_rejection_table(
     or, for the empty row, the whole unfiltered matrix, never reaching `resolve()`
     and never raising `IdentifierInvalid` from the neighbouring guard inside it.
 
-    a project rule: the table's first three rows are the newline, the CRLF and
+    The table's first three rows are the newline, the CRLF and
     the space.
     """
     assert_error_body(admin_get(admin_client, tenant=tenant), status=422, code="VALIDATION")
@@ -542,7 +541,7 @@ def test_a_policy_reload_rebuilds_the_breaker(tmp_path: Path) -> None:
 
 
 def test_a_reload_leaves_the_new_adapter_set_callable(tmp_path: Path) -> None:
-    """Catches decision C applied to the wrong set: closing the adapters that
+    """Catches the check applied to the wrong set: closing the adapters that
     SURVIVE the reload rather than the ones it dropped, which passes a
     set-comparison test and leaves every later request holding a closed connection
     pool.
@@ -561,7 +560,7 @@ def test_a_reload_leaves_the_new_adapter_set_callable(tmp_path: Path) -> None:
         assert listed_aliases(built.client) == ["agent-default", "agent-strong", "judge", "embed"]
 
 
-# --- an earlier change: reload swaps the three together as one atomic runtime ----------
+# --- Reload swaps the three together as one atomic runtime ----------
 
 
 def test_a_reload_hands_one_request_the_same_policy_adapters_and_breaker(
@@ -700,7 +699,7 @@ def test_a_failed_reload_closes_nothing_and_keeps_the_runtime(tmp_path: Path) ->
         store.release(runtime)
 
 
-# --- an earlier change: providers come from a folder of files, and reload reads it -------
+# --- Providers come from a folder of files, and reload reads it -------
 
 SHIPPED_PROVIDERS_DIR = SHIPPED_POLICY_PATH.parent / "providers"
 NEW_PROVIDER_ENV = {**WITH_ANTHROPIC_KEY, "MISTRAL_API_KEY": "test-key-not-a-real-one"}

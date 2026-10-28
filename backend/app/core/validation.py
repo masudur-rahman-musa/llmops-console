@@ -7,7 +7,7 @@ every store; now the copies import `checked_identifier` from here, so a tenant
 the running gateway serves cannot be one a store quietly refuses.
 
 This lives in `core` rather than in the routing package on purpose: the resolver
-was the first raiser, but the rule is a core concern that `core` must own with no
+was the first raiser, but the check is a core concern that `core` must own with no
 import back into `model_routing`, so the resolver imports the check from here
 without a cycle.
 

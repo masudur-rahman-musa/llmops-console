@@ -1,6 +1,6 @@
 """Status, latency and the request filters, against a real server.
 
-The `db` file of an earlier change. The migration, the percentile and the filtered SQL are things only
+The `db` file. The migration, the percentile and the filtered SQL are things only
 PostgreSQL can show. Every case runs the SHIPPED migrations into a throwaway schema (the
 fixtures in tests/storage/conftest.py, unchanged) and inserts rows with raw SQL, so a column
 the SQL file and the reader misname between them is a failure here.

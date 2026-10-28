@@ -11,9 +11,9 @@ No backing service. The app is built with no database URL, so
 `app.state.cost_ledger` is the `InMemoryCostLedgerWriter` and the assertions read
 its `rows`. The ledger is reached by NAME, `app.state.cost_ledger`, never by shape:
 this app has several collaborators with a `write`, and selecting one of them by
-its methods is what a project rule exists for.
+its methods is how the wrong one gets picked.
 
-a project rule: one app for the module, built once. Per-test isolation is the
+One app for the module, built once. Per-test isolation is the
 stubs' reset and fresh `response_cache`, `semantic_cache` and `cost_ledger`
 objects on `app.state` - never a new app. The one case that needs a second app is
 the fallback one, and it borrows the session-scoped `fallback_client` and puts
@@ -31,7 +31,7 @@ Three arrangements are worth reading before the assertions:
   through the `embed` alias against `local_embed`. That is deliberate: an
   implementation that booked the INTERNAL embedding as a second row is caught by
   the one-row cases, and it cannot be caught on an app where the semantic tier
-  never runs (a project rule's fourth target).
+  never runs.
 * THE PRICES ARE THE SHIPPED ONES. `anthropic/claude-haiku-5-5` is 0.10 in and
   0.50 out per million, `local_embed/*` is zero, so the chat rows carry a NON-ZERO
   cost written out here as arithmetic (137 * 0.1 + 29 * 0.5 = 28.2 millionths, 28 at
@@ -43,11 +43,11 @@ Three arrangements are worth reading before the assertions:
 The contract these cases are written against, before it exists:
 
 * `create_app` builds `app.state.prices` (a `PriceStore` over
-  `settings.providers_dir`), `app.state.db_pool` (one pool, decision D) and
+  `settings.providers_dir`), `app.state.db_pool` (one pool) and
   `app.state.cost_ledger` (`PostgresCostLedgerWriter` with a database URL, else
   `InMemoryCostLedgerWriter`);
 * `book_cost` in `services/chat_pipeline.py` calls `record_cost`, takes the row it
-  answers (decision G), increments `COST_USD` and answers the header value;
+  answers, increments `COST_USD` and answers the header value;
 * the non-streamed served path, both cache-hit paths and `/v1/embeddings` set
   `X-Gateway-Cost-USD` from it; the streamed path books from its token sink and
   from a close hook, and sets no header at all (the headers are on the wire
@@ -188,7 +188,7 @@ STREAM_COST = Decimal("0.000069")
 usage is a different number here."""
 
 ZERO_COST = Decimal("0.000000")
-"""What a cache hit costs (decision B) and what a zero-priced `local_embed` row costs.
+"""What a cache hit costs and what a zero-priced `local_embed` row costs.
 Written at six places because `Decimal("0") == Decimal("0.000000")`: the exponent
 is asserted separately wherever the scale is the claim."""
 
@@ -485,7 +485,7 @@ def question_body(text: str) -> dict[str, Any]:
 
 
 def eligible_body() -> dict[str, Any]:
-    """The exact tier's baseline: `temperature: 0` stated explicitly (#22)."""
+    """The exact tier's baseline: `temperature: 0` stated explicitly."""
     return chat_body(model=ALIAS, temperature=0)
 
 
@@ -592,7 +592,7 @@ CHAT_ROW = Booked(
 
 HIT_ROW = CHAT_ROW._replace(cached=True, cost_usd=ZERO_COST)
 """A hit books zero with the REPLAYED answer's token counts and the price version
-in force (decisions B and C), so it differs from `CHAT_ROW` in exactly two
+in force, so it differs from `CHAT_ROW` in exactly two
 fields."""
 
 PATHS: list[tuple[str, Send, Booked]] = [
@@ -859,7 +859,7 @@ def test_a_request_that_books_no_row_moves_no_cost(
     response = post(cost_client, chat_body(model=ALIAS))
 
     assert response.status_code == 502, response.text
-    # An earlier change: a 5xx after routing now books one zero-cost failed row.
+    # A 5xx after routing now books one zero-cost failed row.
     assert [(row.status, row.cost_usd) for row in rows_of(writer)] == [(502, Decimal(0))]
     assert metrics.total(COST_USD) == 0.0
     assert metrics.total(REQUESTS) == 1
@@ -940,12 +940,12 @@ def test_the_cost_header_is_absent_on_an_error_response(
 
     assert response.status_code == 502, response.text
     assert COST_HEADER not in {name.lower() for name in response.headers}
-    # An earlier change: the failed request books a zero-cost 502 row.
+    # The failed request books a zero-cost 502 row.
     assert [row.status for row in rows_of(writer)] == [502]
 
 
 # --------------------------------------------------------------------------
-# a cache hit (fifth criterion, decisions B and C)
+# a cache hit
 # --------------------------------------------------------------------------
 
 
@@ -957,10 +957,10 @@ def test_the_cost_header_is_absent_on_an_error_response(
 def test_a_cache_hit_books_zero_with_its_tokens(
     cost_client: TestClient, case: str, send: Send
 ) -> None:
-    """Decision B on both hit tiers. Catches a hit booked at the cost it AVOIDED, which
+    """The behaviour on both hit tiers. Catches a hit booked at the cost it AVOIDED, which
     puts money that was never spent into the spend column where no `WHERE cached = false`
     can find it, and catches the other direction - a hit booked with its tokens zeroed -
-    which would lose the numbers an earlier change's cache-savings figure is derived from. The
+    which would lose the numbers the cache-savings figure is derived from. The
     exponent is asserted because `Decimal("0") == Decimal("0.000000")`, and the price
     version is asserted because a zero cost with `unpriced` beside it is a different
     claim: it would say the model has no price rather than that the request was free."""
@@ -982,12 +982,12 @@ def test_a_cache_hit_books_zero_with_its_tokens(
 
 
 # --------------------------------------------------------------------------
-# the stream, and decision E
+# the stream
 # --------------------------------------------------------------------------
 
 
 def test_a_stream_with_usage_books_exactly_one_row(cost_client: TestClient) -> None:
-    """Decision E's double-booking risk, which is the expensive one: the usage event and
+    """The double-booking risk, which is the expensive one: the usage event and
     the close hook both firing writes two rows and doubles every streamed tenant's spend,
     silently and only in production. Catches that, and catches the row being flagged
     `estimated` on a stream that really did report usage - which would make a metered
@@ -1012,7 +1012,7 @@ def test_a_stream_with_usage_books_exactly_one_row(cost_client: TestClient) -> N
 def test_a_stream_that_reports_no_usage_books_one_estimated_row(
     cost_client: TestClient, chat_stub: CostChatStub
 ) -> None:
-    """The other half of decision E. Catches a close hook that books nothing, which makes
+    """The other half of the previous case. Catches a close hook that books nothing, which makes
     "every request writes a row" false exactly when an operator is looking - the provider
     has already charged - and catches one that books a zero-token row, which makes a whole
     provider look free. The output tokens are the characters actually sent divided by the
@@ -1034,7 +1034,7 @@ def test_a_stream_that_reports_no_usage_books_one_estimated_row(
 def test_a_stream_that_fails_after_its_first_frame_books_one_estimated_row(
     cost_client: TestClient, chat_stub: CostChatStub
 ) -> None:
-    """The typed failure decision E is written for: a 200 is already on the wire, one
+    """The typed failure this is written for: a 200 is already on the wire, one
     fragment has reached the client and no usage event ever arrives. Catches a booking
     that only happens on the success path, which loses the row for the request an operator
     is most likely to go looking for, and catches one that estimates from the WHOLE
@@ -1066,7 +1066,7 @@ def test_a_failing_writer_changes_no_status_body_or_header(
     """The unhappy-path criterion, on all five paths. Catches an unguarded write: a
     Postgres blip would take out a gateway whose behaviour is otherwise unchanged, and on
     the streamed path it would do so with a 200 already on the wire, truncating an answer
-    the client had begun reading. Catches the subtler shape decision G exists for as well
+    the client had begun reading. Catches the subtler shape as well
     - a header derived from the WRITE rather than from the row - because the cost header
     must still read what the request cost when the database refused the row. The baseline
     request is what makes this a comparison rather than a restatement of the happy path,
@@ -1117,7 +1117,7 @@ def test_a_failing_writer_still_lets_the_stream_finish_its_frames(
 
 
 # --------------------------------------------------------------------------
-# the wiring (the last criterion, decision D)
+# the wiring (the last criterion)
 # --------------------------------------------------------------------------
 
 
@@ -1141,7 +1141,7 @@ def test_the_app_builds_the_in_memory_cost_ledger_without_a_database_url(
 
 
 def test_every_postgres_writer_shares_one_pool() -> None:
-    """Decision D. Catches a pool per writer, which is twice the server-side connections
+    """Catches a pool per writer, which is twice the server-side connections
     for one dependency and is invisible until connection limits bite in production - no
     behaviour changes, no test fails, and the readiness probe stays green. Identity is
     asserted, not equality: two pools against the same URL compare equal on nothing useful
@@ -1241,7 +1241,7 @@ def test_the_semantic_tier_is_live_on_this_modules_app(
     on. If no embedding adapter were reachable, the semantic tier would never run and
     `test_a_served_request_books_exactly_one_row` would be unable to catch an
     implementation that books the internal embedding as a second row - it would pass for
-    the wrong reason, which is exactly the vacuous case a project rule names. The
+    the wrong reason, which is exactly the vacuous case. The
     embedding count is what proves the tier really ran."""
     response = post(cost_client, question_body(QUESTION))
 

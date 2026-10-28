@@ -50,7 +50,7 @@ REQUEST = ChatRequest(
 
 
 def test_timeout_constants_are_exactly_the_spec_values() -> None:
-    """Catches a constant drifting from the design (a 30s read is the httpx-tutorial value),
+    """Catches a constant drifting from the spec values (a 30s read is the httpx-tutorial value),
     which would cut off a long answer the caller paid for."""
     assert CONNECT_TIMEOUT == 5.0
     assert READ_TIMEOUT == 60.0

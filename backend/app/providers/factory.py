@@ -1,7 +1,7 @@
 """Building the adapter set the gateway can actually call, from the routing policy.
 
 The policy says which providers exist; the environment says which of them are
-usable. This is where the two meet, and the rule is that an unusable provider is
+usable. This is where the two meet, and the principle is that an unusable provider is
 absent rather than broken: an adapter constructed with an empty key would look
 healthy to the resolver and 401 on the first real request a tenant paid for.
 

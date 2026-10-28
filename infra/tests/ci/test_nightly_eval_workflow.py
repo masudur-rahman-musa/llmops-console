@@ -1,7 +1,7 @@
-r"""`.github/workflows/nightly-eval.yml`: SPEC line 344's documented backup path to the k3s
-CronJob, an earlier change's #43.
+r"""`.github/workflows/nightly-eval.yml`: the documented backup path to the k3s
+nightly eval CronJob.
 
-This file does not exist yet. It is wired the SAME way `eval-gate.yml`'s `eval` job is
+The workflow is wired the SAME way `eval-gate.yml`'s `eval` job is
 (`infra/tests/ci/test_eval_gate_workflow.py`'s own convention, which this module copies rather than
 imports - a test module importing another test module makes the second one's collection a
 dependency of the first's): `if: vars.EVAL_TARGET_URL != ''`, so it ships correct but inert
@@ -89,17 +89,16 @@ def test_the_workflow_runs_only_by_hand(
 def test_the_workflow_carries_exactly_one_job(jobs: dict[str, Any]) -> None:
     """Catches a second job nobody agreed to: this workflow's whole purpose is one inert-until-
     configured eval run, and a required-check-by-name mistake here is `eval-gate.yml`'s own
-    decision E risk repeated on a workflow nobody watches while it runs."""
+    risk repeated on a workflow nobody watches while it runs."""
     assert set(jobs) == {"nightly-eval"}
 
 
 def test_the_job_runs_only_when_a_target_url_is_configured(
     jobs: dict[str, Any],
 ) -> None:
-    """Mirrors `eval-gate.yml`'s decision A exactly, per this plan's own acceptance criteria
-    ("gated the same way `eval-gate.yml` is"). Catches the condition dropped, which would
-    fail every run on a compose stack with nothing to evaluate against, since no
-    prod target exists yet."""
+    """Mirrors `eval-gate.yml`'s condition exactly, so both are gated the same way. Catches the
+    condition dropped, which would fail every run on a compose stack with nothing to evaluate
+    against, since no prod target exists yet."""
     assert "EVAL_TARGET_URL" in str(jobs["nightly-eval"]["if"])
 
 
@@ -124,7 +123,7 @@ def test_the_job_invokes_ops_eval_conversations_with_the_nightly_run_kind(
 
 
 def test_the_job_checks_out_the_help_desk_for_its_cases(jobs: dict[str, Any]) -> None:
-    """a design note: `nightly-eval.yml` is the one nightly path and reads the help desk's 33 cases
+    """`nightly-eval.yml` is the one nightly path and reads the help desk's 33 cases
     from a checkout of its repository (never a copy here). Catches a job with no second
     checkout (the cases file is then missing at run time), one using the default token (which
     cannot read a private repo), and one that puts the checkout somewhere other than the
@@ -141,7 +140,7 @@ def test_the_job_checks_out_the_help_desk_for_its_cases(jobs: dict[str, Any]) ->
 
 
 def test_the_job_passes_a_pushgateway_url(jobs: dict[str, Any]) -> None:
-    """Criterion 1 end to end at the CI wiring layer: a nightly run with no `--pushgateway-url`
+    """End to end at the CI wiring layer: a nightly run with no `--pushgateway-url`
     never feeds `NightlyEvalRegression` anything, and the alert stays permanently pending on
     a manifest that is otherwise correct. Catches the flag dropped from the one step that
     matters even though the run itself is wired correctly in every other respect."""

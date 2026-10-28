@@ -1,6 +1,6 @@
 """Fixtures for the request-envelope tests: keys, headers, errors, /v1/models.
 
-a project rule: the app, its key store and the policy snapshot are built once,
+The app, its key store and the policy snapshot are built once,
 in session-scoped fixtures. Per-test isolation comes from the tenant, the key and
 the headers a case sends, never from rebuilding the app.
 
@@ -10,7 +10,7 @@ real handlers and none shares state with another:
 * `gateway_client` talks to the shipped app exactly as it is served.
 * `harness_client` talks to a second app plus the five routes `build_harness`
   registers under `/_harness/`: `context`, `refused`, `validated`, `boom` and
-  `http-detail`. They exist because this plan adds no route that can be observed
+  `http-detail`. They exist because no route can be observed
   from the outside: nothing yet returns the `RequestContext` a header builds, and
   nothing yet raises a `GatewayError`, an `HTTPException` or a bug at request
   time (`/v1/models` filters the unresolvable aliases out rather than failing).
@@ -22,7 +22,7 @@ real handlers and none shares state with another:
   exception reaching the test. Keeping it separate means an accidental crash in
   any other test still surfaces as the real exception rather than a masked 500.
 
-An earlier change adds a fourth client, `chat_client`, and the `StubAdapter` behind it;
+A fourth client, `chat_client`, sits on a `StubAdapter`;
 the block at the foot of this file explains why the adapter set is replaced after
 `create_app` rather than built from the environment.
 
@@ -31,7 +31,7 @@ Every `create_app` call in this directory passes an explicit environment
 otherwise reads `os.environ`, so a developer with a real `ANTHROPIC_API_KEY`
 exported would have every app in this directory holding a live-keyed client
 against `api.anthropic.com` - a suite that passes locally by making a real,
-billed call and fails in CI, which is the inversion #66 exists to prevent.
+billed call and fails in CI, which is the inversion this guard exists to prevent.
 
 The plaintext keys below are test data, not secrets: they are random-looking only
 by shape, are worth nothing, and match no provider's key format.
@@ -435,7 +435,7 @@ def build_chat_client(settings: Settings, adapters: Mapping[str, Adapter]) -> Te
     """A real app whose adapter set is the given stubs, keyed by policy provider name.
 
     `NO_PROVIDER_KEYS` means `create_app` builds nothing of its own, so no
-    provider key is read whatever the shell holds (#66); replacing the dict
+    provider key is read whatever the shell holds; replacing the dict
     afterwards is what keeps the route, the resolver and the error handlers real.
     """
     app = create_app(settings, NO_PROVIDER_KEYS)
@@ -519,7 +519,7 @@ anything this suite is about."""
 # Every component is exactly representable as a float32, so the base64 round trip
 # in `test_embeddings.py` compares EQUAL rather than approximately equal: a wrong
 # byte order is then the only thing that can break it, which is the whole point
-# of the case (the plan's silent-corruption risk).
+# of the case (the silent-corruption risk).
 STUB_VECTORS: tuple[tuple[float, ...], ...] = (
     (0.5, -1.5, 2.25),
     (-0.75, 3.125, -0.0625),
@@ -644,7 +644,7 @@ def embeddings_client(
 # --- tracing ------------------------------------------------------
 #
 # One `InMemorySpanExporter`, attached once to the process-wide tracer provider
-# `app.core.tracing.tracer_provider()` owns. a project rule: the
+# `app.core.tracing.tracer_provider()` owns. The
 # exporter and its span processor are session-scoped and built once, and
 # per-test isolation comes from `clear()` on the buffer rather than from a new
 # provider, a new exporter or a new app - none of which OpenTelemetry lets you
@@ -681,7 +681,7 @@ def spans(span_exporter: InMemorySpanExporter) -> Iterator[InMemorySpanExporter]
 # --- metrics ------------------------------------------------------
 #
 # One `CollectorRegistry`, the module-owned one `app.core.metrics` holds,
-# read through `MetricDelta`. a project rule in its shape for a registry: a
+# read through `MetricDelta`. Isolation for a registry: a
 # family can be added to a registry and never taken back, and every app in this
 # session feeds the same one, so per-test isolation is a DELTA rather than a new
 # registry - every sample is read before the test's own requests and again after,
@@ -781,7 +781,7 @@ def metrics(metrics_registry: CollectorRegistry) -> MetricDelta:
 # --- admin --------------------------------------------------------
 #
 # `/admin/*` is a second key space: the admin key is not a tenant key and a
-# tenant key is not an admin key (the design). So the admin app is a fourth app,
+# tenant key is not an admin key. So the admin app is a fourth app,
 # built once from a `Settings` carrying BOTH the tenant key
 # store above and an `admin_key_sha256`, because the cases that matter present a
 # working tenant key to an admin route and expect a 401.
@@ -832,7 +832,7 @@ def no_admin_key_client() -> Iterator[TestClient]:
 
 # --- fallback and the breaker -------------------------------------
 #
-# Two things the earlier stubs cannot give this plan: a SECOND adapter, and a
+# Two things the earlier stubs cannot give: a SECOND adapter, and a
 # failure that can be changed between cases. `StubAdapter` is built with its
 # error and answers with it forever, so a file whose nine cases each want a
 # different first-candidate failure would build nine apps.
@@ -878,7 +878,7 @@ something real to look for."""
 
 
 def retryable_error(provider: str) -> ProviderError:
-    """The failure a fallback is allowed to act on: a 5xx, a 429 or a timeout (#16)."""
+    """The failure a fallback is allowed to act on: a 5xx, a 429 or a timeout."""
     return ProviderError(
         f"{provider}: the provider answered 503",
         retryable=True,
@@ -998,7 +998,7 @@ def app_of(client: TestClient) -> FastAPI:
 def fresh_breaker(client: TestClient) -> CircuitBreaker:
     """Put a new breaker on the app this client talks to, and hand it back.
 
-    The per-test isolation for the breaker (a project rule again): the app, its
+    The per-test isolation for the breaker (built once, as above): the app, its
     policy and its adapters are built once for the session, and what is replaced
     per test is the one object that accumulates state.
     """
@@ -1025,7 +1025,7 @@ def fallback_app(
 class SilentSemanticCache:
     """A `SemanticCache` that stores nothing and finds nothing, ever.
 
-    An earlier change wires the semantic tier into the chat route, and `agent-default` -
+    The semantic tier is wired into the chat route, and `agent-default` -
     the alias every case in the fallback family sends - carries
     `semantic_cache: true`. This app registers an adapter under `openai`, and the
     probe resolves `embed` to `local_embed`, so the tier is live here whenever

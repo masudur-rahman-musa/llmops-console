@@ -31,8 +31,6 @@ SCANNED = [
     REPO_ROOT / "backend" / "Dockerfile",
     TRADEOFF_SCRIPT,
     REPO_ROOT / "README.md",
-    REPO_ROOT / "dev" / "ops" / "runbook.md",
-    REPO_ROOT / "dev" / "docs" / "ci-cd-deploy.md",
     REPO_ROOT / "docs" / "tradeoff-run" / "README.md",
     *sorted((REPO_ROOT / "docs").glob("eval-*.md")),
     *sorted((REPO_ROOT / "infra" / "evals").rglob("*")),
@@ -153,7 +151,7 @@ def test_the_in_cluster_nightly_cronjob_is_gone() -> None:
 #: A repo path as a workflow, recipe or script writes it. Not preceded by a path character or
 #: a `)`, so `helpdesk/backend/...` and `$(EVAL_HELPDESK)/backend/...` (the other repo) are
 #: skipped, and not under `reports/`, which a run creates.
-NAMED_PATH = re.compile(r"(?<![\w./)-])((?:backend|infra|docs|dev)/[\w./-]*\w\.\w+)")
+NAMED_PATH = re.compile(r"(?<![\w./)-])((?:backend|infra|docs)/[\w./-]*\w\.\w+)")
 
 
 def test_every_path_the_eval_files_name_exists() -> None:

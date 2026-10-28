@@ -6,7 +6,6 @@ name: nightly-eval
 #
 # Gated on the `EVAL_TARGET_URL` repository variable: there is no standing target to
 # run this against yet, so the job is wired but skipped until that variable is set.
-# See the project notes.
 on:
   # Manual only: evals run on demand, not on a timer. Run it from the Actions tab
   # or `gh workflow run nightly-eval.yml`. Switch on a `schedule:` here once the

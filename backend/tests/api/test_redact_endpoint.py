@@ -14,13 +14,13 @@ later. So the cases here are grouped by what could break that promise.
 * The REFUSALS: neither-and-both, an empty list, an unknown class, and the cap
   pair. Every refused row asserts that NO map was written, against a store that
   records its writes, because a validation that runs after the store write is
-  not the "before any effect" the plan asks for.
+  not the "before any effect" that is required.
 
 `redact_batch` and `redaction_applies` are exercised directly as well: the route
 composes them, and a claim about numbering across a 64-item batch is cheaper and
 sharper as a function call than as 64 HTTP requests.
 
-No provider key is read and no adapter is built (#66): this route resolves
+No provider key is read and no adapter is built: this route resolves
 nothing, so its client is built with an empty adapter set.
 """
 
@@ -66,7 +66,7 @@ NO_ADAPTERS: Mapping[str, Any] = {}
 def rehydrate(text: str, mapping: Mapping[str, str]) -> str:
     """Substitute every placeholder in `mapping` back into `text`.
 
-    Plain replacement, exactly as an earlier change's rehydration will do it: if the map is
+    Plain replacement, exactly as the rehydration will do it: if the map is
     a total inverse, this reproduces the caller's original string.
     """
     restored = text
@@ -103,7 +103,7 @@ MAP_STORE_ATTRIBUTE = "redaction_map_store"
 """The `app.state` attribute `create_app` puts the placeholder map store under.
 
 Named, not found by shape. This helper used to select "the one state object with
-a `put` and a `get`" and assert there was exactly one; an earlier change's tenant
+a `put` and a `get`" and assert there was exactly one; the tenant
 directory store has both, so every case in this file broke the moment a second
 store was wired - and no grep for a name could have predicted it, because the
 selection named nothing. A hardcoded attribute is a wiring
@@ -325,8 +325,8 @@ def test_the_header_data_class_applies_when_the_body_omits_it(
 
 def test_the_body_data_class_wins_over_the_header(redact_client: TestClient) -> None:
     """Catches an implementation reading `X-Data-Class` and ignoring the body field
-    (decision E): the two are set to DIFFERENT classes, so whichever the route echoed is
-    visible - a route honouring only the header answers `pii` here."""
+    : the two are set to DIFFERENT classes, so whichever the route echoed is
+     visible - a route honouring only the header answers `pii` here."""
     response = post_redact(
         redact_client, {"text": "nothing here", "data_class": "public"}, data_class="pii"
     )
@@ -338,7 +338,7 @@ def test_the_body_data_class_wins_over_the_header(redact_client: TestClient) -> 
 def test_the_endpoint_redacts_on_a_class_whose_rule_carries_no_redact_flag(
     redact_client: TestClient, policy: Policy
 ) -> None:
-    """Catches an endpoint that honours the tenant's `redact` flag (decision D): `public`
+    """Catches an endpoint that honours the tenant's `redact` flag: `public`
     is asserted to be a non-redact class from the shipped policy first, so this cannot
     pass by accident, and an explicit ingestion call must never be a silent no-op."""
     assert not redaction_applies(policy, "evals", DataClass.PUBLIC)
@@ -354,7 +354,7 @@ def test_an_unknown_body_data_class_is_422_before_any_store_write(
 ) -> None:
     """Catches a body class coerced onto the default instead of refused: silently
     treating `secret` as `confidential` labels a map with a class the caller never
-    asked for, and an earlier change reads that label back."""
+    asked for; rehydration reads that label back."""
     response = post_redact(redact_client, {"text": "hello", "data_class": "secret"})
 
     assert_error_body(response, status=422, code="VALIDATION")
@@ -391,8 +391,8 @@ def test_a_body_that_is_not_exactly_one_shape_is_422_before_any_store_write(
 @pytest.mark.parametrize("shape", ["text", "messages"])
 def test_a_string_at_the_cap_is_accepted(redact_client: TestClient, shape: str) -> None:
     """Catches a cap written `>=` (the inclusive half of the boundary pair): 16384
-    characters is a legal input, and a route refusing it would 422 a request the plan
-    says it must serve."""
+    characters is a legal input, and a route refusing it would 422 a request it
+    must serve."""
     at_cap = "a" * MAX_REDACTION_INPUT_CHARS
     body = {"text": at_cap} if shape == "text" else {"messages": [message(at_cap)]}
 
@@ -438,7 +438,7 @@ def test_the_cap_applies_to_a_later_message_too(
 
 
 def test_two_messages_each_at_the_cap_are_accepted(redact_client: TestClient) -> None:
-    """Catches a cap applied to the JOINED request rather than per string (decision F):
+    """Catches a cap applied to the JOINED request rather than per string:
     32768 characters across two legal turns must pass, and a joined cap refuses exactly
     this body while passing every single-string row above."""
     at_cap = "a" * MAX_REDACTION_INPUT_CHARS
@@ -512,9 +512,9 @@ def test_one_numbering_spans_every_string_in_the_batch() -> None:
 
 
 def test_the_batch_reports_redaction_only_when_a_value_was_replaced() -> None:
-    """Catches a `redacted` flag wired to "the rule applied" rather than to the payload
-    (decision C): the header a console sums comes from this property, so a constant True
-    would count a redaction on every clean request."""
+    """Catches a `redacted` flag wired to "a policy applied" rather than to the payload
+    : the header a console sums comes from this property, so a constant True
+     would count a redaction on every clean request."""
     replaced = redact_batch([f"mail {EMAIL_A}"])
     untouched = redact_batch(["nothing personal here", "nor here"])
 
@@ -550,7 +550,7 @@ def test_a_string_over_the_cap_raises_wherever_it_sits(position: int) -> None:
 
 
 def test_strings_at_the_cap_are_accepted_however_many_there_are() -> None:
-    """Catches a joined cap (decision F) and an exclusive comparison at once: two strings
+    """Catches a joined cap and an exclusive comparison at once: two strings
     of exactly 16384 characters are 32768 joined, so a joined cap refuses them, and a
     `>=` refuses either one alone."""
     at_cap = "a" * MAX_REDACTION_INPUT_CHARS

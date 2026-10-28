@@ -24,18 +24,18 @@ Three arrangements are worth reading before the assertions:
   outbound call rather than after a served request.
 * THE STREAMED LOOKUP. `test_a_streamed_request_is_not_served_from_a_stored_answer`
   fills the cache with a NON-streamed request first and then sends the identical
-  body with `stream: true`. The key does not carry `stream` (the design's seven
+  body with `stream: true`. The key does not carry `stream` (the seven keyed
   fields do not include it), so the entry is genuinely there to be found, and the
-  only thing that can keep the stream off it is the eligibility rule (decision G).
+  only thing that can keep the stream off it is the eligibility rule.
 
-a project rule: one app for the module, built once. Per-test isolation is the
+One app for the module, built once. Per-test isolation is the
 stub's reset and a fresh `InProcessResponseCache` on `app.state`, exactly as
 `fresh_breaker` in this directory's `conftest.py` replaces the one object that
 accumulates state rather than rebuilding the app.
 
 The cache is reached by NAME, `app.state.response_cache`, never by shape: this
 directory now has three collaborators with a `put` and a `get`, and selecting one
-of them by its methods is what a project rule exists for.
+of them by its methods is how the wrong one gets picked.
 """
 
 from __future__ import annotations
@@ -84,17 +84,17 @@ HIT = "hit"
 MISS = "miss"
 
 CACHE_SPAN = "cache"
-"""the design's stage name for the lookup. `tests/gateway/test_tracing.py` used to
+"""The stage name for the lookup. `tests/gateway/test_tracing.py` used to
 assert this span is NEVER emitted; step 4 emits it, so the positive claim lives
-here and that file keeps the `ledger` half (plan §8)."""
+here and that file keeps the `ledger` half."""
 
 REQUESTS = "gateway_requests_total"
 TOKENS = "gateway_tokens_total"
 CACHE_HITS = "gateway_cache_hits_total"
 
 EXACT_TIER = "exact"
-"""The value of `gateway_cache_hits_total`'s `kind` label for this tier (SPEC
-§13.2). The semantic one is `SEMANTIC_CACHE_KIND`, counted by
+"""The value of `gateway_cache_hits_total`'s `kind` label for this tier The semantic one is
+`SEMANTIC_CACHE_KIND`, counted by
 `tests/gateway/test_semantic_cache.py::test_a_semantic_hit_counts_its_own_kind_and_labels_the_request_semantic`,
 and the label NAME is `kind` rather than `tier`, which is what the family was
 declared with while it carried no samples."""
@@ -214,7 +214,7 @@ def post(
 
 
 def eligible_body(**overrides: object) -> dict[str, Any]:
-    """The baseline cacheable body: `temperature: 0` stated explicitly (#22)."""
+    """The baseline cacheable body: `temperature: 0` stated explicitly."""
     return chat_body(model=ALIAS, temperature=0, **overrides)
 
 
@@ -239,7 +239,7 @@ def cache_header_of(response: Response) -> str:
 def test_a_second_identical_eligible_request_calls_no_adapter(
     cache_client: TestClient, cache_stub: CacheStub
 ) -> None:
-    """The plan's first criterion. Catches a cache that stores nothing, one that stores
+    """The first criterion. Catches a cache that stores nothing, one that stores
     under a key it cannot look up again (a per-request salt, a key built from the
     REDACTED body on the way in and the inbound body on the way out), and one that looks
     up after the provider call rather than before. `call_count == 1` across two requests
@@ -258,7 +258,7 @@ def test_a_second_identical_eligible_request_calls_no_adapter(
 def test_a_hit_carries_its_own_completion_id_and_the_same_answer(
     cache_client: TestClient, cache_stub: CacheStub
 ) -> None:
-    """Catches decision E gone the other way - the WIRE body cached verbatim: replaying it
+    """Catches the opposite mistake - the WIRE body cached verbatim: replaying it
     replays another request's `chatcmpl-` id, which is the id the ledger and the trace
     store key their rows by, so two requests would merge into one row. The equal content
     is what stops this passing on a route that answers something else entirely."""
@@ -278,12 +278,12 @@ def test_a_hit_carries_its_own_completion_id_and_the_same_answer(
 def test_a_hit_still_carries_the_six_gateway_headers(cache_client: TestClient) -> None:
     """Catches a hit returned before the header set is built, which would leave an
     operator unable to say which provider the cached answer came from - the
-    one question #9's headers exist to answer - and would change the published header
+    one question the response headers exist to answer - and would change the published header
     contract depending on whether a request happened to hit.
 
     The sixth is `X-Gateway-Cost-USD`, and on a hit it reads `0.000000`: a hit is a
-    served request with a real ledger row, and zero is what it cost (an earlier change decisions
-    B and F). An ABSENT cost header on a hit and a present one on a miss is the shape
+    served request with a real ledger row, and zero is what it cost . An ABSENT cost header on a
+    hit and a present one on a miss is the shape
     this asserts against - it would make a client special-case a value it can read."""
     post(cache_client, eligible_body())
     hit = post(cache_client, eligible_body())
@@ -323,7 +323,7 @@ def test_a_pair_with_no_temperature_both_miss(
 def test_the_allow_header_makes_an_otherwise_ineligible_pair_cacheable(
     cache_client: TestClient, cache_stub: CacheStub
 ) -> None:
-    """Catches an eligibility rule that reads the temperature and ignores the opt-in: #22
+    """Catches an eligibility rule that reads the temperature and ignores the opt-in: it
     gives a caller a second way in, and without this row the header would be a word the
     gateway validates and never acts on. Paired with the case above - same body, one
     header apart - so only the header can decide the outcome."""
@@ -338,7 +338,7 @@ def test_the_allow_header_makes_an_otherwise_ineligible_pair_cacheable(
 def test_tools_with_a_live_tool_choice_are_never_stored(
     cache_client: TestClient, cache_stub: CacheStub
 ) -> None:
-    """Decision H at the route. Catches a cache that ignores the tool rule: a tool call's
+    """The behaviour at the route. Catches a cache that ignores the tool rule: a tool call's
     result varies per call, so the answer is not a function of the request, and replaying
     yesterday's call is a wrong answer that looks perfectly well formed. `temperature: 0`
     is stated, so eligibility is refused by the tool rule alone."""
@@ -355,7 +355,7 @@ def test_tools_with_a_live_tool_choice_are_never_stored(
 def test_tools_offered_with_tool_choice_none_are_still_cacheable(
     cache_client: TestClient, cache_stub: CacheStub
 ) -> None:
-    """The other half of decision H, and the row that stops "tools present, never cache"
+    """The companion case, and the row that stops "tools present, never cache"
     from passing the case above: `tool_choice: none` means the model may not call
     anything, so the answer is a function of the request again. Without this row the
     tool rule could be a blanket refusal nobody would notice."""
@@ -370,9 +370,9 @@ def test_tools_offered_with_tool_choice_none_are_still_cacheable(
 
 
 def test_a_streamed_pair_is_never_stored(cache_client: TestClient, cache_stub: CacheStub) -> None:
-    """Decision G. Catches a route that stores the assembled answer of a stream: the
+    """Catches a route that stores the assembled answer of a stream: the
     stored value would then be served to a NON-streamed request that shares its key, and
-    #22 asks for a response cache rather than frame replay. Both frames sets are pulled,
+    this is a response cache rather than frame replay. Both frames sets are pulled,
     so the store-on-serve step really did run."""
     body = eligible_body(stream=True)
 
@@ -389,9 +389,9 @@ def test_a_streamed_pair_is_never_stored(cache_client: TestClient, cache_stub: C
 def test_a_streamed_request_is_not_served_from_a_stored_answer(
     cache_client: TestClient, cache_stub: CacheStub
 ) -> None:
-    """The sharper half of decision G, and the arrangement that makes it decidable: the
+    """The sharper companion case, and the arrangement that makes it decidable: the
     non-streamed request FILLS the cache under a key the streamed one computes identically
-    (the design's seven fields carry no `stream`), so the entry is genuinely there. Catches a
+    (the seven keyed fields carry no `stream`), so the entry is genuinely there. Catches a
     lookup that runs before the eligibility check, which would answer a JSON completion to
     a caller waiting for `text/event-stream`."""
     filled = post(cache_client, eligible_body())
@@ -406,7 +406,7 @@ def test_a_streamed_request_is_not_served_from_a_stored_answer(
 
 
 # --------------------------------------------------------------------------
-# the request header (decision D)
+# the request header
 # --------------------------------------------------------------------------
 
 REJECTED_HEADER_VALUES = [
@@ -426,7 +426,7 @@ REJECTED_HEADER_VALUES = [
 def test_a_cache_header_that_is_not_the_accepted_word_is_422(
     value: str, cache_client: TestClient, cache_stub: CacheStub
 ) -> None:
-    """Decision D. Catches a header compared with `in`, `startswith`, `.strip()` or
+    """Catches a header compared with `in`, `startswith`, `.strip()` or
     `.lower()` - each row is one of those - and catches the decision going the other way,
     a typo silently meaning "do not cache", which is the failure a caller cannot see. The
     body is INELIGIBLE without the header, so nothing but the header check can produce a
@@ -456,7 +456,7 @@ def test_the_accepted_word_is_not_refused(cache_client: TestClient, cache_stub: 
 def test_a_cache_that_raises_still_serves_the_request(
     cache_client: TestClient, cache_stub: CacheStub
 ) -> None:
-    """The plan's unhappy path: Redis unreachable is a MISS and an ordinary provider call,
+    """The unhappy path: Redis unreachable is a MISS and an ordinary provider call,
     never a 5xx. Catches a route that calls the store outside a guard - the lookup happens
     before the provider call, so an escaping failure would take out every chat request in
     the deployment that has Redis, and the failing PUT happens after a provider has
@@ -476,7 +476,7 @@ def test_a_cache_that_raises_still_serves_the_request(
 
 
 # --------------------------------------------------------------------------
-# the metrics (#24, the design)
+# the metrics
 # --------------------------------------------------------------------------
 
 
@@ -509,10 +509,10 @@ def test_a_hit_counts_a_cache_hit_and_labels_the_request_hit(
     cache_client: TestClient, metrics_registry: CollectorRegistry
 ) -> None:
     """Catches a hit counted under the label name the family was DECLARED with rather than
-    the one the design publishes (`tier` for `kind`), which would leave every dashboard
+    the published one (`tier` for `kind`), which would leave every dashboard
     query written against the spec reading nothing; catches a hit that never reaches
     `gateway_cache_hits_total` at all; and catches a `cache` label left at `miss` on the
-    served row, which is the label the savings panel of #24 sums. The delta is taken
+    served row, which is the label the savings panel sums. The delta is taken
     AFTER the warming request, so only the second request's emissions are measured."""
     assert post(cache_client, eligible_body()).status_code == 200
 
@@ -529,7 +529,7 @@ def test_a_hit_counts_a_cache_hit_and_labels_the_request_hit(
 def test_a_hit_books_no_tokens(
     cache_client: TestClient, metrics_registry: CollectorRegistry
 ) -> None:
-    """Decision F. Catches a hit that re-books the tokens the ORIGINAL call reported:
+    """Catches a hit that re-books the tokens the ORIGINAL call reported:
     `gateway_tokens_total` is what the providers billed, so a cache hit - which bought
     nothing - would inflate cost reporting by exactly the traffic the cache was added to
     save. The delta starts after the warming request, so the first call's real tokens are
@@ -545,14 +545,14 @@ def test_a_hit_books_no_tokens(
 
 
 # --------------------------------------------------------------------------
-# the stage span (the design)
+# the stage span
 # --------------------------------------------------------------------------
 
 
 def test_the_cache_span_is_emitted_on_a_miss_and_on_a_hit(
     cache_client: TestClient, spans: InMemorySpanExporter
 ) -> None:
-    """The claim `tests/gateway/test_tracing.py` used to make in reverse (plan §8). Catches
+    """The claim `tests/gateway/test_tracing.py` used to make in reverse. Catches
     a lookup with no span - an operator reading a trace could not tell whether the cache
     was consulted or how long it took - and catches a span emitted on one path only, which
     would make every trace that carries one a hit by construction. Both requests are read
@@ -572,7 +572,7 @@ def test_the_cache_span_is_emitted_on_a_miss_and_on_a_hit(
 
 
 # --------------------------------------------------------------------------
-# the wiring (plan decision C)
+# the wiring
 # --------------------------------------------------------------------------
 
 UNCONNECTED_REDIS_URL = "redis://127.0.0.1:1/0"
@@ -604,7 +604,7 @@ def test_create_app_keeps_the_in_process_cache_without_a_redis_url() -> None:
 
 def test_create_app_uses_the_redis_cache_when_a_redis_url_is_configured() -> None:
     """Catches a factory that files responses in process memory while Redis is configured:
-    two gateway replicas would each warm their own cache, halving the hit rate #24 reports
+    two gateway replicas would each warm their own cache, halving the hit rate the dashboard reports
     for a reason no test with one replica can see except at the wiring."""
     app = create_app(wiring_settings(redis_url=UNCONNECTED_REDIS_URL), NO_PROVIDER_KEYS)
 

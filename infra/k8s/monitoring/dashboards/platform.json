@@ -1,7 +1,7 @@
 {
   "uid": "platform",
   "title": "Platform",
-  "description": "Cluster-wide pod and node health from kube-state-metrics and node-exporter, plus two Postgres/Redis panels that read empty until an exporter exists for them (decision F, 23a) - named here, not silently missing. Provisioned from infra/k8s/monitoring/dashboards/; edits made in the Grafana UI are not saved.",
+  "description": "Cluster-wide pod and node health from kube-state-metrics and node-exporter, plus two Postgres/Redis panels that read empty until an exporter exists for them (23a) - named here, not silently missing. Provisioned from infra/k8s/monitoring/dashboards/; edits made in the Grafana UI are not saved.",
   "tags": ["platform", "opsconsole"],
   "timezone": "utc",
   "schemaVersion": 39,
@@ -179,7 +179,7 @@
       "id": 6,
       "type": "timeseries",
       "title": "Postgres pod phase",
-      "description": "Cluster only, empty on localhost. Postgres has no database-level exporter (23a decision F), so no connection, replication or query metric exists to plot. This shows pod phase from kube-state-metrics as the closest available signal - a proxy for liveness, not for the database itself.",
+      "description": "Cluster only, empty on localhost. Postgres has no database-level exporter (23a), so no connection, replication or query metric exists to plot. This shows pod phase from kube-state-metrics as the closest available signal - a proxy for liveness, not for the database itself.",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
       "fieldConfig": {
         "defaults": {
@@ -205,7 +205,7 @@
       "id": 7,
       "type": "timeseries",
       "title": "Redis pod phase",
-      "description": "Cluster only, empty on localhost. Redis has no database-level exporter (23a decision F), so no connection, hit-rate or memory metric exists to plot. This shows pod phase from kube-state-metrics as the closest available signal - a proxy for liveness, not for Redis itself.",
+      "description": "Cluster only, empty on localhost. Redis has no database-level exporter (23a), so no connection, hit-rate or memory metric exists to plot. This shows pod phase from kube-state-metrics as the closest available signal - a proxy for liveness, not for Redis itself.",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 26 },
       "fieldConfig": {
         "defaults": {

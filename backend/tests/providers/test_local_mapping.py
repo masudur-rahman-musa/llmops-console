@@ -7,7 +7,7 @@ first") go through the adapter with a scripted transport that records requests.
 The fixtures under `tests/providers/fixtures/local/` are HAND-WRITTEN to the
 published OpenAI chat-completions wire shape, not recorded from a llama.cpp
 server: none was available when these tests were written. That is a deliberate
-deviation from the plan's section 5, and it is stated here and in each `.sse`
+departure from the usual recorded fixtures, and it is stated here and in each `.sse`
 file so the next reader does not take them for a recording.
 
 The mapping is deliberately NOT the Anthropic one. A `system` turn stays a
@@ -581,7 +581,7 @@ def request_for(site: str, value: str) -> ChatRequest:
 AT_CAP = "a" * MAX_TOOL_NAME_LENGTH
 OVER_CAP = "a" * (MAX_TOOL_NAME_LENGTH + 1)
 
-# The rejection table a project rule asks for. The newline and CRLF rows are the
+# The rejection table. The newline and CRLF rows are the
 # ones `re.match` with `^...$` lets through; the space row is the one a `.strip()`
 # before validation lets through.
 BAD_VALUES: list[tuple[str, str]] = [

@@ -92,7 +92,7 @@ def table_of(directory: Path, *options: dict[str, Any]) -> TradeoffTable:
 
 
 def test_the_rows_read_check_score_and_judge_score() -> None:
-    """Catches a table still reading the old five metrics: the console and the plan rank by
+    """Catches a table still reading the old five metrics: the console ranks by
     check_score, and a row without `judge_score` would hide the second number."""
     assert ROW_METRIC_NAMES == ("check_score", "judge_score")
     assert COST_METRIC_NAME == "cost_usd_per_turn"

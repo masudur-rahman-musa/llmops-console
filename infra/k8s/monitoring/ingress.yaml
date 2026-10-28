@@ -33,7 +33,7 @@
 # the admin credential; the test asserts that disjointness.
 #
 # The host comes from `infra/terraform/hetzner/variables.tf`, which publishes
-# `api`, `console`, `helpdesk` and `grafana` as A records. a design note keeps every
+# `api`, `console`, `helpdesk` and `grafana` as A records. Every one of them stays
 # one of them proxy-off, which is what lets the HTTP-01 solver answer at all.
 ---
 apiVersion: networking.k8s.io/v1

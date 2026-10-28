@@ -1,16 +1,14 @@
-r"""`ops-eval baseline-guard`: the rule over both baseline files.
+r"""`ops-eval baseline-guard`: the check over both baseline files.
 
-Pure, for `gate.py`'s reason one step further along: the same commits give the
+Pure, like `gate.py`: the same commits give the
 same verdict on a laptop and in `.github/workflows/eval-gate.yml`, so every way
-of bypassing the rule is a test row rather than a pull request somebody has to
+of bypassing the check is a test case rather than a pull request somebody has to
 open. The git read and the exit code live in `cli/evals.py`; what lives here is
 the comparison.
 
-The rule: a commit that touches the baseline is clean only when its subject
-starts `baseline:` AND the same commit carries a file under the decision records
-folder. Same commit, not same pull request - a merge and a revert can split a baseline change
-from its justification across a PR
-.
+The check: a commit that touches the baseline is clean only when its subject
+starts `baseline:` AND the same commit carries a file under `docs/adr/`. Same commit, not same pull
+request - a merge and a revert can split a baseline change from its justification across a PR.
 
 Both halves are checked, and a commit breaking both is ONE offence carrying two
 reasons:
@@ -18,12 +16,11 @@ the same sha printed twice reads as two bad commits.
 
 Two files are watched (`BASELINE_PATHS`): the old `baseline.json` and the conversation
 baseline. A deletion counts as touching, because the path of a deleted file is in the
-commit's file list, and the plan's own swap commit deletes one and adds the other.
+commit's file list, and the swap commit deletes one and adds the other.
 
 Each path is compared as an exact string and `ADR_PREFIX` carries its
 trailing slash, because the loose forms of both are how a guard stops being one -
-`baseline.json.bak` is not the baseline and `docs/adrs/` is not the ADR directory
-.
+`baseline.json.bak` is not the baseline and `docs/adrs/` is not the ADR directory.
 """
 
 from __future__ import annotations
@@ -48,7 +45,7 @@ The one commit subject in this repository that carries a colon: the house style
 has no `type: subject` prefixes, and this rule names the literal string. Published
 in `docs/eval-gate.md`."""
 
-ADR_PREFIX: Final[str] = "dev/adr/"
+ADR_PREFIX: Final[str] = "docs/adr/"
 """The directory the justification must land in, trailing slash included: without
 it `docs/adrs/0009-x.md` and the bare name `docs/adr` both count."""
 
@@ -70,7 +67,7 @@ second range in; and `fullmatch` refuses a trailing newline, CRLF or space, whic
 MISSING_PREFIX_REASON: Final[str] = 'the subject does not start "baseline:"'
 """Half of what a reviewer is told, pinned exactly because the CLI prints it."""
 
-MISSING_ADR_REASON: Final[str] = "the commit adds no file under dev/adr/"
+MISSING_ADR_REASON: Final[str] = "the commit adds no file under docs/adr/"
 """The other half. Named separately so a commit that got the subject right and
 forgot the ADR is not sent back twice."""
 
@@ -100,7 +97,7 @@ class Commit(BaseModel):
 
 
 class Offence(BaseModel):
-    """One commit that touched the baseline and broke the rule, with every reason.
+    """One commit that touched the baseline and broke the check, with every reason.
 
     One record per SHA, never one per broken half: `reasons` carries both when both
     are broken, in the fixed order the prefix is checked before the ADR.

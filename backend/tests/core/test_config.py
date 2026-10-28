@@ -55,7 +55,7 @@ def test_settings_env_override(
 
 # The three backing-service URLs. Absent by default, because
 # absence is what decides that a probe is not registered and that the redaction
-# map store stays in process (decision B and decision C): a field defaulting to a
+# map store stays in process: a field defaulting to a
 # localhost URL would register a probe on every developer's machine and make
 # `/readyz` red for a service nobody asked for.
 

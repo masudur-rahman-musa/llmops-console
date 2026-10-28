@@ -1,9 +1,9 @@
 """The response cache: its TTL, its boundary, its tenant scoping, and its absent answers.
 
 Everything here is in-process and the clock is injected, so no test sleeps and no
-backing service is started; a project rule has nothing to apply to beyond that.
+backing service is started, so there is nothing to scope or isolate.
 
-Three claims carry the plan's criteria and each is arranged so that only the
+Three claims carry the criteria and each is arranged so that only the
 control it names can decide the outcome:
 
 * the TTL is a boundary PAIR against one clock (readable at exactly
@@ -18,7 +18,7 @@ control it names can decide the outcome:
 The absent answers are the reason this store is not `RedisRedactionMapStore`: a
 cache is not a control. An unknown key, an expired entry and a broken store all
 answer `None` rather than raising, because a raise here would turn a Redis
-incident into a 5xx on requests the provider could have served (plan §5).
+incident into a 5xx on requests the provider could have served.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ ONE_DAY = 24 * 60 * 60
 
 def test_the_ttl_is_exactly_one_day() -> None:
     """Catches a TTL written in minutes, or set to a plausible neighbour like 3600 (the
-    redaction map's) or 604800: #22 says twenty-four hours, a band would admit every one
+    redaction map's) or 604800: the TTL is twenty-four hours, a band would admit every one
     of those, and the third assertion is what a reader checks the arithmetic against."""
     assert RESPONSE_CACHE_TTL_SECONDS == 86400
     assert RESPONSE_CACHE_TTL_SECONDS == ONE_DAY
@@ -53,7 +53,7 @@ def test_the_ttl_is_exactly_one_day() -> None:
 
 def test_a_stored_answer_round_trips_every_field() -> None:
     """Catches a store that keeps the content and drops the rest: the cached value is the
-    NEUTRAL answer (decision E), so the tool calls, the finish reason and the usage are
+    NEUTRAL answer, so the tool calls, the finish reason and the usage are
     what the output path re-renders from - a hit that lost the tool calls would answer
     text where the caller expected a call."""
     store = InProcessResponseCache(clock=FakeClock())
@@ -68,7 +68,7 @@ def test_a_stored_answer_round_trips_every_field() -> None:
 @pytest.mark.parametrize("elapsed", [0.0, 1.0, 86399.0, 86400.0])
 def test_an_entry_is_readable_up_to_and_including_the_ttl(elapsed: float) -> None:
     """Catches an expiry written `now - stored_at >= TTL` (or an off-by-one on the clock):
-    the 86400.0 row is exactly the moment the plan says the entry is still there, and the
+    the 86400.0 row is exactly the last moment the entry is still there, and the
     earlier rows keep a store that expires everything immediately from passing the pair by
     accident."""
     clock = FakeClock()
@@ -85,7 +85,7 @@ def test_an_entry_is_gone_past_the_ttl(elapsed: float) -> None:
     """Catches a store that never expires anything - the key is right, the tenant is
     right, and the ONLY thing that can make this answer `None` is the TTL, so a plain dict
     with no clock reading fails here and nowhere else. An entry that outlives its day is a
-    day-old answer served as current, which is the failure #22's window exists to bound."""
+    day-old answer served as current, which is the failure the TTL window exists to bound."""
     clock = FakeClock()
     store = InProcessResponseCache(clock=clock)
     store.put(TENANT, KEY, cached_answer())

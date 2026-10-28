@@ -19,7 +19,8 @@ The contract these cases are written against, before it exists:
 * `PostgresConsoleReader(pool, *, schema)` with `home`, `cost` and `quality`,
   answering the frozen read models of `app.storage.dashboard_reads`;
 * a window of `now - timedelta(days=days)`, compared with `>=` on timestamps and
-  with `day >= since.date()` on the cost days, which are summed from the ledger itself; "today" is `[UTC midnight, +1 day)`. A range is `start` and `end`, both
+  with `day >= since.date()` on the cost days, which are summed from the ledger itself;
+"today" is `[UTC midnight, +1 day)`. A range is `start` and `end`, both
   UTC dates with both ends kept, and it replaces the `days` window for the day rows.
 """
 
@@ -1009,7 +1010,7 @@ def test_top_users_ranks_per_tenant_and_keeps_ten(
 ) -> None:
     """Catches a read with no per-tenant limit (11 users come back), a limit applied over
     all tenants together (`nordlicht` loses its two to `cuan`'s ten), a wrong order (the
-    lowest first), and each filter the plan names: a no-user row (ranked as one user), a
+    lowest first), and each filter: a no-user row (ranked as one user), a
     5xx row (money that was never spent), a row before the window, and, with `tenant=cuan`,
     a `nordlicht` row. Every distractor satisfies every OTHER condition, so removing that
     one filter is what changes the answer. User N spends N cents, so the order is set by

@@ -157,7 +157,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     shared by the stores, caches, writers and the readiness probes, so a
     deployment opens one connection set per service and the probe that checks a
     service runs over the very client the routes use. Each is settings-driven on
-    the switch its plan fixed: `OPSCONSOLE_REDIS_URL` gives the five Redis-backed
+    its own switch: `OPSCONSOLE_REDIS_URL` gives the five Redis-backed
     stores a shared client and an in-process twin otherwise `OPSCONSOLE_QDRANT_URL` the semantic
     cache,
     `OPSCONSOLE_DATABASE_URL` the one pool both Postgres writers, the console event

@@ -1,6 +1,6 @@
 """Public traces: every span of a request carries `langfuse.trace.public` when it may.
 
-An earlier change, a design note and 0062. Every case is a real request through `TestClient`,
+Every case is a real request through `TestClient`,
 read back from the in-memory span exporter. The gateway switch is
 `Settings.public_trace_langfuse`; a tenant can opt out with `trace_public: false` in the
 policy, and cannot turn it on alone.

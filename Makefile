@@ -62,8 +62,8 @@ COVERED_100 = backend/app/model_routing/*,backend/app/core/validation.py,backend
 # them. This needs `docker compose up -d` first; without a reachable service
 # those tests FAIL rather than skip, which is the point - a green `make verify`
 # now means the backing tests ran. The names are OPSCONSOLE_TEST_*, never the
-# OPSCONSOLE_* ones Settings reads, so they reach only the test fixtures
-#. The password matches compose's default (POSTGRES_PASSWORD
+# OPSCONSOLE_* ones Settings reads, so they reach only the test fixtures.
+# The password matches compose's default (POSTGRES_PASSWORD
 # defaults to opsconsole in docker-compose.yml and backend/.env.demo). The three
 # names are written out in each recipe, not hidden behind a make variable, so a
 # static reader (and its guard test) sees the suite is pointed at them. Each
@@ -184,8 +184,8 @@ eval:       ## The eval gate: the help desk's 45 conversations on the real cheap
 	  $(if $(wildcard $(EVAL_CALIBRATION)),--calibration $(EVAL_CALIBRATION)) \
 	  --comment $(EVAL_REPORTS)/comment.md || status=1; \
 	exit $$status
-# Real numbers on every console tab, filled through the real app and checked
-#. First the real eval (it stores its run, so the eval run reaches
+# Real numbers on every console tab, filled through the real app and checked.
+# First the real eval (it stores its run, so the eval run reaches
 # Postgres through the host port), then the gateway is recreated on two
 # throwaway keys made for this run, a `nordlicht` tenant key and an admin key:
 # the digests go to the gateway, the keys stay in this shell, nothing is stored.
@@ -227,7 +227,7 @@ numbers:    ## Fill every console tab through the real app (eval, traffic, relea
 	  -d "{\"git_sha\": \"$$(git rev-parse HEAD)\", \"deployed_at\": \"$$(date -u +%Y-%m-%dT%H:%M:%SZ)\", \"status\": \"deployed\", \"eval_run_id\": \"$$run_id\"}" \
 	  >/dev/null || exit $$?; \
 	$(UV_ROOT) ops-check-console
-# The published comparison (the design). Pure: it reads a manifest and the
+# The published comparison Pure: it reads a manifest and the
 # report.json each option names, so it needs no stack and no key. MANIFEST and
 # OUT are overridable because the measured run builds its table from its own
 # evidence directory.
@@ -239,7 +239,7 @@ tradeoff:   ## Build docs/tradeoff.md and docs/tradeoff.json from a manifest of 
 # `infra/scripts/tradeoff_run.sh`. No `||` in any recipe: a measurement run that failed
 # must fail its target, or the table is built from whatever the last run left on
 # disk. No workflow names them either: the GPU half applies
-# real infrastructure, which a project rule keeps in the owner's own shell.
+# real infrastructure, which stays in the owner's own shell.
 #
 # OPTION, SHA, START and END have no defaults on purpose. A defaulted option id
 # would measure the wrong row; a defaulted sha would deploy the wrong image.

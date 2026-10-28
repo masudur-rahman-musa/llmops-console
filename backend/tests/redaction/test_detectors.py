@@ -11,7 +11,7 @@ guard carry the row: a 16-digit run that fails Luhn is also not a PHONE, so an
 implementation with no Luhn check at all would still pass an emptiness
 assertion if PHONE happened to reject it first.
 
-a project rule has no direct target here - no pattern in this package validates
+Strict whole-string validation has no direct target here - no pattern in this package validates
 a whole client-supplied string with `fullmatch`, every one runs `finditer` over
 free text - so the contract's stated analogue is asserted instead: a value
 followed by a trailing newline, a trailing CRLF or a trailing space is still
@@ -64,7 +64,7 @@ def test_kind_members_are_the_ten_named_in_acceptance() -> None:
     """Catches a detector set that drops a kind or renames one.
 
     The ten labels are the wire-visible half of the placeholder `<KIND_N>`, so
-    a rename is a silent contract break for an earlier change's stored map. `PERSON` is
+    a rename is a silent contract break for the stored map. `PERSON` is
     the tenth and is asserted in its position, not merely as a member:
     the list is compared by equality, so a kind inserted in the middle fails here
     as well.
@@ -104,7 +104,7 @@ def test_person_is_last_in_the_precedence_order() -> None:
 
 
 def test_dob_cue_distance_is_thirty_two() -> None:
-    """Catches a widened or narrowed cue window (a project rule: exact literal)."""
+    """Catches a widened or narrowed cue window (exact literal)."""
     assert DOB_CUE_DISTANCE == 32
 
 
@@ -481,7 +481,7 @@ def test_the_other_field_order_is_still_accepted() -> None:
 
 
 # --------------------------------------------------------------------------
-# a project rule: the two whole-string validators
+# The two whole-string validators
 # --------------------------------------------------------------------------
 
 # `grep -n 'fullmatch\|re\.match' backend/app/redaction/*.py`
@@ -558,7 +558,7 @@ def test_a_short_valid_ipv6_is_deliberately_not_detected() -> None:
     """Records the density guard's cost rather than leaving it to be rediscovered.
 
     `::1` is a real address and is NOT redacted. That is the trade the guard
-    buys; if a later plan needs loopback redacted, this row is the one to change
+    buys; if loopback ever needs to be redacted, this row is the one to change
     and `test_scope_resolution_operator_is_not_an_ipv6` is what it must not break.
     """
     assert spans_of("Loopback ::1 responded.", Kind.IPV6) == []
@@ -697,7 +697,7 @@ def test_a_colon_run_with_enough_hex_but_no_valid_parse_is_not_an_ipv6(text: str
 # a value matched only in part leaks the rest
 # --------------------------------------------------------------------------
 
-# Round 2 of this plan's review found three of these at once. The boundaries were
+# A later review found three of these at once. The boundaries were
 # right at the token level, so nothing was ever truncated mid-placeholder - but
 # the pattern stopped short of the value's ordinary PRINTED form and the leftover
 # characters went to the provider in the clear. The rows below are the canonical
@@ -712,7 +712,7 @@ def test_a_space_grouped_iban_is_one_detection_not_a_card() -> None:
     Two failures in one, and the second is the worse: with no separators allowed,
     `DE12 5001 ...` is not an IBAN at all, and `CARD_PATTERN` - which does admit
     them - picks up the digit tail instead. The country and check digits stay in
-    the clear AND the value is stored under the wrong kind, so an earlier change would
+    the clear AND the value is stored under the wrong kind, so the map would
     persist an IBAN in its map as a card number.
     """
     text = f"pay {SPACED_IBAN} today"
@@ -838,7 +838,7 @@ def test_a_directory_name_inside_an_email_address_loses_to_the_longer_span() -> 
     """Catches PERSON given a precedence that beats a longer overlapping span: the whole
     address is the value a caller must not leak, and a name matched inside it would
     replace `anna.schmidt` alone and leave `@example.com` - with the local part gone, the
-    map's inverse no longer reproduces the input. Decision F's "unequal overlap is decided
+    map's inverse no longer reproduces the input. The "unequal overlap is decided
     by length" reading, exercised through `redact` because that is where the merge runs."""
     directory = NameDirectory.compile(["anna.schmidt"])
 

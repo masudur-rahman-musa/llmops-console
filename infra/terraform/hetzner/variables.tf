@@ -1,4 +1,4 @@
-# Decision F: no default. An unset value must fail at plan time, because the
+# No default. An unset value must fail at plan time, because the
 # alternative - a default of 0.0.0.0/0 - is a firewall that quietly opens SSH to
 # the internet the day someone forgets the variable.
 variable "admin_ips" {
@@ -16,7 +16,7 @@ variable "admin_ips" {
   }
 }
 
-# Decision A of an earlier change: CD reaches the node over SSH, so the deploy runner's
+# CD reaches the node over SSH, so the deploy runner's
 # egress ranges are a DECLARED list rather than an ephemeral firewall opened by a
 # cloud token in CI - a token that can open a port can also delete the server.
 #

@@ -109,7 +109,7 @@ def test_prometheus_scrapes_the_help_desk_agent_api_and_scheduler() -> None:
 def test_the_scheduler_has_a_metrics_port_and_service_and_still_no_probes() -> None:
     """Catches a scheduler scraped at a port nothing listens on (a Service with no
     container port behind it), a missing Service (the scrape name resolves to nothing), and
-    probes added by the way: decision F stands, so there must still be none."""
+    probes added by the way: the scheduler serves nothing, so there must still be none."""
     docs = documents(HELPDESK)
     deployment = next(
         doc

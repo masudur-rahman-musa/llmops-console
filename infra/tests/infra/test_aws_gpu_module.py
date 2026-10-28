@@ -10,7 +10,8 @@ Every path is taken from this file's own `__file__`, and every read goes through
 file the module does not have yet fails the one case that needs it instead of collapsing the
 whole file at collection.
 
-The block readers and the token-scan patterns are imported from `test_hetzner_module.py`. `entries()`, `regex_literal()`, `conditions()` and `is_printer()` are
+The block readers and the token-scan patterns are imported from `test_hetzner_module.py`.
+`entries()`, `regex_literal()`, `conditions()` and `is_printer()` are
 local copies of `test_aws_module.py`'s, because importing between the two module test files
 is not the pattern this directory uses.
 """
@@ -53,7 +54,7 @@ HETZNER_CLOUD_INIT = REPO_ROOT / "infra" / "terraform" / "hetzner" / "cloud-init
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 MAKEFILE = REPO_ROOT / "Makefile"
 
-#: Section 1's input-validation criterion, in the order the plan names them.
+#: The input-validation checks, in the order the variables are declared.
 VALIDATED_VARIABLES = (
     "admin_ips",
     "region",
@@ -67,7 +68,7 @@ VALIDATED_VARIABLES = (
 EXPECTED_OUTPUTS = {"region", "instance_id", "public_ip"}
 FORBIDDEN_IN_OUTPUTS = ("password", "token", "secret", "kubeconfig")
 
-#: The exact conditions the plan agrees, written out literally. Raw strings:
+#: The exact conditions, written out literally. Raw strings:
 #: the HCL source carries `\\.`, two characters, and so does each literal here.
 REGION_CONDITION = r'can(regex("^eu-[a-z]+-[0-9]$", var.region))'
 NAME_CONDITION = r'can(regex("^[a-z][a-z0-9-]{0,19}$", var.name))'
@@ -167,7 +168,7 @@ def tf_aws_gpu_job() -> dict[str, Any]:
 
 
 def test_one_instance_of_the_validated_type_defaulting_to_g5_xlarge() -> None:
-    """Criterion 30. Catches a hard-coded `instance_type = "g5.xlarge"` that makes the validated
+    """Catches a hard-coded `instance_type = "g5.xlarge"` that makes the validated
     variable decorative, a default of `g5.2xlarge` (twice the hourly bill for no extra GPU), a
     second instance, and the type condition widened past the two single-GPU sizes."""
     instance = sole_resource("aws_instance")
@@ -178,7 +179,7 @@ def test_one_instance_of_the_validated_type_defaulting_to_g5_xlarge() -> None:
 
 
 def test_the_ami_is_amazons_latest_deep_learning_gpu_base() -> None:
-    """Criterion 31. Catches `owners` naming a marketplace or a wildcard account (anyone can
+    """Catches `owners` naming a marketplace or a wildcard account (anyone can
     publish an AMI with that name), `most_recent` dropped (the lookup then fails on more than one
     match), a filter on a plain Ubuntu AMI that carries no NVIDIA driver, and the instance not
     using the looked-up AMI at all."""
@@ -210,7 +211,7 @@ def test_the_ami_is_amazons_latest_deep_learning_gpu_base() -> None:
     ],
 )
 def test_the_root_volume_carries_each_agreed_value(key: str, expected: str) -> None:
-    """Criterion 32, one row per value. Catches `delete_on_termination = false`, where a 100GB
+    """One row per value. Catches `delete_on_termination = false`, where a 100GB
     volume outlives the destroy and bills monthly unseen; an unencrypted volume holding model
     weights; `gp2`; and a size too small for the image plus the 15GB of weights."""
     blocks = inner_blocks(sole_resource("aws_instance"), "root_block_device")
@@ -220,7 +221,7 @@ def test_the_root_volume_carries_each_agreed_value(key: str, expected: str) -> N
 
 
 def test_the_security_group_has_exactly_one_ingress_ssh_from_the_admins() -> None:
-    """Criterion 33. Catches a second inline `ingress {` in any file (8000 opened "to test the
+    """Catches a second inline `ingress {` in any file (8000 opened "to test the
     API from a laptop"), SSH admitted from a literal CIDR list that drifts from the validated
     `admin_ips`, a port range around 22, and `protocol = "-1"`."""
     blocks = [block for path in tf_files() for block in inner_blocks(read(path), "ingress")]
@@ -262,7 +263,7 @@ def opens(body: str, port: int) -> bool:
 
 
 def test_no_ingress_anywhere_names_the_world_or_opens_8000_or_6443() -> None:
-    """Criterion 34, reading ONLY ingress bodies: egress legitimately names `0.0.0.0/0`. Catches
+    """Reading ONLY ingress bodies: egress legitimately names `0.0.0.0/0`. Catches
     a standalone `aws_vpc_security_group_ingress_rule` with `cidr_ipv4 = "0.0.0.0/0"` (the
     inline-block count above does not see it), `ipv6_cidr_blocks = ["::/0"]` added beside the
     admin CIDRs on the SSH rule, and any ingress whose port range covers vLLM's 8000 or the
@@ -282,7 +283,7 @@ def test_no_ingress_anywhere_names_the_world_or_opens_8000_or_6443() -> None:
 
 
 def test_the_instance_terminates_when_it_shuts_down() -> None:
-    """Criterion 35. Catches the default `stop`, where the cloud-init shutdown timer leaves a
+    """Catches the default `stop`, where the cloud-init shutdown timer leaves a
     stopped instance with a 100GB volume and an Elastic address still billing."""
     assert argument(sole_resource("aws_instance"), "instance_initiated_shutdown_behavior") == (
         '"terminate"'
@@ -290,7 +291,7 @@ def test_the_instance_terminates_when_it_shuts_down() -> None:
 
 
 def test_cloud_init_arms_the_shutdown_timer_from_the_variable() -> None:
-    """Criterion 36 and decision F. Catches the timer missing, a literal minute count that drifts
+    """Catches the timer missing, a literal minute count that drifts
     from the validated variable, a default other than 240, and `user_data = file(...)`, which
     ships the placeholder unrendered so `shutdown` refuses it and the guard never arms."""
     instance = sole_resource("aws_instance")
@@ -303,7 +304,7 @@ def test_cloud_init_arms_the_shutdown_timer_from_the_variable() -> None:
 
 
 def test_cloud_init_installs_the_same_k3s_as_hetzner() -> None:
-    """Criterion 37. Catches the GPU host on a different k3s release from the long-lived cluster,
+    """Catches the GPU host on a different k3s release from the long-lived cluster,
     so a manifest valid on one refuses on the other, and catches an install with no version,
     which takes the channel's latest. Every occurrence in both files is read."""
     pattern = re.compile(r"INSTALL_K3S_VERSION=(\S+)")
@@ -320,7 +321,7 @@ def test_cloud_init_installs_the_same_k3s_as_hetzner() -> None:
 
 
 def test_the_budget_is_fifteen_dollars_of_cost_mailed_at_eighty_percent_actual() -> None:
-    """Criteria 38 and 39. Catches a `USAGE` budget that counts hours, `limit_amount = "150"`,
+    """Catches a `USAGE` budget that counts hours, `limit_amount = "150"`,
     `FORECASTED` (silent in the first hours of a month, which is exactly a forgotten GPU),
     `threshold = 100`, and a subscriber hard-coded instead of the validated `budget_email`."""
     budgets = [
@@ -343,7 +344,7 @@ def test_the_budget_is_fifteen_dollars_of_cost_mailed_at_eighty_percent_actual()
 
 
 def test_the_provider_tags_everything_as_the_gpu_measurement() -> None:
-    """Criterion 40. Catches `purpose = "evidence"` copied from the `aws` module, which files the
+    """Catches `purpose = "evidence"` copied from the `aws` module, which files the
     GPU spend under the wrong run in the cost explorer, and `default_tags` dropped entirely."""
     providers = named_blocks(read(PROVIDERS_TF), "provider")
     assert "aws" in providers, "providers.tf declares no aws provider"
@@ -358,7 +359,7 @@ def test_the_provider_tags_everything_as_the_gpu_measurement() -> None:
 
 
 def test_the_terraform_block_pins_core_provider_and_its_own_workspace() -> None:
-    """Criterion 41. Catches the workspace copied from the `aws` module as
+    """Catches the workspace copied from the `aws` module as
     `ai-operations-console-aws`, where this module's destroy plans against the evidence stack's
     state, a missing `cloud {` block, and an unconstrained `hashicorp/aws`."""
     text = read(VERSIONS_TF)
@@ -374,7 +375,7 @@ def test_the_terraform_block_pins_core_provider_and_its_own_workspace() -> None:
 
 
 def test_the_outputs_are_the_three_agreed_facts_and_no_credential() -> None:
-    """Criteria 42 and 43. Catches a fourth output added for convenience (a kubeconfig fetched
+    """Catches a fourth output added for convenience (a kubeconfig fetched
     over SSH, which Terraform Cloud then stores), one of the three dropped, and any of the four
     forbidden words anywhere in `outputs.tf`."""
     text = read(OUTPUTS_TF)
@@ -389,7 +390,7 @@ def test_the_outputs_are_the_three_agreed_facts_and_no_credential() -> None:
 
 
 def test_every_input_is_validated_and_admin_ips_has_no_default() -> None:
-    """Criterion 44. Catches a variable declared with no `validation` block, parsed per variable
+    """Catches a variable declared with no `validation` block, parsed per variable
     so one block cannot stand in for a neighbour's; `admin_ips` acquiring a default, where an
     unset variable opens SSH to that default instead of refusing to plan; and a `region`
     default outside the EU."""
@@ -418,7 +419,7 @@ def test_every_input_is_validated_and_admin_ips_has_no_default() -> None:
     ],
 )
 def test_each_condition_is_exactly_the_agreed_one(name: str, expected: str) -> None:
-    """Criterion 44, one row per variable. Catches a condition dropped to `length(...) > 0`, the
+    """One row per variable. Catches a condition dropped to `length(...) > 0`, the
     right condition pasted onto the wrong variable, `|| true` appended, `ssh-rsa` accepted, and
     the auto-terminate bound written `> 30` so the boundary moves. Equality on the one condition
     each variable carries sees a second, looser validation block too."""
@@ -426,7 +427,7 @@ def test_each_condition_is_exactly_the_agreed_one(name: str, expected: str) -> N
 
 
 def test_admin_ips_refuses_an_empty_list_and_a_non_cidr_entry() -> None:
-    """Criterion 45's first two rows. Catches an `admin_ips` validation that checks only length
+    """The first two rows. Catches an `admin_ips` validation that checks only length
     (a hostname or a bare address then reaches `cidr_blocks` and fails mid-apply) or only shape
     (an empty list plans a group nobody can SSH into), and `anytrue` in place of `alltrue`."""
     joined = " ".join(conditions("admin_ips"))
@@ -451,7 +452,7 @@ def test_admin_ips_refuses_an_empty_list_and_a_non_cidr_entry() -> None:
 def test_the_region_and_type_patterns_refuse_the_unhappy_rows(
     name: str, value: str, accepted: bool
 ) -> None:
-    """Criterion 45's region and type rows, read off the file's own pattern. The exact-condition
+    """The region and type rows, read off the file's own pattern. The exact-condition
     case above already reddens on any edit to the file; this one catches the AGREED pattern
     itself being wrong, a region pattern without its anchor that admits `xeu-central-1`, or a
     type pattern with an unescaped dot that admits `g5xxlarge`, where both files agree."""
@@ -465,7 +466,7 @@ def test_the_region_and_type_patterns_refuse_the_unhappy_rows(
     [(29, False), (30, True), (480, True), (481, False)],
 )
 def test_auto_terminate_bounds_hold_their_inclusive_edges(value: int, accepted: bool) -> None:
-    """Criterion 45's `29` and `481` rows with the inclusive edges. Parsed from
+    """The `29` and `481` rows with the inclusive edges. Parsed from
     the condition, so it catches the agreed bounds themselves being off by one (`> 30` agreed as
     `>= 31`), which the exact-condition case cannot see when both files carry the same typo."""
     joined = " ".join(conditions("auto_terminate_minutes"))
@@ -481,7 +482,7 @@ def test_auto_terminate_bounds_hold_their_inclusive_edges(value: int, accepted: 
 
 
 def test_the_tf_aws_gpu_job_holds_only_the_oidc_and_read_permissions() -> None:
-    """Criterion 48. Catches `permissions` omitted (no OIDC token, so the plan never assumes the
+    """Catches `permissions` omitted (no OIDC token, so Terraform never assumes the
     role) and `contents: write` or any extra scope on a job that runs on pull requests."""
     assert tf_aws_gpu_job().get("permissions") == {
         "id-token": "write",
@@ -494,7 +495,7 @@ def test_the_tf_aws_gpu_job_holds_only_the_oidc_and_read_permissions() -> None:
     ["terraform fmt -check", "terraform init", "terraform validate"],
 )
 def test_the_tf_aws_gpu_job_checks_terraform_unconditionally(fragment: str) -> None:
-    """Criterion 46. Catches the plan's `if` copied onto `fmt`, `init` or `validate`, which makes
+    """Catches the plan step's `if` copied onto `fmt`, `init` or `validate`, which makes
     the gate inert on every pull request without credentials, and a working directory still
     pointed at the `aws` module, which checks the wrong code green. The `echo` skip step is
     excluded."""
@@ -509,7 +510,7 @@ def test_the_tf_aws_gpu_job_checks_terraform_unconditionally(fragment: str) -> N
 
 
 def test_the_tf_aws_gpu_init_falls_back_to_no_backend_without_a_token() -> None:
-    """Criterion 46's `-backend=false`. Catches an init that always contacts Terraform Cloud and
+    """The `-backend=false`. Catches an init that always contacts Terraform Cloud and
     fails every fork pull request before `validate` runs."""
     job = tf_aws_gpu_job()
     inits = [step for step in steps_running(job, "terraform init") if not is_printer(step)]
@@ -519,18 +520,18 @@ def test_the_tf_aws_gpu_init_falls_back_to_no_backend_without_a_token() -> None:
 
 
 def test_the_tf_aws_gpu_plan_runs_only_with_both_credentials() -> None:
-    """Criterion 47. Catches `||` in place of `&&`, an unconditional plan that fails on every
+    """Catches `||` in place of `&&`, an unconditional plan that fails on every
     credential-less pull request, and a plan conditioned on the token alone."""
     job = tf_aws_gpu_job()
     planners = [step for step in steps_running(job, "terraform plan") if not is_printer(step)]
 
-    assert "TF_API_TOKEN_PRESENT" in job.get("env", {}), "the plan's env flag is never defined"
+    assert "TF_API_TOKEN_PRESENT" in job.get("env", {}), "the plan step's env flag is never defined"
     assert len(planners) == 1, f"{len(planners)} steps run `terraform plan`"
     assert planners[0].get("if") == PLAN_CONDITION
 
 
 def test_the_tf_aws_gpu_job_says_so_when_the_plan_is_skipped() -> None:
-    """Criterion 47's skip. Catches the silent skip, where a green tick reads as "the plan was
+    """The skip. Catches the silent skip, where a green tick reads as "the plan was
     checked", and a skip conditioned on one credential only."""
     skips = [
         step
@@ -545,7 +546,7 @@ def test_the_tf_aws_gpu_job_says_so_when_the_plan_is_skipped() -> None:
 
 
 def test_infra_check_runs_the_aws_gpu_lines_each_on_its_own() -> None:
-    """Criterion 51 and a project rule. Catches an aws-gpu line missing (the local gate never
+    """Catches an aws-gpu line missing (the local gate never
     reads the module), the three chained onto one line so only the last exit code counts, and
     any terraform line swallowing failure with `||`."""
     lines = recipe(read(MAKEFILE), "infra-check")
@@ -557,7 +558,7 @@ def test_infra_check_runs_the_aws_gpu_lines_each_on_its_own() -> None:
 
 
 def test_no_file_in_the_module_carries_a_token_shaped_literal() -> None:
-    """Criterion 52 and a project rule. Catches an AWS or Terraform Cloud credential pasted into
+    """Catches an AWS or Terraform Cloud credential pasted into
     `terraform.tfvars.example`, which is why every file is scanned and none exempted. The
     directory is asserted first, because an empty scan of a missing directory passes."""
     assert MODULE.is_dir(), f"{MODULE} does not exist"

@@ -1,6 +1,6 @@
 """`make console-check`: the live junk check on the running console.
 
-An earlier change. Every case reads files as text and starts nothing; the check itself
+Every case reads files as text and starts nothing; the check itself
 needs the local stack and is never part of `make verify` or CI.
 """
 

@@ -196,7 +196,7 @@ def test_a_response_without_usage_raises_rather_than_zero_filling(
 ) -> None:
     """Catches the silent-zero reader (`payload.get("usage", {}).get(...) or 0`): an
     embedding call is the cheapest thing this gateway serves, so a zero booked into the
-    ledger is the one nobody would query - which is precisely why decision F refuses to
+    ledger is the one nobody would query - which is precisely why the code refuses to
     write a count this wire did not give."""
     with pytest.raises(ProviderError) as raised:
         from_openai_embedding(payload)
@@ -482,7 +482,7 @@ def test_the_local_server_being_unreachable_is_not_retried(sleeps: SleepRecorder
     """Catches a raw `httpx.ConnectError` escaping `embed()`, which the route would answer
     as a 500 with a traceback, and catches it being retried: the model container being down
     is not a condition half a second fixes, and three attempts only delay the 502 by the
-    backoff. Until an earlier change starts a llama.cpp server this is the state the shipped policy
+    backoff. Until a llama.cpp server is started this is the state the shipped policy
     is actually in, so it is the failure an operator meets first."""
     steps: list[Step] = [httpx.ConnectError]
     adapter, scripted = make_local_adapter(steps, sleep=sleeps)

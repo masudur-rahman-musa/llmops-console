@@ -117,13 +117,13 @@ def stream_events(client: TestClient) -> tuple[str, list[str]]:
 def test_the_mock_constants_hold_their_agreed_values(
     mock: ModuleType, name: str, value: float
 ) -> None:
-    """Criteria 2-4: catches a mock whose delay, chunk count,
+    """Catches a mock whose delay, chunk count,
     vector width or port drifts from the value the README's load numbers assume."""
     assert getattr(mock, name) == value
 
 
 def test_health_answers_ok(client: TestClient) -> None:
-    """Criterion 1: catches a mock with no `/health`, which the compose healthcheck
+    """Catches a mock with no `/health`, which the compose healthcheck
     needs before the gateway may start."""
     response = client.get("/health")
     assert response.status_code == 200
@@ -134,7 +134,7 @@ def test_health_answers_ok(client: TestClient) -> None:
 def test_non_streaming_chat_returns_one_choice_and_a_usage_block(
     client: TestClient, extra: dict[str, Any]
 ) -> None:
-    """Criteria 1-2: catches a response missing `usage` or its total, one that
+    """Catches a response missing `usage` or its total, one that
     hard-codes the model instead of echoing it, or one that treats an explicit
     `stream: false` as a stream."""
     response = client.post("/v1/chat/completions", json={**CHAT_BODY, **extra})
@@ -158,7 +158,7 @@ def test_non_streaming_chat_returns_one_choice_and_a_usage_block(
 def test_non_streaming_chat_sleeps_the_chat_delay_exactly_once(
     client: TestClient, slept: list[float]
 ) -> None:
-    """Criterion 2: catches a mock that skips the delay, calls `asyncio.sleep`
+    """Catches a mock that skips the delay, calls `asyncio.sleep`
     around the seam, sleeps twice, or sleeps a stream-chunk delay instead."""
     response = client.post("/v1/chat/completions", json=CHAT_BODY)
     assert response.status_code == 200
@@ -168,7 +168,7 @@ def test_non_streaming_chat_sleeps_the_chat_delay_exactly_once(
 def test_a_stream_is_ten_content_chunks_then_one_usage_chunk_then_done(
     client: TestClient,
 ) -> None:
-    """Criterion 3: catches a stream with the wrong chunk count, a missing or
+    """Catches a stream with the wrong chunk count, a missing or
     misplaced usage chunk, a `finish_reason` on the wrong chunk, or no final
     `[DONE]` (which leaves a streaming client waiting)."""
     content_type, events = stream_events(client)
@@ -197,7 +197,7 @@ def test_a_stream_is_ten_content_chunks_then_one_usage_chunk_then_done(
 def test_a_stream_sleeps_the_chunk_delay_once_per_content_chunk(
     client: TestClient, slept: list[float]
 ) -> None:
-    """Criterion 3: catches a stream that sleeps once in total, adds the
+    """Catches a stream that sleeps once in total, adds the
     non-streaming 0.4 s on top, or sleeps before the usage chunk as well."""
     stream_events(client)
     assert slept == [0.04] * 10
@@ -211,7 +211,7 @@ def test_a_stream_sleeps_the_chunk_delay_once_per_content_chunk(
 def test_embeddings_return_one_finite_384_wide_vector_per_input(
     client: TestClient, inputs: str | list[str]
 ) -> None:
-    """Criterion 4: catches a mock returning one vector for a list, indices out of
+    """Catches a mock returning one vector for a list, indices out of
     order, the wrong width, a non-finite value, a hard-coded model, or no usage."""
     expected_count = 1 if isinstance(inputs, str) else len(inputs)
     response = client.post("/v1/embeddings", json={"model": EMBED_BODY["model"], "input": inputs})
@@ -232,7 +232,7 @@ def test_embeddings_return_one_finite_384_wide_vector_per_input(
 def test_embeddings_sleep_the_embed_delay_once_per_request(
     client: TestClient, slept: list[float]
 ) -> None:
-    """Criterion 4: two inputs in one request, so catches a mock that sleeps per
+    """Two inputs in one request, so catches a mock that sleeps per
     input, skips the delay, or sleeps the chat delay instead."""
     response = client.post(
         "/v1/embeddings", json={"model": EMBED_BODY["model"], "input": ["one", "two"]}
@@ -244,7 +244,7 @@ def test_embeddings_sleep_the_embed_delay_once_per_request(
 def test_the_same_text_embeds_to_the_same_vector_and_different_texts_do_not(
     client: TestClient,
 ) -> None:
-    """Criterion 4 (deterministic): catches random vectors (the repeat differs) and
+    """Deterministic output: catches random vectors (the repeat differs) and
     a constant vector (two different texts collide), either of which would make
     the gateway's semantic cache behave unlike it does in production."""
 
@@ -271,7 +271,7 @@ def test_the_same_text_embeds_to_the_same_vector_and_different_texts_do_not(
 def test_a_request_missing_a_required_field_is_422(
     client: TestClient, path: str, body: dict[str, Any], missing: str
 ) -> None:
-    """Unhappy-path criterion: each row drops exactly one field from an otherwise
+    """Unhappy path: each row drops exactly one field from an otherwise
     valid body, so catches a mock that gives that one field a default."""
     partial = {key: value for key, value in body.items() if key != missing}
     response = client.post(path, json=partial)
@@ -280,7 +280,7 @@ def test_a_request_missing_a_required_field_is_422(
 
 @pytest.mark.parametrize("path", [MOCK_PATH, DOCKERFILE], ids=["main.py", "Dockerfile"])
 def test_the_mock_and_its_image_carry_nothing_of_opsconsole(path: Path) -> None:
-    """Criterion 1: catches a mock importing gateway types, or an image installing
+    """Catches a mock importing gateway types, or an image installing
     the package, which would let load pass through code the gateway also runs."""
     assert "opsconsole" not in path.read_text(encoding="utf-8")
 
@@ -305,7 +305,7 @@ def dockerfile_instructions() -> list[str]:
 
 
 def test_the_mock_image_is_python_312_slim() -> None:
-    """Criterion 1: catches a different or unpinned base image (every `FROM` is
+    """Catches a different or unpinned base image (every `FROM` is
     scanned, so a second stage cannot hide one)."""
     froms = [line for line in dockerfile_instructions() if line.upper().startswith("FROM ")]
     assert froms, "the Dockerfile has no FROM"
@@ -314,7 +314,7 @@ def test_the_mock_image_is_python_312_slim() -> None:
 
 
 def test_the_mock_image_pins_fastapi_and_uvicorn_to_the_lockfile_versions() -> None:
-    r"""a project rule: catches an install of a version other than `uv.lock`'s, or any
+    r"""Catches an install of a version other than `uv.lock`'s, or any
     unpinned package on a `pip install` line. Arguments starting with `-` are
     flags; every other argument must carry `==`."""
     installs = [

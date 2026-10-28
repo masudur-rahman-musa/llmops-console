@@ -1,5 +1,5 @@
-r"""`infra/k8s/base/networkpolicies.yaml`: the twenty-two NetworkPolicies an earlier change,
-23c, 31a, 31b and 77 agree, read off what kustomize actually emits rather than off the file, so a
+r"""`infra/k8s/base/networkpolicies.yaml`: the twenty-two NetworkPolicies, read off what kustomize
+actually emits rather than off the file, so a
 policy written and never listed in `base/kustomization.yaml`'s `resources` is the same failure
 as a policy never written.
 
@@ -8,9 +8,9 @@ The stream comes from the session-scoped `built` fixture in `infra/tests/infra/c
 `test_k8s_base.py`, `test_k8s_apps.py` and `test_k8s_platform.py`. Nothing here builds again and
 nothing here reads a raw file.
 
-Everything is asserted by EQUALITY, never by containment (decision D): Kubernetes unions allows,
+Everything is asserted by EQUALITY, never by containment: Kubernetes unions allows,
 so an extra `to` peer, an extra port or an extra `ipBlock` is exactly as dangerous as a missing
-one, and only equality sees both. The guarantee #54 asks for is a property of what is ABSENT.
+one, and only equality sees both. The guarantee is a property of what is ABSENT.
 
 Named ports are the reason this file resolves rather than compares. One NetworkPolicy has one
 `podSelector`, and its `ports` apply to every pod that selector matches - but
@@ -19,13 +19,13 @@ manifest resolves that by NAMING the port (`port: http`), which Kubernetes resol
 each target pod's own container port. So `resolved_ports` looks the name up in the pod
 templates the same build emitted and the assertions read in numbers, while the manifest reads
 in names. A literal number asserted against those rules would either be wrong for one of the
-two pods or would force the manifest into a shape that cannot express criterion 6 at all.
+two pods or would force the manifest into a shape that cannot express the policy at all.
 `platform`'s `data-ingress-from-apps` is the exception and is asserted numerically: its three
 targets name their ports differently (`postgres`, `redis`, `http`), so there is no shared name
 to resolve.
 
 `helpdesk-api-ingress` is pinned by name in `POLICY_NAMES` and by the selector scan, but its
-`from` peers are not pinned here: criterion 6 states peers for `llama-ingress`,
+`from` peers are not pinned here: peers are pinned for `llama-ingress`,
 `gateway-ingress` and `helpdesk-web-ingress` only, and a peer set invented for the fourth would
 be red against a correct manifest rather than against a wrong one.
 
@@ -79,7 +79,7 @@ NAME_LABEL = "app.kubernetes.io/name"
 NAMESPACE_NAME_LABEL = "kubernetes.io/metadata.name"
 
 GATEWAY = "gateway"
-#: An earlier change's own pod, the second and last one in the build with a route to the public internet.
+#: The own pod, the second and last one in the build with a route to the public internet.
 ALERTMANAGER = "alertmanager"
 LLAMA_EMBED = "llama-embed"
 HELPDESK_AGENT_API = "helpdesk-agent-api"
@@ -90,15 +90,15 @@ POSTGRES = "postgres"
 REDIS = "redis"
 QDRANT = "qdrant"
 
-#: Criterion 5's four workloads: the policies that select any of them are the ones the
+#: The four workloads: the policies that select any of them are the ones the
 #: no-`ipBlock` scan runs over. `helpdesk-scheduler` serves no port and is here because it is
-#: still a Helpdesk pod whose EGRESS criterion 5 constrains.
+#: still a Helpdesk pod whose EGRESS is constrained.
 HELPDESK_WORKLOADS = frozenset(
     {HELPDESK_AGENT_API, HELPDESK_MCP_SERVER, HELPDESK_SCHEDULER, HELPDESK_WEB}
 )
 
-#: Criterion 1, the `apps` half: eleven policies, by name. An earlier change adds the console's pair;
-#: `test_k8s_console.py` owns their content. An earlier change adds the Prometheus scrape of the help desk.
+#: The `apps` half: eleven policies, by name. The console's pair is included;
+#: `test_k8s_console.py` owns their content. So is the Prometheus scrape of the help desk.
 APPS_POLICIES = frozenset(
     {
         "default-deny",
@@ -115,8 +115,8 @@ APPS_POLICIES = frozenset(
     }
 )
 
-#: Criterion 1, the `platform` half: three policies, by name. `metrics-ingress-from-monitoring`
-#: is an earlier change's - a NEW policy for Qdrant rather than a widening of `data-ingress-from-apps`, so
+#: The `platform` half: three policies, by name. `metrics-ingress-from-monitoring`
+#: is the - a NEW policy for Qdrant rather than a widening of `data-ingress-from-apps`, so
 #: that policy's `apps`-only guarantee is untouched.
 PLATFORM_POLICIES = frozenset(
     {
@@ -126,16 +126,17 @@ PLATFORM_POLICIES = frozenset(
     }
 )
 
-#: An earlier change criterion 6, an earlier change criterion 7 and an earlier change's own criterion, the `monitoring`
+#: The `monitoring`
 #: half: EIGHT policies, by name. Its own catch-all in both directions, DNS, the named-port
 #: scrape ingress every pod in the namespace carries, Prometheus's egress to what it scrapes plus
-#: Alertmanager, Grafana's own pair - 23b decision D leaves Grafana publishing `http` rather than
-#: `metrics`, so it is the first pod here that the namespace-wide named-port allow cannot cover
-#: and it gets an ingress and an egress policy of its own - and 23c's `alertmanager-egress`,
-#: scoped to the one pod that needs a route to the public internet (decision B). Alertmanager
+#: Alertmanager, Grafana's own pair - Grafana publishes `http` rather
+#: than `metrics`, so it is the first pod here that the namespace-wide named-port allow cannot cover
+#: and it gets an ingress and an egress policy of its own - and the `alertmanager-egress`,
+#: scoped to the one pod that needs a route to the public internet. Alertmanager
 #: needs no ingress policy of its own: `metrics-ingress-from-monitoring` already covers it, since
-#: its container port is named `metrics` like the three scrape targets. An earlier change adds
-#: `prometheus-ingress-from-gateway`; `test_k8s_gateway_prometheus.py` owns its content.
+#: its container port is named `metrics` like the three scrape targets.
+#: `prometheus-ingress-from-gateway`
+#: is also included; `test_k8s_gateway_prometheus.py` owns its content.
 MONITORING_POLICIES = frozenset(
     {
         "default-deny",
@@ -149,7 +150,7 @@ MONITORING_POLICIES = frozenset(
     }
 )
 
-#: Criterion 1 as `(namespace, name)` pairs, which is the identity a NetworkPolicy actually has:
+#: The requirement as `(namespace, name)` pairs, which is the identity a NetworkPolicy actually has:
 #: two policies of the same name in different namespaces are two different objects - which is
 #: exactly the shape `metrics-ingress-from-monitoring` has, one in `platform` and one in
 #: `monitoring`.
@@ -159,17 +160,17 @@ POLICY_NAMES: frozenset[tuple[str, str]] = frozenset(
     | {(MONITORING, name) for name in MONITORING_POLICIES}
 )
 
-#: Criterion 2: `apps`'s catch-all closes both directions, `platform`'s closes ingress only
-#: (decision A - `platform` has no egress policy at all, so declaring `Egress` there would deny
+#: `apps`'s catch-all closes both directions, `platform`'s closes ingress only
+#: (- `platform` has no egress policy at all, so declaring `Egress` there would deny
 #: every outbound connection the data pods make).
 APPS_DEFAULT_DENY_POLICY_TYPES = frozenset({"Ingress", "Egress"})
 PLATFORM_DEFAULT_DENY_POLICY_TYPES = frozenset({"Ingress"})
 
-#: Criterion 3: kube-dns answers on both protocols on the same number, and a policy allowing
+#: Kube-dns answers on both protocols on the same number, and a policy allowing
 #: only UDP breaks every response over 512 bytes - intermittently, and only under load.
 DNS_PORTS: frozenset[tuple[str, int]] = frozenset({("UDP", 53), ("TCP", 53)})
 
-#: Criterion 4 and decision E: the public destination, its four carve-outs and its one port.
+#: The public destination, its four carve-outs and its one port.
 #: `169.254.0.0/16` is the one that closes the `169.254.169.254` metadata route the threat model
 #: names under SSRF via `base_url`; the other three keep the gateway out of the cluster's private
 #: space except where a named policy lets it back in.
@@ -178,15 +179,15 @@ PUBLIC_EXCEPT: frozenset[str] = frozenset(
     {"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"}
 )
 GATEWAY_PORTS: frozenset[tuple[str, int]] = frozenset({("TCP", 443)})
-#: An earlier change / a design note: Alertmanager also sends mail, on 587 (STARTTLS) and 465.
+#: Alertmanager also sends mail, on 587 (STARTTLS) and 465.
 ALERTMANAGER_PORTS: frozenset[tuple[str, int]] = frozenset(
     {("TCP", 443), ("TCP", 465), ("TCP", 587)}
 )
 
-#: Criterion 5: every destination the four Helpdesk workloads may reach, as
+#: Every destination the four Helpdesk workloads may reach, as
 #: `(workload, resolved port)`. The DNS allow is NOT here - it lives in `allow-dns`, which
 #: selects every pod in `apps` rather than the Helpdesk pods specifically. The MCP server's
-#: port is 8081 since an earlier change decision A, the port its image binds.
+#: port is 8081 now, the port its image binds.
 HELPDESK_EGRESS_DESTINATIONS: frozenset[tuple[str, int]] = frozenset(
     {
         (GATEWAY, 8080),
@@ -198,7 +199,7 @@ HELPDESK_EGRESS_DESTINATIONS: frozenset[tuple[str, int]] = frozenset(
     }
 )
 
-#: Criterion 7: the three data ports `platform` admits from `apps`, and nothing else. Qdrant's
+#: The three data ports `platform` admits from `apps`, and nothing else. Qdrant's
 #: 6334 (gRPC) is absent on purpose - nothing in `apps` speaks it.
 DATA_PORTS: frozenset[int] = frozenset({5432, 6379, 6333})
 
@@ -387,7 +388,7 @@ def peer_targets(
     documents: list[dict[str, Any]], peer: dict[str, Any], default_namespace: str
 ) -> set[tuple[str, str]]:
     """A peer as `(namespace, workload)` pairs, `workload` being `ANY_POD` when the peer names
-    no `podSelector` or an empty one - namespace-wide, which is a shape criterion 6 states for
+    no `podSelector` or an empty one - namespace-wide, which is a shape used for
     the `kube-system` and in-`apps` peers of `gateway-ingress`."""
     namespace = peer_namespace(peer, default_namespace)
     selector = peer.get("podSelector")
@@ -440,7 +441,7 @@ def resolved_ports(
 ) -> dict[str, set[tuple[str, int]]]:
     """An INGRESS rule's ports resolved per pod the policy's own `podSelector` protects.
 
-    `{workload: {(protocol, number)}}`. This is the shape criterion 6 needs: one
+    `{workload: {(protocol, number)}}`. This is the shape needed: one
     `helpdesk-api-ingress` rule naming a port that is 8000 on one pod and 8081 on the other,
     and only a per-pod resolution can assert both from the one rule.
     """
@@ -461,9 +462,9 @@ def egress_destinations(
 ) -> set[tuple[str, int]]:
     """An egress policy's destinations as `(workload-or-namespace, resolved port)`.
 
-    Every peer of a rule is crossed with every port of that rule, which is what the rule means:
+    Every peer of a rule is crossed with every port of that rule, which is what a rule means:
     grouping three data services and three numbers into one rule allows all nine, and this set
-    says so rather than flattering the manifest into the six the criterion names.
+    says so rather than flattering the manifest into the expected six.
     """
     namespace = namespace_of(document)
     assert namespace is not None, f"{name_of(document)} declares no metadata.namespace"
@@ -549,7 +550,7 @@ def selector_scope(
 def test_each_namespace_emits_exactly_the_policies_the_plan_names(
     built: list[dict[str, Any]], namespace: str, expected: frozenset[str]
 ) -> None:
-    """Criterion 1, by SET EQUALITY of NetworkPolicy names within one namespace. Catches the
+    """By SET EQUALITY of NetworkPolicy names within one namespace. Catches the
     policies written into `base/networkpolicies.yaml` and the file never added to
     `base/kustomization.yaml`'s `resources` - valid YAML that reaches no cluster and that no
     schema check can see. Catches a policy that keeps `namespace: apps` when it belongs in
@@ -567,11 +568,11 @@ def test_each_namespace_emits_exactly_the_policies_the_plan_names(
 def test_the_whole_build_emits_exactly_the_twenty_two_policies_and_nowhere_else(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 1 over the WHOLE stream as `(namespace, name)`. Catches a twenty-third policy
+    """The requirement over the WHOLE stream as `(namespace, name)`. Catches a twenty-third policy
     landing in a fourth namespace, which the three per-namespace rows above cannot see because each
     filters to its own namespace first; and catches a policy emitted with no
     `metadata.namespace` at all, which the API server would file into whatever namespace the
-    apply ran against rather than the one the plan names."""
+    apply ran against rather than the one it names."""
     emitted = {(str(namespace_of(document)), name_of(document)) for document in policies(built)}
     assert emitted == POLICY_NAMES, (
         f"unexpected: {sorted(emitted - POLICY_NAMES)}; missing: {sorted(POLICY_NAMES - emitted)}"
@@ -581,8 +582,8 @@ def test_the_whole_build_emits_exactly_the_twenty_two_policies_and_nowhere_else(
 def test_the_default_deny_policies_close_the_directions_the_plan_names(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 2 and decision A. Catches an `apps` catch-all written with `policyTypes:
-    [Ingress]` only, which leaves every pod's EGRESS unrestricted and makes criterion 4's whole
+    """Catches an `apps` catch-all written with `policyTypes:
+    [Ingress]` only, which leaves every pod's EGRESS unrestricted and makes the whole
     `ipBlock` argument decorative - the gateway would not be the only pod that can reach the
     internet, every pod could. Catches a `podSelector` on the catch-all that names a workload
     instead of being empty, which denies one pod and leaves the rest open. Catches a `platform`
@@ -610,7 +611,7 @@ def test_the_default_deny_policies_close_the_directions_the_plan_names(
 def test_the_dns_policy_opens_both_protocols_on_53_for_every_pod_in_apps(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 3. Catches a DNS allow written with a `podSelector` naming one workload, which
+    """Catches a DNS allow written with a `podSelector` naming one workload, which
     leaves every other pod in `apps` unable to resolve anything once `default-deny` is applied -
     a failure that looks like a provider outage, not like a policy. Catches UDP 53 alone, which
     works until a response exceeds 512 bytes and the resolver retries over TCP; and catches an
@@ -629,11 +630,11 @@ def test_the_dns_policy_opens_both_protocols_on_53_for_every_pod_in_apps(
 def test_the_gateway_and_alertmanager_are_the_only_pods_with_a_route_to_the_public_internet(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 4 and decision E, widened by an earlier change decision B: scanned over EVERY policy in
+    """Scanned over EVERY policy in
     the build rather than read off `gateway-egress` and `alertmanager-egress` by name - the claim
     is that no OTHER policy has one, and a case that opened the two by name could not see a third
     `ipBlock` added anywhere else. Both are asserted to share the SAME excluded-ranges list, by
-    VALUE (a project rule - copied, not re-derived): `alertmanager-egress`'s own shape is pinned
+    VALUE (copied, not re-derived): `alertmanager-egress`'s own shape is pinned
     a second time, more narrowly, by `infra/tests/infra/test_k8s_alerting.py`'s
     test_alertmanager_is_the_second_and_last_pod_with_internet_egress.
 
@@ -680,9 +681,9 @@ def test_the_gateway_and_alertmanager_are_the_only_pods_with_a_route_to_the_publ
 def test_the_helpdesk_may_reach_exactly_six_destinations_and_no_ip_block(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 5 and decision B, by EQUALITY of `(destination, resolved port)` pairs. Catches
-    a `to` peer left in that lets the Helpdesk reach a service the plan does not list - the
-    provider-key path #54 exists to close, since a Helpdesk pod that can dial a provider
+    """By EQUALITY of `(destination, resolved port)` pairs. Catches
+    a `to` peer left in that lets the Helpdesk reach a service that is not listed - the
+    provider-key path this policy exists to close, since a Helpdesk pod that can dial a provider
     directly bypasses every ledger, redaction and budget control in the gateway. Catches a
     destination missing, which is an outage. Catches an `ipBlock` on any policy selecting a
     Helpdesk workload, which is the same bypass written a second way and which the destination
@@ -735,7 +736,7 @@ def test_each_ingress_policy_admits_exactly_its_named_sources_on_its_own_port(
     expected_peers: set[tuple[str, str]],
     expected_ports: dict[str, set[tuple[str, int]]],
 ) -> None:
-    """Criterion 6, with every port RESOLVED against the target pod's own container port rather
+    """With every port RESOLVED against the target pod's own container port rather
     than compared to a literal. Catches `llama-ingress` admitting a port other than the
     embedding server's 8083, and a `from` peer opening it to every pod in `apps` instead of to
     the gateway alone, which is the hop that lets a Helpdesk pod use the local model without a
@@ -763,7 +764,7 @@ def test_each_ingress_policy_admits_exactly_its_named_sources_on_its_own_port(
 def test_the_data_namespace_admits_apps_on_exactly_the_three_data_ports(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 7, asserted NUMERICALLY because the three data pods name their ports
+    """Asserted NUMERICALLY because the three data pods name their ports
     differently (`postgres`, `redis`, `http`) and there is no shared name to resolve. Catches
     Qdrant's gRPC 6334 admitted beside 6333, which is a second protocol surface nothing in
     `apps` speaks. Catches the peer written as a bare `podSelector` with no `namespaceSelector`,
@@ -789,7 +790,7 @@ def test_the_data_namespace_admits_apps_on_exactly_the_three_data_ports(
 def test_every_selector_in_the_build_matches_a_pod_that_exists(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 8, the unhappy path: every `podSelector` in the build - a policy's own and
+    """The unhappy path: every `podSelector` in the build - a policy's own and
     every one nested in a `from` or a `to` - matches at least one pod template in the namespace
     it resolves in. Catches a typo'd label (`app.kubernetes/name`, `helpdesk-api` for
     `helpdesk-agent-api`), which builds, validates and schema-checks exactly like a correct

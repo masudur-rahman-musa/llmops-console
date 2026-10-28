@@ -12,17 +12,17 @@ The contract these tests are written against, before it exists:
 * `app.core.tracing.SpanAttributes` - the closed, typed attribute model
   whose field set is exactly the names in `ALLOWED_ATTRIBUTE_KEYS`.
 * `app.core.tracing.build_exporter(settings)` - the OTLP/HTTP exporter
-  switch: `None` when no endpoint is configured (decision D).
+  switch: `None` when no endpoint is configured.
 * `app.core.config.Settings.otlp_endpoint` - optional, absent by
   default, `OPSCONSOLE_OTLP_ENDPOINT` in the environment.
 
-Two things are deliberately NOT pinned here. The root span's NAME: the plan
-fixes the four stage names and says nothing about the root's, so every case
+Two things are deliberately NOT pinned here. The root span's NAME: the four stage names
+are fixed and the root's is not, so every case
 identifies the root structurally (the only span with no local parent) and
 asserts the stage names around it. And the ROUTE the trace id header rides on
 `/v1/redact`: that route writes no `X-Gateway-*` header at all
 (tests/gateway/test_redact_endpoint.py, `test_the_response_carries_no_gateway_headers`),
-and an earlier change section 8 changes no old test, so section 6's "on the chat,
+so "on the chat,
 embeddings and redact routes" is read here as "the redact route emits its trace
 too" and pinned by `test_the_redact_route_emits_a_trace_without_a_header`.
 """
@@ -117,8 +117,7 @@ ALL_ZERO_TRACE_ID = "0" * 32
 # The rows of tests/gateway/test_context_headers.py's rejection table that say
 # something different from one another about a PARENT: each is a header a
 # receiver must not join a trace on. The trailing-whitespace rows are here
-# because `$`-anchored matching accepts them and `re.fullmatch` does not
-#.
+# because `$`-anchored matching accepts them and `re.fullmatch` does not.
 MALFORMED_TRACEPARENT_CASES: list[tuple[str, str]] = [
     ("empty", ""),
     ("not a traceparent at all", "garbage"),
@@ -157,16 +156,16 @@ TEXT_WITH_PII = f"write to {EMAIL} about it"
 
 SESSION = "session-1"
 
-# The stage names the design gives this plan, and the one still unbuilt.
+# The stage names, and the one still unbuilt.
 AUTH_SPAN = "auth"
 ROUTE_SPAN = "route"
 CACHE_SPAN = "cache"
 SEMANTIC_SPAN = "semantic"
 REDACT_SPAN = "redact"
 UNEMITTED_SPAN_NAMES = frozenset({"ledger"})
-"""`cache` left this set in an earlier change, which emits it on every chat request; the
+"""`cache` left this set because the route emits it on every chat request; the
 positive claim is `test_the_cache_span_is_emitted_on_a_miss_and_on_a_hit` in
-tests/gateway/test_exact_cache.py. `semantic` left it in an earlier change, which emits it
+tests/gateway/test_exact_cache.py. `semantic` left it because the route emits it
 on every ELIGIBLE chat request - the alias must carry `semantic_cache: true`, so
 the embeddings row and the redact-endpoint row below still carry none; its
 positive and negative claims are
@@ -724,7 +723,7 @@ def test_the_emitted_span_names_are_exactly_the_stages_that_exist(
 ) -> None:
     """Catches both directions at once: a stage that emits no span (an operator reading
     the trace cannot tell whether redaction ran or where the time went) and a span
-    emitted for a stage this plan does not have, which would make a later plan's work
+    emitted for a stage that does not exist yet, which would make later work
     look done. The redact-endpoint row also catches `route` or `provider:` spans on a
     route that resolves nothing."""
     client: TestClient = request.getfixturevalue(client_fixture)
@@ -740,9 +739,9 @@ def test_the_emitted_span_names_are_exactly_the_stages_that_exist(
 def test_no_ledger_span_is_emitted(
     chat_client: TestClient, embeddings_client: TestClient, spans: InMemorySpanExporter
 ) -> None:
-    """Catches a placeholder span for the one the design stage still unbuilt: a `ledger`
-    span would say a call was booked when nothing prices it yet, which makes a later
-    plan's work look done. Asserted on the two shapes the exact-set rows do not cover - a
+    """Catches a placeholder span for the one stage still unbuilt: a `ledger`
+    span would say a call was booked when nothing prices it yet, which makes later
+    work look done. Asserted on the two shapes the exact-set rows do not cover - a
     plain-class chat and an embeddings request in the same buffer."""
     assert send_chat(chat_client, None).status_code == 200
     assert send_embeddings(embeddings_client, None).status_code == 200
@@ -756,7 +755,7 @@ def test_no_ledger_span_is_emitted(
 def test_the_stage_spans_share_the_roots_trace_id(
     openai_chat_client: TestClient, spans: InMemorySpanExporter
 ) -> None:
-    """Catches the plan's threadpool risk: the routes are `def`, so they run in a worker
+    """Catches the threadpool risk: the routes are `def`, so they run in a worker
     thread, and a stage span started there without the request's context becomes the root
     of a SECOND trace. The request would look traced and the provider call would be
     missing from the trace an engineer opens."""
@@ -853,7 +852,7 @@ def test_no_message_content_reaches_a_span(
     chat_client: TestClient, chat_stub: StubAdapter, spans: InMemorySpanExporter, tmp_path: Path
 ) -> None:
     """Catches an implementation that puts the prompt, the answer or a header value on a
-    span for a tenant whose `trace_content` switch is off (an earlier change turned `evals` on, so
+    span for a tenant whose `trace_content` switch is off (`evals` is switched on, so
     this runs on a copy with it off): the trace backend is outside this system's
     redaction guarantees. The bearer key row catches a middleware that records request
     headers wholesale, which no switch allows."""
@@ -969,7 +968,7 @@ def test_an_unauthorized_request_still_emits_a_trace(
 def test_no_exporter_is_installed_without_an_endpoint(
     gateway_client: TestClient, spans: InMemorySpanExporter
 ) -> None:
-    """Catches decision D being implemented as a console exporter by default, which would
+    """Catches this being implemented as a console exporter by default, which would
     print every request's tenant and session to stdout in production, and catches
     a default endpoint compiled in - a gateway posting spans to an address nobody
     configured. The served request is the other half: with no exporter the seam is still
@@ -1007,7 +1006,7 @@ def test_an_exporter_that_raises_changes_no_response(
 
 
 # --------------------------------------------------------------------------
-# decision F: a typed failure raised inside middleware
+# A typed failure raised inside middleware
 # --------------------------------------------------------------------------
 
 
@@ -1016,7 +1015,7 @@ class RaisingMiddleware:
 
     Pure ASGI rather than `BaseHTTPMiddleware` because that is what the root-span
     middleware is: it runs outside `ExceptionMiddleware`, which is exactly the
-    position that makes decision F necessary.
+    position that makes the fix necessary.
     """
 
     def __init__(self, app: ASGIApp) -> None:
@@ -1034,8 +1033,7 @@ def test_a_gateway_error_raised_in_middleware_keeps_its_status_and_code(
     """Catches the registration Starlette gives us today: the `Exception` handler is
     lifted into `ServerErrorMiddleware`, so a `GatewayError` raised in middleware answers
     500 with `code: null` and a client's retry logic sees a gateway bug instead of the
-    503 it can act on. This plan installs the first middleware, so it is the plan that
-    owes the fix."""
+    503 it can act on. This is the first middleware, so it owes the fix."""
     app = create_app(settings, NO_PROVIDER_KEYS)
     app.add_middleware(RaisingMiddleware)
 
@@ -1054,7 +1052,7 @@ def test_an_untraced_scope_still_runs_every_stage() -> None:
     """Catches `stage_span` and `annotate` assuming the middleware ran. A router mounted
     on an app that does not install `TracingMiddleware` - a future admin app, a unit test
     building one route - would raise inside the `with` and turn a missing trace into a
-    failed request, which inverts the rule that observability never takes the system
+    failed request, which inverts the principle that observability never takes the system
     down."""
     scope: dict[str, object] = {"type": "http"}
 
@@ -1111,7 +1109,7 @@ def test_the_otlp_header_setting_is_parsed_into_pairs(
 # fallback_count
 # --------------------------------------------------------------------------
 #
-# The last of the three attributes an earlier change declared and left unset. It is
+# The last of the three attributes that was declared and left unset. It is
 # asserted as a VALUE on whichever span carries it rather than on a span chosen
 # by name: `annotate` puts every label on the root span by design (stage spans
 # take none), and pinning the carrier here would pin that choice twice.
@@ -1123,7 +1121,7 @@ def test_the_failed_candidate_keeps_its_own_provider_span(
     spans: InMemorySpanExporter,
 ) -> None:
     """The only way an operator identifies a provider shedding its traffic behind a
-    WORKING fallback, and the claim `core/metrics.py` and a design note both make in place of
+    WORKING fallback, and the claim `core/metrics.py` also makes in place of
     the provider-error counter - which a 200 never moves, because it reaches no error
     handler. Catches a loop wrapped in one provider span, or the span moved outside the
     `try` so a failed attempt leaves none: either way both passages become false and
@@ -1185,7 +1183,7 @@ def test_a_fallback_is_recorded_on_the_trace_as_a_count(
 
 
 # --------------------------------------------------------------------------
-# an earlier change: the provider call is a Langfuse generation
+# The provider call is a Langfuse generation
 # --------------------------------------------------------------------------
 
 GENERATION = "generation"
@@ -1494,7 +1492,7 @@ def test_a_real_request_after_a_probe_is_still_traced(
 
 
 # --------------------------------------------------------------------------
-# an earlier change: every step carries a short Input and Output note, and the tenant is a tag
+# Every step carries a short Input and Output note, and the tenant is a tag
 # --------------------------------------------------------------------------
 
 INPUT_TEXT = "not sent: prompts stay inside the gateway"
@@ -1864,7 +1862,7 @@ def test_an_unauthorized_request_has_no_tenant_tag(
 
 
 # --------------------------------------------------------------------------
-# an earlier change: the request root is the one generation; the provider step keeps metadata
+# The request root is the one generation; the provider step keeps metadata
 # --------------------------------------------------------------------------
 
 

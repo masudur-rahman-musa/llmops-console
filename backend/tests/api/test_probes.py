@@ -11,16 +11,16 @@ Four groups:
 
 * the four probe factories over a fake client each: an answer that passes, an
   answer that fails, a client that raises, and a client that raises a TIMEOUT,
-  which is the plan's hung-service risk and the row `_run` would otherwise be
+  which is the hung-service risk and the row `_run` would otherwise be
   credited for;
 * the two client builders, whose timeouts are pinned to `PROBE_TIMEOUT_SECONDS`
   exactly rather than to "some timeout is set";
 * `register_probes`, asserted through the names the registry actually carries,
-  so "registered only what is configured" (decision C) is measured rather than
+  so "registered only what is configured" is measured rather than
   inferred from the settings that went in;
 * one end-to-end unhappy path through `TestClient`: a Redis that refuses
   connections, `/readyz` 503 naming every probe, `/healthz` still 200 and a chat
-  completion unaffected (a project rule - the status comes from a request, not
+  completion unaffected (the status comes from a request, not
   from reading the handler).
 
 No backing service is started. The refused-connection case points at a port
@@ -143,7 +143,7 @@ def test_the_redis_probe_answers_a_bool_for_every_client(
 ) -> None:
     """Catches a probe that lets its client's error escape - the factory is called here
     directly, so `/readyz`'s own `except` cannot be what turns the raising rows into
-    `False`, and the timeout row is the plan's hung-service risk rather than a repeat of
+    `False`, and the timeout row is the hung-service risk rather than a repeat of
     the refused one."""
     client = FakePing(answer=answer, error=error)
 
@@ -332,7 +332,7 @@ QDRANT_ERROR_CASES: list[tuple[str, Exception]] = [
 def test_the_qdrant_probe_answers_false_when_the_call_raises(case: str, error: Exception) -> None:
     """Catches a probe that lets a transport error escape: called directly here, so
     `/readyz`'s own `except` cannot be credited, and the timeout row is the hung-service
-    risk the plan names rather than a second unreachable row."""
+    risk rather than a second unreachable row."""
     seen: list[httpx.Request] = []
     with raising_client(error, seen) as client:
         probe = qdrant_probe(client, QDRANT_BASE_URL)
@@ -488,7 +488,7 @@ def bare_app(
     Built without `create_app` or its lifespan, so this group measures
     `register_probes` alone: a lifespan that registered the probes itself could
     otherwise make these cases pass with the function under test doing nothing.
-    Since an earlier change the probes run over the SHARED clients on `app.state`, so those
+    The probes run over the SHARED clients on `app.state`, so those
     are put here too - the real lazy Redis and Qdrant clients (neither opens a
     socket until asked), and a `FakePool` stand-in that opens no connection, since
     no case in this group runs the postgres probe.
@@ -534,7 +534,7 @@ REGISTRATION_CASES: list[tuple[str, dict[str, str], set[str]]] = [
 def test_register_probes_registers_the_configured_stores_and_always_the_provider(
     case: str, urls: dict[str, str], expected: set[str]
 ) -> None:
-    """Catches a registration that always registers all four (decision C: an unconfigured
+    """Catches a registration that always registers all four (an unconfigured
     store would then fail readiness forever) and one that registers only the stores and
     forgets the provider - the names are read off the registry, so what was registered is
     measured rather than inferred from the settings that went in."""
@@ -560,7 +560,7 @@ def test_the_registered_redis_probe_is_wired_to_the_configured_redis() -> None:
 
 def test_create_app_registers_the_probes_its_settings_configure() -> None:
     """Catches a lifespan that builds `probes.py` and never calls it: `/readyz` would then
-    be 200 while checking nothing at all, which is the failure decision C's named probe
+    be 200 while checking nothing at all, which is the failure the named probe
     set exists to make visible. The probes register on lifespan startup now, so
     the client is entered before the registry is read."""
     app = create_app(probe_settings(redis_url=UNREACHABLE_REDIS_URL), NO_PROVIDER_KEYS)

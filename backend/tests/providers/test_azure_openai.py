@@ -1,17 +1,16 @@
 """The Azure OpenAI adapter: the deployment URL, the `api-key` header, and nothing else.
 
-`AzureOpenAIAdapter` is `OpenAICompatibleAdapter` with two seams overridden (plan
-11b decision A), so the mapping is not re-asserted here: `to_openai` and
-`to_openai_embedding` are the same functions
+`AzureOpenAIAdapter` is `OpenAICompatibleAdapter` with two seams overridden, so the mapping is not
+re-asserted here: `to_openai` and `to_openai_embedding` are the same functions
 `tests/providers/test_local_mapping.py` and
 `tests/providers/test_local_embeddings.py` already pin in both directions, and a
 second copy of that suite would assert the same code twice and drift on the first
-change (decision E). What this file asserts is exactly what Azure changes - the
+change. What this file asserts is exactly what Azure changes - the
 request URL, the auth header - plus the one case that proves the body did NOT
 change (`test_the_body_is_the_shared_openai_mapping`).
 
 Everything runs over `httpx.MockTransport`: no socket is opened, no key is read
-from the environment, and no Azure resource exists to call (#66). The OpenAI-wire
+from the environment, and no Azure resource exists to call. The OpenAI-wire
 fixtures under `tests/providers/fixtures/local/` are the answers, because Azure
 answers the OpenAI shape and the readers are the shared ones.
 
@@ -254,7 +253,7 @@ def test_the_api_version_default_is_exactly_2024_10_21() -> None:
 
 
 def test_max_deployment_name_length_is_exactly_64() -> None:
-    r"""Catches a cap borrowed from `checked_tool_name` (128, decision D), which would let
+    r"""Catches a cap borrowed from `checked_tool_name` (128), which would let
     a name Azure cannot have onto the wire as a 404 the caller cannot read, and catches a
     pattern whose own `{1,64}` quantifier drifted away from the constant beside it."""
     assert MAX_DEPLOYMENT_NAME_LENGTH == 64
@@ -300,7 +299,7 @@ def test_a_deployment_name_of_65_characters_is_rejected() -> None:
     assert scripted.request_count == 0
 
 
-# The rejection table a project rule asks for. The newline and CRLF rows are the
+# The rejection table. The newline and CRLF rows are the
 # ones a pattern applied with `re.match` and `^...$` lets through - and here that
 # is a request-splitting attempt in a URL path, not just a bad name. The `/` and
 # `..` rows are the ones that make the deployment segment address a different

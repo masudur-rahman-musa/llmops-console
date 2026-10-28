@@ -295,7 +295,7 @@ describe("every tab has the same shape", () => {
     const qualityHtml = await render("quality", quality);
     expect(rowTexts(qualityHtml)).toEqual(expect.arrayContaining(["Out of scope 3 of 4", "Wrong tool 4", "Missed refusal 2"]));
 
-    // Cost is left out: its tradeoff table shows the option kind (self_hosted) as the file gives it, and the plan names no label for it.
+    // Cost is left out: its tradeoff table shows the option kind (self_hosted) as the file gives it, and no label is defined for it.
     for (const [name, html] of [["requests", requestsHtml], ["quality", qualityHtml]] as const) {
       for (const cell of [...tableCells(html), ...cards(html).map((item) => item.text)]) {
         expect(cell, name).not.toMatch(UNDERSCORE_WORD);

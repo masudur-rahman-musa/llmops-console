@@ -11,10 +11,9 @@ outcome:
   whole conversation. A trailing assistant turn and a differing earlier turn are
   separate rows, because an implementation reading `messages[-1]` passes the
   "changes when the question changes" assertion anyone would write first.
-* THE TWO HASHES are payload filters, never part of the embedded text (plan
-  decision C). The pairing case is the one that separates them: two requests with
-  the same final question and a different system prompt share a probe text and
-  must NOT share a system hash.
+* THE TWO HASHES are payload filters, never part of the embedded text. The pairing case is the one
+  that separates them: two requests with the same final question and a different system prompt share
+  a probe text and must NOT share a system hash.
 * ELIGIBILITY is four independent refusals: the alias must opt in, the request
   must not be streamed, tools must not be live, and the request must not name a
   response schema. Each row leaves the other three controls satisfied, so the
@@ -32,7 +31,7 @@ Contract this file assumes (the implementation follows it):
     semantic_eligible(body: ChatCompletionRequest, *, alias: Alias) -> bool
 
 `Alias` is `app.model_routing.policy.Alias` carrying the new
-`semantic_cache: bool = False` field (plan step 3). The alias objects below are
+`semantic_cache: bool = False` field. The alias objects below are
 built with `model_validate` from a dict rather than by keyword, so this file type
 checks against today's `Alias` and reddens at runtime until the field lands.
 """
@@ -116,7 +115,7 @@ def wire_body(**overrides: object) -> ChatCompletionRequest:
 
 
 def alias_with(*, semantic_cache: bool) -> Alias:
-    """A resolved alias carrying the per-alias switch #23 describes.
+    """A resolved alias carrying the per-alias switch.
 
     Built through `model_validate` rather than by keyword so this file type checks
     before `Alias.semantic_cache` exists; the candidate list is the minimum the
@@ -137,7 +136,7 @@ def alias_with(*, semantic_cache: bool) -> Alias:
 
 def test_the_semantic_threshold_is_exactly_the_published_one() -> None:
     """Catches a threshold moved to a plausible neighbour - 0.95, 0.98, or one read from
-    settings so that an operator can move it - after the design published a FIXED 0.97. A
+    settings so that an operator can move it - when the published value is a FIXED 0.97. A
     band would admit every one of those, and the number is what decides whether one
     tenant's question is served another question's answer, so it is pinned to the
     literal."""
@@ -249,7 +248,7 @@ def test_two_different_system_prompts_hash_differently() -> None:
     """Catches a hash over a constant, or over the PRESENCE of a system turn rather than
     its content: "you are terse" and "you are verbose" produce different answers to the
     same question, so sharing a filter value means one caller is served the other's answer
-    (plan decision C's whole reason)."""
+    (the whole reason for the filter)."""
     terse = wire_body(messages=[SYSTEM_TURN, FIRST_QUESTION])
     verbose = wire_body(messages=[OTHER_SYSTEM_TURN, FIRST_QUESTION])
 
@@ -258,7 +257,7 @@ def test_two_different_system_prompts_hash_differently() -> None:
 
 def test_a_system_prompt_changes_the_system_hash_and_not_the_probe_text() -> None:
     """Catches the system prompt being glued into the EMBEDDED text instead of kept as a
-    payload filter (plan decision C). Both halves are asserted at once, because an
+    payload filter. Both halves are asserted at once, because an
     implementation that embedded the prompt would still pass the hash case above: it is the
     unchanged probe text that says the prompt never reached the vector."""
     without = wire_body(messages=[FIRST_QUESTION])
@@ -392,16 +391,15 @@ def test_the_semantic_eligibility_decision_table(
 ) -> None:
     """Catches each of the five wrong predicates this rule invites, one row group each.
 
-    A predicate that never reads the alias takes the two `flag off` rows, and #23's "off by
+    A predicate that never reads the alias takes the two `flag off` rows, and "off by
     default per alias" would be a comment. One that forgot `stream` takes the streamed row,
     which is arranged with the flag ON and no tools so nothing else can refuse it. One that
     refused tools outright takes the `tool_choice: none` row, while one that read
-    `tool_choice` alone takes the row with tools and no choice at all (the design's design
-    note, the same rule 13a decision H applied to the exact tier). And one that reused
-    `is_cacheable` wholesale takes the two temperature rows: this tier is not the exact
-    tier, so a hot request whose alias opts in is a semantic candidate. And one that never
-    reads `response_format` takes the bare schema row, where no tool and no stream is in
-    the way, so a caller owed JSON of its own shape would be handed a neighbour's prose;
+    `tool_choice` alone takes the row with tools and no choice at all (the same treatment the exact
+    tier gets). And one that reused `is_cacheable` wholesale takes the two temperature rows: this
+    tier is not the exact tier, so a hot request whose alias opts in is a semantic candidate. And
+    one that never reads `response_format` takes the bare schema row, where no tool and no stream is
+    in the way, so a caller owed JSON of its own shape would be handed a neighbour's prose;
     the row that also offers tools is here because that body is LEGAL on the wire -
     `_supported` forbids only `tool_choice` beside a `response_format` - and it carries two
     refusals at once, which is why it is not the isolating case."""

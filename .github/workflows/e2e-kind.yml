@@ -1,10 +1,10 @@
 name: e2e-kind
-# #68 (part, kind e2e): a full local deploy of the gateway and a stub eval target,
+# Kind e2e: a full local deploy of the gateway and a stub eval target,
 # checked end to end. `infra/k8s/kind/smoke.sh` checks the gateway's model-free paths,
 # and `ops-eval conversations` plays the three small cases in
 # `backend/evals/kind-cases.jsonl` through the stub on the conversation route.
 #
-# No dependency on `build.yml` or GHCR (decision D): the gateway's and the
+# No dependency on `build.yml` or GHCR: the gateway's and the
 # stub's images are BUILT and `kind load docker-image`d fresh in the runner, so
 # a pull request with no push to `main` yet - and therefore no image published
 # under its SHA - can still run this whole. `infra/k8s/kind/` narrows the

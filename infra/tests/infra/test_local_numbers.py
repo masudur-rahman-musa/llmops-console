@@ -1,6 +1,6 @@
 """The local stack shows numbers: Prometheus in compose, the gateway wired to it, `make numbers`.
 
-An earlier change. Every case reads files as text or parsed YAML and starts nothing.
+Every case reads files as text or parsed YAML and starts nothing.
 """
 
 from __future__ import annotations

@@ -32,7 +32,7 @@ cannot decide any outcome the semantic tier is being asked about. The one
 exception is `test_an_exact_hit_returns_before_anything_is_embedded`, where the
 exact tier is the control under test.
 
-a project rule: one app for the module, built once, plus four more for the
+One app for the module, built once, plus four more for the
 arrangements a stub swap cannot express (a policy whose `embed` alias is refused
 by being turned off, a policy with no `embed` alias at all, an app with no
 embedding-capable adapter, and the `openai` and `local_embed` app a `pii` request reaches).
@@ -43,7 +43,7 @@ object that accumulates state.
 
 The semantic store is reached by NAME, `app.state.semantic_cache`, never by
 shape: this app now has four collaborators with a `put` and a `get`-shaped pair,
-and selecting one by its methods is what a project rule exists for.
+and selecting one by its methods is how the wrong one gets picked.
 """
 
 from __future__ import annotations
@@ -118,7 +118,7 @@ EMBED_PROVIDER = "local_embed"
 EMBED_MODEL = "bge-small-en-v1.5"
 """The provider and the resolved model of the shipped `embed` alias's only
 candidate. Stated because no header carries them: the embedding is not the
-request's candidate, which is the whole content of decision G."""
+request's candidate, which is the whole content of."""
 
 REQUESTS = "gateway_requests_total"
 TOKENS = "gateway_tokens_total"
@@ -130,7 +130,7 @@ DIRECTION_OUT = "out"
 CHAT_ANSWER = "Berlin is the capital of Germany."
 
 # Two ways of asking one question, and a third question. The pair is what the
-# tier exists for (#23's "the same question in different words"); the third is
+# tier exists for ("the same question in different words"); the third is
 # what stops every hit case here passing on a route that serves the nearest
 # entry whatever its distance.
 QUESTION = "What is the capital of Germany?"
@@ -219,7 +219,7 @@ class ChatStub:
         self.requests: list[ChatRequest] = []
 
     def reset(self) -> None:
-        """Forget every recorded call (a project rule's per-test isolation)."""
+        """Forget every recorded call."""
         self.requests = []
 
     @property
@@ -334,7 +334,7 @@ class BrokenSemanticCache:
     """A semantic store whose chosen half fails the way an unreachable Qdrant does.
 
     Deliberately NOT `QdrantSemanticCache` pointed at a dead port: that class
-    swallows its own failures (13b decision G), so it could not tell whether the
+    swallows its own failures, so it could not tell whether the
     ROUTE survives a store that raises. The two cases using it are about the
     route.
     """
@@ -457,7 +457,7 @@ def chat_only_client(settings: Settings) -> Iterator[TestClient]:
     """An app with a chat adapter and NO embedding-capable adapter anywhere.
 
     The shipped `embed` alias then has no healthy candidate and `resolve()`
-    answers `AllProvidersUnavailable` - the 503 half of decision B, and the
+    answers `AllProvidersUnavailable` - the 503 half, and the
     arrangement every other chat suite in this directory already runs under.
     """
     with build_chat_client(settings, {PROVIDER: ChatStub(name=PROVIDER)}) as client:
@@ -598,7 +598,7 @@ def send(
     """POST one completion carrying `text` as its only user message.
 
     No `temperature`, so `is_cacheable` refuses every body this helper builds and
-    the exact tier cannot decide any outcome here (13a decision G). The cases
+    the exact tier cannot decide any outcome here. The cases
     that want the exact tier state `temperature=0` themselves.
     """
     return post_chat(
@@ -651,10 +651,10 @@ def test_the_stub_vectors_sit_where_every_case_here_assumes() -> None:
 
 
 def test_the_semantic_words_are_the_published_ones() -> None:
-    """a project rule for the four names this plan introduces. Catches the header word
+    """The four new names. Catches the header word
     and the metric label drifting apart - a console summing `cache="semantic"` while the
     counter is filed under `kind="vector"` reports a hit rate of zero forever - and
-    catches the embedding alias becoming a setting (decision E), which is how a
+    catches the embedding alias becoming a setting, which is how a
     deployment ends up querying with vectors no stored entry shares."""
     assert CACHE_STATUS_SEMANTIC == "semantic"
     assert SEMANTIC_CACHE_KIND == "semantic"
@@ -672,7 +672,7 @@ def test_the_semantic_words_are_the_published_ones() -> None:
 def test_a_differently_worded_second_request_is_served_from_the_semantic_tier(
     semantic_client: TestClient, chat_stub: ChatStub, embed_stub: EmbedStub
 ) -> None:
-    """The plan's first criterion. Catches a tier that stores nothing, one that stores
+    """The first criterion. Catches a tier that stores nothing, one that stores
     under filters it cannot query back (a swapped `system_hash`/`tools_hash` pair, an
     alias taken from the resolved candidate on the way in and from the body on the way
     out), and one that looks up AFTER the provider call. `chat_stub.call_count == 1`
@@ -750,7 +750,7 @@ def test_only_an_eligible_request_embeds_anything(
     semantic_client: TestClient,
     embed_stub: EmbedStub,
 ) -> None:
-    """The plan's second criterion, asserted on the embedding stub's call count and not on
+    """The second criterion, asserted on the embedding stub's call count and not on
     the header, because a header cannot tell "embedded and found nothing" from "never
     embedded" - and an embedding is a provider call that is billed and can leak. Catches
     an eligibility check placed AFTER the embedding, which is the natural place to write
@@ -791,8 +791,8 @@ def test_a_schema_request_is_never_stored_in_the_semantic_tier(
 def test_an_exact_hit_returns_before_anything_is_embedded(
     semantic_client: TestClient, chat_stub: ChatStub, embed_stub: EmbedStub
 ) -> None:
-    """The plan's third criterion, and the ordering claim the two tiers make together
-    (13c decision A against 13a decision A). Catches a semantic lookup placed before the
+    """The third criterion, and the ordering claim the two tiers make together
+    (the semantic tier against the exact tier). Catches a semantic lookup placed before the
     exact one, or beside it: an exact hit would then pay for an embedding on every repeat
     of the cheapest possible request, which is the traffic the exact tier exists to make
     free. `temperature: 0` is stated so the exact tier is eligible; the second request is
@@ -813,14 +813,14 @@ def test_an_exact_hit_returns_before_anything_is_embedded(
 
 
 # --------------------------------------------------------------------------
-# what is embedded (decision A)
+# what is embedded
 # --------------------------------------------------------------------------
 
 
 def test_the_embedded_probe_is_the_redacted_text_and_not_the_raw_one(
     pii_client: TestClient, pii_stub: ChatAndEmbedStub
 ) -> None:
-    """Decision A, read off the stub's recorded `EmbeddingRequest` rather than off the
+    """Read off the stub's recorded `EmbeddingRequest` rather than off the
     answer - a route that redacted only what it returned would look identical from the
     body. Catches the lookup placed beside the exact one, ahead of `_redacted`: the raw
     address would then be sent to an embedding provider on every request of a `pii`-class
@@ -902,7 +902,7 @@ def test_a_short_final_message_is_neither_looked_up_nor_stored(
 
 
 # --------------------------------------------------------------------------
-# the metrics (#24, the design)
+# the metrics
 # --------------------------------------------------------------------------
 
 
@@ -937,7 +937,7 @@ def test_a_semantic_hit_counts_its_own_kind_and_labels_the_request_semantic(
     """Catches a semantic hit counted under `kind="exact"`, which would make the two tiers
     indistinguishable in the one query an operator asks (which tier is paying for itself),
     and catches a hit that never reaches `gateway_cache_hits_total` at all. The `cache`
-    label is the one #24's savings panel sums, so a hit left labelled `miss` is money
+    label is the one the savings panel sums, so a hit left labelled `miss` is money
     reported as spent. The delta is taken AFTER the warming request, so only the second
     request's emissions are inside the measurement."""
     assert send(semantic_client, QUESTION).status_code == 200
@@ -954,7 +954,7 @@ def test_a_semantic_hit_counts_its_own_kind_and_labels_the_request_semantic(
 def test_a_semantic_hit_books_the_embedding_tokens_and_no_chat_tokens(
     semantic_client: TestClient, metrics_registry: CollectorRegistry
 ) -> None:
-    """The plan's fifth criterion. Catches a hit that re-books the tokens of the ORIGINAL
+    """The fifth criterion. Catches a hit that re-books the tokens of the ORIGINAL
     completion: the tier would inflate cost reporting by exactly the traffic it was added
     to save, which is worse than not caching at all because it is invisible. The exact
     total is asserted rather than a band: what a hit costs is one embedding and nothing
@@ -981,9 +981,9 @@ def test_a_semantic_hit_books_the_embedding_tokens_and_no_chat_tokens(
 def test_the_embedding_tokens_are_booked_under_the_embed_provider_and_model(
     semantic_client: TestClient, metrics: MetricDelta
 ) -> None:
-    """Decision G's booking half. Catches the embedding's tokens booked under the CHAT
+    """The booking half. Catches the embedding's tokens booked under the CHAT
     candidate - `anthropic`/`claude-haiku-4-5` would then be billed for vectors it never
-    computed, and an earlier change's ledger could never be reconciled with the provider's invoice -
+    computed, and the ledger could never be reconciled with the provider's invoice -
     and catches them booked under the ALIAS rather than the resolved model, which is the
     grain the ledger prices at. The `out` assertion is the one that catches a copied chat
     call site: an embedding has no completion, and a zero `out` sample is an invented
@@ -1024,10 +1024,10 @@ def test_the_embedding_tokens_are_booked_under_the_embed_provider_and_model(
 def test_the_embedding_does_not_relabel_the_requests_candidate(
     semantic_client: TestClient, metrics: MetricDelta
 ) -> None:
-    """The scope-label half of decision G. Catches an embedding resolution that runs
+    """The scope-label half. Catches an embedding resolution that runs
     through `label_candidate`: every eligible chat request would then be attributed to the
     embedding provider on the counter and on the span, so the per-alias latency and error
-    panels of the design would show `openai` serving traffic it never served. Asserted as
+    dashboard panels would show `openai` serving traffic it never served. Asserted as
     the ABSENCE of a series as well as the presence of the right one, because a relabel
     moves the count rather than adding to it."""
     response = send(semantic_client, QUESTION)
@@ -1039,14 +1039,14 @@ def test_the_embedding_does_not_relabel_the_requests_candidate(
 
 
 # --------------------------------------------------------------------------
-# the stage span (decision D)
+# the stage span
 # --------------------------------------------------------------------------
 
 
 def test_the_semantic_span_is_emitted_on_an_eligible_miss_and_on_an_eligible_hit(
     semantic_client: TestClient, spans: InMemorySpanExporter
 ) -> None:
-    """Decision D. Catches the embedding folded into the `cache` span, where a slow
+    """Catches the embedding folded into the `cache` span, where a slow
     embedder reads as a slow cache and pages the wrong team, and catches a span emitted on
     hits alone, which would make every trace carrying one a hit by construction and hide
     the cost of the lookups that found nothing. The two buffers are read separately, so a
@@ -1096,7 +1096,7 @@ def test_no_semantic_span_is_emitted_on_an_ineligible_request(
 
 
 # --------------------------------------------------------------------------
-# every way it can fail (decision B)
+# every way it can fail
 # --------------------------------------------------------------------------
 
 
@@ -1147,7 +1147,7 @@ def test_an_embed_alias_missing_from_the_policy_is_a_miss(
 ) -> None:
     """The row `AliasUnknown` hides in. Catches a seam that catches only the availability
     errors: a policy with no `embed` alias - a legal document - would 404 every chat
-    request, and the failure would name an alias the caller never sent. Decision B is
+    request, and the failure would name an alias the caller never sent. The point is
     about every failure of the resolution, not about the two that were easy to think of."""
     response = send(no_embed_alias_client, QUESTION, tenant=REFUSAL_TENANT)
 
@@ -1211,7 +1211,7 @@ def test_a_store_that_raises_on_put_is_swallowed_after_the_caller_is_served(
 
 
 # --------------------------------------------------------------------------
-# the input cap (decision F, a project rule)
+# the input cap
 # --------------------------------------------------------------------------
 
 AT_CAP_PROBE = "a" * MAX_EMBEDDING_INPUT_CHARS
@@ -1229,7 +1229,7 @@ CAP_ROWS: list[tuple[str, str, int]] = [
 def test_the_probe_length_boundary_is_inclusive_and_never_a_422(
     case: str, probe: str, embeddings: int, semantic_client: TestClient, embed_stub: EmbedStub
 ) -> None:
-    """Decision F and a project rule: the probe is a client-supplied string reaching an
+    """The probe is a client-supplied string reaching an
     unsized store, so it is pre-checked against that store's own constant, inclusively,
     on both sides. Catches a cap written `>=`, which would refuse the longest legal input
     forever, and a cap missing entirely, which sends an over-length text to an embedder
@@ -1247,7 +1247,7 @@ def test_the_probe_length_boundary_is_inclusive_and_never_a_422(
 def test_a_probe_at_the_cap_is_embedded_whole_and_not_truncated(
     semantic_client: TestClient, embed_stub: EmbedStub
 ) -> None:
-    """The other way decision F can go wrong. Catches a route that truncates to the cap
+    """The other way this can go wrong. Catches a route that truncates to the cap
     instead of refusing: two different long prompts sharing a prefix would become one
     question, and the tier would confidently serve one caller's answer to the other -
     the same failure the threshold exists to prevent, arriving through the door nobody

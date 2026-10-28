@@ -20,8 +20,8 @@ grouped by the three things that could break that promise or the answer.
   that can reject it, and every rejected row asserts that NO outbound call was
   made - a cap enforced after the provider was called is not a cap.
 
-No socket is opened, no provider key is read and no backing service is started
-(#66). The successful cases answer from the stub, the base64 case from a
+No socket is opened, no provider key is read and no backing service is started.
+The successful cases answer from the stub, the base64 case from a
 hand-written payload under `tests/providers/fixtures/local/`.
 """
 
@@ -187,7 +187,7 @@ def test_the_two_object_discriminators_are_the_published_words() -> None:
 def test_the_input_caps_are_exactly_sixty_four_and_eight_thousand_one_hundred_ninety_two() -> None:
     """Catches either cap drifting: the table below is written in terms of the constants, so
     it follows them rather than pinning them, and these are the acceptance criterion's
-    numbers (decision E)."""
+    numbers."""
     assert MAX_EMBEDDING_INPUTS == 64
     assert MAX_EMBEDDING_INPUT_CHARS == 8192
 
@@ -232,7 +232,7 @@ def test_response_model_is_the_alias_the_caller_named(embeddings_client: TestCli
 
 def test_usage_is_carried_through_unchanged(embeddings_client: TestClient) -> None:
     """Catches a zero-filled or recomputed usage, and catches a third `completion_tokens`
-    field written as 0 alongside the two real ones (decision F): the ledger prices from
+    field written as 0 alongside the two real ones: the ledger prices from
     these numbers, so a wrong one books a real, billed call at the wrong cost."""
     body = ok_body(post_embeddings(embeddings_client, embeddings_body()))
 
@@ -388,7 +388,7 @@ CAPPED_INPUTS: list[tuple[str, WireInput]] = [
     ("an item one character over the character cap", ["Berlin", OVER_CHAR_CAP]),
 ]
 
-# The rows the ANNOTATION rejects, before any validator of ours runs. Decision C:
+# The rows the ANNOTATION rejects, before any validator of ours runs. The reasoning:
 # the gateway has no tokenizer, and neither redaction nor pricing can see inside
 # a token array, so OpenAI's two token forms are a shape this product cannot
 # honour its guarantees on and are refused by the type rather than passed
@@ -432,7 +432,7 @@ def test_a_capped_input_names_the_field(case: str, value: WireInput, settings: S
     Only the capped rows are here. The mistyped ones are refused by the annotation, and
     the existing `handle_request_validation_error` reports the LAST segment of the error
     location, which for a `str | tuple[str, ...]` union is the failing member's name; that
-    handler is not this plan's to change."""
+    handler is out of scope here."""
     stub = EmbeddingStubAdapter(name=EMBED_PROVIDER)
 
     with build_chat_client(settings, {EMBED_PROVIDER: stub}) as client:
@@ -507,7 +507,7 @@ def test_a_candidate_without_an_embedding_adapter_is_503(settings: Settings) -> 
     can embed": `local` IS registered here, with the chat-only `StubAdapter`, so the
     provider-presence seam would let the request through and the caller would get an
     `AttributeError` served as a 500 with no code. Only the `EmbeddingAdapter` check can
-    turn it into the resolver's typed 503 (decision B)."""
+    turn it into the resolver's typed 503."""
     with build_chat_client(settings, {EMBED_PROVIDER: StubAdapter(name=EMBED_PROVIDER)}) as client:
         response = post_embeddings(client, embeddings_body())
 
@@ -650,7 +650,7 @@ def test_the_header_set_is_exactly_six(embeddings_client: TestClient) -> None:
 
 
 def test_the_cost_header_is_the_booked_cost(embeddings_client: TestClient) -> None:
-    """The positive claim that replaced the absence an earlier change decision B pinned, on the
+    """The positive claim that replaced the old absence of the header, on the
     route a dashboard would sum most of. Catches an embeddings path that books a row and
     forgets the header - the chat route is where the header is built, so this route
     getting it is not automatic - and catches a header that is not the row's number, since

@@ -1,11 +1,11 @@
 """The streaming half of the Anthropic adapter: the SSE reader and the stream open.
 
-Two halves, kept apart the way an earlier change kept `from_anthropic` apart from the HTTP.
+Two halves, kept apart the way `from_anthropic` is kept apart from the HTTP.
 `from_anthropic_events` is pure - a function over the decoded lines
 `httpx.Response.iter_lines()` yields - so every reader case runs against a
 recorded `.sse` file with no transport at all. `stream_chat` adds the request,
 the 120s read timeout and the retried open, and those cases run through
-`httpx.MockTransport`: no socket is opened and no provider key is read (#66).
+`httpx.MockTransport`: no socket is opened and no provider key is read.
 
 The recorded fixtures carry deliberately distinct, non-round token counts, and
 they are asserted here as exact literals. `message_start` in
@@ -116,7 +116,7 @@ class SseTransport:
     """A `MockTransport` that answers with recorded SSE bodies and records every request.
 
     The last step repeats once the script runs out, so a retry loop that makes
-    more attempts than the plan allows gets a plausible answer rather than an
+    more attempts than allowed gets a plausible answer rather than an
     IndexError; the exact request counts are what catch it.
     """
 
@@ -192,7 +192,7 @@ def test_the_reader_yields_the_start_then_the_text_then_the_finish_and_usage_las
 
 def test_the_reader_assembles_a_tool_use_block_from_its_json_fragments() -> None:
     """Catches a reader that forwards Anthropic's `input_json_delta` fragments one by one:
-    `{"city": "Ber` is not JSON any client can parse, and decision B promises one whole
+    `{"city": "Ber` is not JSON any client can parse, and the stream promises one whole
     call. Also catches a reader that emits the block when it OPENS, whose arguments would
     be the empty `input` object Anthropic starts with."""
     events = list(from_anthropic_events(sse_lines("stream_tool_use")))
@@ -516,7 +516,7 @@ def test_stream_chat_yields_the_recorded_events_over_the_transport() -> None:
 
 
 def test_stream_open_retries_only_before_the_first_event(sleeps: SleepRecorder) -> None:
-    """Catches both halves of decision C at once: an open that gives up on a 500 the next
+    """Catches both halves at once: an open that gives up on a 500 the next
     attempt would have served, and a retry wrapped around the whole iteration, which would
     replay an answer whose first sentences the client has already been shown."""
     adapter, scripted = make_sse_adapter(
@@ -547,8 +547,8 @@ def test_a_transport_failure_mid_stream_is_a_provider_error_and_is_not_retried(
     sleeps: SleepRecorder,
 ) -> None:
     """Catches a raw `httpx.ReadTimeout` escaping `stream_chat` once the body has started -
-    the route would answer 500 with a traceback instead of the error frame decision E
-    promises - and catches a retry wrapped around the iteration, which would reopen the
+    the route would answer 500 with a traceback instead of the error frame that is
+    promised - and catches a retry wrapped around the iteration, which would reopen the
     call and replay sentences the client has already been shown."""
 
     def cut_off() -> Iterator[bytes]:
@@ -586,8 +586,8 @@ def test_a_transport_failure_mid_stream_is_a_provider_error_and_is_not_retried(
 
 def test_a_stream_that_never_opens_is_a_provider_error(sleeps: SleepRecorder) -> None:
     """Catches an unwrapped `httpx.ReadTimeout` escaping `stream_chat`: the route would
-    answer 500 with a traceback instead of the 502 a client's retry logic reads, and plan
-    10's fallback would have no `retryable` flag to act on."""
+    answer 500 with a traceback instead of the 502 a client's retry logic reads, and the
+    fallback would have no `retryable` flag to act on."""
     adapter, scripted = make_sse_adapter([httpx.ConnectTimeout], sleep=sleeps)
 
     with pytest.raises(ProviderError) as raised:

@@ -1,6 +1,6 @@
 """The local chat model is gone from everything that ships; the embedding server stays.
 
-An earlier change: chat runs on Anthropic and OpenAI only. These cases read files
+Chat runs on Anthropic and OpenAI only. These cases read files
 as text or as parsed YAML. No backing service, no network, nothing written.
 
 The one-off GPU run keeps its own Qwen manifests (`infra/k8s/gpu/`, the `gpu-vllm`
@@ -139,7 +139,7 @@ def test_the_server_and_load_provider_files_match_the_shipped_ones() -> None:
     assert set(load["mock_chat"]) <= set(shipped["openai"])
 
 
-#: The files the plan changed that name paths, from the repo root.
+#: The changed files that name paths, from the repo root.
 PATH_FILES = (
     "backend/Dockerfile",
     "docker-compose.yml",
@@ -161,7 +161,7 @@ PATH_FILES = (
 
 #: Paths that are named on purpose and do not exist in this repo: the companion
 #: repo's files, private folders that never ship, and build outputs.
-PATH_EXEMPT_PREFIXES = ("dev/", "backend/evals/conversations/", "backend/app/evals/prompts/")
+PATH_EXEMPT_PREFIXES = ("backend/evals/conversations/", "backend/app/evals/prompts/")
 
 #: Named on purpose, written by a run or filled in by the owner, so absent from a clean checkout.
 PATH_EXEMPT_EXACT = frozenset(
@@ -193,7 +193,7 @@ def named_paths(text: str) -> set[str]:
 
 def test_every_path_the_changed_files_name_exists() -> None:
     """Catches a doc or build file that still names `backend/config/prices.yaml`,
-    `infra/k8s/apps/llama.yaml` or any other file this plan deleted or moved, and a
+    `infra/k8s/apps/llama.yaml` or any other file that was deleted or moved, and a
     new path (the provider folders) that was written with a typo."""
     missing: list[str] = []
     for file_name in PATH_FILES:

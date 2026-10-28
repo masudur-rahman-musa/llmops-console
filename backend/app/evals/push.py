@@ -26,9 +26,8 @@ from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Gauge, gen
 from app.evals.scores import METRIC_NAMES
 
 PUSHGATEWAY_JOB: Final[str] = "eval_nightly"
-"""The fixed job label every push carries (§1's "fixed job label", never derived from a
-tenant, a run kind or any other caller-supplied value - the plan's own no-new-identifier
-criterion)."""
+"""The fixed job label every push carries, never derived from a tenant, a run kind or any
+other caller-supplied value, so a push cannot introduce a new identifier."""
 
 
 def push_metrics(

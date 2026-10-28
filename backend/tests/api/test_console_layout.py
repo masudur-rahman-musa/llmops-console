@@ -1,4 +1,4 @@
-"""An earlier change: the data the console layout reads, on `/console/requests` and `/console/cost`.
+"""The data the console layout reads, on `/console/requests` and `/console/cost`.
 
 No backing service. Each case builds the admin app from `create_app`, then replaces the two
 sources on `app.state` as tests/api/test_console_requests.py does, and reuses its
@@ -8,7 +8,7 @@ The contract these cases are written against, before it exists:
 
 * `RequestsPage.per_day`: one `{day, requests, errors}` per window day, oldest first, every
   day present. `requests` is the ledger's answered count for the UTC day and `errors` its
-  status 500 and above count (`daily_requests`, an earlier change); both are whole numbers whatever
+  status 500 and above count (`daily_requests`); both are whole numbers whatever
   Prometheus does;
 * `RequestsPage.tokens` comes from `ConsoleReader.model_tokens(days, now)`; Prometheus is not
   asked for tokens any more;

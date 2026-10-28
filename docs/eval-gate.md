@@ -62,7 +62,7 @@ line each. The markdown `--comment` writes opens with that same verdict line.
 
 `backend/evals/conversation-baseline.json` is the record of what the system is known
 to do. It changes only in a commit whose subject begins `baseline:`, with an ADR
-saying what moved and why. It is never edited to make a run pass.
+in `docs/adr/` saying what moved and why. It is never edited to make a run pass.
 
 The rule is enforced in CI, not by review:
 
@@ -70,7 +70,7 @@ The rule is enforced in CI, not by review:
 
 It reads `base..head` once and answers a verdict over the commits in it. A commit
 that does not touch a baseline file is not examined. One that does is clean only when
-its subject starts `baseline:` and that same commit carries a file under the project notes.
+its subject starts `baseline:` and that same commit carries a file under `docs/adr/`.
 The guard watches the conversation baseline and also the old single-reply baseline
 file, so that file cannot come back quietly.
 

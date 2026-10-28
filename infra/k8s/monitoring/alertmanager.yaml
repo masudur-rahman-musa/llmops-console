@@ -1,14 +1,13 @@
 # Alertmanager: the one pod that turns a firing rule into an email and a
 # Telegram message. One Deployment, one ConfigMap, one Service - no operator,
-# no `Alertmanager` custom resource (a design note, unchanged by this plan).
+# no `Alertmanager` custom resource.
 #
-# One route, one receiver, both channels on every alert. Nothing in
-# SPEC.md or REQUIREMENTS.md asks for severity-based branching, so none is
-# built: `BudgetExceeded` and `DiskSpaceLow` page the same two channels.
+# One route, one receiver, both channels on every alert. Nothing asks for severity-based
+# branching, so none is built: `BudgetExceeded` and `DiskSpaceLow` page the same two channels.
 #
 # The container port is named `metrics`, the same as every other SCRAPED pod
 # in this namespace (9093 here) - not because Prometheus scrapes Alertmanager's
-# own `/metrics` for this plan's dashboards (it does not, yet), but because the
+# own `/metrics` for the dashboards (it does not, yet), but because the
 # shared name is what lets the existing `metrics-ingress-from-monitoring`
 # policy (`../base/networkpolicies.yaml`) admit Prometheus's alert-firing POST
 # to this pod with no new ingress policy - one rule, five pods, three port
@@ -146,8 +145,8 @@ spec:
       # No `serviceAccountName`. This pod never calls the API server: its
       # config is a mounted file and its two outbound calls (SMTP, Telegram)
       # are what `alertmanager-egress` exists to allow.
-      # Writes the four plain values into the config before Alertmanager starts
-      #. The only container that reads `alertmanager-secrets` as env.
+      # Writes the four plain values into the config before Alertmanager starts.
+      # The only container that reads `alertmanager-secrets` as env.
       # Until that Secret exists the pod waits here; a bad value stops it here,
       # with the key named in this container's log.
       initContainers:
@@ -198,7 +197,7 @@ spec:
             initialDelaySeconds: 15
             periodSeconds: 20
             timeoutSeconds: 5
-          # The exact remainder an earlier change's budget accounting left: 32Mi of the
+          # The exact remainder the budget accounting left: 32Mi of the
           # namespace's 512Mi requests, 50m of its 400m, 64Mi of its 1Gi
           # ceiling - `monitoring`'s totals now read the envelope exactly, with
           # nothing left over. No `limits.cpu`, the same reason the scrape
@@ -234,9 +233,9 @@ spec:
         - name: secrets
           secret:
             secretName: alertmanager-secrets
-        # `emptyDir`, not a claim (decision D). Losing silences and the
+        # `emptyDir`, not a claim. Losing silences and the
         # notification log across a restart of a single-replica internal tool
-        # is a cost nothing in REQUIREMENTS or SPEC asks to avoid, and 23b's
+        # is a cost nothing asks to avoid, and the
         # budget accounting reserved memory and CPU for this pod but no
         # storage quota.
         - name: data

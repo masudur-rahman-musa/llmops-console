@@ -255,7 +255,7 @@ def test_a_case_line_made_without_a_round_is_round_one() -> None:
 
 
 def test_the_most_repeats_allowed_is_ten() -> None:
-    """Catches a changed cap: a design note publishes 1 to 10."""
+    """Catches a changed cap: the documented range is 1 to 10."""
     assert MAX_REPEATS == 10
 
 

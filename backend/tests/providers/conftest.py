@@ -3,8 +3,8 @@
 Everything here is in-process. The "recorded" Anthropic payloads are JSON files
 read from disk and replayed through `httpx.MockTransport`, so no test opens a
 socket and no test reads a provider key from the environment.
-There is no backing service, so a project rule (session-scoped fixtures with a
-per-test namespace) does not apply and function scope is the correct choice:
+There is no backing service, so session-scoped fixtures with a
+per-test namespace do not apply and function scope is the correct choice:
 building a transport costs a dict lookup.
 
 `PROVIDER_DETAIL_MARKER` is planted inside every error fixture's provider
@@ -58,7 +58,7 @@ class ScriptedTransport:
     """An `httpx.MockTransport` that plays a fixed script and records every request.
 
     The last step repeats once the script runs out, so a retry loop that makes
-    more attempts than the plan allows gets a plausible answer rather than an
+    more attempts than allowed gets a plausible answer rather than an
     IndexError; the exact-request-count assertions are what catch it.
     """
 
@@ -199,8 +199,8 @@ def make_local_adapter(
 ) -> tuple[OpenAICompatibleAdapter, ScriptedTransport]:
     """A local adapter wired to a scripted transport, with no clock and no key by default.
 
-    `api_key=None` is the shipped `local` provider's configuration (an earlier change
-    decision B): it sits on a private network and declares no `key_env`.
+    `api_key=None` is the shipped `local` provider's configuration (it sits on a private network
+    and declares no `key_env`.
     """
     scripted = ScriptedTransport(steps)
     adapter = OpenAICompatibleAdapter(

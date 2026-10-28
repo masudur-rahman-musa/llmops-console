@@ -33,10 +33,8 @@ CHANGED_DOCS = (
     "docs/media/README.md",
     "docs/eval-report.md",
 )
-ROOTS = ("backend/", "infra/", "docs/", "dev/", "web/", ".github/")
+ROOTS = ("backend/", "infra/", "docs/", "web/", ".github/")
 ROOT_FILES = {"Makefile", "README.md", "ARCHITECTURE.md", "docker-compose.yml"}
-# Gitignored or local-only: on the owner's disk, absent from a fresh clone.
-LOCAL_ONLY = ("dev/notes/", "dev/docs/REQUIREMENTS.md", "dev/disputes/")
 # Written by a run, or living in the companion repo.
 NOT_IN_THIS_TREE = {"docs/tradeoff.md", "backend/evals/conversations/cases.jsonl"}
 
@@ -97,7 +95,7 @@ def candidate(token: str) -> str | None:
     token = re.sub(r":\d+(-\d+)?$", "", token)
     if not token or any(mark in token for mark in "*{}<>$|=") or "://" in token:
         return None
-    if token.startswith(LOCAL_ONLY) or "/.env" in token or token.endswith(".tfvars"):
+    if "/.env" in token or token.endswith(".tfvars"):
         return None
     if token in NOT_IN_THIS_TREE:
         return None

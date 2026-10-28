@@ -45,7 +45,7 @@ from app.evals.baseline_guard import (
 
 OLD = "backend/evals/baseline.json"
 NEW = "backend/evals/conversation-baseline.json"
-ADR = "dev/adr/0040-conversation-baseline.md"
+ADR = "docs/adr/0040-conversation-baseline.md"
 GOOD_SUBJECT = "baseline: set the conversation baseline"
 
 
@@ -55,10 +55,10 @@ def test_the_published_values_are_pinned() -> None:
     ref cap of 255."""
     assert BASELINE_PATHS == (OLD, NEW)
     assert BASELINE_PREFIX == "baseline:"
-    assert ADR_PREFIX == "dev/adr/"
+    assert ADR_PREFIX == "docs/adr/"
     assert MAX_REF_LENGTH == 256
     assert MISSING_PREFIX_REASON == 'the subject does not start "baseline:"'
-    assert MISSING_ADR_REASON == "the commit adds no file under dev/adr/"
+    assert MISSING_ADR_REASON == "the commit adds no file under docs/adr/"
     assert GUARD_PASSED_LINE.format(checked=2) == "baseline guard passed: 2 commits checked"
 
 
@@ -97,7 +97,7 @@ def test_a_commit_breaking_both_halves_is_one_offence_with_both_reasons() -> Non
 
 
 def test_the_commit_that_swaps_the_baselines_is_clean_with_prefix_and_adr() -> None:
-    """Catches a guard that fails the plan's own commit: it deletes `baseline.json` and adds
+    """Catches a guard that fails its own commit: it deletes `baseline.json` and adds
     `conversation-baseline.json`, with the prefix and its ADR."""
     swap = Commit(sha="a1", subject=GOOD_SUBJECT, files=(OLD, NEW, ADR))
 
@@ -138,8 +138,9 @@ def test_a_path_that_is_not_exactly_a_baseline_is_not_examined(path: str) -> Non
 
 
 def test_only_a_file_under_the_adr_directory_counts() -> None:
-    """Catches an ADR check that accepts `docs/adr/` or a file merely containing the project notes."""
-    for elsewhere in ("docs/adr/0040.md", "x/dev/adr/0040.md", "dev/adrs/0040.md"):
+    """Catches an ADR check that accepts a near-miss folder or a file merely containing the
+    directory name."""
+    for elsewhere in ("adr/0040.md", "x/docs/adr/0040.md", "docs/adrs/0040.md"):
         verdict = check([Commit(sha="a1", subject=GOOD_SUBJECT, files=(NEW, elsewhere))])
         assert [o.reasons for o in verdict.offences] == [(MISSING_ADR_REASON,)], elsewhere
 
@@ -256,13 +257,13 @@ def commit(repo: Path, subject: str, files: Sequence[str], *, remove: Sequence[s
 
 @pytest.fixture(scope="module")
 def guard_repo(tmp_path_factory: pytest.TempPathFactory) -> GuardRepo:
-    """One small history: a root with the old baseline, the plan's swap commit done the right
+    """One small history: a root with the old baseline, the swap commit done the right
     way, a change to the new file with no prefix, and a deletion of the old file with none."""
     repo = tmp_path_factory.mktemp("guard-repo")
     git(repo, "init", "--initial-branch=main", ".")
     root = commit(repo, "add the readme and the old baseline", ["README.md", OLD])
     swap = commit(repo, GOOD_SUBJECT, [NEW, ADR], remove=[OLD])
-    no_prefix = commit(repo, "update the numbers", [NEW, "dev/adr/0041-x.md"])
+    no_prefix = commit(repo, "update the numbers", [NEW, "docs/adr/0041-x.md"])
     readd = commit(repo, "bring the old one back", [OLD])
     return GuardRepo(repo, {"root": root, "swap": swap, "no_prefix": no_prefix, "readd": readd})
 

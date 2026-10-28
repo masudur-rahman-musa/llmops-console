@@ -1,6 +1,6 @@
 # The twenty-one NetworkPolicies: ten in `apps`, three in `platform`, eight in
 # `monitoring`. They live in `base/` rather than beside the workloads
-# they constrain because the design puts them here: a policy is part of the
+# they constrain because a policy is part of the
 # envelope a namespace admits work into, like its quota and its LimitRange, and
 # splitting them across `apps/` and `platform/` would mean reading two files to
 # answer "what may this pod reach".
@@ -12,7 +12,7 @@
 #
 # The shape is deny-first. `apps`'s `default-deny` selects every pod in it in
 # both directions and everything after it is an additive allow, because Kubernetes
-# unions allows and has no deny rule. So the guarantee #54 asks for - only the
+# unions allows and has no deny rule. So the guarantee that only the
 # gateway reaches the internet - is a property of what is ABSENT from this file,
 # not of anything written in it, which is why `infra/tests/infra/test_k8s_netpol.py`
 # asserts by equality and scans the whole build for a second `ipBlock` rather
@@ -108,7 +108,7 @@ spec:
         - protocol: TCP
           port: http
 
-# The one policy in the cluster with a route off it, and the reason #54 is a
+# The one policy in the cluster with a route off it, and the reason that guarantee is a
 # property this build can claim at all.
 #
 # `0.0.0.0/0` minus the three private ranges and link-local keeps the gateway
@@ -291,7 +291,7 @@ spec:
         - protocol: TCP
           port: metrics
 
-# Six destinations and no `ipBlock` at all (decision B). The Helpdesk holds no
+# Six destinations and no `ipBlock` at all. The Helpdesk holds no
 # provider key and this is what makes that structural rather than conventional:
 # even a bug in the companion repo cannot dial a provider, because there is no
 # route off the cluster from these four pods. An allow to 443 for Langfuse would
@@ -446,7 +446,7 @@ spec:
         - protocol: TCP
           port: 8080
 
-# `platform` is denied INBOUND only (decision A). cert-manager lives here and
+# `platform` is denied INBOUND only. cert-manager lives here and
 # needs the ACME endpoint and the API server; an egress deny would be a cluster
 # that cannot issue a certificate, and every public host in this build depends
 # on one. What it costs is that a compromised data pod can still talk out -
@@ -668,12 +668,12 @@ spec:
       ports:
         - protocol: TCP
           port: metrics
-    # An earlier change's sixth scrape target: cert-manager's own `/metrics`, read by
+    # The sixth scrape target: cert-manager's own `/metrics`, read by
     # NUMBER rather than by name. Every other destination here resolves a
     # named port against a pod template this build actually writes; nothing in
     # this kustomize build owns a cert-manager pod template to resolve one
     # against (it is helm-installed, unmanaged by this repo), so this is the
-    # one entry that has to be asserted by the number 23a's scrape config
+    # one entry that has to be asserted by the number the scrape config
     # dials - `infra/tests/infra/test_k8s_alerting.py` documents why this peer
     # carries no `podSelector` at all.
     - to:
@@ -683,7 +683,7 @@ spec:
       ports:
         - protocol: TCP
           port: 9402
-    # An earlier change: where a firing alert goes. Read by NAME - the pod template
+    # Where a firing alert goes. Read by NAME - the pod template
     # exists in this same build - the same mechanism the exporter rules above
     # use.
     - to:
@@ -693,9 +693,9 @@ spec:
       ports:
         - protocol: TCP
           port: metrics
-    # An earlier change's seventh scrape target: the Pushgateway the nightly eval
+    # The seventh scrape target: the Pushgateway the nightly eval
     # workflow pushes `gateway_eval_*` to. `evals` carries no NetworkPolicy of its own
-    # yet (that namespace held no workload before this plan), so this is the
+    # yet (that namespace holds no workload yet), so this is the
     # only side of the connection anything here restricts today.
     - to:
         - namespaceSelector:
@@ -744,8 +744,7 @@ spec:
 
 # Grafana is the first pod in `monitoring` that the namespace-wide named-port
 # allow above does NOT cover. `metrics-ingress-from-monitoring` opens the port
-# NAMED `metrics`, and Grafana's port is named `http` (an earlier change decision D,
-# because an Ingress backend points at it and it serves a browser) - a named
+# NAMED `metrics`, and Grafana's port is named `http` (because an Ingress backend points at it and it serves a browser) - a named
 # port that does not resolve on a pod is no allowance for that pod. So the UI
 # gets a policy of its own, and the two together say exactly who may open a
 # connection to it: Traefik, and nothing else.
@@ -775,7 +774,7 @@ spec:
           port: http
 
 # The gateway reading Prometheus's query API for the console-api,
-# the ingress half of the rule at the end of `gateway-egress`. The only `apps`
+# the ingress half of the last rule in `gateway-egress`. The only `apps`
 # peer anywhere in this namespace: `metrics-ingress-from-monitoring` stays
 # scoped to `monitoring`, so no other `apps` pod gains a path by this.
 #
@@ -816,7 +815,7 @@ spec:
 #
 # The port is the NUMBER rather than the name `metrics`: Prometheus's port is
 # named for the scrape plane, and this rule is a UI reading a query API on the
-# same socket. The number is what 23a pinned and what the scrape config dials.
+# same socket. The number is the one the scrape config dials.
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -842,12 +841,12 @@ spec:
 # to the public internet (`gateway-egress` above is the first and only other
 # one - `infra/tests/infra/test_k8s_netpol.py` scans the whole build for an
 # `ipBlock` and pins the set to exactly these two). SMTP and Telegram are both
-# public endpoints, so this is the one genuinely new capability an earlier change adds
+# public endpoints, so this is the one genuinely new capability this adds
 # to the cluster rather than a rewiring of an existing one.
 #
-# Scoped to this one pod rather than opened namespace-wide (a design note, decision
-# B): `monitoring` is single-tenant and has exactly one pod that will ever
-# need this, so the narrower shape costs nothing and keeps req #54's guarantee
+# Scoped to this one pod rather than opened namespace-wide (on purpose):
+# `monitoring` is single-tenant and has exactly one pod that will ever
+# need this, so the narrower shape costs nothing and keeps the guarantee
 # closer to true than a namespace where "nothing else needs it today" is the
 # only thing stopping a future pod from getting it for free.
 #

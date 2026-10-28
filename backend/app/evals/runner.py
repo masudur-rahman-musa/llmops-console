@@ -1,8 +1,8 @@
 """Play every case in file order, save each one the moment it finishes, and resume.
 
 The loop is the whole module. The result of a case is a `CaseLine`, written as one
-flushed JSON line to `<reports_dir>/<run-id>.jsonl` as soon as the case is done
-, so a run that dies keeps every paid
+flushed JSON line to `<reports_dir>/<run-id>.jsonl` as soon as the case is done, so a run that
+dies keeps every paid
 result. Starting again with the same run id plays only the cases not yet in the file,
 and never resets the help desk inside a round, because the cases act on what earlier
 ones filed. A new run id, or an empty file, resets once before the first case.

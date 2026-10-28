@@ -1,8 +1,8 @@
 """Fixtures for the routing policy and resolver tests.
 
 Everything here is in-process: a Pydantic model tree and a YAML file under
-`tmp_path`. There is no backing service, so a project rule (session-scoped
-fixtures, per-test isolation by namespace) does not apply and function scope is
+`tmp_path`. There is no backing service, so session-scoped fixtures with per-test
+namespaces do not apply and function scope is
 the correct choice.
 """
 

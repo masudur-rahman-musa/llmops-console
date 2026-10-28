@@ -7,8 +7,8 @@ token counts, because a symmetric fixture cannot tell an implementation that
 prices both directions at the input rate from one that prices them separately.
 
 Money is `Decimal` throughout and the results are asserted as exact strings
-rather than as bands: a band admits precisely the float implementation decision E
-exists to forbid.
+rather than as bands: a band admits precisely the float implementation that
+must not be used.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ CURRENT_ENTRY = PriceEntry(
     output_usd_per_1m=Decimal("15.00"),
 )
 CURRENT_VERSION = f"{KEY}@2025-06-01"
-"""Decision A's version string for `CURRENT_ENTRY`: the key, `@`, and the entry's
+"""The version string for `CURRENT_ENTRY`: the key, `@`, and the entry's
 OWN `effective_from` - never the instant the request was priced at, and never a
 document-level version."""
 
@@ -93,7 +93,7 @@ def test_reported_usage_is_not_an_estimate(table: PriceTable) -> None:
 def test_the_price_version_names_the_entrys_own_effective_from(table: PriceTable) -> None:
     """Catches a version string built from anything but the SELECTED entry's own
     `effective_from`: the query instant (`@2025-07-01`), the first entry in the table
-    (`@2025-01-01`), or a document-level version bumped by hand, which decision A rejects
+    (`@2025-01-01`), or a document-level version bumped by hand, which is rejected
     because editing a price without bumping it silently rewrites what every historical row
     was charged at. The table carries two entries dated six months apart and the instant
     matches neither, so each of those three mistakes produces a different string."""
@@ -155,7 +155,7 @@ def test_absent_usage_is_estimated_from_characters(table: PriceTable) -> None:
     zero-fills the completion (0.000030), and a divisor other than four (at 3 chars per
     token it is 0.000140). 40 and 20 characters are 10 and 5 tokens, which at 3.00 and
     15.00 is 0.000105. It also catches an estimated row reported as `estimated=False` -
-    decision B calls that flag the honest part of the heuristic - and a version dropped to
+    that flag is the honest part of the heuristic - and a version dropped to
     `unpriced` merely because usage was absent, when the entry was found and only the
     token counts were not."""
     cost = cost_for(table, KEY, AT, usage=None, prompt_chars=40, completion_chars=20)
@@ -182,8 +182,8 @@ def test_the_estimator_floors_at_four_characters_per_token(
     """Catches a divisor other than four and rounding that is not a floor. The two boundary
     rows are what the arithmetic case above cannot see: 3 characters must be 0 tokens and
     not 1, because an estimator that rounds up books a request with no text as having
-    consumed something, and 39 must be 9 and not 10. Pins the divisor as a value (standing
-    rules 2 and 37) rather than leaving it implied by one total."""
+    consumed something, and 39 must be 9 and not 10. Pins the divisor as a value rather than
+    leaving it implied by one total."""
     assert estimate_tokens(chars) == tokens
 
 
@@ -209,7 +209,7 @@ UNPRICED_CASES: list[tuple[str, PriceTable, str]] = [
 def test_an_unpriced_key_costs_zero_and_does_not_raise(
     case: str, unpriced_table: PriceTable, key: str
 ) -> None:
-    """Catches decision C implemented as a raise - a bare `KeyError`, or a typed error the
+    """Catches this implemented as a raise - a bare `KeyError`, or a typed error the
     route would have to catch - which lets a gap in a config file change a served
     request's status code, the one outcome the decision forbids. It also catches a
     sentinel that borrows the future entry's 99.00, one reporting `estimated=False` (a
@@ -227,7 +227,7 @@ def test_an_unpriced_key_costs_zero_and_does_not_raise(
 
 
 def test_an_unpriced_key_is_warned_once_per_key(caplog: pytest.LogCaptureFixture) -> None:
-    """Catches decision C's "logged once per key" implemented as either extreme: no log at
+    """Catches "logged once per key" implemented as either extreme: no log at
     all, so a model that quietly books every request unpriced is invisible until someone
     reads the ledger; or a log per CALL, which on a hot alias is the same gap buried under
     thousands of identical lines nobody reads. Both keys are asked for TWICE and in an

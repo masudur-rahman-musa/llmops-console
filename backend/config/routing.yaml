@@ -14,7 +14,7 @@
 # are fallbacks. Chat runs on Anthropic, then OpenAI if Anthropic does not answer.
 
 aliases:
-  # The only alias on the semantic cache (#23). A chat assistant's callers ask the
+  # The only alias on the semantic cache. A chat assistant's callers ask the
   # same question in different words, which is the reuse this tier exists for; a
   # judge, an extraction and an embedding need the answer to THEIR input and not
   # to one that resembles it, so they stay off. Off is the default, so turning

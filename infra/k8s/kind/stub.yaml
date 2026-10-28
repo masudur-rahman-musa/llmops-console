@@ -1,4 +1,4 @@
-# The eval-target-stub workload: this plan's own, applied by the CI-only kind
+# The eval-target-stub workload, applied by the CI-only kind
 # kustomization and nowhere else. No PVC, no HPA, no PDB - it holds no state, and
 # this cluster is created and torn down inside one workflow run.
 apiVersion: apps/v1

@@ -1,4 +1,4 @@
-"""Structural tests that pin the module layout changes from an earlier change.
+"""Structural tests that pin the module layout.
 
 Each test checks where a name lives (or must not live) so that the split,
 move and cleanup steps are proven by import rather than by convention.

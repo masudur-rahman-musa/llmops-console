@@ -7,8 +7,8 @@ The half that needs a REAL Redis is the half whose claims are Redis semantics:
 that `INCRBY` accumulates across calls, that the total reads back as the integer
 that was booked, that the tenant and the month are genuinely separate keys, and
 that the expiry is on the key - read back with `TTL`, never slept for. Redis is
-required by an explicit conditional on `OPSCONSOLE_TEST_REDIS_URL` (standing rule
-9); the fixture skips with that variable's name in the reason, so a run that
+required by an explicit conditional on `OPSCONSOLE_TEST_REDIS_URL`; the fixture skips with that
+variable's name in the reason, so a run that
 checked nothing says so in its own output. Deliberately NOT
 `OPSCONSOLE_REDIS_URL`, which `Settings` itself reads: exporting that one to run
 this file would hand every other test in the suite a Redis-backed gateway it
@@ -17,11 +17,11 @@ reason.
 
 The half that needs NOTHING is the validation and failure half, over a client
 that records its calls and refuses to answer. "No spend was booked" is asserted
-as "Redis was never called at all", which is the claim a project rule actually
-makes, and the fail-open rows (decision B) need a client that raises rather than
+as "Redis was never called at all", which is the claim
+being made, and the fail-open rows need a client that raises rather than
 a server that is down.
 
-Decision B is the difference from the redaction map store, and it is stated here
+This is the difference from the redaction map store, and it is stated here
 because it is the behaviour someone will later mistake for a bug: a
 `redis.RedisError` is SWALLOWED and both methods answer `None`. `None` is
 "unknown", not "zero" - the route serves the request, logs, and moves NO gauge,
@@ -29,7 +29,7 @@ because a gauge fed with a zero it invented would read a healthy 0% for every
 tenant for as long as Redis is down, which is exactly when someone is looking at
 it.
 
-a project rule: one session-scoped client, built once. Per-test isolation is a
+One session-scoped client, built once. Per-test isolation is a
 unique `key_prefix` handed to the store, never `FLUSHDB` - this database may be
 shared with anything else - and never a fresh client.
 
@@ -201,7 +201,7 @@ def test_debit_refuses_a_malformed_tenant_before_touching_redis(label: str, tena
     budget:ev:als:2026-09 282` books one tenant's spend against a key nobody reads, and a
     glob character widens any later `SCAN` an operator runs over these counters. The
     assertion is on the recorded calls rather than on "no key exists", because that is
-    the claim a project rule makes - the check runs BEFORE the effect, not instead of
+    the claim being made - the check runs BEFORE the effect, not instead of
     it."""
     store, client = fake_store()
 
@@ -244,7 +244,7 @@ def test_a_malformed_month_reaches_no_command_on_either_method(label: str, month
 
 
 def test_the_tenant_length_boundary_is_inclusive() -> None:
-    """The inclusive boundary a project rule asks for, on the store rather than on the
+    """The inclusive boundary, on the store rather than on the
     key function. Catches a `>=` that refuses a tenant of exactly the permitted length -
     a name `gateway/context.py` already authenticated, so the request would fail after
     the provider had answered."""
@@ -286,8 +286,7 @@ def test_the_default_prefix_is_the_one_the_key_is_written_under() -> None:
 
 def test_a_prefixed_store_writes_under_its_own_namespace() -> None:
     """Catches a `key_prefix` argument that is accepted and ignored, which would make
-    every test below share one live key and this file's isolation a fiction (standing
-    rule 7)."""
+    every test below share one live key and this file's isolation a fiction."""
     client = RecordingRedis()
     store = RedisBudgetStore(as_client(client), key_prefix="test-budget-prefix")
 
@@ -297,13 +296,13 @@ def test_a_prefixed_store_writes_under_its_own_namespace() -> None:
 
 
 # --------------------------------------------------------------------------
-# the expiry (section 5's third risk)
+# the expiry
 # --------------------------------------------------------------------------
 
 
 def test_a_debit_sets_the_expiry_in_the_same_call_sequence() -> None:
-    """Catches a counter written with `INCRBY` and no expiry at all, which is the risk
-    section 5 names: one key per tenant per month, kept for ever. `INCRBY` does not carry
+    """Catches a counter written with `INCRBY` and no expiry at all, which is the risk:
+    one key per tenant per month, kept for ever. `INCRBY` does not carry
     a TTL the way `SET ... EX` does, so the expiry is a second command and its absence is
     invisible until an operator counts the keys a year later. The order is asserted too -
     an `EXPIRE` sent first would set a TTL on a key that does not exist yet and be
@@ -317,7 +316,7 @@ def test_a_debit_sets_the_expiry_in_the_same_call_sequence() -> None:
 
 
 # --------------------------------------------------------------------------
-# fail open (decision B)
+# fail open
 # --------------------------------------------------------------------------
 
 REDIS_FAILURES: list[tuple[str, Exception]] = [
@@ -330,7 +329,7 @@ REDIS_FAILURES: list[tuple[str, Exception]] = [
 
 @pytest.mark.parametrize(("label", "error"), REDIS_FAILURES, ids=[row[0] for row in REDIS_FAILURES])
 def test_an_unreachable_redis_serves_and_moves_no_gauge(label: str, error: Exception) -> None:
-    """Decision B, at the seam where it is decided.
+    """At the seam where it is decided.
 
     Catches a store that lets `redis.RedisError` escape, which turns a Redis blip into
     5xx on every request a provider would have served - the failure a BUDGET must not
@@ -352,7 +351,7 @@ def test_an_unreachable_redis_serves_and_moves_no_gauge(label: str, error: Excep
 
 
 def test_every_swallowed_failure_is_logged_with_the_tenant_and_the_month() -> None:
-    """The other half of decision B, and the half that is easy to leave out.
+    """The other half, and the half that is easy to leave out.
 
     Failing open means a cap silently stops being enforced: the request is served, the
     gauge deliberately does not move, and a debit that was lost is money spent against a
@@ -451,7 +450,7 @@ def test_the_in_process_twin_never_answers_unknown() -> None:
 
 
 def test_a_zero_debit_still_answers_the_running_total() -> None:
-    """A cache hit debits zero (criterion 5), and the route feeds the gauge from what
+    """A cache hit debits zero, and the route feeds the gauge from what
     `debit` answers. Catches a store that short-circuits a zero debit and answers `None`
     or nothing, which would make the gauge go stale on every hit."""
     store = InProcessBudgetStore()
@@ -532,7 +531,7 @@ def test_the_key_expires_after_exactly_the_published_ttl(
     live_store: RedisBudgetStore, redis_client: redis.Redis
 ) -> None:
     """Read back off the server rather than slept for. Catches a counter with no expiry at
-    all (`TTL` answers -1, which is a key that lives for ever - section 5's third risk)
+    all (`TTL` answers -1, which is a key that lives for ever)
     and a key that never existed (-2). The value is read back exactly, as
     tests/cache/test_redis_cache.py and tests/redaction/test_redis_store.py read theirs:
     the expiry is written in the same call sequence as the increment, so there is no

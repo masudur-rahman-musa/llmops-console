@@ -108,7 +108,7 @@ def ledger_rows(pool: Pool, schema: str) -> list[tuple[object, ...]]:
 def test_every_column_round_trips_through_the_shipped_migration(
     pool: Pool, migrated_schema: str
 ) -> None:
-    """The plan's schema-drift risk in one case. Catches an INSERT whose column list
+    """The schema-drift risk in one case. Catches an INSERT whose column list
     disagrees with the SQL file: `tenant`, `alias`, `provider`, and `model` are
     all `text`, so two of them swapped is a ledger that attributes a tenant's spend to
     another tenant's model and PostgreSQL accepts it without a murmur. Catches a
@@ -142,7 +142,7 @@ def test_every_column_round_trips_through_the_shipped_migration(
 def test_the_cost_reads_back_exactly_at_six_decimal_places(
     pool: Pool, migrated_schema: str
 ) -> None:
-    """The criterion, and the plan's `numeric` scale risk. Catches a column declared with
+    """The criterion, and the `numeric` scale risk. Catches a column declared with
     a scale narrower than six, which rounds the number the library computed exactly and
     then sums a month of rows into an invoice nobody can reconcile - and catches
     `double precision`, which round-trips this value to something that merely prints the

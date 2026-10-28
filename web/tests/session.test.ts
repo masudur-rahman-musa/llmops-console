@@ -150,7 +150,7 @@ describe("session cookie", () => {
   });
 
   it("the ttl is 43200 seconds", () => {
-    // Catches a session lifetime or cookie name other than the plan's 43200 seconds and `opsconsole_session`.
+    // Catches a session lifetime or cookie name other than 43200 seconds and `opsconsole_session`.
     expect(SESSION_TTL_SECONDS).toBe(43_200);
     expect(SESSION_COOKIE).toBe("opsconsole_session");
   });

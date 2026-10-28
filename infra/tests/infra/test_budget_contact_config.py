@@ -1,4 +1,4 @@
-"""An earlier change: the budget contact reaches the gateway, and `.env.example` names it.
+"""The budget contact reaches the gateway, and `.env.example` names it.
 
 The contact is the address a refused request's message tells the user to ask for more budget.
 the `gateway-config` must carry it, or the live message names no one.

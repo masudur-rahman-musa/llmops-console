@@ -1,7 +1,7 @@
-"""An earlier change: the "SLO error budgets" row of `gateway-overview.json`.
+"""The "SLO error budgets" row of `gateway-overview.json`.
 
 The dashboards are read off the session-scoped `built` fixture in `infra/tests/infra/conftest.py`
-(one `kubectl kustomize infra/k8s` per session, a project rule) through
+(one `kubectl kustomize infra/k8s` per session) through
 `test_k8s_grafana.py`'s `dashboard_documents` and `panels_of`, so a panel written into the JSON
 file but not generated into the `grafana-dashboards` ConfigMap is the same failure as a panel
 never written.

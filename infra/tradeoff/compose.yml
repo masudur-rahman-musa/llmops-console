@@ -2,8 +2,7 @@
 # up` on its own.
 #
 # An override over `docker-compose.yml`, under profile `tradeoff`, so the everyday
-# stack never starts the stub below. One harness measures all three options (plan
-# 27c decision B): the gateway is the real image, and the only thing that changes
+# stack never starts the stub below. One harness measures all three options: the gateway is the real image, and the only thing that changes
 # between options is the routing policy mounted into it.
 #
 # No credential is written in this file. `infra/scripts/tradeoff_run.sh` generates a

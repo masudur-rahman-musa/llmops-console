@@ -3,7 +3,7 @@ r"""One tenant's monthly spend: where it is counted, and what it decides.
 The gateway prices every served request already - `app.limits.cost` turns
 a usage report into a `Decimal`, and `app.storage` files it. This module is
 the running TOTAL of those rows for the month in progress, and the two thresholds
-the design puts on it: a warning at 80% of the tenant's `budget_usd_month` and a
+on it: a warning at 80% of the tenant's `budget_usd_month` and a
 refusal at 100%.
 
 Three things here are decisions rather than mechanics.
@@ -230,7 +230,7 @@ def to_micro_usd(usd: Decimal) -> int:
 def decide(*, spend_micro_usd: int, cap_micro_usd: int) -> BudgetDecision:
     """What a tenant's spend so far means for the request in hand.
 
-    BOTH boundaries are inclusive, which is the whole of criteria 2 and 3: a
+    BOTH boundaries are inclusive, which is the whole point: a
     spend of exactly 80% of the cap warns, and a spend exactly equal to the cap
     is refused. Written `>=` on both, because `>` on either serves one request a
     month that the criteria say is the 429 and never warns the tenant whose spend
@@ -334,7 +334,7 @@ r"""What the signature half of a token must look like before it is compared.
 check is not decoration: `hmac.compare_digest` on `str` operands requires both to
 be ASCII and raises `TypeError` otherwise, so a header carrying any non-ASCII
 character would reach the comparison and crash the request rather than being
-refused. Used with `fullmatch` for a project rule's reason."""
+refused. Used with `fullmatch` for the project's reason."""
 
 
 def verify_override(header: str | None, *, tenant: str, month: str, secret: str) -> bool:

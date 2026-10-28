@@ -21,7 +21,7 @@ converted to UTC.
 - Five tests are recorded as failing at `main`: one in `tests/evals/test_report.py`,
   one in `infra/tests/infra/test_tradeoff_run.py`, and one each in `test_cost_wiring.py`,
   `test_rate_limit_enforcement.py` and `test_rehydration.py`.
-- A red test stays red here. The project's rules forbid editing a test to make it
+- A red test stays red here. A test is never edited to make it
   pass, so each one waits for a deliberate fix, and every change made meanwhile
   is checked against a suite that is already failing.
 - All five failing tests reached the shared branch: every commit named in the

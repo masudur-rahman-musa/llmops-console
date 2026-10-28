@@ -85,11 +85,8 @@ package = true
 line-length = 100
 target-version = "py312"
 # Without this, `exclude` is advisory for a path named on the command line, and
-# the PostToolUse formatter hook always names one explicit path.
+# an editor formatter always names one explicit path.
 force-exclude = true
-# `dev/` holds the owner's private working files and helper scripts. They never
-# ship, so neither lint nor format reads them.
-extend-exclude = ["dev/**"]
 
 [tool.ruff.lint]
 # `W` is here for W605 specifically: a docstring citing a regex or a `grep -E`

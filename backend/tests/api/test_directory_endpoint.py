@@ -11,12 +11,12 @@ its own.
 * Every refusal happens before any store write. The app's directory store is
   wrapped once in a recorder, and each refused row asserts `writes == []` -
   "the directory is unchanged afterwards" would also pass for a route that wrote
-  and then rolled back, which is not what a project rule asks for.
+  and then rolled back, which is not what this test means.
 * Nothing carries a name back out. The response body, the response text and the
   log records of a SUCCESSFUL push are all checked for the name that was pushed,
   because a leak on the success path is the one a 4xx-only test never reaches.
 
-a project rule: one app, the session-scoped `admin_client`, and per-test
+One app, the session-scoped `admin_client`, and per-test
 isolation from a tenant name of this test's own. A directory is per tenant and
 merges rather than replaces, so two cases that share a tenant would see each
 other's names; every case here pushes under a tenant name of its own, and the
@@ -146,7 +146,8 @@ def push(
 def test_the_directory_path_is_the_published_one(admin_client: TestClient) -> None:
     """Catches a route mounted at a near-miss path (`/admin/directories`, or under
     `/v1/`), which would leave the published one answering Starlette's own 404 with no
-    typed code at all. Asserted through the built app rather than by reading the router: the framework has handlers nobody here registered."""
+    typed code at all. Asserted through the built app rather than by reading the router: the
+    framework has handlers nobody here registered."""
     assert ADMIN_DIRECTORY == DIRECTORY_PATH == "/admin/directory"
 
     response = push(admin_client, {"tenant": "tpath", "names": [NAME_A]})
@@ -261,7 +262,7 @@ def test_a_re_push_leaves_the_directory_unchanged(
 def test_a_second_push_merges_rather_than_replacing(
     admin_client: TestClient, directory_store: RecordingDirectoryStore
 ) -> None:
-    """Catches replace-whole semantics (decision C): a caller paging a large directory
+    """Catches replace-whole semantics: a caller paging a large directory
     would silently delete every name it had already pushed, and nothing in the response
     would say so."""
     push(admin_client, {"tenant": "tmerge", "names": [NAME_A]})
@@ -275,7 +276,7 @@ def test_a_push_names_the_tenant_from_the_body(
     admin_client: TestClient, directory_store: RecordingDirectoryStore
 ) -> None:
     """Catches a route filing the names under some other tenant - the admin caller, a
-    default, an `X-Tenant` header: the whole point of decision A is that an operator seeds
+    default, an `X-Tenant` header: the whole point is that an operator seeds
     a tenant it is not authenticating as, so a route reading the tenant from anywhere but
     the body writes into the wrong directory and the names are never matched."""
     push(admin_client, {"tenant": "tbody", "names": [NAME_A]})

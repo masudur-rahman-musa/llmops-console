@@ -1,15 +1,15 @@
-r"""An earlier change: the gateway reads Prometheus in-cluster. One ConfigMap key, one egress rule inside
+r"""The gateway reads Prometheus in-cluster. One ConfigMap key, one egress rule inside
 `gateway-egress`, and its ingress partner `prometheus-ingress-from-gateway` in `monitoring`
-(a project rule: the two land together or the allow is a deny nobody reports).
+(The two land together or the allow is a deny nobody reports).
 
 The stream comes from the session-scoped `built` fixture in `infra/tests/infra/conftest.py`: one
 `kubectl kustomize infra/k8s` for the whole session, shared with every other
 `infra` module. Nothing here builds again. The one case that reads raw files does so because
-its criterion is about what the two FILES say, not what the build emits.
+it checks what the two FILES say, not what the build emits.
 
 The NetworkPolicy resolvers are IMPORTED from `test_k8s_netpol.py` and the `apps` object lookup
-from `test_k8s_apps.py`, spelled as the package `__init__` files make them (`infra.test_k8s_x`,
-a project rule). No `test_*` name is imported, so pytest collects nothing twice.
+from `test_k8s_apps.py`, spelled as the package `__init__` files make them (`infra.test_k8s_x`). No
+`test_*` name is imported, so pytest collects nothing twice.
 
 Ports are asserted RESOLVED against the Prometheus pod's own container port, never compared as a
 name alone: a named port that resolves to nothing is a silent deny.
@@ -140,7 +140,7 @@ def reaches_prometheus(rule: dict[str, Any], built: list[dict[str, Any]], label:
 def test_the_gateway_config_names_prometheus_by_its_fully_qualified_address(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 1, by exact value. Catches the key missing (the console read routes answer
+    """By exact value. Catches the key missing (the console read routes answer
     `prometheus: error` forever), a bare `http://prometheus:9090` that resolves nowhere from
     `apps`, the short `prometheus.monitoring:9090` form, and a wrong port or scheme."""
     data = gateway_config(built)
@@ -151,7 +151,7 @@ def test_the_gateway_config_names_prometheus_by_its_fully_qualified_address(
 
 
 def test_the_gateway_prometheus_url_equals_the_grafana_datasource_url() -> None:
-    """Criterion 2 and a project rule, read off the two raw FILES. Catches the gateway's value
+    """read off the two raw FILES. Catches the gateway's value
     injected by a kustomize patch or replacement instead of written in `apps/gateway.yaml` (the
     raw file then lacks it), and catches drift between the two readers of one Prometheus: Grafana's
     datasource moved to another address or port while the gateway keeps the old one, which the
@@ -184,7 +184,7 @@ def test_the_gateway_prometheus_url_equals_the_grafana_datasource_url() -> None:
 def test_the_config_key_is_the_setting_the_gateway_reads(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 3. Catches the ConfigMap key and the `Settings` field disagreeing - the field
+    """Catches the ConfigMap key and the `Settings` field disagreeing - the field
     renamed, or the settings prefix changed - so the pod starts with the variable set and the
     gateway reads `None`, with no error anywhere."""
     assert PROMETHEUS_URL_KEY in gateway_config(built), f"{GATEWAY_CONFIG_MAP} lacks the key"
@@ -198,7 +198,7 @@ def test_the_config_key_is_the_setting_the_gateway_reads(
 def test_the_gateway_egress_reaches_prometheus_on_exactly_9090(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 4. Catches the rule missing (the gateway's PromQL denied by `default-deny`),
+    """Catches the rule missing (the gateway's PromQL denied by `default-deny`),
     the peer written as two separate peers - a `namespaceSelector` alone is an OR that opens
     every pod in `monitoring` - a second port beside 9090, and a second rule into `monitoring`,
     since exactly one rule may name that namespace and its peers and ports are compared by
@@ -230,7 +230,7 @@ def test_the_gateway_egress_reaches_prometheus_on_exactly_9090(
 def test_the_gateway_egress_ip_block_rule_still_carries_only_443(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 5. Catches 9090 appended to the public `ipBlock` rule's ports instead of a rule
+    """Catches 9090 appended to the public `ipBlock` rule's ports instead of a rule
     of its own, which would open 9090 to every public address rather than to Prometheus."""
     document = policy(built, APPS, "gateway-egress")
     rules = rules_with_ip_block(document)
@@ -242,7 +242,7 @@ def test_the_gateway_egress_ip_block_rule_still_carries_only_443(
 def test_prometheus_admits_only_the_gateway_from_apps_on_9090(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criteria 6 and 7. Catches the ingress partner missing (the gateway's egress allowed and
+    """Catches the ingress partner missing (the gateway's egress allowed and
     Prometheus's side denied), the policy selecting every `monitoring` pod, an `Egress` type that
     would deny Prometheus's scrapes, the peer split into an OR that admits every `apps` pod, and a
     port name that does not resolve to 9090 on the Prometheus pod - a silent deny."""
@@ -270,7 +270,7 @@ def test_prometheus_admits_only_the_gateway_from_apps_on_9090(
 
 
 def test_no_other_apps_pod_may_reach_prometheus(built: list[dict[str, Any]]) -> None:
-    """Criterion 8, the unhappy path, scanned over EVERY `apps` policy rather than read off
+    """The unhappy path, scanned over EVERY `apps` policy rather than read off
     `gateway-egress` by name. Catches the Prometheus rule added to `helpdesk-egress`,
     `console-egress` or a namespace-wide policy such as `allow-dns`, which lets a pod other than
     the gateway query a store holding everything the cluster has exposed; equality also makes
@@ -288,7 +288,7 @@ def test_no_other_apps_pod_may_reach_prometheus(built: list[dict[str, Any]]) -> 
 def test_the_monitoring_scrape_ingress_carries_no_apps_peer(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 10. Catches the gateway admitted by widening `metrics-ingress-from-monitoring`
+    """Catches the gateway admitted by widening `metrics-ingress-from-monitoring`
     instead of adding its own policy - that policy selects every `monitoring` pod, so the gateway
     (or every `apps` pod) would reach both exporters and Alertmanager as well as Prometheus."""
     document = policy(built, MONITORING, "metrics-ingress-from-monitoring")

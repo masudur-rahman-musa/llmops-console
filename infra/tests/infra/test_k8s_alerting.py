@@ -1,5 +1,5 @@
 r"""`infra/k8s/monitoring/alerts/rules.yml`, `infra/k8s/monitoring/alertmanager.yaml` and the two
-NetworkPolicy widenings an earlier change agrees, as `kubectl kustomize infra/k8s` actually emits them.
+NetworkPolicy widenings, as `kubectl kustomize infra/k8s` actually emits them.
 
 The stream comes from the session-scoped `built` fixture in `infra/tests/infra/conftest.py`: one
 `kubectl kustomize infra/k8s` for the whole session, shared with every other
@@ -7,24 +7,23 @@ The stream comes from the session-scoped `built` fixture in `infra/tests/infra/c
 read off the BUILT stream rather than off a raw file, so a manifest written and never listed in a
 `resources:` block is the same failure as a manifest never written.
 
-Everything is asserted by EQUALITY where the plan names a whole set (the object inventory, the
+Everything is asserted by EQUALITY where a whole set is named (the object inventory, the
 `ipBlock` scan, the excluded-ranges list, the receiver's config entries): an extra allow, an extra
-peer or an extra port is exactly as dangerous as a missing one (decision D of an earlier change, restated
+peer or an extra port is exactly as dangerous as a missing one (restated
 by every sibling module in this directory).
 
 This module does NOT own `monitoring`'s object inventory - `infra/tests/infra/test_k8s_grafana.py`'s
-`MONITORING_OBJECTS` does, from an earlier change on (its own docstring says so: "23e, 23c and 23d each
-edit one expected set instead of two that drift apart", moved from
-`infra/tests/infra/test_k8s_monitoring.py` when 23b added nine objects). This plan's three -
+`MONITORING_OBJECTS` does, now (its own docstring says so: each addition
+edits one expected set instead of two that drift apart; it moved from
+`infra/tests/infra/test_k8s_monitoring.py` when nine objects were added). The three -
 `Deployment/alertmanager`, `Service/alertmanager`, `ConfigMap/alertmanager-config` - are therefore
 added to THAT constant directly rather than asserted a second time here, which is also where the
 CRD/`monitoring.coreos.com` prohibition already lives (`test_k8s_monitoring.py`'s
-`test_the_monitoring_namespace_emits_exactly_the_objects_the_two_plans_name`, scoped over the
+`test_the_monitoring_namespace_emits_exactly_the_expected_objects`, scoped over the
 WHOLE build rather than one namespace). An earlier draft of this module wrote a third copy of
 both checks here, which is exactly the drift the two files above already changed their own
-layout to avoid - grepping `MONITORING_OBJECTS` at drafting time (the plan's own "the prior
-twenty" prose undercounts it by two, which is a project rule's trap: twenty-two, not twenty)
-should have found the existing convention before adding a fourth reader of the same set. The
+layout to avoid. Grepping `MONITORING_OBJECTS` finds the existing convention before a fourth
+reader of the same set is added. The
 `22` is reproduced by `grep -c` over the live file:
 
     python3 -c "import re; t=open('infra/tests/infra/test_k8s_grafana.py').read(); \
@@ -32,24 +31,22 @@ should have found the existing convention before adding a fourth reader of the s
     print(len([l for l in m.group(1).splitlines() if l.strip()]))"
     22
 
-Test-writer design decision, because the plan is silent on exactly where `rules.yml` lands
-(section 6 test 2's own wording: "or whatever key `rules.yml` is mounted as ... you may need to
-design this yourself"): `infra/k8s/monitoring/alerts/rules.yml`'s contents join the EXISTING
+Design decision, because nothing else fixes where `rules.yml` lands:
+`infra/k8s/monitoring/alerts/rules.yml`'s contents join the EXISTING
 `prometheus-config` ConfigMap as a SECOND key, `alert-rules.yml`, rather than a new ConfigMap of
-their own - "ConfigMap-mounted the same way `prometheus.yml` itself is" (the plan's own words) is
-read literally, as the SAME ConfigMap, and it is also the only reading that keeps the object count
-at exactly three new objects, matching this plan's own "emits exactly ... `Deployment/alertmanager`,
-`Service/alertmanager`, `ConfigMap/alertmanager-config`" (a fourth ConfigMap for rules would sit
+their own - mounted the same way `prometheus.yml` itself is, as the SAME ConfigMap. That is also
+the only choice that keeps the object count at exactly three new objects: `Deployment/alertmanager`,
+`Service/alertmanager`, `ConfigMap/alertmanager-config` (a fourth ConfigMap for rules would sit
 outside that list and redden `test_the_monitoring_namespace_emits_alertmanager_and_nothing_else_new`
 against a manifest that did everything else right). `rule_files` therefore names the bare filename
 `alert-rules.yml`, exactly as `prometheus.yml`'s own key names the file Prometheus reads it as.
 
-Second test-writer design decision: the receiver's `email_configs`/`telegram_configs` entries read
-every secret value as a `${VAR_NAME}` placeholder rather than a literal - the plan says "reading
-values from env vars ... rather than literal values" but names no substitution syntax. `${VAR}` is
-the one shape this scan understands; a config templated any other way (a `_file` suffixed field, a
-Go template) is a different, undocumented mechanism the implementer would need to also update this
-test's `ENV_PLACEHOLDER` for, rather than something this scan silently waves through.
+Second design decision: the receiver's `email_configs`/`telegram_configs` entries read
+every secret value as a `${VAR_NAME}` placeholder rather than a literal, and no substitution syntax
+is otherwise fixed. `${VAR}` is the one shape this scan understands; a config templated any other
+way (a `_file` suffixed field, a Go template) is a different, undocumented mechanism a maintainer
+would need to also update this test's `ENV_PLACEHOLDER` for, rather than something this scan
+silently waves through.
 
 `registered_metric_names` and the PromQL identifier scanner are COPIES of
 `infra/tests/infra/test_k8s_grafana.py`'s, not imports - the convention of this suite. So are the
@@ -95,15 +92,15 @@ NAMESPACE_NAME_LABEL = "kubernetes.io/metadata.name"
 #: one.
 ANY_POD = "*"
 
-#: Test-writer design decision (see the module docstring): `rules.yml`'s contents land as a
+#: Design decision (see the module docstring): `rules.yml`'s contents land as a
 #: SECOND key on the EXISTING `prometheus-config` ConfigMap, named the way it is mounted.
 PROMETHEUS_CONFIGMAP = "prometheus-config"
 RULES_KEY = "alert-rules.yml"
 
-#: Criterion 2's `alerting:` block: the Service DNS Prometheus sends firing alerts to.
+#: The `alerting:` block: the Service DNS Prometheus sends firing alerts to.
 ALERTMANAGER_SERVICE_DNS = "alertmanager.monitoring.svc.cluster.local:9093"
 
-#: Criterion, by value, the exact remainder an earlier change left (its own
+#: By value, the exact remainder left (see
 #: `test_grafana_fits_what_the_scrape_plane_left_and_leaves_alertmanager_its_row`): 32Mi, 50m,
 #: 64Mi, no `limits.cpu`. The whole flattened mapping is compared, so an extra key is a failure.
 ALERTMANAGER_RESOURCES: dict[str, str] = {
@@ -112,24 +109,24 @@ ALERTMANAGER_RESOURCES: dict[str, str] = {
     "limits.memory": "64Mi",
 }
 
-#: The five pod templates `monitoring` carries after this plan (23a's three, 23b's Grafana, this
-#: plan's Alertmanager). Pinned so a fifth-workload count cannot be reached by a wrong pod
+#: The five pod templates `monitoring` carries (the three, the Grafana, the
+#: Alertmanager). Pinned so a fifth-workload count cannot be reached by a wrong pod
 #: cancelling a missing Alertmanager template out.
 MONITORING_WORKLOADS: frozenset[str] = frozenset(
     {PROMETHEUS, NODE_EXPORTER, KUBE_STATE_METRICS, GRAFANA, ALERTMANAGER}
 )
 
-#: Criterion, exact durations (a project rule, never a band).
+#: Exact durations (never a band).
 GROUP_WAIT = "30s"
 GROUP_INTERVAL = "5m"
 REPEAT_INTERVAL = "4h"
 
-#: Test-writer design decision (see the module docstring): the one substitution syntax this scan
+#: Design decision (see the module docstring): the one substitution syntax this scan
 #: understands for "read from an env var, not a literal".
 ENV_PLACEHOLDER = re.compile(r"^\$\{(?P<name>[A-Z][A-Z0-9_]*)\}$")
 
-#: The plain values `render.sh` writes into the template, by the env var each reads (an earlier change,
-#: a design note). The password and the bot token are NOT here: they are files, see below.
+#: The plain values `render.sh` writes into the template, by the env var each reads. The password
+#: and the bot token are NOT here: they are files, see below.
 EMAIL_FIELD_VARS: dict[str, str] = {
     "smarthost": "SMTP_SMARTHOST",
     "from": "SMTP_FROM",
@@ -176,15 +173,16 @@ ALERTMANAGER_SECRETS = "alertmanager-secrets"
 
 #: Copied from `infra/tests/infra/test_k8s_netpol.py`'s `PUBLIC_EXCEPT`/`PUBLIC_PORTS`:
 #: `gateway-egress`'s excluded ranges and port, which `alertmanager-egress` must copy exactly
-#: (a project rule - copied, not re-derived).
+#: (copied, not re-derived).
 PUBLIC_CIDR = "0.0.0.0/0"
 PUBLIC_EXCEPT: frozenset[str] = frozenset(
     {"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"}
 )
 PUBLIC_PORTS: frozenset[tuple[str, int]] = frozenset({("TCP", 443), ("TCP", 465), ("TCP", 587)})
 
-#: Criterion: no named-inert alert. `BackupJobFailed` left this set with row 23d's CronJobs,
-#: which feed `kube_job_status_failed{job_name=~".*-backup.*"}` for real; an earlier change empties it
+#: No named-inert alert. `BackupJobFailed` left this set with the backup CronJobs,
+#: which feed `kube_job_status_failed{job_name=~".*-backup.*"}` for real; `NightlyEvalRegression`
+#: was emptied
 #: the same way, by registering `gateway_eval_*` under `ALLOWED_METRIC_PREFIXES` below instead
 #: of naming `NightlyEvalRegression` an exception - the family is fed by the nightly CronJob's
 #: Pushgateway push, never by `metrics.py`'s own registry, so it belongs beside `certmanager_`
@@ -193,10 +191,10 @@ PUBLIC_PORTS: frozenset[tuple[str, int]] = frozenset({("TCP", 443), ("TCP", 465)
 #: the loop below rather than being waved through silently.
 INERT_ALERT_NAMES: frozenset[str] = frozenset()
 
-#: The non-gateway metric family PREFIXES this plan's rules read, beside a family
+#: The non-gateway metric family PREFIXES the rules read, beside a family
 #: `metrics.py` registers: Prometheus's own `up`, cluster infra (kube-state-metrics,
 #: node-exporter), cert-manager's own metrics - not registered in this repo's code, since
-#: cert-manager is helm-installed and unmanaged by this kustomize build - and, from an earlier change,
+#: cert-manager is helm-installed and unmanaged by this kustomize build - and, now,
 #: `gateway_eval_*`: pushed by the nightly CronJob to a Pushgateway rather than registered by
 #: any in-process `prometheus_client` registry this repo owns.
 ALLOWED_METRIC_PREFIXES: tuple[str, ...] = (
@@ -653,10 +651,10 @@ def registered_metric_names() -> set[str]:
 def test_the_rules_file_is_mounted_and_every_expr_names_a_registered_family_or_a_documented_gap(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 1 and 2, over the PARSED rules file and the PARSED `prometheus.yml`: `rule_files`
+    """Over the PARSED rules file and the PARSED `prometheus.yml`: `rule_files`
     names `alert-rules.yml`, `alerting.alertmanagers` names Alertmanager's Service DNS, and every
     `expr` in every rule reads a metric family `metrics.py` registers or one under
-    `up`/`kube_`/`node_`/`certmanager_`/`gateway_eval_` - an earlier change empties `INERT_ALERT_NAMES`, so
+    `up`/`kube_`/`node_`/`certmanager_`/`gateway_eval_` - `INERT_ALERT_NAMES` is empty, so
     every alert this build carries is checked here with no exception left at all.
 
     Catches `rules.yml` written and never referenced by `rule_files`, which builds and
@@ -703,7 +701,7 @@ def test_the_rules_file_is_mounted_and_every_expr_names_a_registered_family_or_a
             )
 
 
-#: An earlier change decision A's exact expression, character for character: the
+#: The exact expression, character for character: the
 #: median rather than the average, over the same 7-day window and the same 2-point drop.
 NIGHTLY_EVAL_REGRESSION_EXPR = (
     "gateway_eval_check_score - quantile_over_time(0.5, gateway_eval_check_score[7d]) < -2"
@@ -713,32 +711,32 @@ NIGHTLY_EVAL_REGRESSION_EXPR = (
 def test_nightly_eval_regression_reads_the_seven_day_median_and_not_the_average(
     built: list[dict[str, Any]],
 ) -> None:
-    """Decision A, pinned by exact string. Catches the alert left on `avg_over_time` while
-    every OTHER trace of "inert until row 24" is cleaned up - a rename or an annotation edit
-    with the operator left unchanged would still pass the generic scan above, since
-    `avg_over_time(...)` and `quantile_over_time(0.5, ...)` read the exact same metric family
-    and neither is a typo of a family name that scan can catch. Only a character-for-character
-    comparison of the whole expression tells "reads the average" from "reads the median" -
-    the request's own wording, and the whole reason this row exists."""
+    """Pinned by exact string. Catches the alert left on `avg_over_time` while
+    every OTHER trace of "inert until the nightly job exists" is cleaned up - a rename or an
+    annotation edit with the operator left unchanged would still pass the generic scan above, since
+    `avg_over_time(...)` and `quantile_over_time(0.5, ...)` read the exact same metric family and
+    neither is a typo of a family name that scan can catch. Only a character-for-character
+    comparison of the whole expression tells "reads the average" from "reads the median" - which is
+    the whole reason this case exists."""
     alerts = {str(rule.get("alert", "")): rule for rule in rule_alerts(built)}
     assert "NightlyEvalRegression" in alerts, sorted(alerts)
     assert str(alerts["NightlyEvalRegression"].get("expr", "")) == NIGHTLY_EVAL_REGRESSION_EXPR
 
 
-def test_alertmanager_fits_the_exact_remainder_23b_left_it(
+def test_alertmanager_fits_the_exact_remainder_left_for_it(
     built: list[dict[str, Any]],
 ) -> None:
-    """The exact remainder an earlier change left, on the container named `alertmanager` (the pod also has
-    an init container since an earlier change): 32Mi/50m/64Mi by VALUE (the whole flattened mapping, so
+    """The exact remainder, on the container named `alertmanager` (the pod also has
+    an init container now): 32Mi/50m/64Mi by VALUE (the whole flattened mapping, so
     an extra `limits.cpu` is a failure), `emptyDir` for its data volume, and no
     `PersistentVolumeClaim` named `alertmanager` anywhere in the build.
 
     Catches a quantity raised above the remainder, which pushes `monitoring`'s namespace over its
     unchanged `ResourceQuota` and gets the LAST-admitted pod refused with no error naming why.
     Catches a `limits.cpu` added, which throttles the one pod holding every firing alert rather
-    than protecting anything. Catches decision D reversed to a
-    `PersistentVolumeClaim`, which an earlier change's headroom accounting never reserved storage quota
-    for and 23a's envelope never sized for either.
+    than protecting anything. Catches the storage reversed to a
+    `PersistentVolumeClaim`, which the headroom accounting never reserved storage quota
+    for and the envelope never sized for either.
     """
     templates = pod_templates(built, MONITORING)
     assert ALERTMANAGER in templates, f"monitoring has pod templates {sorted(templates)}"
@@ -765,8 +763,8 @@ def test_alertmanager_routes_every_alert_to_both_an_email_and_a_telegram_receive
     built: list[dict[str, Any]],
 ) -> None:
     """The one route, the one receiver, exactly one `email_configs` and one `telegram_configs`
-    entry; the four plain fields are `${VAR}` placeholders the init step fills in (an earlier change, ADR
-    0060), and the three durations are exact strings.
+    entry; the four plain fields are `${VAR}` placeholders the init step fills in, and the three
+    durations are exact strings.
 
     Catches a receiver with two `email_configs` entries or none, which is either a duplicate
     notification for every alert or total silence. Catches a value typed in literally
@@ -877,13 +875,12 @@ def test_render_config_writes_the_config_alertmanager_reads(
     image as `alertmanager`, reading the template folder and writing an `emptyDir` that both
     containers mount, with the exact small resources.
 
-    Catches an init container on another image, which is one more image to pin and scan (ADR
-    0060). Catches the output folder not shared with the main container, or not writable
-    (`emptyDir` is, a ConfigMap is not), which runs the script and then starts Alertmanager on no
-    file. Catches the script not mounted, or run as an executable file (a ConfigMap file has no
-    execute bit unless set). Catches `render-config` asking for more than `alertmanager`, which
-    raises the pod's effective request over the quota sized for Alertmanager alone.
-    """
+    Catches an init container on another image, which is one more image to pin and scan. Catches the
+    output folder not shared with the main container, or not writable (`emptyDir` is, a ConfigMap is
+    not), which runs the script and then starts Alertmanager on no file. Catches the script not
+    mounted, or run as an executable file (a ConfigMap file has no execute bit unless set). Catches
+    `render-config` asking for more than `alertmanager`, which raises the pod's effective request
+    over the quota sized for Alertmanager alone."""
     template = pod_templates(built, MONITORING)[ALERTMANAGER]
     init = named_container(template, "initContainers", RENDER_CONFIG)
     running = named_container(template, "containers", ALERTMANAGER)
@@ -1097,9 +1094,8 @@ def test_alertmanager_is_the_second_and_last_pod_with_internet_egress(
     missing `169.254.0.0/16`, which reopens the `169.254.169.254` metadata route the threat model
     names under SSRF via `base_url` - the same exposure `gateway-egress` closes, now open a
     second way if the two lists are allowed to diverge. Catches a port beside 443, 465 and 587, or
-    the rule hung on a `podSelector` that is not Alertmanager's own, which would open the public
-    internet to every pod `monitoring` runs rather than to Alertmanager alone.
-    """
+    the egress rule hung on a `podSelector` that is not Alertmanager's own, which would open the
+    public internet to every pod `monitoring` runs rather than to Alertmanager alone."""
     reaching = {
         (str(namespace_of(document)), name_of(document))
         for document in policies(built)
@@ -1193,19 +1189,19 @@ def test_prometheus_can_reach_alertmanager_and_cert_manager_and_nothing_new_besi
 def test_every_podselector_still_resolves_against_a_pod_template_in_its_namespace(
     built: list[dict[str, Any]],
 ) -> None:
-    """`monitoring` now carries exactly FIVE pod templates - 23a's three, 23b's Grafana, this
-    plan's Alertmanager - which is what lets `alertmanager-egress`'s `podSelector` resolve at
+    """`monitoring` now carries exactly FIVE pod templates - the three, the Grafana, the
+    Alertmanager - which is what lets `alertmanager-egress`'s `podSelector` resolve at
     all. The build-wide claim that every `podSelector` matches at least one pod
     (`test_k8s_netpol.py`'s `test_every_selector_in_the_build_matches_a_pod_that_exists`) already
-    generalises to this plan with no constant change once the fifth template exists; this case
+    generalises to Alertmanager with no constant change once the fifth template exists; this case
     additionally pins the NAMED set, so a sixth pod or a renamed one is caught by identity and not
     only by "at least one selector resolves somewhere".
 
     Catches Alertmanager's Deployment written with `spec.template.metadata.labels` missing
     `app.kubernetes.io/name`, or carrying the wrong value - a pod that starts, is never selected
     by `alertmanager-egress`, and is denied all egress by `default-deny` with no error naming why:
-    an allow that allows nothing, the exact failure shape a project rule and this suite's
-    selector scan both exist to catch, pinned here to the specific five-workload identity rather
+    an allow that allows nothing, the exact failure shape this suite's
+    selector scan exists to catch, pinned here to the specific five-workload identity rather
     than only to "at least one resolves".
     """
     templates = pod_templates(built, MONITORING)

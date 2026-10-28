@@ -1,6 +1,6 @@
 r"""`infra/scripts/tradeoff_run.sh` and the artefacts around it: the three-option measurement run.
 
-The run itself is a human action (a project rule: `terraform apply` against a real account, a GPU
+The run itself is a human action (`terraform apply` against a real account, a GPU
 instance that bills by the hour), so what can be proven before it happens is the tooling, in
 two halves.
 
@@ -10,19 +10,19 @@ The script is EXECUTED, against fake `terraform`, `aws`, `kubectl`, `ssh`, `dock
 `<tool> <argv joined by space>` to `$FAKE_LOG`, exits 1 when `FAKE_FAIL_<TOOL>` is set, and
 prints the canned output the script parses. Two fakes do more: `ops-eval conversations` writes
 `report.json` and `report.md` into its `--out` directory even when it is made to fail, which is
-what criterion 46 is about, and `docker` records the two credential variables from its own
+which is the point of the check, and `docker` records the two credential variables from its own
 environment into `$FAKE_ENV_DIR`, which is how the tenant key is seen reaching the harness
 without the script ever writing it down. `uv run <tool>` re-executes `<tool>`, so a recipe
 written either way is logged. `python3` stays REAL (it is re-executed through `$REAL_PYTHON3`)
 because the policy build and the account-id redaction are its work, and faking it would make
-both unobservable. `TRADEOFF_TEST_ROOT` (a `..._TEST_...` name no application setting reads,
-a project rule) sends the evidence under `tmp_path`, so no case writes into the repository,
+both unobservable. `TRADEOFF_TEST_ROOT` (a `..._TEST_...` name no application setting reads) sends
+the evidence under `tmp_path`, so no case writes into the repository,
 and `HOME` is pointed there too.
 
 The compose overlay, the manifest, the Makefile, the workflows and the two READMEs are read as
 TEXT or as parsed documents, because nothing else in this repository builds them. Every path is
-taken from this file's own `__file__`, and every read goes through `read()`, so a file the plan
-has not written yet fails the one case that needs it instead of the collection.
+taken from this file's own `__file__`, and every read goes through `read()`, so a file that is not
+written yet fails the one case that needs it instead of the collection.
 
 `read`, `load_yaml`, `recipe` and the token-scan patterns come from
 `test_hetzner_module.py` rather than being copied, spelled as the package `__init__` files make
@@ -69,7 +69,7 @@ WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 #: A real-looking commit SHA: 40 lowercase hex, with letters so `.upper()` changes it.
 VALID_SHA = "3f9c2a7e1b4d6f8a0c2e4b6d8f0a1c3e5b7d9f1a"
 
-#: SPEC section 11's three options, in the order the manifest lists them.
+#: The three options, in the order the manifest lists them.
 OPTION_IDS = ("cheap-api", "strong-api", "gpu-vllm")
 
 #: The option every non-GPU case runs, and the target the stub is reached at.
@@ -89,7 +89,7 @@ ACCOUNT_PLACEHOLDER = "ACCOUNT_ID"
 #: What the fake `openssl rand -hex 32` returns, standing in for the run's tenant key.
 FAKE_TENANT_KEY = "b" * 64
 
-#: Criterion 52's captures, plus the option's two report files.
+#: The captures, plus the option's two report files.
 CAPTURES = (
     "terraform-output.json",
     "nvidia-smi.txt",
@@ -99,7 +99,7 @@ CAPTURES = (
     "report.md",
 )
 
-#: The host ports `docker-compose.yml` publishes today (criterion 34, a project rule and 59).
+#: The host ports `docker-compose.yml` publishes today.
 #: Asserted against the file as well, so this list cannot silently go stale. The backing
 #: services sit on shifted numbers - 15432, 16379, 16333 - so this stack and the
 #: companion Helpdesk stack can be up together; only the gateway's 8080 is stock, because that
@@ -114,14 +114,14 @@ HELPDESK_STACK_HOST_PORTS = frozenset({5432, 6379, 6333, 8082, 8000, 8081, 3000}
 #: The stub's own port, its `PORT` default, and the only host port the overlay may add.
 STUB_PORT = 8090
 
-#: The stub image the overlay's one added service is built from (criterion 31).
+#: The stub image the overlay's one added service is built from.
 STUB_BUILD_DIR = "backend/evals/target-stub"
 
-#: The environment variable the overlay points at the mounted effective policy (criterion 32).
+#: The environment variable the overlay points at the mounted effective policy.
 POLICY_ENV = "OPSCONSOLE_ROUTING_POLICY_PATH"
 PROVIDERS_ENV = "OPSCONSOLE_PROVIDERS_DIR"
 
-#: Criterion 61's three targets and the subcommand each must reach.
+#: The three targets and the subcommand each must reach.
 MAKE_TARGETS = (
     ("tradeoff-option", "option"),
     ("tradeoff-gpu", "gpu"),
@@ -131,12 +131,12 @@ MAKE_TARGETS = (
 #: The placeholder `tradeoff.example.json` ships, which neither self-hosted option may keep.
 PLACEHOLDER_HOURLY = "0.0100"
 
-#: The conclusion marker in README section 7, matched as a WORD and in any case. An earlier change
-#: publishes the section in sentence case, and a bare substring would also count the
+#: The conclusion marker in the README's tradeoff section, matched as a WORD and in any case. The
+#: section is published in sentence case, and a bare substring would also count the
 #: "depending" of an ordinary sentence as a second marker.
 PENDING_MARKER = re.compile(r"(?i)\bpending\b")
 
-#: A source date in a manifest note: criterion 59 wants the day the rate was read.
+#: A source date in a manifest note: the day the rate was read is wanted.
 NOTE_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
 #: Tracing on in any spelling a bash script accepts: `set -x`, `set -ex`, `set -o xtrace`.
@@ -144,7 +144,7 @@ XTRACE = re.compile(r"(?m)^\s*set\s+(-[a-z]*x|-o\s+xtrace)")
 
 DATE_NAME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
-#: One fake for every tool, dispatched on its own name. a project rule's stub run exercised
+#: One fake for every tool, dispatched on its own name. the project's stub run exercised
 #: every branch below against a script written to the agreed contract.
 FAKE_TOOL = r"""#!/usr/bin/env bash
 tool=$(basename "$0")
@@ -491,7 +491,7 @@ def gpu_run(tmp_path_factory: pytest.TempPathFactory) -> Run:
     ],
 )
 def test_gpu_refuses_a_malformed_sha_before_any_tool(tmp_path: Path, sha: str) -> None:
-    """Criteria 48 and 49, the refused rows; the accepted 40-lowercase row is `gpu_run`. Catches
+    """The refused rows; the accepted 40-lowercase row is `gpu_run`. Catches
     a check written as `grep -Eq '^[0-9a-f]{40}$'`, which accepts the trailing-newline row
     because grep matches per line, a `{39,41}` bound or a `[0-9a-fA-F]` class, and a check
     placed after `terraform apply` - every fake succeeds, so without the check the run completes
@@ -516,7 +516,7 @@ def test_gpu_refuses_a_malformed_sha_before_any_tool(tmp_path: Path, sha: str) -
 def test_cost_refuses_a_malformed_or_empty_window_before_any_tool(
     tmp_path: Path, start: str, end: str
 ) -> None:
-    """Criterion 54. Catches a date check on the start only (the short-day end passes), a
+    """Catches a date check on the start only (the short-day end passes), a
     grep-per-line check (the newline row), `-le` in place of a strict comparison (the equal row,
     a zero-day window Cost Explorer rejects), and no ordering check at all. The fake `aws`
     succeeds, so without the check `cost` would call it and exit 0."""
@@ -537,7 +537,7 @@ def test_cost_refuses_a_malformed_or_empty_window_before_any_tool(
     ],
 )
 def test_a_missing_or_unknown_subcommand_is_refused(tmp_path: Path, arguments: list[str]) -> None:
-    """The argument shape behind criteria 43, 47 and 54. Catches a dispatcher whose default
+    """The argument shape behind. Catches a dispatcher whose default
     branch falls through to `option` or `gpu`, and a missing positional expanding to an empty
     string that a later `terraform apply` never sees refused."""
     run = invoke(tmp_path, arguments)
@@ -547,7 +547,7 @@ def test_a_missing_or_unknown_subcommand_is_refused(tmp_path: Path, arguments: l
 
 
 def test_option_refuses_a_malformed_id_before_any_tool(tmp_path: Path) -> None:
-    """Criterion 16: the id shapes the overlay path AND the evidence directory, so `option`
+    """The id shapes the overlay path AND the evidence directory, so `option`
     refuses it before it can become either. Catches a script that passes the id straight to
     `tradeoff_policy.py` and lets the reports directory be created from `../..` first - the
     policy script's own check comes too late to stop the directory."""
@@ -564,9 +564,9 @@ def test_option_refuses_a_malformed_id_before_any_tool(tmp_path: Path) -> None:
 def test_option_builds_flushes_migrates_runs_and_tears_down_in_that_order(
     option_run: Run,
 ) -> None:
-    """Criteria 43 and 45. Catches the policy built after the harness is up (the gateway then
+    """Catches the policy built after the harness is up (the gateway then
     loads the shipped `routing.yaml` and every option measures the same three candidates), the
-    cache flush placed after the first `ops-eval` call or left out entirely (decision F: option
+    cache flush placed after the first `ops-eval` call or left out entirely (option
     two reads option one's answers and reports a near-zero cost at a latency no provider
     served), `ops-migrate` never run (the ledger has no tables and every turn's cost is lost),
     and a teardown that never happens, which leaves the stack holding the ports the next
@@ -594,12 +594,12 @@ def test_option_builds_flushes_migrates_runs_and_tears_down_in_that_order(
 def test_option_runs_the_named_set_as_the_evals_tenant_with_the_policy_it_built(
     option_run: Run,
 ) -> None:
-    """Criterion 43's flags, and criterion 16's "the id shapes both". The `--policy` value is
-    required to be the SAME path the build wrote, so the two scripts are proven wired together
-    rather than each being correct alone. Catches `--policy` left off (the gateway's shipped
-    policy is used and the option is not what it says), a hard-coded reports directory that
-    overwrites the previous option's files, the Helpdesk set named instead of the stand-in one
-    (decision E), and a tenant other than `evals`, whose rules the overlays edit."""
+    """The flags, and the "the id shapes both". The `--policy` value is
+     required to be the SAME path the build wrote, so the two scripts are proven wired together
+     rather than each being correct alone. Catches `--policy` left off (the gateway's shipped
+     policy is used and the option is not what it says), a hard-coded reports directory that
+     overwrites the previous option's files, the Helpdesk set named instead of the stand-in one
+    , and a tenant other than `evals`, whose rules the overlays edit."""
     succeeded(option_run)
     builds = policy_builds(option_run)
     evaluations = eval_runs(option_run)
@@ -618,7 +618,7 @@ def test_option_runs_the_named_set_as_the_evals_tenant_with_the_policy_it_built(
 def test_a_failing_eval_still_tears_down_and_reports_the_targets_own_exit_code(
     tmp_path: Path,
 ) -> None:
-    """Criterion 46. A run with failed cases is a MEASUREMENT, not a broken tool: its two report
+    """A run with failed cases is a MEASUREMENT, not a broken tool: its two report
     files are written and the table reads them. Catches `ops-eval ... || true`, which hides a
     target that never answered at all, a `set -e` script that exits before the teardown and
     leaves the stack up for the next option, and an exit code invented by the wrapper."""
@@ -637,7 +637,7 @@ def test_a_failing_eval_still_tears_down_and_reports_the_targets_own_exit_code(
 def test_the_generated_tenant_key_reaches_the_harness_and_no_file(
     option_run: Run,
 ) -> None:
-    """Criterion 44, the `make load` shape. The gateway is handed the SHA-256 digest and the
+    """The `make load` shape. The gateway is handed the SHA-256 digest and the
     stub the key itself, both through the environment. Catches a key hard-coded in the script
     or committed to `.env` (one credential shared by every run, now in git history), the raw key
     written into the evidence directory that is about to be committed, and an `echo` of it for
@@ -666,7 +666,7 @@ def test_the_generated_tenant_key_reaches_the_harness_and_no_file(
 def test_gpu_applies_connects_deploys_waits_measures_and_destroys_in_that_order(
     gpu_run: Run,
 ) -> None:
-    """Criterion 47. Catches `apply -auto-approve` (the owner never reviews the plan for an
+    """Catches `apply -auto-approve` (the owner never reviews the Terraform plan for an
     instance that bills by the hour), the kubeconfig fetched before the instance exists, the
     manifests applied before the kubeconfig is there, the measurement started before the fetch
     Job and the rollout have finished (vLLM answers 503 and the option scores zero), and a
@@ -701,7 +701,7 @@ def test_gpu_applies_connects_deploys_waits_measures_and_destroys_in_that_order(
 
 
 def test_gpu_measures_the_gpu_option(gpu_run: Run) -> None:
-    """Criterion 47's "the `gpu-vllm` option run". Catches the GPU subcommand measuring whatever
+    """The "the `gpu-vllm` option run". Catches the GPU subcommand measuring whatever
     id it was last given or defaulting to `cheap-api`, which would apply a GPU instance, destroy
     it, and publish a row measured against an API provider."""
     succeeded(gpu_run)
@@ -716,7 +716,7 @@ def test_gpu_measures_the_gpu_option(gpu_run: Run) -> None:
 
 
 def test_a_failing_kubectl_still_destroys_the_instance(tmp_path: Path) -> None:
-    """Criterion 50, and risk 1's one tested guard. Catches a script with `set -e` and a destroy
+    """The one tested guard for a failed run. Catches a script with `set -e` and a destroy
     at the end but no EXIT trap: the first failing `kubectl` exits it and leaves a GPU instance
     billing until the module's own 240-minute self-shutdown. The fakes for terraform and ssh
     succeed, so the only thing that can stop the destroy is the missing trap."""
@@ -731,7 +731,7 @@ def test_a_failing_kubectl_still_destroys_the_instance(tmp_path: Path) -> None:
 
 
 def test_the_capture_writes_every_file_under_todays_utc_date(gpu_run: Run) -> None:
-    """Criterion 52. Catches a local-time directory name, a format other than `YYYY-MM-DD`,
+    """Catches a local-time directory name, a format other than `YYYY-MM-DD`,
     evidence written under the repository instead of the test root, and any capture skipped -
     the run is destroyed minutes later, so a capture missed is a measurement that cannot be
     repeated without paying for the instance again."""
@@ -743,7 +743,7 @@ def test_the_capture_writes_every_file_under_todays_utc_date(gpu_run: Run) -> No
 
 
 def test_every_captured_account_id_is_redacted(gpu_run: Run) -> None:
-    """Criterion 53. The capture is committed to a public repository, and `terraform output`
+    """The capture is committed to a public repository, and `terraform output`
     and `kubectl get` both carry the account id in a real run. Catches captures written straight
     from the command, and a redaction that empties the file instead of substituting, which the
     placeholder half makes visible."""
@@ -765,7 +765,7 @@ def test_every_captured_account_id_is_redacted(gpu_run: Run) -> None:
 
 
 def test_the_kubeconfig_never_touches_the_owners_default_context(gpu_run: Run) -> None:
-    """Criterion 51. Catches the k3s kubeconfig written to `~/.kube/config`, which rewrites the
+    """Catches the k3s kubeconfig written to `~/.kube/config`, which rewrites the
     owner's default context to a cluster that is destroyed minutes later, and a `mktemp -d`
     directory the EXIT trap never removes."""
     succeeded(gpu_run)
@@ -778,7 +778,7 @@ def test_the_kubeconfig_never_touches_the_owners_default_context(gpu_run: Run) -
 
 
 def test_cost_queries_the_whole_account_daily_by_service(tmp_path: Path) -> None:
-    """Criteria 54 and 55. Catches a `--filter` on a project tag (the tag is not active before
+    """Catches a `--filter` on a project tag (the tag is not active before
     the run, so the filter returns nothing and the GPU hour looks free), `MONTHLY` granularity
     (which cannot separate the measurement day), `BlendedCost`, no `SERVICE` group-by, and a
     one-day window refused. `cost` runs after the instance is gone, so it must touch neither
@@ -802,7 +802,7 @@ def test_cost_queries_the_whole_account_daily_by_service(tmp_path: Path) -> None
 
 
 def test_both_scripts_are_executable_and_never_trace_or_name_the_default_kubeconfig() -> None:
-    """Criterion 51. Catches `set -x` or `set -euxo pipefail`, which prints every expanded
+    """Catches `set -x` or `set -euxo pipefail`, which prints every expanded
     command - the tenant key among them - to the owner's terminal and scrollback, `.kube/config`
     named anywhere, and either file committed without its execute bit, where `make
     tradeoff-option` fails with permission denied."""
@@ -816,11 +816,11 @@ def test_both_scripts_are_executable_and_never_trace_or_name_the_default_kubecon
 
 
 def test_no_file_this_plan_writes_carries_a_token_shaped_literal() -> None:
-    """Criterion 64 and a project rule. Catches a provider key pasted into an overlay while
+    """Catches a provider key pasted into an overlay while
     debugging, a digest left in the run README, and a tenant key committed with the evidence.
     Each path is asserted to exist first, so an empty scan cannot pass as a clean one, and the
     scan is anchored on a secret-shaped NAME: a bare long-run ban would
-    redden on the model names and the commit sha the same plan requires."""
+    redden on the model names and the commit sha that is also needed."""
     roots = (OVERLAY_DIR, SCRIPT, POLICY_SCRIPT, RUN_DOCS)
     for path in roots:
         assert path.exists(), f"{path} does not exist"
@@ -846,8 +846,8 @@ def test_no_file_this_plan_writes_carries_a_token_shaped_literal() -> None:
 
 
 def test_the_overlay_adds_exactly_the_stub_service() -> None:
-    """Criterion 31. Catches a second gateway or a duplicated platform service added here
-    instead of merged (decision B: one harness, the shipped compose file plus this overlay), and
+    """Catches a second gateway or a duplicated platform service added here
+    instead of merged (one harness: the shipped compose file plus this overlay), and
     the stub pulled as an image instead of built from the Dockerfile beside it, which would need
     a published image for a throwaway target."""
     base = set(load_yaml(BASE_COMPOSE).get("services") or {})
@@ -861,7 +861,7 @@ def test_the_overlay_adds_exactly_the_stub_service() -> None:
 
 
 def test_the_overlay_mounts_the_effective_policy_read_only_and_points_the_gateway_at_it() -> None:
-    """Criteria 32 and 33. Catches the policy mounted read-write (the gateway process could
+    """Catches the policy mounted read-write (the gateway process could
     rewrite the file the measurement is defined by), the mounts and
     `OPSCONSOLE_ROUTING_POLICY_PATH` or `OPSCONSOLE_PROVIDERS_DIR` naming different paths - the
     gateway then silently loads the shipped files and every option measures the same
@@ -890,7 +890,7 @@ def test_the_overlay_mounts_the_effective_policy_read_only_and_points_the_gatewa
 
 
 def test_the_overlay_publishes_no_port_the_base_stack_already_publishes() -> None:
-    """Criterion 34 and a project rule. Catches the stub published on 8080, which the gateway
+    """Catches the stub published on 8080, which the gateway
     already holds - compose then refuses to start the whole harness and the run is lost at `up`.
     The base file's own port set is asserted against the literal list too, so this case cannot go
     stale by reading a file that changed underneath it. It also refuses any port the companion
@@ -915,10 +915,10 @@ def test_the_overlay_publishes_no_port_the_base_stack_already_publishes() -> Non
 
 
 def test_the_manifest_names_the_three_options_in_order_against_the_stand_in_set() -> None:
-    """Criteria 58 and 59, and a project rule's spirit about published numbers. Catches the
-    example manifest copied across with its `helpdesk-golden-v1.jsonl` set name (decision E: the
+    """Catches the
+    example manifest copied across with its `helpdesk-golden-v1.jsonl` set name (the
     Helpdesk set does not exist yet), the options reordered so the table's rows do not match
-    SPEC section 11, an absolute report path or one resolving outside the repository,
+    the README table, an absolute report path or one resolving outside the repository,
     and above all the self-hosted option keeping the example's `0.0100` placeholder - a
     fabricated hourly rate produces a fabricated USD per 1,000 turns, which is the one number
     the whole table exists to publish.
@@ -947,8 +947,8 @@ def test_the_manifest_names_the_three_options_in_order_against_the_stand_in_set(
 
 @pytest.mark.parametrize(("target", "subcommand"), MAKE_TARGETS)
 def test_each_tradeoff_target_calls_the_script(target: str, subcommand: str) -> None:
-    """Criterion 61. Catches a target that only prints its usage (an `echo` naming the script is
-    excluded, a project rule), the subcommands swapped between targets, and `||` in a recipe,
+    """Catches a target that only prints its usage (an `echo` naming the script is
+    excluded), the subcommands swapped between targets, and `||` in a recipe,
     which reports success for a measurement run that failed."""
     lines = [
         line for line in recipe(read(MAKEFILE), target) if not line.lstrip("@-").startswith("echo")
@@ -960,9 +960,9 @@ def test_each_tradeoff_target_calls_the_script(target: str, subcommand: str) -> 
 
 
 def test_no_workflow_names_the_measurement_tooling() -> None:
-    """Criterion 61 and decision A. Catches a dispatch workflow, or a step in any workflow,
+    """Catches a dispatch workflow, or a step in any workflow,
     calling a target or the script directly: that needs a write-capable AWS role on the
-    repository and an approval gate for an apply, which a project rule keeps off it."""
+    repository and an approval gate for an apply, which is kept off the repository."""
     assert WORKFLOWS.is_dir(), f"{WORKFLOWS} does not exist"
     files = sorted(path for path in WORKFLOWS.rglob("*") if path.is_file())
     assert files, f"{WORKFLOWS} holds no workflow"
@@ -978,7 +978,7 @@ def test_no_workflow_names_the_measurement_tooling() -> None:
 
 
 def test_the_run_readme_states_the_methodology_the_numbers_have_to_be_read_with() -> None:
-    """Criterion 62 and risk 4. Ten cases move `check_score` in ten-point steps and one
+    """Ten cases move `check_score` in ten-point steps and one
     sequential stream measures no concurrency, so a table published without those two sentences
     implies a precision it has not got. Catches a README that lists the commands and leaves the
     methodology out, and one whose cost table is missing entirely."""
@@ -991,16 +991,15 @@ def test_the_run_readme_states_the_methodology_the_numbers_have_to_be_read_with(
     assert "|" in text, "the run README carries no cost table"
 
 
-def test_readme_section_seven_links_the_table_and_marks_the_conclusion_pending() -> None:
-    """Criterion 63 and decision G. SPEC section 21 fixes this section's position, so the
-    heading and the link land with the tooling and the run replaces ONE line. Catches the
+def test_readme_tradeoff_section_links_the_table_and_marks_the_conclusion_pending() -> None:
+    """The heading and the link land with the tooling and the run replaces ONE line. Catches the
     section added with a conclusion already written (a claim about numbers nobody has measured),
     more than one pending line (the post-run edit then misses one and the README ships half
     pending), and a heading with no link to the generated table. The marker is matched
-    case-insensitively: section 7 is published English, and an earlier change writes it in sentence
+    case-insensitively: the section is published English, and it is written in sentence
     case, so the count of one is the claim and the casing is not."""
     body = readme_section(read(README), "tradeoff")
     pending = [line for line in body if PENDING_MARKER.search(line)]
 
     assert any("docs/tradeoff.md" in line for line in body), body
-    assert len(pending) == 1, f"{len(pending)} pending lines in section 7: {pending}"
+    assert len(pending) == 1, f"{len(pending)} pending lines in the tradeoff section: {pending}"

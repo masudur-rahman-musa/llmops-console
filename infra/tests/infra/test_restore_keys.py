@@ -1,6 +1,6 @@
 """`infra/evals/restore_keys.sh`: put the gateway and the help desk back on their normal keys.
 
-An earlier change. `make eval` and `make numbers` start both on a run's throwaway keys. The restore
+`make eval` and `make numbers` start both on a run's throwaway keys. The restore
 force-recreates them with the base compose files only, and with the run's key variables
 unset, so no throwaway key outlives the run in a container. A stub `docker` on `PATH` records
 every call, its directory and which key variables it could see. Nothing real is started.

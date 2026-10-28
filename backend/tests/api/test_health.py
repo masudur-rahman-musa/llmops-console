@@ -4,7 +4,7 @@ Values are pinned exactly: 200 with `{"status": "ok"}` for
 liveness, 200 for readiness while every probe passes, 503 the moment one fails.
 
 These cases are about the REGISTRY: what an app does with the probes it is
-given. Since an earlier change, `create_app` registers probes of its own - `provider`
+given. `create_app` registers probes of its own - `provider`
 always, and one per configured backing service (none here, because the root
 conftest clears those variables for the whole suite) - so every case measures
 what it registered against `baseline_names`, the set the factory put there

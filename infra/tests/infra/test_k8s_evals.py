@@ -5,7 +5,7 @@ The stream comes from the session-scoped `built` fixture in `infra/tests/infra/c
 `infra/tests/infra/test_k8s_*.py` module. `infra/k8s/evals/` does not exist yet, so the fixture
 still builds (the root `resources:` list has not been asked to include it), and every case below
 that reads FOR the new objects therefore fails on "found none" rather than on a build error - the
-distinction the project notes's rule 10 asks the test-writer to confirm.
+distinction the suite relies on.
 
 The parsing helpers (`read`, `objects_of_kind`, `name_of`, `namespace_of`, `memory_bytes`,
 `cpu_millicores`, `quota_hard`, `owner_spec`, `pod_owners`, `pod_spec`, `all_containers`,
@@ -35,7 +35,7 @@ EVALS = "evals"
 #: this file owns what `evals/` ADDS, not what `base/` already put in the namespace.
 BASE_KINDS = frozenset({"Namespace", "ResourceQuota", "LimitRange"})
 
-#: Criterion: the exact three objects this plan's own section 6 names, in the `evals`
+#: The exact three objects in the `evals`
 #: namespace. Set equality, so a manifest left out of `evals/kustomization.yaml`'s
 #: `resources:` and an object nobody agreed to are both visible.
 EVALS_OBJECTS: frozenset[tuple[str, str]] = frozenset(
@@ -47,8 +47,8 @@ EVALS_OBJECTS: frozenset[tuple[str, str]] = frozenset(
 
 #: The three keys every container in this namespace must declare (mirrors
 #: `test_k8s_platform.py`'s `REQUIRED_CONTAINER_KEYS`); no `limits.cpu` value is pinned here
-#: because decision C (a CPU limit throttles rather than kills) is `platform/`'s own decision
-#: and this plan's own section 3 never restates a value for it either way.
+#: because (a CPU limit throttles rather than kills) is `platform/`'s own choice
+#: and nothing here restates a value for it either way.
 REQUIRED_CONTAINER_KEYS = ("requests.memory", "requests.cpu", "limits.memory")
 
 #: Binary and decimal suffixes a `resources.requests.memory` may carry. Copied from
@@ -78,7 +78,7 @@ ENV_VALUE_LOOKAHEAD = 3
 
 
 def read(path: Path) -> str:
-    """Read a file the plan owes, failing the one case that needs it when it is absent."""
+    """Read a file the tests need, failing the one case that needs it when it is absent."""
     assert path.is_file(), f"{path} does not exist"
     return path.read_text(encoding="utf-8")
 
@@ -222,7 +222,7 @@ def evals_object(built: list[dict[str, Any]], kind: str, name: str) -> dict[str,
 def test_the_evals_directory_emits_exactly_the_objects_the_plan_names(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 1 and 3. Catches `infra/k8s/evals/` never wired into the root
+    """Catches `infra/k8s/evals/` never wired into the root
     `kustomization.yaml`'s `resources:` list - the manifests can be perfectly valid and
     simply absent from the built stream, which set equality over `(kind, name)` in the
     `evals` namespace (minus `base/`'s three kinds) is the only thing that sees. Catches a
@@ -246,7 +246,7 @@ def test_the_evals_directory_emits_exactly_the_objects_the_plan_names(
 
 
 def test_there_is_no_nightly_eval_cronjob(built: list[dict[str, Any]]) -> None:
-    """a design note: the in-cluster nightly CronJob goes, because its cases would be a copy of the
+    """The in-cluster nightly CronJob goes, because its cases would be a copy of the
     help desk's file baked into the image. `nightly-eval.yml` is the one nightly path. Catches
     a CronJob still built into the cluster, its manifest still on disk, and a kustomization
     that still lists it (which would fail the build the day the file is deleted)."""
@@ -260,7 +260,7 @@ def test_there_is_no_nightly_eval_cronjob(built: list[dict[str, Any]]) -> None:
 
 
 def test_no_credential_is_written_inline_under_evals() -> None:
-    """a project rule: catches a literal secret in any manifest under `infra/k8s/evals/`. A
+    """Catches a literal secret in any manifest under `infra/k8s/evals/`. A
     literal a later patch strips from the built output is still in git history, so the scan
     is of what is written, and it asserts the directory exists first so a missing folder is a
     named failure and not a pass over zero files."""
@@ -323,7 +323,7 @@ def test_the_evals_subtotals_fit_inside_the_namespace_quota(
     """Criterion: the new Pushgateway Deployment (by its replica count) and the CronJob's one
     run's containers must fit inside the ALREADY-DECLARED `evals-envelope`
     `512Mi`/`300m`/`1Gi` (`infra/k8s/base/quotas.yaml`), derived from the BUILT pod templates
-    and compared to the quota read from the SAME build (a project rule: never restated).
+    and compared to the quota read from the SAME build (never restated).
     Catches the arithmetic failing even though every individual container above is
     individually correctly-shaped - a Pushgateway given two replicas, or either workload
     sized generously enough on its own but not against the OTHER one sharing the same small

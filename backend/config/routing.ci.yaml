@@ -1,4 +1,4 @@
-# The CI budget overlay (the design's "$2 hard budget per run").
+# The CI budget overlay (a "$2 hard budget per run").
 #
 # A PARTIAL document, not a policy: merged over the shipped `routing.yaml`, with
 # both the compose gateway and `ops-eval conversations` pointed at the result. The prod number stays `10.00` in `routing.yaml`, which is what a
@@ -12,8 +12,7 @@
 # bare `2.00` is a YAML float - a number that looks right and does not merge.
 #
 # Not used by the pull request gate: that runs the help desk on the mock with its
-# own whole policy, `infra/evals/routing.evals.yaml`, which spends nothing. See
-# the project notes. This cap is
+# own whole policy, `infra/evals/routing.evals.yaml`, which spends nothing. This cap is
 # for a gate run against a real model.
 tenants:
   evals:

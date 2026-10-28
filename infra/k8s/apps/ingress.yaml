@@ -27,13 +27,13 @@
 # readiness body names which dependencies are reachable.
 #
 # On the Helpdesk pair, `helpdesk-web` is the only public surface - the agent API
-# is the shape a project rule rejects for the console, and the MCP server is a tool
+# is the shape rejected for the console, and the MCP server is a tool
 # endpoint with no host. That router keeps `/` because the browser app serves a
 # whole site, and `Service/helpdesk-web` mounts none of the paths above.
 #
 # The hosts come from `infra/terraform/hetzner/variables.tf`, which publishes
-# `api`, `console`, `helpdesk` and `grafana` as A records. a design note keeps every
-# one of them proxy-off, which is what lets the HTTP-01 solver answer at all.
+# `api`, `console`, `helpdesk` and `grafana` as A records. Every one of them stays
+# proxy-off, which is what lets the HTTP-01 solver answer at all.
 #
 # Traefik instantiates a rate limit PER ROUTER, so the four routers here do not
 # share one budget: each gets the middleware's own 50/s average and 100 burst.

@@ -220,7 +220,7 @@ spec:
 # ipBlock rule and `infra/tradeoff/providers/vllm.yaml`'s `base_url` - and a
 # test compares them, because the drift is only visible if both files say the
 # value. The host lives about four hours and is destroyed
-# with the run; a design note records the widening.
+# with the run.
 apiVersion: v1
 kind: Service
 metadata:

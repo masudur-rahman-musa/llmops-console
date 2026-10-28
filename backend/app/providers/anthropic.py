@@ -13,8 +13,8 @@ becomes Anthropic's native `output_config.format`, whose answer is a plain text
 block of JSON, so both readers hand it back as content with no special case.
 
 Every PROVIDER failure that leaves this module is a `ProviderError` carrying
-`retryable`, including a timeout and a 200 whose body we cannot read, so plan
-10's fallback reads one flag instead of re-deriving a verdict from a status it
+`retryable`, including a timeout and a 200 whose body we cannot read, so the
+fallback reads one flag instead of re-deriving a verdict from a status it
 can no longer see. The caller's own bad input is the deliberate exception: it
 leaves as `IdentifierInvalid` (422) before any call is made, because that is the
 caller's error to fix and not a provider outage to fall back from. Seven inputs

@@ -8,7 +8,7 @@ group ranges (via `ipaddress`) for `IPV4` and `IPV6`, and the cue window for
 carry a checksum, and a kind label is only truthful if the thing it labels
 passed that kind's own check.
 
-a project rule has two targets here. Run from
+Two things are checked here. Run from
 `backend/app/redaction/`, `grep -E '^    if not re\.'
 detectors.py` prints exactly this and nothing else, and `grep 're\.fullmatch('
 *.py` over the package prints nothing at all:
@@ -28,8 +28,7 @@ before a trailing newline - `iban_ok("DE12...\n")` would otherwise be true, as
 The same goes for a trailing CRLF or a trailing space.
 
 The nine PATTERNS are the other half and have no `fullmatch` at all: every one
-searches free text with explicit boundary lookarounds, so the rule's analogue is
-what applies to them: a
+searches free text with explicit boundary lookarounds, so the same idea applies to them: a
 value at the very end of the input, with a trailing newline, CRLF or space, is
 still detected and its span stops before the whitespace.
 

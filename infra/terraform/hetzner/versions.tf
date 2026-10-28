@@ -1,7 +1,7 @@
 terraform {
   required_version = ">= 1.9"
 
-  # Decision E, recorded as a design note: the state lives in Terraform Cloud's free
+  # The state lives in Terraform Cloud's free
   # tier. It is remote, locked and versioned, and no state file or plan output
   # ever lands in this repository.
   cloud {

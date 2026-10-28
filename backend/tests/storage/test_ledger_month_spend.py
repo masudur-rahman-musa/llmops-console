@@ -39,7 +39,7 @@ class DownPool:
 def test_a_failing_database_raises_ledger_unreadable() -> None:
     """Catches a reader that swallows the database error and answers 0 or `None`: the gateway
     would then treat an unreadable ledger as no spend and serve a tenant over its cap, the
-    exact bug this plan fixes. Both methods are asserted, since they are two queries."""
+    exact bug this guards against. Both methods are asserted, since they are two queries."""
     reader = PostgresMonthSpendReader(DownPool())  # type: ignore[arg-type]
 
     with pytest.raises(LedgerUnreadable):

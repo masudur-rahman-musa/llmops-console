@@ -1,4 +1,4 @@
-"""Auth coverage tests for an earlier change: one auth layer that blocks by default.
+"""Auth coverage tests: one auth layer that blocks by default.
 
 Every route mounted on the app must either:
 - be in OPEN_PATHS (exactly /healthz and /readyz), or
@@ -256,7 +256,7 @@ def test_the_caller_check_runs_once_when_a_route_also_declares_context() -> None
     app = create_app(environ={})
 
     # Find /v1/chat/completions — it declares Context in its handler and will
-    # also sit under the caller parent after an earlier change.
+    # also sit under the caller parent.
     chat_routes = [
         r for r in _all_routes(app) if isinstance(r, APIRoute) and r.path == "/v1/chat/completions"
     ]

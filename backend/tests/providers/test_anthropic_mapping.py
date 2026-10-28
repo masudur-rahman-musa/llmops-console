@@ -262,7 +262,7 @@ def test_finish_reason_is_the_providers_stop_reason() -> None:
 RESPONSE_FORMAT = ResponseFormat(name="ticket_summary", json_schema=TICKET_SCHEMA)
 
 # What a `response_format` becomes on the wire: Anthropic's native
-# structured outputs, carrying the caller's schema exactly as sent (decision C).
+# structured outputs, carrying the caller's schema exactly as sent.
 NATIVE_OUTPUT_CONFIG: dict[str, Any] = {
     "format": {"type": "json_schema", "schema": TICKET_SCHEMA},
 }
@@ -271,7 +271,7 @@ NATIVE_OUTPUT_CONFIG: dict[str, Any] = {
 def test_response_format_renders_output_config() -> None:
     """Catches a mapper that still fakes the schema with a forced tool, that forwards the
     OpenAI `response_format` object as it is, or that rewrites the caller's schema (adding
-    `additionalProperties`, say) against decision C: `TICKET_SCHEMA` has no such key, so
+    `additionalProperties`, say) against the spec: `TICKET_SCHEMA` has no such key, so
     any rewrite shows up as an unequal dict."""
     body = to_anthropic(request_with({"response_format": RESPONSE_FORMAT}))
 
@@ -388,7 +388,7 @@ def test_chat_sends_no_beta_header_for_response_format() -> None:
 
 
 def test_the_readers_take_no_forced_tool() -> None:
-    """Catches an earlier change's unwrap left in place behind its keyword or its helpers: any
+    """Catches the unwrap left in place behind its keyword or its helpers: any
     caller still passing a name would have a real tool call turned into content, and the
     dead path would keep a second meaning of `tool_use` alive in the reader."""
     assert "forced_tool" not in inspect.signature(from_anthropic).parameters

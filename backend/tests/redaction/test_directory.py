@@ -7,11 +7,12 @@ unavailable error - is `tests/redaction/test_redis_directory.py`.
 Three claims carry the file.
 
 * The caps. `MIN_DIRECTORY_NAME_CHARS`, `MAX_DIRECTORY_NAME_CHARS` and
-  `MAX_DIRECTORY_NAMES` are values this plan introduces, so each is pinned to its
-  exact literal and each has its inclusive boundary pair. The count cap is pinned against the directory TOTAL rather
+  `MAX_DIRECTORY_NAMES` are new values, so each is pinned to its
+  exact literal and each has its inclusive boundary pair. The count cap is pinned against the
+  directory TOTAL rather
   than against one push, because a per-push reading lets an unbounded directory
   in through pagination and the compiled alternation is the only unbounded thing
-  this plan adds.
+  here.
 * Nothing is written when anything is refused. Every rejection row reads the
   directory back afterwards, so a store that writes the good names and then
   raises on the bad one - which leaves a tenant's directory half applied and the
@@ -70,7 +71,7 @@ def bulk(count: int, prefix: str = "Persona") -> list[str]:
 def test_the_three_caps_are_the_published_numbers() -> None:
     """Catches a cap moved to a plausible neighbour (a one-character minimum, a 64 or 256
     character maximum): the minimum is the one an operator can break precision with in a
-    single typo, so a band would admit exactly the value decision G rejects."""
+    single typo, so a band would admit exactly the value that must be rejected."""
     assert MIN_DIRECTORY_NAME_CHARS == 2
     assert MAX_DIRECTORY_NAME_CHARS == 128
     assert MAX_DIRECTORY_NAMES == 2000
@@ -132,7 +133,7 @@ def test_an_empty_directory_answers_an_empty_tuple() -> None:
 
 
 def test_a_pushed_name_is_read_back() -> None:
-    """Catches a `put` that stores the hashed field alone: the design asks for hashed key and
+    """Catches a `put` that stores the hashed field alone: the store keeps a hashed key and
     plaintext value, and the matcher needs the plaintext, so a hash-only store compiles an
     alternation of hex digests that matches nothing."""
     directory = store()
@@ -143,7 +144,7 @@ def test_a_pushed_name_is_read_back() -> None:
 
 
 def test_a_second_push_merges_rather_than_replacing() -> None:
-    """Catches replace-whole semantics (decision C): a caller that pages a large directory
+    """Catches replace-whole semantics: a caller that pages a large directory
     would silently delete everything it had already pushed, and the failure is invisible
     until a name stops being redacted."""
     directory = store()
@@ -201,7 +202,7 @@ def test_re_pushing_a_name_the_directory_already_holds_changes_nothing(
 ) -> None:
     """Catches a store keyed on the raw string: the field is `sha256(normalised name)`
     exactly so that a re-push from an operator who typed the name slightly differently is
-    idempotent (decision B) rather than a second entry that eats a slot of the 2000 and
+    idempotent rather than a second entry that eats a slot of the 2000 and
     compiles a duplicate branch into the alternation."""
     directory = store()
     directory.put(TENANT, [NAME_A])
@@ -222,7 +223,7 @@ def test_normalisation_folds_case_and_strips_surrounding_whitespace() -> None:
 
 def test_the_field_is_the_sha256_of_the_normalised_name() -> None:
     """Catches a field that is the plaintext name, a truncated digest, or a hash of the
-    RAW string: the design asks for a hashed key, and the digest is computed here from
+    RAW string: the key is a hash, and the digest is computed here from
     `hashlib` directly rather than by calling the helper twice, so a helper that answered a
     constant would still fail."""
     expected = hashlib.sha256(normalise_name(NAME_A).encode("utf-8")).hexdigest()
@@ -247,7 +248,7 @@ def test_the_field_is_the_sha256_of_the_normalised_name() -> None:
 )
 def test_a_name_at_a_length_boundary_is_accepted(case: str, name: str) -> None:
     """Catches a comparison written `>` where `>=` belongs and the reverse: a two-letter
-    surname is a real name and a 128-character one is what decision G said fits, so
+    surname is a real name and a 128-character one is what is documented to fit, so
     refusing either would reject a push an operator is entitled to make. The half of each
     pair that a cap alone cannot get right."""
     directory = store()
@@ -268,7 +269,7 @@ def test_a_name_at_a_length_boundary_is_accepted(case: str, name: str) -> None:
 def test_a_name_outside_the_length_bounds_is_refused_and_nothing_is_stored(
     case: str, name: str, limit: int
 ) -> None:
-    """Catches a cap that was never applied - the one-character name is decision G's whole
+    """Catches a cap that was never applied - the one-character name is the whole
     reason, because it redacts every `L` in every request that tenant sends - and a check
     run after the write, which the closing read is what sees."""
     directory = store()
@@ -306,8 +307,8 @@ def test_one_bad_name_in_a_push_stores_none_of_the_good_ones() -> None:
 
 
 def test_a_push_at_the_count_cap_is_accepted() -> None:
-    """Catches a count cap written `>=`: exactly 2000 names is the largest legal directory
-    decision G names, and refusing it would make the published number a lie by one."""
+    """Catches a count cap written `>=`: exactly 2000 names is the largest legal directory, and
+    refusing it would make the published number a lie by one."""
     directory = store()
 
     directory.put(TENANT, bulk(MAX_DIRECTORY_NAMES))
@@ -318,7 +319,7 @@ def test_a_push_at_the_count_cap_is_accepted() -> None:
 def test_a_push_one_name_over_the_count_cap_is_refused() -> None:
     """The other half of the boundary pair: catches a count cap that was never applied,
     which the accepted row alone cannot see, and leaves the compiled alternation the only
-    unbounded thing in the plan."""
+    unbounded thing here."""
     directory = store()
 
     with pytest.raises(DirectoryNameInvalid) as raised:
@@ -331,7 +332,7 @@ def test_a_push_one_name_over_the_count_cap_is_refused() -> None:
 def test_the_count_cap_is_over_the_directory_total_and_not_over_one_push() -> None:
     """Catches a cap compared against `len(names)` alone: two pushes of 1500 are each
     legal on their own, so a per-push reading lets a paged caller build a directory of any
-    size at all and the bound decision G set means nothing. The first push must survive,
+    size at all and the bound means nothing. The first push must survive,
     which is what separates this from a cap that simply refuses everything."""
     directory = store()
     directory.put(TENANT, bulk(1500, prefix="First"))
@@ -346,7 +347,7 @@ def test_the_count_cap_is_over_the_directory_total_and_not_over_one_push() -> No
 def test_the_count_cap_counts_a_re_push_once() -> None:
     """Catches a total computed as "held plus offered" without noticing the overlap: a
     caller re-pushing the directory it already holds would be refused for a directory that
-    is not growing at all, which is exactly what decision C's merge semantics invite."""
+    is not growing at all, which is exactly what the merge semantics invite."""
     directory = store()
     directory.put(TENANT, bulk(MAX_DIRECTORY_NAMES))
 

@@ -10,17 +10,17 @@ isolation is the difference a test makes rather than a registry of its own.
 The contract these tests are written against, before it exists:
 
 * `app.core.metrics.registry()` - the module-owned `CollectorRegistry`
-  holding this gateway's families and nothing else (decision B).
+  holding this gateway's families and nothing else.
 * `app.core.metrics.request_metrics(scope)` - the accessor for the
   `RequestMetrics` record carried in the ASGI scope beside `RequestTrace`, filled
-  where `annotate` is filled and read once by the middleware after the last byte
-  (decision E). `None` when nothing started one.
-* `app.api.routes.health` - `GET /metrics`, unauthenticated
-  (decision D), answering the Prometheus text exposition format.
+  where `annotate` is filled and read once by the middleware after the last byte.
+`None` when nothing started one.
+* `app.api.routes.health` - `GET /metrics`, unauthenticated, answering the Prometheus text
+exposition format.
 
-The eleven family names below are the design's, spelled as the exposition spells
+The eleven family names below are the declared ones, spelled as the exposition spells
 them: a counter's family is its `_total` series, which is also the name a
-dashboard query uses. `gateway_eval_*` is deliberately absent (decision C): the
+dashboard query uses. `gateway_eval_*` is deliberately absent: the
 nightly job pushes those gauges to a Pushgateway, so this process never declares
 them.
 
@@ -98,7 +98,7 @@ METRICS = "/metrics"
 HEALTHZ = "/healthz"
 READYZ = "/readyz"
 
-# --- the eleven declared families (the design, decision C) --------------------
+# --- the eleven declared families --------------------
 
 REQUESTS = "gateway_requests_total"
 LATENCY = "gateway_request_latency_seconds"
@@ -125,12 +125,12 @@ FED_FAMILIES = (
     COST_USD,
     BUDGET_RATIO,
 )
-"""The families a request through a route in this file feeds. An earlier change ADDED
-`gateway_budget_ratio` to it, from the other direction: the tuple
-of families that were declared and left empty shrank by one plan's worth each
-time a subsystem landed - an earlier change filled `gateway_fallbacks_total` and
-`gateway_circuit_state`, an earlier change filled `gateway_cache_hits_total`, an earlier change
-filled `gateway_cost_usd_total` - and an earlier change filled the last of them, so that
+"""The families a request through a route in this file feeds. `gateway_budget_ratio` was ADDED
+to it, from the other direction: the tuple
+of families that were declared and left empty shrank by one family each
+time a subsystem landed - `gateway_fallbacks_total` and
+`gateway_circuit_state` were filled, then `gateway_cache_hits_total`, then
+`gateway_cost_usd_total` - and the last of them was filled, so that
 tuple and the emptiness case that read it are gone rather than empty (standing
 rule 33; an emptiness assertion over an empty tuple asserts nothing). The budget
 gauge is now set after every served request, and every chat request in this file
@@ -145,7 +145,7 @@ ELSEWHERE_FED_FAMILIES = (CACHE_HITS, LEDGER_WRITES)
 """Declared, empty after every request THIS file makes, and fed elsewhere in the
 session - so neither tuple above can hold them.
 
-`gateway_cache_hits_total` is fed by a route as of an earlier change, but only by a
+`gateway_cache_hits_total` is fed by a route, but only by a
 request eligible for the cache - a stated `temperature: 0` or the
 `X-Gateway-Cache: allow` header - and no request in this file is either, which is
 why every `cache` label asserted here reads `miss`.
@@ -161,16 +161,15 @@ DECLARED_FAMILIES = frozenset(FED_FAMILIES) | frozenset(ELSEWHERE_FED_FAMILIES)
 
 DECLARED_FAMILY_COUNT = 11
 """Nine fed by a request in this file and two fed only from elsewhere in the
-session. The plan's own number, so a family added or dropped fails here as well
-as in the set comparison - and it did NOT change when an earlier change filled the last
-declared-and-empty family, because a plan here adds a value, never a family.
+session. A fixed number, so a family added or dropped fails here as well
+as in the set comparison - and it did NOT change when the last
+declared-and-empty family was filled, because a change here adds a value, never a family.
 
 The sentence this replaced read "seven ... two declared and empty, and two fed
 only from elsewhere", which was already one short of the eight names in
-`FED_FAMILIES` when an earlier change added `gateway_cost_usd_total` to it (standing
-rule 6)."""
+`FED_FAMILIES` when `gateway_cost_usd_total` was added to it."""
 
-# The `le` values decision H fixes, in the order and the spelling
+# The fixed `le` values, in the order and the spelling
 # prometheus_client renders them with, `+Inf` included. The default histogram
 # tops out at 10s, which puts every ordinary streamed completion in the last
 # bucket and makes a p95 panel unreadable.
@@ -190,7 +189,7 @@ DECLARED_BUCKET_BOUNDS = (
     "+Inf",
 )
 
-# The prefixes prometheus_client's GLOBAL registry arrives carrying. Decision B
+# The prefixes prometheus_client's GLOBAL registry arrives carrying. This
 # is exactly the decision not to have them.
 PLATFORM_COLLECTOR_PREFIXES = ("python_", "process_", "gc_")
 
@@ -211,11 +210,11 @@ CACHE_MISS = "miss"
 """What `X-Gateway-Cache` says on a request the cache did not serve, and therefore
 the `cache` label those requests carry. Every request in this file is one: none
 states `temperature: 0` and none sends the `X-Gateway-Cache: allow` header, so
-none is eligible under an earlier change. The hit label is covered in
+none is eligible for the cache. The hit label is covered in
 tests/gateway/test_exact_cache.py."""
 
 EMPTY = ""
-"""Decision F: a label a request never got. Not a `none` sentinel and not a
+"""A label a request never got. Not a `none` sentinel and not a
 dropped request, so the counter still reconciles with the access log."""
 
 EMAIL = "alice@example.com"
@@ -280,7 +279,7 @@ def request_labels(
     status: str,
     cache: str,
 ) -> dict[str, str]:
-    """The five labels the design gives `gateway_requests_total`, in one place."""
+    """The five labels on `gateway_requests_total`, in one place."""
     return {
         "tenant": tenant,
         "alias": alias,
@@ -396,7 +395,7 @@ def slow_stream_client(
 # the call sites fill and the middleware reads - so whatever the middleware does
 # with it at the end of the request raises there.
 #
-# The route is mounted under `/v1/` because that is the traffic decision G counts:
+# The route is mounted under `/v1/` because that is the traffic that is counted:
 # on any other path there would be no emission to fail and the case would pass
 # whether or not the guard exists.
 
@@ -443,9 +442,9 @@ def poison_client(settings: Settings) -> Iterator[TestClient]:
 def test_metrics_answers_the_exposition_content_type(gateway_client: TestClient) -> None:
     """Catches a route that returns the samples as JSON, or as a bare `text/plain`
     without the version parameter: a Prometheus scrape reads the content type before the
-    body and drops a target it cannot parse, so every panel in the design would be empty
+    body and drops a target it cannot parse, so every dashboard panel would be empty
     while the endpoint answered 200 to a browser. Also catches an authenticated
-    `/metrics` (decision D), since this scrape sends no key at all."""
+    `/metrics`, since this scrape sends no key at all."""
     response = scrape(gateway_client)
 
     assert response.status_code == 200, response.text
@@ -458,8 +457,8 @@ def test_the_exposed_family_names_are_exactly_the_declared_set(
 ) -> None:
     """Catches both directions of the closed table: a family this gateway never declared
     (prometheus_client's global registry arrives carrying process, GC and platform
-    collectors, which is decision B) and a declared family that never reached the
-    registry - which is the failure an earlier change would each discover as a missing
+    collectors, which is) and a declared family that never reached the
+    registry - which is the failure each such change would discover as a missing
     family rather than as a missing value."""
     body = scrape(gateway_client).text
 
@@ -474,12 +473,12 @@ def test_the_last_declared_family_is_now_fed_by_a_served_request(
 ) -> None:
     """This case used to be `test_the_unfed_families_are_registered_and_carry_no_samples`,
     which asserted that `gateway_budget_ratio` was registered and EMPTY - exactly what
-    an earlier change exists to break. It is inverted rather than deleted,
+    the later change exists to break. It is inverted rather than deleted,
     because the claim it protected is still worth holding from this file: the family had
     to be filled with a VALUE and not re-declared, and this is the one file that reads
     the whole exposition.
 
-    Catches a plan that adds the family again under a second registration (the set
+    Catches a change that adds the family again under a second registration (the set
     comparison above would fail too, but this says which one), and catches a gauge that
     is registered, set once at startup and never moved - the sample would be present and
     `moved_series` empty, which is the shape a placeholder emission has. The served
@@ -539,8 +538,8 @@ def test_the_probe_and_scrape_paths_are_not_counted(
 ) -> None:
     """Catches a middleware that counts every HTTP scope. A scrape every fifteen seconds
     and a kubelet probe are not traffic: counted, they put a constant floor under every
-    RPS panel and an unmovable denominator under every error ratio in the design's
-    dashboard 1, so a real outage barely moves the line. The chat request afterwards is
+    RPS panel and an unmovable denominator under every error ratio on the
+    dashboards, so a real outage barely moves the line. The chat request afterwards is
     the control - it proves the reader would have SEEN a count, so the zero above is the
     filter working rather than the metrics never being emitted at all."""
     assert gateway_client.get(path).status_code == 200
@@ -603,11 +602,12 @@ def test_a_streamed_requests_latency_covers_the_frames(
 def test_latency_buckets_are_the_declared_eleven(
     chat_client: TestClient, metrics: MetricDelta
 ) -> None:
-    """Catches prometheus_client's DEFAULT buckets being taken (decision H): they top out
+    """Catches prometheus_client's DEFAULT buckets being taken: they top out
     at 10 seconds, so every ordinary streamed completion falls in `+Inf` and a p95 is
-    unreadable exactly where it matters. a project rule: the twelve bounds are asserted
-    as the exact ordered list, so a band of roughly-right values cannot pass. An earlier change adds
-    `6.0`, the latency SLO's threshold: without it the share under 6 seconds is not
+    unreadable exactly where it matters. The twelve bounds are asserted
+    as the exact ordered list, so a band of roughly-right values cannot pass. `6.0` is also a
+    bound: it is
+    the latency SLO's threshold: without it the share under 6 seconds is not
     measurable from the buckets and the latency error budget reads against `5.0` instead."""
     assert post_chat(chat_client, chat_body(model=ALIAS)).status_code == 200
 
@@ -626,7 +626,7 @@ def test_tokens_are_recorded_in_and_out_on_a_chat_completion(
     chat_client: TestClient, metrics: MetricDelta
 ) -> None:
     """Catches `total_tokens` being recorded as `out` (the two directions would sum to
-    more than the provider billed, and an earlier change's ledger, built from the same numbers,
+    more than the provider billed, and the ledger, built from the same numbers,
     would disagree with the dashboard), and catches one direction being emitted with the
     other's number - the fixture's prompt and completion counts are deliberately
     different, so a swap is visible."""
@@ -644,7 +644,7 @@ def test_tokens_are_recorded_in_and_out_on_a_chat_completion(
 def test_tokens_are_recorded_from_the_streams_usage_chunk(
     chat_client: TestClient, metrics: MetricDelta
 ) -> None:
-    """Catches a token counter blind to streaming (decision I): the tokens would be
+    """Catches a token counter blind to streaming: the tokens would be
     emitted only where the non-streamed route reads `usage`, so every tenant's usage
     would be understated by the whole of the path a chat product actually uses, and the
     ledger built from the same chunk would disagree. The streamed fixture's numbers
@@ -683,7 +683,7 @@ def test_the_token_model_label_is_the_resolved_model_not_the_alias(
     chat_client: TestClient, metrics: MetricDelta
 ) -> None:
     """Catches the alias being used as the `model` label, and the adapter's own answer
-    being used instead of the resolved id. Both break the grain an earlier change's ledger prices
+    being used instead of the resolved id. Both break the grain the ledger prices
     at: an alias covers several provider models, so cost per model would be unattributable
     and the two systems could never be reconciled. The stub deliberately reports a model
     that is neither the alias nor the policy's id, so an echo of the provider's answer
@@ -786,8 +786,8 @@ def test_a_repeated_value_across_turns_counts_once(
     gateway_client: TestClient, metrics: MetricDelta
 ) -> None:
     """Catches a counter incremented per DETECTION rather than per placeholder minted:
-    the same address in three turns is one redacted value under one placeholder (plan
-    07b's numbering), so counting detections would report four EMAILs for the two people
+    the same address in three turns is one redacted value under one placeholder (placeholders
+    are numbered per value), so counting detections would report four EMAILs for the two people
     in this body and make the per-tenant redaction rate a function of how often someone
     repeats themselves. The second, distinct address is what stops the test being passed
     by an implementation that counts one per request."""
@@ -861,8 +861,8 @@ def test_an_unauthorized_request_is_counted_with_empty_labels(
     would then stop reconciling with the access log, and a key being probed against the
     gateway - a burst of 401s, the one shape worth alerting on - would be invisible.
     Also catches a `none` sentinel or a tenant label taken from the unauthenticated
-    caller's own `X-Tenant` header, which would let a stranger mint time series
-    (decision F)."""
+    caller's own `X-Tenant` header, which would let a stranger mint time series.
+    """
     response: HttpxResponse = chat_client.post(CHAT, json=chat_body(model=ALIAS))
     assert_error_body(response, status=401, code="UNAUTHORIZED")
 
@@ -940,9 +940,9 @@ def test_a_second_app_registers_no_duplicate_family(
 # the fallback counter and the circuit gauge
 # --------------------------------------------------------------------------
 #
-# The two families an earlier change declared empty and this plan fills are fed from here
+# The two families that were declared empty and are now filled are fed from here
 # on, which is why they are in `FED_FAMILIES` above. (They moved there out of a
-# tuple of declared-and-empty families that an earlier change emptied and removed.) They are
+# tuple of declared-and-empty families that was emptied and removed.) They are
 # read the same way everything else in this file is - through the session
 # registry - but the gauge is read ABSOLUTELY rather than as a delta: a gauge
 # carries a level, not an increment, and "0 for a provider nothing failed on" is
@@ -979,7 +979,7 @@ def test_a_fallback_is_counted_once_against_the_serving_provider(
     metrics: MetricDelta,
 ) -> None:
     """Catches the counter labelled with the provider that FAILED, which is the natural
-    mistake when the failure is the thing being handled: the design's panel would then
+    mistake when the failure is the thing being handled: the dashboard panel would then
     report fallbacks onto a provider that served nothing, and the tenant's traffic would be
     attributed to the wrong provider. The total pins "once per request" as well, so a loop
     that counted each candidate it tried is caught by the same case."""

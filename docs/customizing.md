@@ -78,10 +78,8 @@ You do not have to touch any of these to run the gateway.
   `backend/evals/conversation-baseline.json` is the scoreboard the CI gate compares
   against; make it once from a run on your own cases, then leave it alone. The gate
   itself is in [docs/eval-gate.md](docs/eval-gate.md).
-- **Reliability.** The seven service level objectives are in
-  the project notes their alerts in
-  [infra/k8s/monitoring/alerts/](infra/k8s/monitoring/alerts/), and every alert has a response
-  section in the project notes Retarget the numbers to what
+- **Reliability.** The seven service level objectives have their alerts in
+  [infra/k8s/monitoring/alerts/](infra/k8s/monitoring/alerts/). Retarget the numbers to what
   you are actually promising.
 - **Infrastructure.** [infra/terraform/](infra/terraform/) provisions the hosts
   and [infra/k8s/](infra/k8s/) holds the manifests. Both expect your own domain,
@@ -91,6 +89,5 @@ You do not have to touch any of these to run the gateway.
 
 ## Decisions you are inheriting
 
-Every non-obvious choice in here was recorded when it was made, in
-the project notes If a default looks wrong for you, the record of why it
-is the default is the fastest way to decide whether to change it.
+If a default looks wrong for you, read the comments beside it: they say why
+it is the default, which is the fastest way to decide whether to change it.

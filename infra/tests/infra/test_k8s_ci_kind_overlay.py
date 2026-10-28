@@ -6,7 +6,7 @@ kustomize does not let escape its own directory without
 `--load-restrictor=LoadRestrictionsNone` (it selects individual files out of
 `infra/k8s/apps` and `infra/k8s/platform` rather than each directory whole, which
 is what trims Helpdesk, Ingress and the two CRD-backed platform files out at all -
-a project rule says a shared helper is copied rather than imported across test
+A shared helper is copied rather than imported across test
 modules, and the two builds do not even share a root to make importing tempting).
 """
 
@@ -25,10 +25,10 @@ CI_KIND_ROOT = REPO_ROOT / "infra" / "k8s" / "kind"
 ROUTING_POLICY = REPO_ROOT / "backend" / "config" / "routing.yaml"
 PROVIDERS_DIR = REPO_ROOT / "backend" / "config" / "providers"
 
-#: Criterion 2: the object set this overlay must contain, by `(kind, name, namespace)`,
+#: The object set this overlay must contain, by `(kind, name, namespace)`,
 #: read as a strict SUBSET check (not equality) - `base`'s four `Namespace`s, four
 #: `ResourceQuota`s, four `LimitRange`s and every platform/apps `NetworkPolicy` also
-#: ride along unavoidably (base is used whole, per the plan's own wording), and this
+#: ride along unavoidably (base is used whole), and this
 #: overlay only has to prove what it ADDS is exactly these, not that base emits
 #: nothing else. `test_no_excluded_kind_or_name_appears` is the equality half, over
 #: the excluded set instead.
@@ -46,7 +46,7 @@ REQUIRED_OBJECTS: frozenset[tuple[str, str, str]] = frozenset(
     }
 )
 
-#: Criterion 2's other half: names no CI overlay may emit, whatever their kind -
+#: The other half: names no CI overlay may emit, whatever their kind -
 #: nothing here can pull the four Helpdesk images or `web`, and kind
 #: has no controller for either CRD kind.
 EXCLUDED_NAMES: frozenset[str] = frozenset(
@@ -133,14 +133,14 @@ def _deployment(documents: list[dict[str, Any]], name: str) -> dict[str, Any]:
 def test_the_overlay_contains_every_required_object(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 2's inclusion half: the gateway, both llama.cpp servers and the
+    """The inclusion half: the gateway, both llama.cpp servers and the
     stub target, each with its Service, plus the two Secrets and `platform`'s
     three data services - a subset check, since `base` rides along whole."""
     assert _objects(built) >= REQUIRED_OBJECTS
 
 
 def test_no_excluded_kind_or_name_appears(built: list[dict[str, Any]]) -> None:
-    """Criterion 2's exclusion half: no Helpdesk object, no Ingress, no Traefik
+    """The exclusion half: no Helpdesk object, no Ingress, no Traefik
     Middleware, no cert-manager ClusterIssuer, no CronJob - a build containing any
     of these is one that would fail `kubectl apply` on a bare kind cluster with
     neither controller installed, or reach for an image nothing publishes."""
@@ -163,7 +163,7 @@ def test_no_secret_reference_names_helpdesk_secrets(
 def test_the_gateway_image_is_the_locally_built_ci_tag(
     built: list[dict[str, Any]],
 ) -> None:
-    """Decision D: the gateway's image is what THIS workflow builds and
+    """The gateway's image is what THIS workflow builds and
     `kind load docker-image`s, never a GHCR reference a PR run cannot publish to."""
     container = _deployment(built, "gateway")["spec"]["template"]["spec"]["containers"][0]
     assert container["image"] == f"gateway:{GATEWAY_IMAGE_TAG}"
@@ -207,7 +207,7 @@ def test_the_ci_secret_carries_no_provider_key(built: list[dict[str, Any]]) -> N
 def test_no_chat_provider_is_reachable_without_a_key() -> None:
     """The routing-policy half of `main.py`'s own claim: with no provider key
     configured, no provider the `evals` tenant's `agent-default` can reach is keyless,
-    so CI can never spend on a chat provider (a design note: chat runs only on Anthropic
+    so CI can never spend on a chat provider (chat runs only on Anthropic
     and OpenAI)."""
     from app.model_routing.policy import DataClass, load_policy
     from app.model_routing.resolver import resolve

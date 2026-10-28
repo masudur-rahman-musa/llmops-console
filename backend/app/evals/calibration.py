@@ -11,13 +11,12 @@ Four properties are worth more than the arithmetic.
   Pass and fail have no distance between them, so weights would add nothing, and plain
   percent agreement would reward a judge that always says the common word. The sum is
   done in whole numbers and divided once.
-* **Chance agreement of 1 is `None`, never 1.0**
-. When every label and every
+* **Chance agreement of 1 is `None`, never 1.0**.
+When every label and every
   answer is the same word the agreement is real and says nothing, and a gate reading
   1.0 would trust a judge nothing measured.
 * **`MIN_CALIBRATION_LABELS` is applied twice**: to the file's count before a single
-  request is paid for, and to the pairs that SURVIVE the judge's drops
-.
+  request is paid for, and to the pairs that SURVIVE the judge's drops.
 * **A label the judge could not grade is dropped**, never graded as a fail and never as
   the label's own word.
 

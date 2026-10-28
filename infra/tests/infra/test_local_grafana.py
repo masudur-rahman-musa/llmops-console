@@ -1,6 +1,6 @@
 """The local stack shows the dashboards: Grafana in compose, a datasource, `make grafana-check`.
 
-An earlier change. Every case reads files as text, JSON or parsed YAML and starts nothing.
+Every case reads files as text, JSON or parsed YAML and starts nothing.
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ K8S_GRAFANA = REPO_ROOT / "infra" / "k8s" / "monitoring" / "grafana.yaml"
 DASHBOARDS = REPO_ROOT / "infra" / "k8s" / "monitoring" / "dashboards"
 DATASOURCE_FILE = REPO_ROOT / "infra" / "local" / "grafana-datasource.yml"
 PROVIDER_FILE = REPO_ROOT / "infra" / "local" / "grafana-dashboards.yml"
-CI_CD_DEPLOY = REPO_ROOT / "dev" / "docs" / "ci-cd-deploy.md"
 LOCAL_PROMETHEUS = REPO_ROOT / "infra" / "local" / "prometheus.yml"
 K8S_PROMETHEUS = REPO_ROOT / "infra" / "k8s" / "monitoring" / "prometheus.yaml"
 RULES_SOURCE = "./infra/k8s/monitoring/alerts/rules.yml"
@@ -78,19 +77,6 @@ def datasource_uids(node: object, title: str = "") -> list[tuple[str, str]]:
         for item in node:
             found.extend(datasource_uids(item, title))
     return found
-
-
-def bullet(text: str, start_marker: str) -> str:
-    """One `- ` bullet of the deploy handbook: from its first line to the next bullet."""
-    lines = text.splitlines()
-    first = next((i for i, line in enumerate(lines) if line.startswith(start_marker)), None)
-    assert first is not None, f"ci-cd-deploy.md has no line starting {start_marker!r}"
-    body = [lines[first]]
-    for line in lines[first + 1 :]:
-        if line.startswith("- ") or line.startswith("#") or line.strip() == "":
-            break
-        body.append(line)
-    return "\n".join(body)
 
 
 def test_grafana_runs_by_default_with_the_k8s_pin() -> None:
@@ -191,15 +177,11 @@ def test_the_grafana_check_target_asks_health_and_the_dashboard() -> None:
 
 
 def test_every_path_the_changed_files_name_exists() -> None:
-    """Catches a path left behind in the compose service, the check recipe or the deploy
-    handbook's two edited lines (local link, `infra/local/` files)."""
+    """Catches a path left behind in the compose service or the check recipe."""
     texts = {
         "compose grafana service": json.dumps(service("grafana")),
         "grafana-check recipe": recipe("grafana-check"),
     }
-    handbook = read(CI_CD_DEPLOY)
-    texts["handbook link line"] = bullet(handbook, "- The Overview tab's")
-    texts["handbook infra/local line"] = bullet(handbook, "- `infra/local/`")
     for label, text in texts.items():
         for path in re.findall(PATH_PATTERN, text):
             assert (REPO_ROOT / path.rstrip(".,")).exists(), f"{label}: {path}"

@@ -15,9 +15,9 @@ Two apps, because the secret is a setting and the shipped default is empty:
 * `no_secret_client` is the shipped default, where a token that is valid
   everywhere else has to be refused. HMAC over an empty key is still perfectly
   good HMAC, so an implementation that does not refuse an unset secret outright
-  hands an override to anyone who can read this repository (decision A).
+  hands an override to anyone who can read this repository.
 
-a project rule: both apps are module-scoped and built once. Per-test isolation
+Both apps are module-scoped and built once. Per-test isolation
 is a fresh `budget_store` on `app.state`, never a new app.
 
 The contract these cases are written against, before it exists:
@@ -93,7 +93,7 @@ OTHER_SECRET = "test-budget-override-secret-that-is-not-the-one-configured"
 
 
 def signature(*, tenant: str, month: str, secret: str) -> str:
-    """HMAC-SHA256 over `tenant:month`, hex, exactly as decision A specifies it."""
+    """HMAC-SHA256 over `tenant:month`, hex, exactly as specified."""
     return hmac.new(
         secret.encode("utf-8"), f"{tenant}:{month}".encode(), hashlib.sha256
     ).hexdigest()
@@ -253,7 +253,7 @@ def test_a_valid_override_serves_the_embeddings_route_too(override_client: TestC
 
 
 def test_a_token_minted_for_another_tenant_is_still_refused(override_client: TestClient) -> None:
-    """Section 5's second risk, and the reason the tenant comes from the authenticated
+    """The risk of a forged token, and the reason the tenant comes from the authenticated
     context rather than from the token.
 
     The token is genuine - this gateway's secret, this month - and simply belongs to
@@ -337,7 +337,7 @@ MALFORMED: list[tuple[str, str]] = [
 and a trailing CRLF are not among them - httpx refuses to send either, and the
 server would strip surrounding whitespace anyway - so those two rows are checked
 against `verify_override` directly, in tests/limits/test_budget.py, where they
-are what a project rule is about."""
+matter."""
 
 
 @pytest.mark.parametrize(("label", "header"), MALFORMED, ids=[row[0] for row in MALFORMED])

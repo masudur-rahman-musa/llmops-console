@@ -85,7 +85,7 @@ for (see below), held as a reserve rather than discovered at install time.
 
 `infra/tests/infra/test_k8s_platform.py` derives those three totals from the built pod
 templates plus the same reserve and checks them against the `platform` quota, so
-a row raised in isolation fails there rather than at `helm install`. Row 23d's two
+a row raised in isolation fails there rather than at `helm install`. Two
 CronJobs leave the namespace 448Mi / 95m / 32Mi of headroom - the limits column is
 now the tight one.
 
@@ -211,7 +211,7 @@ exact path outranks its neighbour's `PathPrefix(/)`. On the gateway host the two
 routers no longer overlap at all.
 
 `helpdesk-web` is the only public Helpdesk surface. The agent API is the shape
-a project rule rejects for the console, and the MCP server is a tool endpoint with
+rejected for the console, and the MCP server is a tool endpoint with
 no host - both are reachable in-cluster by their ClusterIP Services and from
 nowhere else.
 
@@ -394,7 +394,7 @@ are asserted equal, and equal to the names the build references, by
 | `backup-secrets` | `platform` | `RCLONE_CONFIG_HETZNER_ACCESS_KEY_ID`, `RCLONE_CONFIG_HETZNER_SECRET_ACCESS_KEY`, `RCLONE_CONFIG_HETZNER_ENDPOINT`, `BACKUP_BUCKET` | both backup CronJobs' `rclone-sync` container, by `envFrom` |
 
 `traefik-basic-auth` is supplied once per routing namespace, not once per
-cluster: a `Middleware` reads its Secret from its own namespace, and a design note is
+cluster: a `Middleware` reads its Secret from its own namespace, and that is
 why each namespace carries its own copy of the middlewares it uses. The five TLS
 Secrets the five Ingresses name are not in this table - cert-manager writes
 those, and their names have to stay disjoint from the nine above, or an issued
@@ -414,8 +414,7 @@ again. Nothing under `../secrets/` is a kustomize input: no kustomization lists 
 path there, the build emits no `Secret` at all, and both are asserted.
 
 The model weights are the third thing this repo does not supply. No GGUF is
-committed, no image carries one and no container downloads one: an unverified
-download URL with a checksum nobody has ever compared anything to is worse than
+committed, no image carries one and no container downloads one: a download URL with a checksum nobody has ever compared anything to is worse than
 an absence that says so. The `llama-embed-models` claim is filled once, by hand,
 with the same file `docker-compose.yml` loads locally - `bge-small-en-v1.5-q8_0.gguf`,
 the upstream Q8_0 build of a 33M-parameter encoder, where quantising harder buys
@@ -511,7 +510,7 @@ The scheduler has no liveness signal and that is a decision, not an omission: it
 serves no port, so a health probe would have to be a command no code in this
 repo defines, and a liveness probe against a command that does not exist
 restarts the pod forever. A wedged scheduler is therefore visible only as an
-object in kube-state-metrics. Row 23c's `PodCrashLooping` alert pages on a
+object in kube-state-metrics. the `PodCrashLooping` alert pages on a
 container that keeps RESTARTING; a scheduler that hangs without crashing trips
 no alert at all, since nothing here reads a liveness signal it does not have -
 still a gap, not one this row closes.
@@ -565,7 +564,6 @@ and Qdrant in `platform`, the gateway, `traefik-basic-auth`, and the `server`
 overlay itself. Its own database is `helpdesk` on the shared Postgres. Renaming
 any of those means checking that repo first.
 
-The owner's one-time setup and every later deploy are in the project notes.
 
 ## Still to land
 

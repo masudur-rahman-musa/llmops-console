@@ -1,4 +1,4 @@
-r"""An earlier change: the console in the cluster, read off what kustomize actually emits, plus the three
+r"""The console in the cluster, read off what kustomize actually emits, plus the three
 files that build its image (`web/Dockerfile`, `.dockerignore`, `next.config.ts`).
 
 The stream comes from the session-scoped `built` fixture in `infra/tests/infra/conftest.py`: one
@@ -7,11 +7,11 @@ The stream comes from the session-scoped `built` fixture in `infra/tests/infra/c
 
 The console's names, the parsing helpers and the Traefik matcher are IMPORTED from
 `test_k8s_apps.py` and the NetworkPolicy resolvers from `test_k8s_netpol.py`, spelled as the
-package `__init__` files make them (`infra.test_k8s_apps`, a project rule). One copy of
+package `__init__` files make them (`infra.test_k8s_apps`). One copy of
 `router_matches` means this file and the gateway's cases cannot disagree about what a router
 matches. No `test_*` name is imported, so pytest collects nothing twice.
 
-The three image files are read as TEXT and parsed only as far as each criterion needs, so a
+The three image files are read as TEXT and parsed only as far as each case needs, so a
 Dockerfile or ignore file written in another legal shape is not red here.
 """
 
@@ -117,13 +117,13 @@ CONSOLE_IMAGE_TAG = "0.0.0-unbuilt"
 #: The one port, by number and by name, on the container and on the Service.
 CONSOLE_PORT = 3001
 
-#: Decision F's per-pod row, DERIVED from the reserve the apps budget held.
+#: The per-pod row, DERIVED from the reserve the apps budget held.
 CONSOLE_RESOURCES: dict[str, str] = {
     key: str(CONSOLE_RESERVE[key]) for key in ("requests.memory", "requests.cpu", "limits.memory")
 }
 CONSOLE_REPLICAS = int(str(CONSOLE_RESERVE["pods"]))
 
-#: Decision E: the in-cluster gateway address, and the key that must NOT be set.
+#: The in-cluster gateway address, and the key that must NOT be set.
 CONSOLE_API_URL_KEY = "CONSOLE_API_URL"
 CONSOLE_API_URL = "http://gateway.apps.svc.cluster.local:8080"
 TRADEOFF_PATH_KEY = "CONSOLE_TRADEOFF_PATH"
@@ -135,7 +135,7 @@ CONSOLE_SECRET_KEYS = frozenset(
 GATEWAY_ADMIN_DIGEST_KEY = "OPSCONSOLE_ADMIN_KEY_SHA256"
 PLACEHOLDER = "REPLACE_ME"
 
-#: The apps budget's total row: the local chat model's row left with a design note.
+#: The apps budget's total row: the local chat model's row is not part of the build.
 APPS_BUDGET_TOTAL = ["**total**", "**1856Mi**", "**950m**", "**3712Mi**"]
 APPS_BUDGET_HEADING = "## The apps budget"
 
@@ -161,7 +161,7 @@ CONSOLE_ROUTERS: dict[str, dict[str, Any]] = {
     },
 }
 
-#: Decision D, exactly.
+#: Exactly.
 LOGIN_RATE_LIMIT_SPEC = {"rateLimit": {"average": 5, "period": "1m", "burst": 5}}
 
 #: `(request path, matched by console-login)`: both sides of `Exact`.
@@ -173,7 +173,7 @@ LOGIN_MATCH_ROWS: tuple[tuple[str, bool], ...] = (
     ("/", False),
 )
 
-#: The base image, pinned by digest (decision A).
+#: The base image, pinned by digest.
 BASE_IMAGE = re.compile(r"node:22-bookworm-slim@sha256:[0-9a-f]{64}")
 
 #: The only paths the runtime stage may copy.
@@ -181,7 +181,7 @@ RUNTIME_COPY_SOURCES = (".next/standalone", ".next/static", "public")
 REQUIRED_RUNTIME_COPY_SOURCES = frozenset({".next/standalone", ".next/static"})
 RUNTIME_ENV = {"PORT": "3001", "HOSTNAME": "0.0.0.0", "NODE_ENV": "production"}
 
-#: The ignore entries criterion 4 names, compared after normalising `/x`, `**/x` and `x/`.
+#: The expected ignore entries, compared after normalising `/x`, `**/x` and `x/`.
 DOCKERIGNORE_EXCLUDED = frozenset({"node_modules", ".next", "tests", ".env", ".env.*"})
 DOCKERIGNORE_KEPT = "!.env.example"
 
@@ -323,7 +323,7 @@ def test_the_build_emits_exactly_the_console_objects_the_plan_names(
     missing = sorted(CONSOLE_LABELLED - labelled)
     assert missing == [], f"console objects without {SELECTOR_LABEL}: {CONSOLE}: {missing}"
     stray = sorted(labelled - {(kind, name) for kind, name, _ in CONSOLE_NAMED})
-    assert stray == [], f"objects labelled as the console that the plan does not name: {stray}"
+    assert stray == [], f"objects labelled as the console that are not expected: {stray}"
 
     owner = console_owner(built)
     match_labels = owner["spec"]["selector"]["matchLabels"]
@@ -423,7 +423,7 @@ def test_the_console_declares_the_quantities_the_reserve_held(
 def test_the_console_runs_one_replica_with_no_autoscaler_and_no_disruption_budget(
     built: list[dict[str, Any]],
 ) -> None:
-    """Decision F. Catches `replicas` omitted or raised (a second pod is a second 256Mi the
+    """Catches `replicas` omitted or raised (a second pod is a second 256Mi the
     quota does not hold), an HPA scaling the console under any name, and a PDB copied from the
     gateway's: `minAvailable: 1` over one replica blocks every node drain on a one-node
     cluster. The PDB check is by SELECTOR, not by name, so a budget named otherwise that still
@@ -487,7 +487,7 @@ def test_the_console_probes_readyz_for_readiness_and_healthz_for_liveness(
 def test_the_console_config_names_the_gateway_by_its_fully_qualified_address_and_no_tradeoff_path(
     built: list[dict[str, Any]],
 ) -> None:
-    """Decision E. Catches `CONSOLE_API_URL` written as a bare `gateway:8080` or a public
+    """Catches `CONSOLE_API_URL` written as a bare `gateway:8080` or a public
     `api.` host (the page reads would leave the cluster through basic auth), a wrong port, and
     `CONSOLE_TRADEOFF_PATH` set to a file the image does not carry, in the ConfigMap or in a
     container `env` entry. Catches any of the three credentials put in the ConfigMap, which is
@@ -601,7 +601,7 @@ def test_the_login_router_matches_exactly_api_login(
     """Catches `console-login` written `Prefix`, which moves `/api/login/...` under the strict
     limit, or on `/api` or `/`, which puts every console request at five a minute; and catches
     a router whose path is not `/api/login` at all, where the login POST is served by the `/`
-    router at 50 a second and decision D's limit protects nothing. Both sides of `Exact` are
+    router at 50 a second and the limit protects nothing. Both sides of `Exact` are
     rows of `LOGIN_MATCH_ROWS`, run through the same matcher the gateway cases use."""
     routes = router_paths(sole_object(built, "Ingress", CONSOLE_LOGIN_INGRESS))
     assert len(routes) == 1, f"{CONSOLE_LOGIN_INGRESS} routes {routes}"
@@ -615,7 +615,7 @@ def test_the_login_router_matches_exactly_api_login(
 def test_the_login_rate_limit_is_five_per_minute_with_a_burst_of_five(
     built: list[dict[str, Any]],
 ) -> None:
-    """Decision D by whole-`spec` equality. Catches `period: 1s` copied from `rate-limit` (five
+    """The rule by whole-`spec` equality. Catches `period: 1s` copied from `rate-limit` (five
     a SECOND is 300 a minute), a burst of 100, an `average` of 50, an extra field such as a
     `sourceCriterion` nobody agreed to, and the Middleware filed in `platform`, where an `apps`
     Ingress cannot resolve it."""
@@ -629,8 +629,8 @@ def test_no_public_router_matches_readyz(built: list[dict[str, Any]]) -> None:
     """Catches a `console-readyz` router added beside `console-healthz`, `/readyz` added to any
     healthz router, and `console-healthz` widened to `Prefix /`, each of which publishes the
     console's probe with no basic auth in front of it. A host's `Prefix /` catch-all cannot help
-    matching `/readyz` (Grafana's and the Helpdesk's do, and serve no such probe), so the rule
-    read here is the satisfiable one: no router anywhere names a path at or under `/readyz`,
+    matching `/readyz` (Grafana's and the Helpdesk's do, and serve no such probe), so the check
+    here is the satisfiable one: no router anywhere names a path at or under `/readyz`,
     and on the console host the ONLY router matching it is `console`, which carries basic auth.
     A matcher answering False for everything is ruled out first."""
     assert router_matches("/", PATH_TYPE_PREFIX, READINESS_PATH) is True
@@ -701,7 +701,7 @@ def test_the_console_admits_only_traefik_and_reaches_only_the_gateway(
 def test_the_gateway_ingress_still_admits_every_pod_in_apps(
     built: list[dict[str, Any]],
 ) -> None:
-    """a project rule, the partner of `console-egress`. Catches `gateway-ingress` narrowed
+    """The partner of `console-egress`. Catches `gateway-ingress` narrowed
     from its in-namespace `podSelector: {}` peer to the Helpdesk pods by name while the
     console's egress was being written - `default-deny` then refuses every console page read
     while `console-egress` looks correct. Its three peers and its one port are pinned by
@@ -720,7 +720,7 @@ def test_the_gateway_ingress_still_admits_every_pod_in_apps(
 
 
 def test_the_console_dockerfile_runs_the_standalone_server_as_uid_1000_on_3001() -> None:
-    """Decision A. Catches a floating `node:22` or `node:lts` base, a tag with no digest, a
+    """Catches a floating `node:22` or `node:lts` base, a tag with no digest, a
     single-stage image carrying the whole build context, a runtime stage copying `node_modules`
     or the source tree, running as root, `HOSTNAME` left to the container hostname (the server
     binds one interface and the kubelet's probes are refused), `PORT` at Next's 3000, a

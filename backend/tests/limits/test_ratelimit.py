@@ -37,8 +37,8 @@ The contract these cases are written against, before it exists:
   `RedisRateLimitStore(client, *, key_prefix=RATE_LIMIT_KEY_PREFIX,
   clock=time.time)`.
 * `RATE_LIMIT_KEY_PREFIX`, `RATE_LIMIT_KEY_TTL_SECONDS`,
-  `MIN_RETRY_AFTER_SECONDS`, `SECONDS_PER_MINUTE` - the constants a project rule
-  requires a test to pin exactly.
+  `MIN_RETRY_AFTER_SECONDS`, `SECONDS_PER_MINUTE` - the constants a test pins
+  exactly.
 
 THE ONE SEMANTIC WORTH READING BEFORE THE ASSERTIONS, because two plausible
 token buckets differ on it and the criteria pick one:
@@ -48,17 +48,17 @@ token buckets differ on it and the criteria pick one:
 Consumption is floored at zero and happens whether or not the take was allowed.
 That floor is not decoration. A bucket that subtracts on a REFUSED take sinks
 further with every retry, so a client that retries at ten times its limit is
-locked out for ever rather than for the fraction of a second criterion 3
+locked out for ever rather than for the fraction of a second the limiter
 promises; and a bucket that consumes NOTHING on a refused take can never be
 drained by an over-large token debit, so `tpm` would leak a residue that keeps
 the next check passing for ever. `debit_tokens` books a real usage through the
-same `take` and ignores the answer, which is decision B: the request that
+same `take` and ignores the answer, which is intended: the request that
 crosses `tpm` completes and the next one is refused.
 
 The tenant is checked against the gateway's OWN `IDENTIFIER_PATTERN` and
 `MAX_IDENTIFIER_LENGTH`, imported rather than restated, so the name a bucket
 accepts and the name `gateway/context.py` authenticated can never disagree.
-a project rule is why the rejection table below carries a trailing newline, a
+That is why the rejection table below carries a trailing newline, a
 trailing CRLF and a trailing space: a check written `^...$` with `.match` accepts
 the first of those and puts a caller-controlled line break into a Redis key.
 """
@@ -173,7 +173,7 @@ def test_a_malformed_tenant_is_refused_by_the_key_function(label: str, tenant: s
     which a command could be sent with one of these. "No command was
     sent" is asserted against a recording client in
     tests/limits/test_redis_ratelimit.py, which is where a client exists at all. The
-    trailing-newline and trailing-CRLF rows are a project rule's: a check written
+    trailing-newline and trailing-CRLF rows are the standard rejection rows: a check written
     `^...$` with `.match` accepts the first."""
     with pytest.raises(IdentifierInvalid):
         bucket_key(tenant, RateDimension.REQUESTS)
@@ -264,7 +264,7 @@ the store hands `refill` and a duration would let a sign error pass."""
 def test_the_refill_table(
     label: str, tokens: float, now: float, capacity: float, expected: float
 ) -> None:
-    """Criterion 3's continuous refill, one row each, with the clock injected.
+    """The requirement's continuous refill, one row each, with the clock injected.
 
     Catches a fixed-window counter wearing a bucket's name: "half a token" and "exactly
     one token" both answer the bucket's starting level under a window that only resets on
@@ -286,7 +286,7 @@ def test_the_refill_table(
 
 
 def test_the_refill_rate_is_the_ceiling_over_one_minute() -> None:
-    """Criterion 3's "rpm/60 and tpm/60", pinned on the constant the rates are derived
+    """The requirement's "rpm/60 and tpm/60", pinned on the constant the rates are derived
     from. Catches a rate computed per SECOND from the ceiling itself
     (120 tokens a second, sixty times the limit, so nothing is ever refused) and one
     computed per hour."""
@@ -341,7 +341,7 @@ def test_a_refused_take_never_drives_the_bucket_below_zero() -> None:
 
     A client that retries hard is refused many times over; if each refused take still
     subtracted its cost, the bucket would be at -20 after twenty retries and the tenant
-    would wait ten seconds for the next token instead of the half second criterion 3
+    would wait ten seconds for the next token instead of the half second the limiter
     promises - a limiter that punishes retries rather than shaping them. Catches exactly
     that: after an empty bucket is hammered, half a second of refill must be enough to
     serve again. Nothing else in this file distinguishes a floored bucket from a sinking
@@ -360,7 +360,7 @@ def test_a_refused_take_never_drives_the_bucket_below_zero() -> None:
 
 
 def test_an_over_large_debit_empties_the_bucket_rather_than_bouncing_off_it() -> None:
-    """Decision B for the token dimension: the request that CROSSES `tpm` completes, and
+    """The behaviour for the token dimension: the request that CROSSES `tpm` completes, and
     the next one is refused.
 
     `debit_tokens` books a real usage through `take` and ignores the answer, so a take
@@ -383,7 +383,7 @@ def test_an_over_large_debit_empties_the_bucket_rather_than_bouncing_off_it() ->
 def test_a_take_answers_no_retry_after_when_it_is_allowed() -> None:
     """Catches a `Taken` that carries a retry-after on every answer, which the route would
     put on a 200 response's `Retry-After` header - a header telling a client to back off
-    from a request that was served. Decision D says the header is on this error only, and
+    from a request that was served. The header is on this error only, and
     this is the store-side half of that."""
     now = [FROZEN]
     store = frozen_store(now)
@@ -397,7 +397,7 @@ def test_a_refused_take_carries_the_wait_for_its_own_bucket() -> None:
     """Catches a refusal that answers a fixed retry-after regardless of the bucket, and one
     that answers the TTL. Two buckets refilling at different rates are refused in the
     same arrangement, and the slower one has to say the longer wait, which is the only
-    reading of "computed from the bucket's own refill rate" (decision D) that a constant
+    reading of "computed from the bucket's own refill rate" that a constant
     cannot satisfy."""
     now = [FROZEN]
     store = frozen_store(now)
@@ -442,7 +442,7 @@ rule 2 asks for on a rounded value: one is exactly three seconds and the other i
 def test_the_retry_after_is_the_seconds_to_the_next_whole_token(
     label: str, tokens: float, cost: int, rate_per_second: float, expected: int
 ) -> None:
-    """Criterion 7's arithmetic, in whole seconds, rounded UP.
+    """The requirement's arithmetic, in whole seconds, rounded UP.
 
     Catches a retry-after computed with `round()` or `int()`: both answer 3 for a wait of
     3.33 seconds, so a client that obeys the header comes back a third of a second early
@@ -505,7 +505,7 @@ def test_the_bucket_key_ttl_is_pinned() -> None:
 
 
 def test_a_token_debit_between_two_request_takes_refuses_neither() -> None:
-    """a project rule: the window's other traffic, interleaved.
+    """The window's other traffic, interleaved.
 
     Every other case here spends one bucket at a time, and a store that keyed on the
     tenant alone - one bucket for `rpm` and `tpm` together - passes all of them. Here a
@@ -525,7 +525,7 @@ def test_a_token_debit_between_two_request_takes_refuses_neither() -> None:
 
 
 def test_a_refill_landing_mid_sequence_serves_the_request_that_follows_it() -> None:
-    """a project rule again, on the reset rather than on the other dimension: what RESETS
+    """The same check, on the reset rather than on the other dimension: what RESETS
     this counter is the passage of time, so the case where the reset lands mid-sequence
     is the one that separates a token bucket from a fixed window.
 
@@ -533,7 +533,7 @@ def test_a_refill_landing_mid_sequence_serves_the_request_that_follows_it() -> N
     one token, the fourth is served and the fifth is refused again. A fixed-window
     counter passes the first three rows and then serves BOTH of the last two, because a
     window that has rolled over grants the whole allowance at once - which is the 2x
-    burst across the boundary decision A rejects. A bucket that refills only when it is
+    burst across the boundary that is rejected. A bucket that refills only when it is
     empty, or only on the first take after an idle period, fails the fourth row."""
     now = [FROZEN]
     store = frozen_store(now)
@@ -577,7 +577,7 @@ def test_the_in_process_twin_never_answers_unknown() -> None:
     """Catches a twin that copied the Redis one's `None` returns. It cannot fail, so a
     `None` from it would only ever be a bug that silently disables both ceilings on the
     local and suite configuration - which is every run of this suite and every bare
-    `uvicorn` run. `None` means "serve, the limiter could not answer" (decision E), so a
+    `uvicorn` run. `None` means "serve, the limiter could not answer", so a
     twin that answered it would be a limiter that is wired and enforces nothing."""
     now = [FROZEN]
     store = frozen_store(now)

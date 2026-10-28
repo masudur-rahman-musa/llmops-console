@@ -29,14 +29,11 @@ CHECKED_FILES = (
     REPO_ROOT / "Makefile",
     REPO_ROOT / "backend" / "pyproject.toml",
     REPO_ROOT / "README.md",
-    REPO_ROOT / "dev" / "docs" / "ci-cd-deploy.md",
 )
 CHECKED_DIRECTORIES = (
     REPO_ROOT / "infra" / "k8s",
     REPO_ROOT / ".github",
 )
-OPTIONAL_FILES = (REPO_ROOT / "dev" / "docs" / "ci-cd-deploy.md",)
-"""`dev/` is stripped before the repo goes public, so a missing copy is not a failure."""
 
 REMOVED_CRONJOB = "rollup-refresh"
 
@@ -57,7 +54,7 @@ def test_nothing_names_the_removed_rollup() -> None:
     for required in (REPO_ROOT / "Makefile", REPO_ROOT / "backend" / "pyproject.toml"):
         assert required.is_file(), required
     for path in CHECKED_FILES:
-        assert path.is_file() or path in OPTIONAL_FILES, path
+        assert path.is_file(), path
     scanned = files_to_scan()
     assert scanned != []
 

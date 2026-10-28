@@ -1,14 +1,15 @@
 r"""`infra/k8s/platform`: the three data services, the two ClusterIssuers and the three
-Traefik middlewares an earlier change agrees, read off what kustomize actually emits.
+Traefik middlewares, read off what kustomize actually emits.
 
-The stream comes from the session-scoped `built` fixture in `infra/tests/infra/conftest.py`
-(decision G): one `kubectl kustomize infra/k8s` for the whole session, parsed once, shared
+The stream comes from the session-scoped `built` fixture in `infra/tests/infra/conftest.py`: one
+`kubectl kustomize infra/k8s` for the whole session, parsed once, shared
 with `test_k8s_base.py`. Nothing here reads the raw files under `platform/` except the
 credential scan, which is a scan of what is WRITTEN rather than of what is built - a password
 removed by a later patch would still be in git, and a build that never emits the file would
 hide it entirely.
 
-Quantities are compared as STRINGS where §1 states them (`512Mi`, `200m`, `1Gi`): the API
+Quantities are compared as STRINGS where the budget table states them (`512Mi`, `200m`, `1Gi`):
+the API
 server compares quantities, so a test that parsed first would accept `524288Ki` for a table
 that says `512Mi`, and the budget table is prose a reader checks by eye. Parsing happens in
 exactly one case, the subtotals, which DERIVES its three sums from the built pod templates
@@ -21,11 +22,11 @@ The parsing helpers below (`read`, `objects_of_kind`, `name_of`, `namespace_of`,
 `memory_bytes`, `cpu_millicores`, `quota_hard`) are copies of `test_k8s_base.py`'s, not
 imports: a test module importing another test module makes the second one's collection a
 dependency of the first's, and this repo already copies `trigger()` across three files for the
-same reason (a project rule sends a shared helper where the imports already run, and nothing
+same reason (a shared helper goes where the imports already run, and nothing
 here imports anything there). `conftest.py` holds the fixture and nothing else, so a reader
 opening either module sees every rule it applies.
 
-§2's kustomize mechanic is what the selector case exists for: the root's `labels:` block sets
+The kustomize label mechanic is what the selector case exists for: the root's `labels:` block sets
 `includeSelectors: false` and does not set `includeTemplates`, so the two common labels reach
 each object's `metadata.labels` and NOT its pod template. Each workload therefore writes its
 own `app.kubernetes.io/name` on `spec.selector.matchLabels`, on the Service's `spec.selector`
@@ -48,15 +49,15 @@ PLATFORM_DIR = K8S_ROOT / "platform"
 K8S_README = K8S_ROOT / "README.md"
 COMPOSE_FILE = REPO_ROOT / "docker-compose.yml"
 
-#: The namespace every object this plan adds belongs to, except the two cluster-scoped issuers.
+#: The namespace every object added here belongs to, except the two cluster-scoped issuers.
 PLATFORM = "platform"
 
-#: The kinds an earlier change's `base/` already emits. Criterion 1 is asserted by set equality over
+#: The kinds the `base/` already emits. The requirement is asserted by set equality over
 #: everything the build contains that is NOT one of these, so it covers what `platform/` adds
 #: without hardcoding a total object count that every later row would have to edit.
 BASE_KINDS = frozenset({"Namespace", "ResourceQuota", "LimitRange"})
 
-#: Criterion 1, as `(kind, name, namespace)`. `None` is a cluster-scoped object. Set EQUALITY:
+#: As `(kind, name, namespace)`. `None` is a cluster-scoped object. Set EQUALITY:
 #: a file left out of `platform/kustomization.yaml`'s `resources` and an object nobody agreed
 #: to are the same failure, and only equality sees both. Scoped to what `platform/` puts in
 #: the build - its own namespace plus the two cluster-scoped issuers - rather than to
@@ -75,28 +76,28 @@ PLATFORM_OBJECTS: frozenset[tuple[str, str, str | None]] = frozenset(
         ("Middleware", "security-headers", PLATFORM),
         ("ClusterIssuer", "letsencrypt-staging", None),
         ("ClusterIssuer", "letsencrypt-prod", None),
-        # Row 21a, from `base/networkpolicies.yaml`: they are written in `base/` and land in
+        # From `base/networkpolicies.yaml`: they are written in `base/` and land in
         # this namespace, and this case scopes by namespace rather than by directory.
         # `infra/tests/infra/test_k8s_netpol.py` owns what they contain; these are the two names.
         ("NetworkPolicy", "default-deny-ingress", PLATFORM),
         ("NetworkPolicy", "data-ingress-from-apps", PLATFORM),
-        # Row 23a, the same way: Qdrant's scrape is a NEW policy in this namespace rather than a
+        # The same way: Qdrant's scrape is a NEW policy in this namespace rather than a
         # widening of `data-ingress-from-apps`, so that policy's `apps`-only guarantee is
         # untouched and this is a third name here.
         ("NetworkPolicy", "metrics-ingress-from-monitoring", PLATFORM),
-        # Row 23a's RBAC, cluster-scoped and therefore inside this case's `None` half although it
+        # RBAC, cluster-scoped and therefore inside this case's `None` half although it
         # belongs to `monitoring/`. `infra/tests/infra/test_k8s_monitoring.py` owns what it grants
         # and that there is no third ClusterRole in the build; these are the two names.
         ("ClusterRole", "kube-state-metrics", None),
         ("ClusterRoleBinding", "kube-state-metrics", None),
-        # Row 23d: the shared PVC and the two nightly backup CronJobs.
+        # The shared PVC and the two nightly backup CronJobs.
         ("PersistentVolumeClaim", "backups-data", PLATFORM),
         ("CronJob", "postgres-backup", PLATFORM),
         ("CronJob", "qdrant-backup", PLATFORM),
     }
 )
 
-#: Criterion 3's budget table, by value and per workload. Compared as
+#: The budget table, by value and per workload. Compared as
 #: strings; the subtotals case is the only place these are parsed.
 WORKLOAD_RESOURCES: dict[str, dict[str, str]] = {
     "postgres": {
@@ -116,12 +117,12 @@ WORKLOAD_RESOURCES: dict[str, dict[str, str]] = {
     },
 }
 
-#: Row 23d's two CronJobs, by NAME - deliberately separate from `WORKLOAD_RESOURCES`, whose
+#: Two CronJobs, by NAME - deliberately separate from `WORKLOAD_RESOURCES`, whose
 #: probe-and-Service case is parametrized over every key in it and would otherwise be asked to
 #: find a readinessProbe and a Service on a CronJob, neither of which one carries.
 BACKUP_CRONJOB_NAMES = ("postgres-backup", "qdrant-backup")
 
-#: The exact schedule, policy and history limits decision D pins, shared by both CronJobs.
+#: The exact schedule, policy and history limits pinned here, shared by both CronJobs.
 BACKUP_SCHEDULE = "0 3 * * *"
 BACKUP_CONCURRENCY_POLICY = "Forbid"
 BACKUP_RESTART_POLICY = "OnFailure"
@@ -153,15 +154,15 @@ BACKUP_CONTAINERS: dict[str, dict[str, tuple[str, dict[str, str]]]] = {
     },
 }
 
-#: Criterion re decision B: the account-specific Secret both `rclone-sync` containers read.
+#: The account-specific Secret both `rclone-sync` containers read.
 BACKUP_SECRET_NAME = "backup-secrets"
 
 
-#: The shared PVC row 23d adds, and the mount path both CronJobs' containers agree on.
+#: The shared PVC, and the mount path both CronJobs' containers agree on.
 BACKUPS_DATA_PVC = "backups-data"
 BACKUP_MOUNT_PATH = "/backup"
 
-#: Decision A: cert-manager is installed by helm into `platform` with these per-pod values, so
+#: Cert-manager is installed by helm into `platform` with these per-pod values, so
 #: this repo writes no manifest for it and holds its share of the quota as a named reserve.
 #: Three pods - controller, webhook, cainjector - each with the same three quantities.
 CERT_MANAGER_RESERVE: dict[str, str | int] = {
@@ -171,33 +172,33 @@ CERT_MANAGER_RESERVE: dict[str, str | int] = {
     "limits.memory": "128Mi",
 }
 
-#: Decision C: a CPU limit throttles rather than kills, so no container declares one. Criterion
-#: 2 asserts its ABSENCE over every pod template, which is the manifest half of 20a's quota.
+#: A CPU limit throttles rather than kills, so no container declares one. Criterion
+#: 2 asserts its ABSENCE over every pod template, which is the manifest half of the quota.
 FORBIDDEN_CONTAINER_KEY = "limits.cpu"
 
-#: Criterion 2: the three a container must declare, as `resources` sub-paths.
+#: The three a container must declare, as `resources` sub-paths.
 REQUIRED_CONTAINER_KEYS = ("requests.memory", "requests.cpu", "limits.memory")
 
-#: Decision E: the workload's k8s image must equal the image `docker-compose.yml` runs under
+#: The workload's k8s image must equal the image `docker-compose.yml` runs under
 #: the same service name. Both sides are READ; neither tag is written here, so the case cannot
 #: pass by agreeing with itself.
 COMPOSE_SERVICES = {"postgres": "postgres", "redis": "redis", "qdrant": "qdrant"}
 
-#: Criterion 6: the ports each Service publishes, pinned as ints because a Service port is a
+#: The ports each Service publishes, pinned as ints because a Service port is a
 #: number and not a quantity. Qdrant serves HTTP on 6333 and gRPC on 6334.
 SERVICE_PORTS = {"postgres": {5432}, "redis": {6379}, "qdrant": {6333, 6334}}
 
-#: Criterion 7, Traefik v3's group (k3s v1.31.5+k3s1 ships v3, so never `traefik.containo.us`).
+#: Traefik v3's group (k3s v1.31.5+k3s1 ships v3, so never `traefik.containo.us`).
 MIDDLEWARE_API_VERSION = "traefik.io/v1alpha1"
 
-#: Criterion 7 and decision D: the basic-auth middleware names a Secret this repo never writes.
+#: The basic-auth middleware names a Secret this repo never writes.
 BASIC_AUTH_SECRET = "traefik-basic-auth"
 
-#: Criterion 7's rate-limit triple, by value. `average` and `burst` are ints, `period` a
+#: The rate-limit triple, by value. `average` and `burst` are ints, `period` a
 #: quantity string - Traefik reads `50` and `"50"` differently in one of the two positions.
 RATE_LIMIT = {"average": 50, "burst": 100, "period": "1s"}
 
-#: Criterion 7's five header values, each pinned. `stsSeconds` is a year in seconds.
+#: The five header values, each pinned. `stsSeconds` is a year in seconds.
 SECURITY_HEADERS = {
     "stsSeconds": 31536000,
     "stsIncludeSubdomains": True,
@@ -206,7 +207,7 @@ SECURITY_HEADERS = {
     "referrerPolicy": "strict-origin-when-cross-origin",
 }
 
-#: Criterion 8, decision F: cert-manager's API group, and the two exact ACME directory URLs.
+#: Cert-manager's API group, and the two exact ACME directory URLs.
 #: A staging issuer pointed at the production endpoint burns real rate limits on a rehearsal,
 #: and a prod issuer pointed at staging issues certificates no browser trusts - both of which
 #: are one character of difference in a URL nothing else checks.
@@ -222,25 +223,25 @@ ISSUERS = {
     },
 }
 
-#: Decision F: a domain address, never a personal one, and a design note's HTTP-01 solver on the
+#: A domain address, never a personal one, and an HTTP-01 solver on the
 #: ingress class k3s runs.
 ACME_EMAIL = "ops@example.com"
 ACME_SOLVERS = [{"http01": {"ingress": {"class": "traefik"}}}]
 
-#: Decision D: the only Secret names anything in the build may reference, checked build-wide
+#: The only Secret names anything in the build may reference, checked build-wide
 #: on purpose - "no Secret is emitted anywhere" is the claim worth keeping whole. All four are
 #: supplied SOPS-encrypted before the first apply; until then an apply fails loudly on a
 #: missing Secret, which is the intended direction. The TLS secrets the Ingresses name are
 #: cert-manager's to write, so they are excluded where that comparison is made
 #: (`infra/tests/infra/test_k8s_apps.py`) rather than added here. `helpdesk-secrets` joined the list
-#: with row 20f's four workloads, which name it and supply it nowhere; this constant is
+#: with the four workloads, which name it and supply it nowhere; this constant is
 #: build-wide, so it has to move in the same change or a correct manifest reddens here.
-#: `grafana-admin` joined with an earlier change's Grafana, which names it by `envFrom` in `monitoring`,
+#: `grafana-admin` joined with the Grafana, which names it by `envFrom` in `monitoring`,
 #: for exactly the reason the sentence above gives: this constant is build-wide, so it moves in
 #: the same change as the manifest or a correct manifest reddens here.
-#: `alertmanager-secrets` joins the same way with an earlier change's Alertmanager.
-#: `backup-secrets` joins the same way with an earlier change's two backup CronJobs.
-#: `evals-secrets` joins the same way with an earlier change's nightly-eval CronJob.
+#: `alertmanager-secrets` joins the same way with the Alertmanager.
+#: `backup-secrets` joins the same way with the two backup CronJobs.
+#: `evals-secrets` joins the same way with the nightly-eval CronJob.
 PINNED_SECRET_NAMES = frozenset(
     {
         "postgres-credentials",
@@ -251,12 +252,12 @@ PINNED_SECRET_NAMES = frozenset(
         "alertmanager-secrets",
         "backup-secrets",
         "evals-secrets",
-        # An earlier change, read by the console Deployment's `envFrom`.
+        # Read by the console Deployment's `envFrom`.
         "console-secrets",
     }
 )
 
-#: Criterion 9's file scan, first shape: a credential KEY with a scalar value on the same
+#: The file scan, first shape: a credential KEY with a scalar value on the same
 #: line. Anchored on the key, so `passwordSecretRef:` and a `secretRef:` reference do not
 #: match, and an empty value (`password:`) is a mapping header rather than a credential.
 INLINE_CREDENTIAL = re.compile(
@@ -295,7 +296,7 @@ MEMORY_SUFFIXES = {
 
 
 def read(path: Path) -> str:
-    """Read a file the plan owes, failing the one case that needs it when it is absent."""
+    """Read a file the tests need, failing the one case that needs it when it is absent."""
     assert path.is_file(), f"{path} does not exist"
     return path.read_text(encoding="utf-8")
 
@@ -347,8 +348,8 @@ def quota_hard(quota: dict[str, Any]) -> dict[str, str]:
 def owner_spec(owner: dict[str, Any]) -> dict[str, Any]:
     """The mapping that carries a `template` key: `spec` itself for every kind here except a
     CronJob, whose template sits one level deeper at `spec.jobTemplate.spec` - found the same
-    way `test_secrets.py`'s `envfrom_secret_names` found the same gap in itself (standing rule
-    12): an earlier change's two CronJobs read back no pod template at all from the plain `spec.template`
+    way `test_secrets.py`'s `envfrom_secret_names` found the same gap in itself: the two CronJobs
+    read back no pod template at all from the plain `spec.template`
     path this file used before them."""
     spec = owner["spec"]
     assert isinstance(spec, dict)
@@ -519,12 +520,12 @@ def inline_credentials(label: str, lines: list[str]) -> list[str]:
 def test_the_platform_directory_emits_the_objects_the_plan_names(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 1, by SET EQUALITY over `(kind, name, namespace)` for everything the build
-    emits that is not one of 20a's three base kinds. Catches an implementation that writes the
+    """By SET EQUALITY over `(kind, name, namespace)` for everything the build
+    emits that is not one of the three base kinds. Catches an implementation that writes the
     seven YAML files but forgets one in `platform/kustomization.yaml`'s `resources` - the files
     are perfectly valid and the object is simply not in the stream, which is exactly what
-    decision D chose "build and parse" to see. Catches Redis shipped as a StatefulSet
-    (decision C says Deployment over `emptyDir`, because a disk image of the redaction map is
+    the tests "build and parse" to see. Catches Redis shipped as a StatefulSet
+    (it must be a Deployment over `emptyDir`, because a disk image of the redaction map is
     personal data at rest), catches a Service written without its workload or vice versa, and
     catches a middleware or an issuer given a namespace it should not have: a namespaced
     `ClusterIssuer` is silently ignored by cert-manager, and a `platform` middleware moved to
@@ -549,14 +550,14 @@ def test_the_platform_directory_emits_the_objects_the_plan_names(
 def test_every_container_in_the_build_declares_requests_and_a_memory_limit(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 2, over every pod template in the WHOLE build and every container in it,
+    """Over every pod template in the WHOLE build and every container in it,
     `initContainers` included. Catches a container added with no `resources` block at all -
-    which 20a's LimitRange would silently default rather than reject, so nothing else in this
+    which the LimitRange would silently default rather than reject, so nothing else in this
     repo ever says the manifest was incomplete - and catches one of the three quantities
     dropped while the other two stay, which no per-workload row would see for a workload added
-    by a later plan. Catches `limits.cpu` creeping in, which decision C refuses because a CPU
+    later. Catches `limits.cpu` creeping in, which is refused because a CPU
     limit throttles the gateway's tail latency rather than protecting the node. Pod owners are
-    found by the PRESENCE of `spec.template.spec`, so a Job or a DaemonSet a later row adds is
+    found by the PRESENCE of `spec.template.spec`, so a Job or a DaemonSet added later is
     covered without this case being edited."""
     owners = pod_owners(built)
     assert owners, "the build emits no pod templates at all"
@@ -582,7 +583,7 @@ def test_every_container_in_the_build_declares_requests_and_a_memory_limit(
 def test_each_platform_workload_carries_the_agreed_quantities(
     workload_name: str, expected: dict[str, str], built: list[dict[str, Any]]
 ) -> None:
-    """Criterion 3, one row per workload, by VALUE and not by presence - the case above proves
+    """One row per workload, by VALUE and not by presence - the case above proves
     the three keys exist, so the only thing that can flip this one is a wrong number. Catches
     Postgres given Redis's 256Mi because the file was copied, catches a limit written as `1G`
     where the table says `1Gi` (a 7% difference the API server does not treat as equal, and
@@ -597,8 +598,8 @@ def test_each_platform_workload_carries_the_agreed_quantities(
 def test_the_platform_subtotals_fit_inside_the_namespace_quota(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 4, derived and never restated, now CONCURRENCY-AWARE because
-    an earlier change adds two maintenance CronJobs to `platform` while base/quotas.yaml is deliberately
+    """Derived and never restated, now CONCURRENCY-AWARE because
+    two maintenance CronJobs run in `platform` while base/quotas.yaml is deliberately
     unchanged. A ResourceQuota only counts pods alive at the same moment; CronJobs at different
     scheduled hours never coexist, so the platform peak is the always-on workloads (full pod
     every minute, times replicas) PLUS the single costliest hour-group of CronJobs. The two
@@ -676,14 +677,14 @@ def test_the_platform_subtotals_fit_inside_the_namespace_quota(
 
 
 def test_the_readme_budget_row_for_cert_manager_matches_the_reserve_constant() -> None:
-    """Criterion 10's half that keeps prose and arithmetic from drifting: the README's
+    """The half that keeps prose and arithmetic from drifting: the README's
     cert-manager row must state the multiplier and the three subtotals this file's constant
     produces, and all four strings are COMPUTED from `CERT_MANAGER_RESERVE` here rather than
     typed, so raising the reserve reddens the table until the table is rewritten. Catches the
-    §5 risk being handled in the test alone - the reserve raised because the chart's real
+    risk being handled in the test alone - the reserve raised because the chart's real
     footprint is bigger, with the README still promising 96Mi to whoever reads the budget
-    before running `helm install`. All four values are required TOGETHER on one line (standing
-    rule 44): the page names `32Mi` and `3` in the helm command a few lines above, so a
+    before running `helm install`. All four values are required TOGETHER on one line: the page
+    names `32Mi` and `3` in the helm command a few lines above, so a
     per-value scan would pass on a table with no cert-manager row at all."""
     pods = int(str(CERT_MANAGER_RESERVE["pods"]))
     memory = f"{pods * memory_bytes(str(CERT_MANAGER_RESERVE['requests.memory'])) // 1024**2}Mi"
@@ -703,10 +704,10 @@ def test_the_readme_budget_row_for_cert_manager_matches_the_reserve_constant() -
 
 
 def test_the_images_match_docker_compose(built: list[dict[str, Any]]) -> None:
-    """Criterion 5 and decision E, read from BOTH files and compared as a mapping, so a drift
+    """Read from BOTH files and compared as a mapping, so a drift
     in either direction reddens and neither side can be the test's own expectation. Catches the
     cluster pinned tighter than the local stack (`postgres:16.6` against compose's
-    `postgres:16`), which is decision E's named temptation and makes a developer debug a
+    `postgres:16`), which is the obvious temptation and makes a developer debug a
     version they are not running; catches compose being bumped without the manifests; and
     catches a Qdrant tag drifting off `v1.12.4`, where the on-disk collection format is what
     changes underneath a StatefulSet's PVC. The mapping compare, rather than three
@@ -722,12 +723,12 @@ def test_the_images_match_docker_compose(built: list[dict[str, Any]]) -> None:
 def test_each_workload_has_both_probes_and_a_service_that_resolves(
     workload_name: str, built: list[dict[str, Any]]
 ) -> None:
-    """Criterion 6, three things a manifest can get wrong without any tool saying so. Catches
+    """Three things a manifest can get wrong without any tool saying so. Catches
     a readiness probe with no liveness probe (a wedged Postgres that answers nothing and is
     never restarted) and the reverse (traffic routed to a pod that has not finished starting).
     Catches a `targetPort` naming a port the pod template never declares - `5433`, or a name
     that was renamed on one side - which is a Service with no endpoints and a connection
-    refused at runtime, not at build. And catches §2's kustomize mechanic going wrong: the
+    refused at runtime, not at build. And catches the kustomize label mechanic going wrong: the
     root sets `includeSelectors: false`, so the common labels do NOT reach pod templates and
     each workload writes its own `app.kubernetes.io/name` on all three of the Service's
     selector, the workload's `matchLabels` and the template's labels - a selector matching no
@@ -800,7 +801,7 @@ def container_named(owner: dict[str, Any], container_name: str) -> dict[str, Any
 def test_each_backup_cronjob_carries_the_agreed_schedule_and_policy(
     cronjob_name: str, built: list[dict[str, Any]]
 ) -> None:
-    """Decision D, by value. Catches a schedule drifted off `0 3 * * *`, a `concurrencyPolicy`
+    """By value. Catches a schedule drifted off `0 3 * * *`, a `concurrencyPolicy`
     other than `Forbid` (two overlapping dumps against the same PVC subdirectory), a
     `restartPolicy` other than `OnFailure` (a CronJob's pod template may not say `Always`,
     which `kubeconform` would catch too, but not with this message), and either history limit
@@ -848,9 +849,9 @@ def test_each_backup_cronjobs_containers_carry_the_agreed_images_and_resources(
 
 
 def test_the_backups_data_pvc_is_the_agreed_shape(built: list[dict[str, Any]]) -> None:
-    """Decision A: one `ReadWriteOnce` PVC, 2Gi, shared by both CronJobs - by value, so a size
+    """One `ReadWriteOnce` PVC, 2Gi, shared by both CronJobs - by value, so a size
     raised or an access mode changed to `ReadWriteMany` (which no storage class here provides)
-    is a failure rather than a silent drift from the plan's own decision."""
+    is a failure rather than a silent drift from the agreed shape."""
     pvcs = [
         document
         for document in objects_of_kind(built, "PersistentVolumeClaim")
@@ -897,13 +898,13 @@ def test_each_backup_cronjobs_containers_mount_the_shared_pvc_at_the_agreed_path
 def test_each_rclone_sync_container_reads_backup_secrets_and_guards_backup_bucket(
     cronjob_name: str, built: list[dict[str, Any]]
 ) -> None:
-    """Decision B and the unhappy-path criterion: `rclone-sync` reads `backup-secrets` by
+    """The unhappy path: `rclone-sync` reads `backup-secrets` by
     `envFrom` (never a literal credential - `test_no_secret_is_emitted_and_no_credential_is_
     written_inline` already scans the whole build for that), and its command guards
     `BACKUP_BUCKET` with `: "${BACKUP_BUCKET:?}"` before `rclone` runs, so an unset value fails
     loudly instead of writing to the bucket root. Read from the built command string rather
-    than run, because no fixture here reaches a real Hetzner Object Storage bucket (the plan's
-    own stated exception to building a backing-service fixture)."""
+    than run, because no fixture here reaches a real Hetzner Object Storage bucket (an
+    exception to building a backing-service fixture)."""
     owner = workload(built, cronjob_name)
     container = container_named(owner, "rclone-sync")
     sources = container.get("envFrom", [])
@@ -924,7 +925,7 @@ def test_each_rclone_sync_container_reads_backup_secrets_and_guards_backup_bucke
 
 
 def test_the_middlewares_carry_the_agreed_values(built: list[dict[str, Any]]) -> None:
-    """Criterion 7, all three by value. Catches `basic-auth` naming a Secret other than the one
+    """All three by value. Catches `basic-auth` naming a Secret other than the one
     `infra/secrets/traefik-basic-auth.example.yaml` contracts, which is an Ingress with
     authentication configured and no credentials behind it. Catches the rate-limit triple
     written with `average` and `burst` swapped - 100
@@ -937,7 +938,7 @@ def test_the_middlewares_carry_the_agreed_values(built: list[dict[str, Any]]) ->
     there, so an additional key is reported rather than silently accepted - a sixth header can
     contradict one of these (`stsPreload` absent is fine; `customResponseHeaders` overwriting
     `X-Frame-Options` is not)."""
-    # An earlier change's `console-login-rate-limit` lives in `apps` only and has no platform original;
+    # The `console-login-rate-limit` lives in `apps` only and has no platform original;
     # `test_k8s_console.py::test_the_login_rate_limit_is_five_per_minute_with_a_burst_of_five`
     # owns its value. Excluded by NAME, so any other new middleware still reddens here.
     middlewares = {
@@ -964,15 +965,15 @@ def test_the_middlewares_carry_the_agreed_values(built: list[dict[str, Any]]) ->
 def test_both_cluster_issuers_use_the_exact_acme_urls_and_the_traefik_solver(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 8 and decision F. Catches the two ACME endpoints swapped, which is the one
+    """Catches the two ACME endpoints swapped, which is the one
     mistake nothing else in this repo can see: a `letsencrypt-prod` pointed at staging issues
     certificates no browser trusts, and a `letsencrypt-staging` pointed at production burns
-    real Let's Encrypt rate limits on the rehearsal decision F created it to absorb. Catches a
+    real Let's Encrypt rate limits on the rehearsal it was created to absorb. Catches a
     shared `privateKeySecretRef`, where the staging account key is reused for production and
     the first issuer to reconcile decides which account both are - asserted as exact names AND
     as a distinctness check, so a copy-paste that renames neither is red twice. Catches the
     HTTP-01 solver replaced or its ingress class changed off `traefik`, which is the only path
-    a design note's DNS-only records leave open for a challenge, and catches a personal account
+    the DNS-only records leave open for a challenge, and catches a personal account
     email replacing the domain one."""
     issuers = {name_of(document): document for document in objects_of_kind(built, "ClusterIssuer")}
     assert set(issuers) == set(ISSUERS)
@@ -995,7 +996,7 @@ def test_both_cluster_issuers_use_the_exact_acme_urls_and_the_traefik_solver(
 def test_no_secret_is_emitted_and_no_credential_is_written_inline(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 9 and decision D, in both halves the decision names. The build half: no
+    """In both halves. The build half: no
     `Secret` kind at all, and every Secret NAME the stream references is one of the three
     supplied SOPS-encrypted - catches the convenient repair of the apply failing on a
     missing Secret, which is a placeholder `Secret` with a password in git that nothing ever
@@ -1012,7 +1013,7 @@ def test_no_secret_is_emitted_and_no_credential_is_written_inline(
     reads BOTH shapes a written credential takes: `password: hunter2` on one line, and the
     `- name: POSTGRES_PASSWORD` / `value: hunter2` env pair a Kubernetes manifest actually
     uses, which a key-anchored pattern alone walks straight past (found by mutating the
-    throwaway stub, a project rule)."""
+    throwaway stub)."""
     emitted = objects_of_kind(built, "Secret")
     assert emitted == [], f"the build emits Secrets: {[name_of(document) for document in emitted]}"
 

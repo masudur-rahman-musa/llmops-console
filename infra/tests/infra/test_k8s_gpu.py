@@ -66,7 +66,7 @@ ADAPTER_IMAGE = "registry.k8s.io/prometheus-adapter/prometheus-adapter:v0.12.0"
 PROMETHEUS_IMAGE = "prom/prometheus:v3.1.0"
 INIT_IMAGE = "busybox:1.37.0"
 
-#: Section 1's quota, compared as strings so YAML's `1` and `"1"` read the same.
+#: The quota, compared as strings so YAML's `1` and `"1"` read the same.
 ENVELOPE = {
     "requests.memory": "11Gi",
     "requests.cpu": "2500m",
@@ -77,7 +77,7 @@ ENVELOPE = {
 VLLM_REQUESTS = {"nvidia.com/gpu": "1", "cpu": "2", "memory": "10Gi"}
 VLLM_LIMITS = {"nvidia.com/gpu": "1", "memory": "14Gi"}
 
-#: Section 1's argument list, each flag and each value its own item.
+#: The argument list, each flag and each value its own item.
 VLLM_ARGS = [
     "--model",
     "/models/Qwen2.5-7B-Instruct",
@@ -125,7 +125,7 @@ GPU_POLICY_NAMES = {
     "adapter-egress",
 }
 
-#: Section 1's refusal list for image tags: moving names, never a release.
+#: The refusal list for image tags: moving names, never a release.
 FLOATING_TAGS = frozenset({"latest", "main", "stable", "server", "nightly"})
 
 #: The pod-template kinds this build can emit.
@@ -301,7 +301,7 @@ def match_labels(document: dict[str, Any]) -> dict[str, str]:
 
 
 def test_the_root_kustomization_does_not_list_the_gpu_directory() -> None:
-    """Criterion 1. Catches `- gpu` added to the root `resources`, which drags a 10Gi GPU pod,
+    """Catches `- gpu` added to the root `resources`, which drags a 10Gi GPU pod,
     a second Prometheus and a cluster-wide APIService into every Hetzner apply and every CI
     build of the long-lived cluster that has no GPU at all."""
     resources = load_yaml(ROOT_KUSTOMIZATION).get("resources", [])
@@ -313,7 +313,7 @@ def test_the_root_kustomization_does_not_list_the_gpu_directory() -> None:
 def test_the_namespace_and_its_quota_are_the_agreed_envelope(
     built_gpu: list[dict[str, Any]],
 ) -> None:
-    """Criterion 2. Catches the quota copied from `apps-envelope` (3Gi of requests, where the
+    """Catches the quota copied from `apps-envelope` (3Gi of requests, where the
     vLLM pod alone asks 10Gi and is refused at admission), a missing `requests.nvidia.com/gpu`
     line that lets a second GPU pod be admitted, and any fifth key. Equality on `hard` sees both
     a missing and an extra key."""
@@ -324,7 +324,7 @@ def test_the_namespace_and_its_quota_are_the_agreed_envelope(
 
 
 def test_the_namespace_has_a_limit_range(built_gpu: list[dict[str, Any]]) -> None:
-    """Criterion 3. Catches the LimitRange left out, where a quota on `requests.memory` makes the
+    """Catches the LimitRange left out, where a quota on `requests.memory` makes the
     API server refuse any container that states no request, the initContainer included."""
     ranges = [
         document
@@ -338,7 +338,7 @@ def test_the_namespace_has_a_limit_range(built_gpu: list[dict[str, Any]]) -> Non
 def test_the_runtime_class_and_device_plugin_are_pinned(
     built_gpu: list[dict[str, Any]],
 ) -> None:
-    """Criteria 4 and 5. Catches a RuntimeClass whose `handler` is not `nvidia` (k3s registers
+    """Catches a RuntimeClass whose `handler` is not `nvidia` (k3s registers
     the NVIDIA containerd runtime under that name, so any other value fails every sandbox), the
     device plugin in a namespace other than `kube-system`, a plugin on the default runtime
     (it then cannot see the GPU and advertises zero `nvidia.com/gpu`), and its image drifting."""
@@ -363,7 +363,7 @@ def test_the_runtime_class_and_device_plugin_are_pinned(
 def test_the_vllm_deployment_is_one_recreated_gpu_pod(
     built_gpu: list[dict[str, Any]],
 ) -> None:
-    """Criteria 6 and 7. Catches `RollingUpdate` (the new pod waits forever for the one GPU the
+    """Catches `RollingUpdate` (the new pod waits forever for the one GPU the
     old pod holds), `replicas: 2`, the default runtime class (no GPU device inside the
     container), a floating or different vLLM image, and resources that differ by any key: a
     `limits.cpu` added throttles token generation, a missing GPU limit schedules without a GPU."""
@@ -383,7 +383,7 @@ def test_the_vllm_deployment_is_one_recreated_gpu_pod(
 def test_the_vllm_args_are_exactly_the_agreed_list(
     built_gpu: list[dict[str, Any]],
 ) -> None:
-    """Criterion 9. Catches a dropped `--tool-call-parser hermes` (tool calls come back as plain
+    """Catches a dropped `--tool-call-parser hermes` (tool calls come back as plain
     text), a `--max-model-len` that no longer fits 14Gi, a served name the gateway's alias does
     not dial, and any extra flag. Also catches a `command` override, which replaces the image's
     entrypoint and turns the args into arguments to something else."""
@@ -396,7 +396,7 @@ def test_the_vllm_args_are_exactly_the_agreed_list(
 def test_vllm_runs_offline_with_a_memory_backed_shm(
     built_gpu: list[dict[str, Any]],
 ) -> None:
-    """Criteria 8 and 10. Catches `HF_HUB_OFFLINE` absent or `"0"`, where vLLM reaches for the
+    """Catches `HF_HUB_OFFLINE` absent or `"0"`, where vLLM reaches for the
     hub at start and hangs behind the default-deny egress; and catches `/dev/shm` left as the
     container's 64Mi default or on disk, which crashes tensor transfer workers under load, or
     the volume declared and never mounted at `/dev/shm`."""
@@ -420,7 +420,7 @@ def test_vllm_runs_offline_with_a_memory_backed_shm(
 
 
 def test_vllm_waits_for_the_download_marker(built_gpu: list[dict[str, Any]]) -> None:
-    """Criterion 11. Catches an initContainer that waits on the model DIRECTORY (it exists from
+    """Catches an initContainer that waits on the model DIRECTORY (it exists from
     the first file the Job writes, so vLLM starts on a partial download), one that checks the
     marker once and exits instead of looping, a marker of a different revision, and a floating
     busybox image."""
@@ -434,7 +434,7 @@ def test_vllm_waits_for_the_download_marker(built_gpu: list[dict[str, Any]]) -> 
 def test_the_fetch_job_downloads_the_pinned_revision_to_the_model_path(
     built_gpu: list[dict[str, Any]],
 ) -> None:
-    """Criteria 12 and 13. Catches `snapshot_download` without `revision=` (the branch head, so
+    """Catches `snapshot_download` without `revision=` (the branch head, so
     two runs a week apart measure two different models), a different repository, a `local_dir`
     other than the path vLLM's `--model` reads, and a Job on a different image from the server.
     The three arguments are read inside the ONE call's parentheses, so a revision named in a
@@ -456,7 +456,7 @@ def test_the_fetch_job_downloads_the_pinned_revision_to_the_model_path(
 def test_the_fetch_job_writes_the_marker_only_after_the_download(
     built_gpu: list[dict[str, Any]],
 ) -> None:
-    """Criterion 14. Catches the marker touched before `snapshot_download(`, where a Job killed
+    """Catches the marker touched before `snapshot_download(`, where a Job killed
     mid-download leaves a marker the initContainer trusts and vLLM loads half a model. Every
     occurrence of the marker is checked, not the first."""
     script = fetch_script(built_gpu)
@@ -471,7 +471,7 @@ def test_the_fetch_job_writes_the_marker_only_after_the_download(
 def test_the_model_volume_claim_is_forty_gigabytes_on_the_default_class(
     built_gpu: list[dict[str, Any]],
 ) -> None:
-    """Criterion 15. Catches a claim below the 15GB of weights plus headroom, `ReadWriteMany`
+    """Catches a claim below the 15GB of weights plus headroom, `ReadWriteMany`
     (k3s's local-path provisioner refuses it and the claim stays Pending), and a hard-coded
     `storageClassName` that exists on one cluster and not on the next."""
     claim = the_one(built_gpu, "PersistentVolumeClaim", "vllm-models", GPU)
@@ -485,7 +485,7 @@ def test_the_model_volume_claim_is_forty_gigabytes_on_the_default_class(
 def test_the_tradeoff_provider_file_dials_the_node_port(
     built_gpu: list[dict[str, Any]],
 ) -> None:
-    """Criteria 16 and 17, since the `vllm` provider left the shipped folder: the
+    """Since the `vllm` provider left the shipped folder: the
     one file that names it is the GPU option's own `infra/tradeoff/providers/vllm.yaml`, read
     by the harness on the GPU host through the node's own NodePort. Catches that file left at
     the in-cluster `vllm.gpu.svc.cluster.local` (which does not resolve from compose), a port
@@ -508,8 +508,8 @@ def resolved_target_port(
 ) -> int:
     """`entry`'s `targetPort` as a number, resolving a named port through the pod's containers.
 
-    Every container port is scanned and the name is required alongside the number (standing
-    rule 44): taking the first port named `http` would read a sidecar's.
+    Every container port is scanned and the name is required alongside the number: taking the
+    first port named `http` would read a sidecar's.
     """
     target = entry.get("targetPort", entry.get("port"))
     if isinstance(target, int):
@@ -529,7 +529,7 @@ def resolved_target_port(
 def test_the_node_port_service_publishes_vllm_on_the_port_the_harness_dials(
     built_gpu: list[dict[str, Any]],
 ) -> None:
-    """An earlier change criterion 56 and decision C. The measurement harness runs in compose on the GPU
+    """The measurement harness runs in compose on the GPU
     host and reaches the in-cluster model server through this Service, so its `nodePort` is the
     port `infra/tradeoff/providers/vllm.yaml`'s `base_url` names. Catches `type: NodePort`
     with no `nodePort` (Kubernetes then allocates a random one in the 30000-32767 range and the
@@ -552,7 +552,7 @@ def test_the_node_port_service_publishes_vllm_on_the_port_the_harness_dials(
 def test_the_cluster_internal_vllm_service_stays_the_only_one_without_a_node_port(
     built_gpu: list[dict[str, Any]],
 ) -> None:
-    """An earlier change criterion 56's other half. The gateway inside the cluster still dials the
+    """The gateway inside the cluster still dials the
     ClusterIP Service `routing.yaml` names, and the host-facing one is an ADDITION. Catches the
     existing `vllm` Service flipped to `NodePort` in place of adding a second (every node in a
     future multi-node cluster would then answer on 30800 with no policy admitting it), and a
@@ -569,7 +569,7 @@ def test_the_cluster_internal_vllm_service_stays_the_only_one_without_a_node_por
 
 
 def test_the_shipped_config_has_no_vllm_provider() -> None:
-    """Criterion 17. Catches a `vllm.yaml` dropped into the shipped provider folder, or an
+    """Catches a `vllm.yaml` dropped into the shipped provider folder, or an
     alias naming `vllm` in `routing.yaml`: live traffic would route to a host that exists
     only during a one-off measurement run and 502 otherwise."""
     names = {
@@ -585,7 +585,7 @@ def test_the_shipped_config_has_no_vllm_provider() -> None:
 def test_the_hpa_scales_one_to_two_on_waiting_requests(
     built_gpu: list[dict[str, Any]],
 ) -> None:
-    """Criterion 18. Catches a `Resource` CPU metric (a GPU-bound server's CPU says nothing about
+    """Catches a `Resource` CPU metric (a GPU-bound server's CPU says nothing about
     its queue), `maxReplicas` above 2, a target other than 4 waiting requests, a metric name the
     adapter never publishes, and an HPA aimed at anything but the vllm Deployment."""
     hpa = the_one(built_gpu, "HorizontalPodAutoscaler", "vllm", GPU)
@@ -603,7 +603,7 @@ def test_the_hpa_scales_one_to_two_on_waiting_requests(
 
 
 def test_the_hpa_comment_names_the_one_gpu_pending_replica() -> None:
-    """Criterion 19. Catches the comment dropped, which leaves the next reader to discover by
+    """Catches the comment dropped, which leaves the next reader to discover by
     incident that replica 2 can never schedule on a host with one GPU."""
     text = read(GPU_DIR / "vllm.yaml")
     comments = " ".join(line for line in text.splitlines() if line.lstrip().startswith("#"))
@@ -618,7 +618,7 @@ def test_the_hpa_comment_names_the_one_gpu_pending_replica() -> None:
 def test_the_adapter_publishes_the_waiting_requests_metric(
     built_gpu: list[dict[str, Any]],
 ) -> None:
-    """Criteria 20 and 21. Catches a floating adapter image, a rule on a series vLLM does not
+    """Catches a floating adapter image, a rule on a series vLLM does not
     export (the HPA then reads `<unknown>` and never scales), a published name that differs
     from the HPA's, and a rule without `namespace` and `pod` overrides, which the Pods metric
     API cannot attribute to a pod."""
@@ -635,7 +635,7 @@ def test_the_adapter_publishes_the_waiting_requests_metric(
 
 
 def test_the_custom_metrics_api_is_registered(built_gpu: list[dict[str, Any]]) -> None:
-    """Criterion 22. Catches the APIService left out, where the adapter runs, answers nothing,
+    """Catches the APIService left out, where the adapter runs, answers nothing,
     and the HPA reports `FailedGetPodsMetric` forever."""
     the_one(built_gpu, "APIService", "v1beta1.custom.metrics.k8s.io")
 
@@ -643,7 +643,7 @@ def test_the_custom_metrics_api_is_registered(built_gpu: list[dict[str, Any]]) -
 def test_the_local_prometheus_image_equals_the_monitoring_one(
     built_gpu: list[dict[str, Any]],
 ) -> None:
-    """Criterion 24 and a project rule. Catches the GPU Prometheus bumped or pinned apart from
+    """Catches the GPU Prometheus bumped or pinned apart from
     `monitoring/`'s, where the next image bump updates one of two copies and the scrape config
     format drifts silently between them."""
     monitoring = [
@@ -663,7 +663,7 @@ def test_the_local_prometheus_image_equals_the_monitoring_one(
 def test_the_local_prometheus_scrapes_only_vllm_pods_in_gpu(
     built_gpu: list[dict[str, Any]],
 ) -> None:
-    """Criterion 23. Catches `kubernetes_sd_configs` with no namespace limit (the pod then lists
+    """Catches `kubernetes_sd_configs` with no namespace limit (the pod then lists
     pods cluster-wide and needs RBAC it should not have), a second scrape job, and a relabel
     that keeps every pod rather than those labelled `vllm`."""
     config_map = the_one(built_gpu, "ConfigMap", "prometheus", GPU)
@@ -686,7 +686,7 @@ def test_the_local_prometheus_scrapes_only_vllm_pods_in_gpu(
 def test_the_policy_names_are_exactly_the_agreed_eight(
     built_gpu: list[dict[str, Any]],
 ) -> None:
-    """Criteria 25 and 26. Catches a policy dropped (the pod it gave traffic back to is dark
+    """Catches a policy dropped (the pod it gave traffic back to is dark
     behind `default-deny`), a `vllm-egress` added "for the hub", and anything this build adds to
     `apps` beyond `gateway-egress-vllm`. Equality fails both ways."""
     assert set(policies(built_gpu, GPU)) == GPU_POLICY_NAMES
@@ -740,7 +740,7 @@ def test_each_support_policy_grants_exactly_its_agreed_pairs(
     direction: str,
     expected: set[Grant],
 ) -> None:
-    """Criterion 25's support rows. Catches DNS on UDP alone (fails intermittently on large
+    """The support rows. Catches DNS on UDP alone (fails intermittently on large
     answers), the API-server rules given a `to` peer that matches nothing, a Prometheus egress
     widened to every `gpu` pod or to every port, and the adapter reaching Prometheus on a port
     other than 9090. Grants are compared as a set, so rule grouping is free and extras are not."""
@@ -755,7 +755,7 @@ def test_each_support_policy_grants_exactly_its_agreed_pairs(
 def test_default_deny_covers_every_pod_both_ways(
     built_gpu: list[dict[str, Any]],
 ) -> None:
-    """Criterion 25's first row. Catches `default-deny` with only `Ingress`, which leaves every
+    """The first row. Catches `default-deny` with only `Ingress`, which leaves every
     `gpu` pod, the model server included, free to call anywhere, and catches it scoped to one
     label so the adapter and Prometheus run unrestricted."""
     document = policy(built_gpu, GPU, "default-deny")
@@ -770,7 +770,7 @@ def test_default_deny_covers_every_pod_both_ways(
 def test_no_policy_selecting_vllm_grants_egress_beyond_dns(
     built_gpu: list[dict[str, Any]],
 ) -> None:
-    """Criterion 27, over EVERY policy in the build, not the named ones. Catches `vllm-ingress`
+    """Over EVERY policy in the build, not the named ones. Catches `vllm-ingress`
     given an `Egress` type and a 443 rule (its name and its ingress grants unchanged, so no
     other case sees it), and any `{}`-selector policy granting a port other than 53, which
     reaches the model server too. A rule with no `ports` is every port and is a finding. The
@@ -804,7 +804,7 @@ def test_no_policy_selecting_vllm_grants_egress_beyond_dns(
 def test_vllm_ingress_admits_the_gateway_prometheus_and_the_node_on_8000_only(
     built_gpu: list[dict[str, Any]],
 ) -> None:
-    """Criterion 25's `vllm-ingress` and an earlier change decision C. Catches the gateway peer written
+    """The `vllm-ingress`. Catches the gateway peer written
     without its `namespaceSelector` (it then means a `gateway` pod in `gpu`, which does not
     exist), every `apps` pod admitted, a FOURTH source, and a port other than TCP 8000. The
     third source is the node's own VPC range, which is the address the NodePort SNATs the
@@ -825,7 +825,7 @@ def test_vllm_ingress_admits_the_gateway_prometheus_and_the_node_on_8000_only(
 def test_exactly_two_policies_carry_an_ip_block_each_on_its_own_port(
     built_gpu: list[dict[str, Any]],
 ) -> None:
-    """Criteria 25 and 28, and an earlier change decision C. Two rules in this build name a raw address
+    """Two rules in this build name a raw address
     range and no more: the fetch Job reaching the model registry on 443, and the node reaching
     vLLM on 8000. Catches an `ipBlock` policy written OUTSIDE `gpu` and `apps` (a `kube-system`
     policy, which the name-set case never reads), a third one added later, the node block put
@@ -860,7 +860,7 @@ def test_exactly_two_policies_carry_an_ip_block_each_on_its_own_port(
 def test_the_fetch_except_list_equals_the_gateway_egress_one(
     built_gpu: list[dict[str, Any]],
 ) -> None:
-    """Criterion 25 and a project rule. Catches the except list missing `169.254.0.0/16`, which
+    """Catches the except list missing `169.254.0.0/16`, which
     lets the fetch pod read the cloud metadata endpoint and the instance role behind it, and
     catches either copy edited without the other. Read from `base/networkpolicies.yaml` by
     value, never from a shared constant."""
@@ -885,7 +885,7 @@ def test_the_fetch_except_list_equals_the_gateway_egress_one(
 
 
 def test_the_gateway_may_reach_vllm_on_8000(built_gpu: list[dict[str, Any]]) -> None:
-    """Criterion 26. Catches the policy scoped to every `apps` pod (a Helpdesk workload then
+    """Catches the policy scoped to every `apps` pod (a Helpdesk workload then
     dials the model directly, bypassing the gateway's budget checks), a peer
     missing its `gpu` namespaceSelector, and a port other than TCP 8000."""
     document = policy(built_gpu, APPS, "gateway-egress-vllm")
@@ -902,7 +902,7 @@ def test_the_gateway_may_reach_vllm_on_8000(built_gpu: list[dict[str, Any]]) -> 
 def test_every_image_in_the_build_has_an_exact_tag(
     built_gpu: list[dict[str, Any]],
 ) -> None:
-    """Criterion 29, over every container and initContainer of every pod template. Catches an
+    """Over every container and initContainer of every pod template. Catches an
     untagged `busybox` (resolved as `latest`), `:latest`, and a moving name such as `:stable`,
     where two applies run two different images. A tag must carry a digit to count as a
     release. The scan asserts it found the vllm image, so an empty build cannot pass."""
@@ -929,7 +929,7 @@ def test_every_image_in_the_build_has_an_exact_tag(
 
 
 def test_k8s_gpu_check_builds_and_validates_with_the_k8s_check_flags() -> None:
-    """Criterion 49 and a project rule. Catches the gpu build piped to nothing (kustomize alone
+    """Catches the gpu build piped to nothing (kustomize alone
     accepts an unknown field), a `|| true` that turns a schema failure green, `-strict` dropped,
     and kubeconform flags drifting from `k8s-check`'s. Exactly one line names the build, so a
     second, unpiped copy cannot sit beside a correct one."""
@@ -953,7 +953,7 @@ def is_printer(step: dict[str, Any]) -> bool:
 
 
 def test_the_k8s_job_runs_k8s_gpu_check_unconditionally() -> None:
-    """Criterion 50. Catches the step missing (the gpu build is then checked by nobody, since it
+    """Catches the step missing (the gpu build is then checked by nobody, since it
     is applied only from the owner's shell), a second copy, and an `if` that skips it on the
     pull requests where a manifest first arrives. An `echo` naming the target is excluded."""
     jobs = load_yaml(WORKFLOW)["jobs"]
@@ -968,7 +968,7 @@ def test_the_k8s_job_runs_k8s_gpu_check_unconditionally() -> None:
 
 
 def test_no_file_in_the_gpu_directory_carries_a_token_shaped_literal() -> None:
-    """Criterion 52 and a project rule. Catches a Hugging Face or registry credential pasted into a
+    """Catches a Hugging Face or registry credential pasted into a
     manifest while trying the fetch out. The patterns are the Hetzner module's, imported. The
     directory is asserted first, because an empty scan of a missing directory passes."""
     assert GPU_DIR.is_dir(), f"{GPU_DIR} does not exist"

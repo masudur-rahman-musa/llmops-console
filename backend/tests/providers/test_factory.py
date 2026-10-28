@@ -1,7 +1,7 @@
 """`build_adapters`: which policy providers become adapters, and which are dropped loudly.
 
 The environment is passed in as an explicit mapping rather than patched onto
-`os.environ`, so no test reads a provider key from the real environment (#66) and
+`os.environ`, so no test reads a provider key from the real environment and
 two cases cannot interfere through process state.
 
 Every provider in `POLICY` below differs from the built one in exactly one
@@ -76,8 +76,8 @@ def test_only_the_usable_providers_of_the_base_policy_are_built() -> None:
     """Catches a factory that builds an adapter with an empty key (or with `None`), which
     would look healthy to the resolver and 401 on the first real request.
 
-    `openai-eu` joins `anthropic-eu` from an earlier change on: it is enabled and its key is set,
-    so from that plan on the ONLY reason a provider is missing here is the control its own
+    `openai-eu` joins `anthropic-eu` is enabled and its key is set,
+    so the ONLY reason a provider is missing here is the control its own
     row names."""
     adapters = build_adapters(POLICY, ENVIRON)
 
@@ -191,7 +191,7 @@ LOCAL_POLICY = Policy(
 
 
 def test_an_openai_compatible_provider_with_no_key_env_is_built() -> None:
-    """Catches a factory that demands a key of every provider (decision B): `local` and
+    """Catches a factory that demands a key of every provider: `local` and
     `vllm` sit on a private network and declare none, so a key check applied to them drops
     the local route and every `pii` request stays a 503."""
     adapters = build_adapters(LOCAL_POLICY, ENVIRON)
@@ -249,7 +249,7 @@ def test_a_disabled_openai_compatible_provider_is_omitted_without_a_warning(
 def test_an_openai_compatible_provider_declaring_an_unset_key_is_dropped_with_a_warning(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Catches decision B applied too widely: an absent `key_env` is legal, but one that
+    """Catches the check applied too widely: an absent `key_env` is legal, but one that
     is DECLARED and unset is a half-configured deployment, and building it anyway would
     put an adapter behind the resolver that 401s on the first real request."""
     with caplog.at_level(logging.WARNING):
@@ -661,7 +661,7 @@ def test_an_azure_provider_without_a_usable_endpoint_is_dropped_with_a_warning(
 def test_an_azure_provider_naming_both_an_endpoint_env_and_a_base_url_is_dropped_with_a_warning(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Catches decision C not implemented: with both sources present one of them quietly
+    """Catches the behaviour missing: with both sources present one of them quietly
     wins, and which one is undocumented - that is how a vendor key reaches the wrong host.
     Both of this row's sources are USABLE (the variable is set and the base url is a real
     string), so neither the key control nor the endpoint control can explain the drop: only

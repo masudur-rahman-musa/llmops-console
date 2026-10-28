@@ -1,4 +1,4 @@
-r"""The cache key and the eligibility predicate: the design's seven fields, and #22's opt-in.
+r"""The cache key and the eligibility predicate: the seven keyed fields, and the opt-in.
 
 Two claims live here and each is arranged so only the control it names can decide
 the outcome.
@@ -13,7 +13,7 @@ the outcome.
   different conversations and must not. Both directions are asserted, because an
   implementation that sorted the messages too would pass the first alone.
 
-`CACHE_ID_PATTERN` gets a project rule's rejection table - a trailing newline, a
+`CACHE_ID_PATTERN` gets the project's rejection table - a trailing newline, a
 trailing CRLF, a trailing space - because the key becomes the last segment of a
 Redis key and `re.match` with `[0-9a-f]{64}$` accepts the first of those.
 
@@ -65,12 +65,12 @@ def test_the_request_and_the_response_header_are_the_same_spelling() -> None:
     """Catches an opt-in header spelled differently from the header the answer carries
     (`X-Gateway-Cache-Control`, `X-Gateway-Cache-Allow`): a caller reads the response
     header to learn the name it may send back, so two spellings is an opt-in nobody can
-    discover, and #24 publishes exactly one name."""
+    discover, and exactly one name is published."""
     assert CACHE_HEADER == "X-Gateway-Cache"
 
 
 def test_the_only_accepted_opt_in_word_is_allow() -> None:
-    """Catches an opt-in widened to `true`, `yes` or `1` after decision D refused every
+    """Catches an opt-in widened to `true`, `yes` or `1` after only one word was accepted and every
     value but one: each extra word is a value a typo can land on, and the whole point of
     the 422 is that a typo cannot silently mean "no"."""
     assert CACHE_ALLOW == "allow"
@@ -191,7 +191,7 @@ FIELD_ROWS: list[tuple[str, dict[str, Any]]] = [
 
 @pytest.mark.parametrize(("field", "override"), FIELD_ROWS, ids=[row[0] for row in FIELD_ROWS])
 def test_changing_one_keyed_field_changes_the_key(field: str, override: dict[str, Any]) -> None:
-    """Catches a key built over a SUBSET of the design's seven fields, one field per row: the
+    """Catches a key built over a SUBSET of the seven keyed fields, one field per row: the
     row for a field left out of the digest is the one that reddens, and nothing else in
     the suite can see it, because a key over the messages alone still serves the right
     answer to every request that differs by its messages. A dropped field is a WRONG
@@ -291,7 +291,7 @@ def test_two_conversations_that_concatenate_alike_do_not_share_a_key() -> None:
 
 
 # --------------------------------------------------------------------------
-# eligibility (#22, decisions D and H)
+# eligibility
 # --------------------------------------------------------------------------
 
 
@@ -377,7 +377,7 @@ def test_the_eligibility_decision_table(
     is the criterion's own boundary; a `<= 0` or a `not temperature` comparison would take
     the just-above-zero row; a predicate that forgot the header would refuse the two allow
     rows; one that forgot `stream` would cache an answer that is never stored in the shape
-    it was served (decision G); and one that refused tools outright would take the
+    it was served; and one that refused tools outright would take the
     `tool_choice: none` row, while one that read `tool_choice` alone would take the row
-    with tools and no choice at all (decision H)."""
+    with tools and no choice at all."""
     assert is_cacheable(wire_body(**overrides), allow_header=allow_header) is expected

@@ -101,7 +101,7 @@ costs.
 
 
 def check_rate_limit(clients: Clients, context: RequestContext) -> None:
-    """Refuse this request if the tenant has spent its minute's requests or tokens (#28).
+    """Refuse this request if the tenant has spent its minute's requests or tokens.
 
     Called at the top of BOTH routes and immediately BEFORE `check_budget`, after
     `Context` has authenticated the tenant. The position carries two criteria at
@@ -109,7 +109,7 @@ def check_rate_limit(clients: Clients, context: RequestContext) -> None:
     and a streamed request must be refused before the 200 and the first frames
     are on the wire, or the client gets an error inside a stream instead of a
     typed 429 with a `Retry-After` no started response could carry. And
-    being before the budget check is criterion 6: both refusals are 429s, so a
+    being before the budget check is required: both refusals are 429s, so a
     tenant over both is told to slow down rather than to top up.
 
     A tenant the POLICY does not carry has no ceiling and is not this function's
@@ -163,7 +163,7 @@ def debit_tokens(clients: Clients, context: RequestContext, *, row: CostLedgerRo
     """Take one served request's tokens out of its tenant's minute.
 
     Called from `book_cost` and from nowhere else, beside `debit_budget`, which
-    is what makes criterion 2 structural rather than a list of call sites to keep
+    is what makes this structural rather than a list of call sites to keep
     in step: every path that books a ledger row debits the bucket, by the tokens
     of the row it just booked, because there is one place that does both.
 
@@ -221,7 +221,7 @@ def check_budget(clients: Clients, context: RequestContext, *, override: str | N
     ledger, and a ledger that cannot be read refuses with `BudgetUnavailable`.
 
     The warning covers the whole band at or above 80%, an overridden request
-    included, because that is what criterion 2 says - it is emitted before the
+    included, because that is intended - it is emitted before the
     override is even considered, so a tenant running on a standing override is
     still visible in the log every request.
     """

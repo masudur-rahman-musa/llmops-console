@@ -10,13 +10,13 @@ The contract these tests are written against, before it exists:
   exactly `CLOSED = 0`, `HALF_OPEN = 1`, `OPEN = 2`, because those are the values
   `gateway_circuit_state` publishes.
 * `app.providers.breaker.MAX_FAILURES`, `FAILURE_WINDOW_SECONDS`,
-  `HALF_OPEN_AFTER_SECONDS` - the three numbers of SPEC section 6.
+  `HALF_OPEN_AFTER_SECONDS` - the three published numbers.
 * `app.providers.breaker.CircuitBreaker(clock=...)` - `allows(provider)`,
   `record_success(provider)`, `record_failure(provider)` and `state(provider)`,
   the last being what the gauge reads. `clock` is keyword-only and returns
   monotonic seconds.
 
-One piece of the contract these cases pin that the plan states only in prose: an
+One piece of the contract these cases pin that is stated only in prose: an
 OPEN breaker is resolved by a TRIAL, never by the failure window emptying
 underneath it. `test_the_open_state_survives_the_failure_window_emptying` is the
 case, and `test_one_trial_failure_reopens_it_and_restarts_the_thirty_seconds`
@@ -73,7 +73,7 @@ def opened_breaker(clock: ManualClock) -> CircuitBreaker:
 
 
 def test_the_three_numbers_are_the_spec_ones_exactly() -> None:
-    """Catches a breaker tuned to a value near SPEC section 6's rather than at it - three
+    """Catches a breaker tuned to a value near the published ones rather than at them - three
     failures instead of five, a 10s window, a 5s recovery - each of which changes how much
     provider trouble the gateway absorbs before it stops sending traffic, and none of
     which any behavioural case below could tell from the intended one on its own."""

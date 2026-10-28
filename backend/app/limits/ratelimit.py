@@ -1,6 +1,6 @@
 r"""One tenant's requests and tokens per minute: two buckets, and what they decide.
 
-the design asks for a token bucket per tenant for `rpm` and `tpm`, and a bucket is
+The limiter is a token bucket per tenant for `rpm` and `tpm`, and a bucket is
 not a window. A fixed-window counter lets a tenant send twice its ceiling across
 the boundary - the whole of one window at its end and the whole of the next at
 its start - and it makes a refused tenant wait up to a whole minute for an
@@ -23,7 +23,7 @@ token debit larger than its level, so `tpm` would keep a residue that passes the
 next check for ever; a
 bucket with no floor sinks further with every retry, so a client retrying at ten
 times its limit is locked out for minutes rather than for the fraction of a
-second the design promises.
+second the limit promises.
 
 A STORE THAT CANNOT ANSWER SERVES THE REQUEST. `take`
 answers `None` for "unknown" rather than raising or refusing, and the route reads

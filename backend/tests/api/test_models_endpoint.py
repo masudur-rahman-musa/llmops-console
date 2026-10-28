@@ -1,6 +1,6 @@
 """`GET /v1/models`: the aliases a caller may actually use, and nothing else.
 
-Decision D: the list is the aliases `resolve()` does not raise for, under the
+The list is the aliases `resolve()` does not raise for, under the
 caller's own tenant and the request's data class. Expectations are computed by
 calling `resolve()` directly, and every case also asserts one membership
 literally, so a route that returned an empty list could not pass.

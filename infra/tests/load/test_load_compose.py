@@ -61,7 +61,7 @@ def services() -> dict[str, Any]:
 def test_mock_provider_is_built_from_its_directory_under_the_load_profile(
     services: dict[str, Any],
 ) -> None:
-    """Criterion 8: catches a mock pulled from a registry instead of built from
+    """Catches a mock pulled from a registry instead of built from
     this repo, or one with no healthcheck for the gateway to wait on."""
     mock = services["mock-provider"]
     assert mock["build"] == "infra/load/mock-provider"
@@ -73,13 +73,13 @@ def test_mock_provider_is_built_from_its_directory_under_the_load_profile(
 def test_the_load_services_run_only_under_the_load_profile(
     services: dict[str, Any], name: str
 ) -> None:
-    """Criterion 8: catches a load service with no profile, which a plain
+    """Catches a load service with no profile, which a plain
     `docker compose up` with the override would start."""
     assert services[name]["profiles"] == ["load"]
 
 
 def test_k6_is_pinned_to_one_exact_grafana_tag(services: dict[str, Any]) -> None:
-    r"""Criterion 9: catches `grafana/k6:latest`, an untagged `grafana/k6`, or a
+    r"""Catches `grafana/k6:latest`, an untagged `grafana/k6`, or a
     partial tag like `grafana/k6:1`, any of which changes k6 under a rerun."""
     assert re.fullmatch(r"grafana/k6:\d+\.\d+\.\d+", str(services["k6"]["image"]))
 
@@ -87,7 +87,7 @@ def test_k6_is_pinned_to_one_exact_grafana_tag(services: dict[str, Any]) -> None
 def test_k6_runs_the_mounted_script_and_writes_results_to_the_host(
     services: dict[str, Any],
 ) -> None:
-    """Criteria 11 and 17: catches k6 running a script path nothing mounts, or a
+    """Catches k6 running a script path nothing mounts, or a
     results directory that stays inside the container and is lost at `--rm`."""
     k6 = services["k6"]
     assert k6["command"] == ["run", "/scripts/gateway.js"]
@@ -99,7 +99,7 @@ def test_k6_runs_the_mounted_script_and_writes_results_to_the_host(
 def test_k6_reads_the_key_and_gateway_address_from_the_environment(
     services: dict[str, Any],
 ) -> None:
-    """Criterion 18: catches a key written into the compose file for k6, or a
+    """Catches a key written into the compose file for k6, or a
     gateway address that is not the compose service name."""
     environment = environment_of(services["k6"])
     assert environment["LOAD_API_KEY"] == "${LOAD_API_KEY}"
@@ -109,7 +109,7 @@ def test_k6_reads_the_key_and_gateway_address_from_the_environment(
 def test_the_gateway_policy_path_is_the_mounted_load_routing_file(
     services: dict[str, Any],
 ) -> None:
-    """Criterion 10: catches a policy path nothing is mounted at, or the shipped
+    """Catches a policy path nothing is mounted at, or the shipped
     `routing.yaml` mounted there instead of the load file."""
     gateway = services["gateway"]
     policy_path = environment_of(gateway)["OPSCONSOLE_ROUTING_POLICY_PATH"]
@@ -124,7 +124,7 @@ def test_the_gateway_policy_path_is_the_mounted_load_routing_file(
 def test_the_gateway_takes_its_keys_from_the_environment_and_waits_for_the_mock(
     services: dict[str, Any],
 ) -> None:
-    """Criterion 18: catches a tenant key digest written into the override, or a
+    """Catches a tenant key digest written into the override, or a
     gateway that can start before the mock it routes to exists."""
     gateway = services["gateway"]
     assert environment_of(gateway)["OPSCONSOLE_API_KEYS"] == "${OPSCONSOLE_API_KEYS}"
@@ -136,7 +136,7 @@ def test_the_gateway_takes_its_keys_from_the_environment_and_waits_for_the_mock(
 def test_every_credential_environment_value_is_an_interpolation(
     services: dict[str, Any],
 ) -> None:
-    """Criterion 10: catches any credential-named variable given a literal value
+    """Catches any credential-named variable given a literal value
     (for example `load:changeme`) in any service of the override."""
     checked: set[str] = set()
     for service in services.values():
@@ -148,7 +148,7 @@ def test_every_credential_environment_value_is_an_interpolation(
 
 
 def test_no_sha256_digest_literal_appears_in_the_override() -> None:
-    r"""Criterion 10: catches a precomputed key digest pasted anywhere in the file,
+    r"""Catches a precomputed key digest pasted anywhere in the file,
     including outside `environment:` (a comment, a command, an `x-` block)."""
     text = COMPOSE_LOAD.read_text(encoding="utf-8")
     assert re.search(r"(?<![0-9a-fA-F])[0-9a-fA-F]{64}(?![0-9a-fA-F])", text) is None
@@ -241,13 +241,13 @@ def running(fragment: str) -> list[int]:
 
 
 def test_make_load_generates_a_fresh_key_at_runtime() -> None:
-    """Criterion 18: catches a hard-coded or pre-shared load key; the key must be
+    """Catches a hard-coded or pre-shared load key; the key must be
     32 random bytes generated inside the recipe itself."""
     assert running("openssl rand -hex 32")
 
 
 def test_make_load_derives_the_tenant_digest_with_sha256() -> None:
-    """Criterion 18: catches `OPSCONSOLE_API_KEYS` set to the plaintext key or to a
+    """Catches `OPSCONSOLE_API_KEYS` set to the plaintext key or to a
     non-sha256 digest, which the gateway's key store would never match."""
     assignments = [
         statement
@@ -259,7 +259,7 @@ def test_make_load_derives_the_tenant_digest_with_sha256() -> None:
 
 
 def test_make_load_exports_both_keys_as_environment_only() -> None:
-    """Criterion 18: catches a recipe that computes the key but never exports it to
+    """Catches a recipe that computes the key but never exports it to
     compose, or exports a tenant other than `load`."""
     exported = [statement for statement in statements() if statement.startswith("export ")]
     assert any(re.match(r"^export\s+LOAD_API_KEY\b", statement) for statement in exported)
@@ -270,7 +270,7 @@ def test_make_load_exports_both_keys_as_environment_only() -> None:
 
 
 def test_every_compose_invocation_uses_both_files_and_the_load_profile() -> None:
-    """Criterion 20: catches any `docker compose` call in the recipe missing the
+    """Catches any `docker compose` call in the recipe missing the
     override file or `--profile load`, for which `k6` and `mock-provider` do not
     exist."""
     invocations = running("docker compose")
@@ -280,7 +280,7 @@ def test_every_compose_invocation_uses_both_files_and_the_load_profile() -> None
 
 
 def test_make_load_brings_the_stack_up_and_migrates_before_k6_runs() -> None:
-    """Criterion 19 and risk 2: catches k6 started before `ops-migrate` (every
+    """Catches k6 started before `ops-migrate` (every
     ledger write fails and the run reads as errors) or before the stack is up."""
     all_statements = statements()
     ups = [
@@ -296,7 +296,7 @@ def test_make_load_brings_the_stack_up_and_migrates_before_k6_runs() -> None:
 
 
 def test_make_load_exits_with_k6s_own_exit_code() -> None:
-    """Criterion 19 and the unhappy path: catches a teardown's status replacing
+    """The unhappy path: catches a teardown's status replacing
     k6's, a `|| true`, or a `-` recipe prefix, any of which turns a threshold
     breach into a green `make load`."""
     all_statements = statements()
@@ -311,7 +311,7 @@ def test_make_load_exits_with_k6s_own_exit_code() -> None:
 
 
 def test_make_load_writes_nothing_to_disk_through_a_redirect() -> None:
-    """Criterion 19: catches the key or digest redirected into a file (`> .key`,
+    """Catches the key or digest redirected into a file (`> .key`,
     `>> .env`). Printers are NOT excluded here: an `echo` into a file is exactly
     the write this forbids. Only the harmless fd redirects are allowed."""
     for statement in statements():
@@ -321,6 +321,6 @@ def test_make_load_writes_nothing_to_disk_through_a_redirect() -> None:
 
 
 def test_the_results_directory_is_gitignored() -> None:
-    """Criterion 17: catches `summary.json` from a local run landing in a commit."""
+    """Catches `summary.json` from a local run landing in a commit."""
     lines = [line.strip() for line in GITIGNORE.read_text(encoding="utf-8").splitlines()]
     assert "infra/load/results/" in lines

@@ -1,5 +1,5 @@
 {
-  "about": "Held-out redaction templates (ADR 0043). No detector is tuned against these. Each template has one {v} slot. backend/tests/redaction/heldout.py fills them with seed 82: 50 positives per kind and 100 look-alikes.",
+  "about": "Held-out redaction templates. No detector is tuned against these. Each template has one {v} slot. backend/tests/redaction/heldout.py fills them with seed 82: 50 positives per kind and 100 look-alikes.",
   "positive": {
     "EMAIL": [
       "Forwarding this to {v} so the vendor gets a copy.",

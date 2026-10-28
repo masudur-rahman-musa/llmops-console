@@ -1,11 +1,11 @@
 r"""`infra/terraform/hetzner`: the security claims `terraform validate` would accept either way.
 
-Decision C of an earlier change keeps this file on plain text rather than an HCL parser, so what is
+This file stays on plain text rather than an HCL parser, so what is
 asserted here is deliberately narrow: `terraform fmt -check`, `init` and `validate` are the
 semantic checks and they run in the `tf` job, while the claims that a syntactically perfect
 module can still break - the firewall's exact rule set, the pinned k3s version, the absent
 `admin_ips` default, an output that leaks a token - have no other guard anywhere in the repo.
-Terraform is not installed on the development machine (a project rule forbids installing it),
+Terraform is not installed on the development machine (and it is not installed for this project),
 which is the second reason these live as file assertions.
 
 Every path is taken from this file's own `__file__`, never from the working directory: a test
@@ -42,14 +42,14 @@ CLOUD_INIT = MODULE / "cloud-init.yaml"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 MAKEFILE = REPO_ROOT / "Makefile"
 
-#: The exact k3s release the server installs. a project rule: a pinned version is a
+#: The exact k3s release the server installs. A pinned version is a
 #: constant, so it is asserted by value and not by "some version string is present".
 K3S_VERSION = "v1.31.5+k3s1"
 
 #: Every public-facing rule carries both families; IPv6-only omission is the quiet half.
 WORLD = ("0.0.0.0/0", "::/0")
 
-#: Section 1's validation criterion, in the order the plan names them.
+#: The validated variables, in the order they are declared.
 VALIDATED_VARIABLES = (
     "admin_ips",
     "zone",
@@ -59,7 +59,7 @@ VALIDATED_VARIABLES = (
     "ssh_public_key",
 )
 
-#: Section 1's output list: two server facts and the four FQDNs.
+#: The outputs: two server facts and the four FQDNs.
 EXPECTED_OUTPUTS = {
     "server_ipv4",
     "server_id",
@@ -69,7 +69,7 @@ EXPECTED_OUTPUTS = {
     "grafana_fqdn",
 }
 
-#: Never an output, never a variable default: a project rule.
+#: Never an output, never a variable default.
 FORBIDDEN_IN_OUTPUTS = ("token", "private_key", "kubeconfig")
 
 SECRETISH_NAME = re.compile(
@@ -174,10 +174,10 @@ def recipe(makefile: str, target: str) -> list[str]:
 
 
 def test_the_firewall_opens_ssh_to_the_admins_and_nothing_else_to_them() -> None:
-    """Criterion 2, the whole reason this file exists. Catches a fourth `rule` block (the
+    """The whole reason this file exists. Catches a fourth `rule` block (the
     k3s API on 6443, a debug port) added to a firewall whose default-deny nobody re-reads;
     catches port 22 taking `["0.0.0.0/0", "::/0"]` like its neighbours, which is the exact
-    mistake decision F's missing default is meant to make impossible; and catches 80 or 443
+    mistake the missing default is meant to make impossible; and catches 80 or 443
     carrying only the IPv4 family, which leaves a dual-stacked box unreachable over IPv6.
     Nothing else in the repo reads this file - `terraform validate` accepts any rule set."""
     firewalls = named_blocks(read(MAIN_TF), "resource")
@@ -196,11 +196,11 @@ def test_the_firewall_opens_ssh_to_the_admins_and_nothing_else_to_them() -> None
 
 
 def test_ci_reaches_ssh_through_a_declared_list_that_defaults_to_empty() -> None:
-    """An earlier change criterion 5 and decision A: CD cannot reach port 22 while it is `admin_ips`
+    """CD cannot reach port 22 while it is `admin_ips`
     alone, so `var.ci_ips` is concatenated into that one rule. Catches the variable declared
     with NO default, which makes every `plan` and every `apply` fail until someone invents a
     value for a list that is meant to be empty until the owner sets it - and catches the
-    default written as anything but the empty list, which is the whole point of the decision:
+    default written as anything but the empty list, which is the whole point:
     a default of `["0.0.0.0/0"]` would open SSH to the internet the moment the variable is
     forgotten, exactly the failure `admin_ips` has no default to avoid. The rule COUNT is
     re-asserted here as well as in the port-22 case above, because the tempting alternative
@@ -222,10 +222,10 @@ def test_ci_reaches_ssh_through_a_declared_list_that_defaults_to_empty() -> None
 
 
 def test_the_server_is_the_arm_box_in_the_agreed_region() -> None:
-    """Criterion 1's hardware, pinned by value. Catches a `server_type`
+    """The hardware, pinned by value. Catches a `server_type`
     default of `cx22`, which is x86 and would run an arm64 image nowhere, and catches a
     `location` outside the EU - `fsn1` is still in region, `ash` and `hil` are the US and
-    silently move the node out of the residency boundary a project rule is written around.
+    silently move the node out of the residency boundary.
     Read from `variables.tf`'s own block, so a default moved into a `.tfvars` is a failure."""
     variables = named_blocks(read(VARIABLES_TF), "variable")
 
@@ -234,7 +234,7 @@ def test_the_server_is_the_arm_box_in_the_agreed_region() -> None:
 
 
 def test_the_cloud_init_pins_k3s_once_and_disables_nothing() -> None:
-    """Criterion 3. Catches `INSTALL_K3S_VERSION` set to an empty string or omitted, where the
+    """Catches `INSTALL_K3S_VERSION` set to an empty string or omitted, where the
     installer takes `latest` and two applies a month apart build different clusters; catches
     the version being pasted a second time (a comment, a second export) where one copy is
     then bumped and the other is not; and catches `--disable traefik` or
@@ -248,7 +248,7 @@ def test_the_cloud_init_pins_k3s_once_and_disables_nothing() -> None:
 
 
 def test_the_terraform_block_pins_the_core_and_both_providers() -> None:
-    """Criterion 4. Catches a missing `cloud {` block, where state falls back to a local
+    """Catches a missing `cloud {` block, where state falls back to a local
     `terraform.tfstate` that CI throws away and an `apply` then rebuilds the server; catches
     an unconstrained provider (`version` dropped), where a 2.x hcloud release lands on the
     next `init` with renamed arguments; and catches the two constraints being swapped between
@@ -265,10 +265,10 @@ def test_the_terraform_block_pins_the_core_and_both_providers() -> None:
 
 
 def test_every_input_is_validated_and_the_admin_cidrs_have_no_default() -> None:
-    """Criteria 6 and 7, and decision F. Catches a variable declared with a description and no
+    """Catches a variable declared with a description and no
     `validation` block, where a typo'd region or a bare IP reaches the API instead of failing
-    at plan time; and catches `admin_ips` acquiring a default, which is the failure mode the
-    decision is named for - an unset variable would then open 22 to the internet quietly
+    at plan time; and catches `admin_ips` acquiring a default, which is the failure mode a
+    missing default exists to prevent - an unset variable would then open 22 to the internet quietly
     rather than refusing to plan. Parsed per variable, so a `validation` block belonging to
     one variable cannot stand in for a neighbour that has none."""
     variables = named_blocks(read(VARIABLES_TF), "variable")
@@ -283,7 +283,7 @@ def test_every_input_is_validated_and_the_admin_cidrs_have_no_default() -> None:
     assert unvalidated == [], f"no validation block on {unvalidated}"
     assert argument(variables["admin_ips"], "default") == "", "admin_ips carries a default"
 
-    # Criterion 7 names the two cases by hand, so the conditions are pinned by what
+    # The requirement names the two cases by hand, so the conditions are pinned by what
     # they call and not only by their presence: `length(...) > 0` is the empty list,
     # `cidrhost` is what refuses a bare address. A validation block that checked
     # neither would satisfy the loop above.
@@ -295,7 +295,7 @@ def test_every_input_is_validated_and_the_admin_cidrs_have_no_default() -> None:
 
 
 def test_the_outputs_are_the_six_agreed_facts_and_no_credential() -> None:
-    """Criterion 5. Catches a seventh output added for convenience - a `kubeconfig`, the
+    """Catches a seventh output added for convenience - a `kubeconfig`, the
     hcloud token, the generated private key - which Terraform Cloud then stores in state and
     prints in every run's log; and catches one of the four FQDNs being dropped, which is what
     the Ingresses read to point their hosts once the app manifests land. Equality on the name
@@ -310,8 +310,8 @@ def test_the_outputs_are_the_six_agreed_facts_and_no_credential() -> None:
 
 
 def test_no_file_in_the_module_carries_a_token_shaped_literal() -> None:
-    r"""Criterion 10 and a project rule. Catches a real credential pasted into
-    `terraform.tfvars.example` while "filling it in to test the plan", which is why the
+    r"""Catches a real credential pasted into
+    `terraform.tfvars.example` while "filling it in to test a plan", which is why the
     example file is scanned like every other file and not exempted. A finding is a
     `(token|secret|password|api_key)`-ish name assigned a quoted run of 20+ characters from
     `[A-Za-z0-9+/=_-]` - long enough that `hcloud_token = "changeme"` and a `${var.x}`
@@ -332,7 +332,7 @@ def test_no_file_in_the_module_carries_a_token_shaped_literal() -> None:
 
 
 def test_the_ci_job_checks_terraform_always_and_plans_only_with_credentials() -> None:
-    """Criterion 8 and decision B. Catches an `if` copied from the plan step onto `fmt`, `init`
+    """Catches an `if` copied from the plan step onto `fmt`, `init`
     or `validate`, which would make the whole terraform gate inert on exactly the fork pull
     requests it exists to check - green because it never ran; catches an unconditional `plan`,
     which fails every PR that has no TFC credentials; and catches the silent skip, where a
@@ -370,7 +370,7 @@ def test_the_ci_job_checks_terraform_always_and_plans_only_with_credentials() ->
 
 
 def test_infra_check_runs_terraform_for_real_and_skips_kustomize_when_absent() -> None:
-    """Decision H and a project rule. Three terraform lines, each its own line so its exit
+    """Three terraform lines, each its own line so its exit
     code is the target's, then a guarded kustomize half. That half no longer carries the
     pipeline itself: it delegates to the `k8s-check` target, which CI runs on its own without
     a terraform toolchain, so the invocation exists in one place. The guard stays because it

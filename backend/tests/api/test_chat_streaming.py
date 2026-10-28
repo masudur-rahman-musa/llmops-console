@@ -7,7 +7,7 @@ it is `StubAdapter`, whose `stream_chat` plays a scripted list of NEUTRAL events
 the Anthropic SSE dialect is tested one layer down, in
 tests/providers/test_anthropic_streaming.py, and nothing of it may appear here.
 
-Three properties carry the plan's risk and each has its own case. The stream is
+Three properties carry the risk and each has its own case. The stream is
 opened and its first event pulled inside the route, so a provider failure is
 still a typed 502 and not a 200 carrying an error frame
 (`test_a_provider_failure_before_the_first_event_is_502_with_no_stream`). `usage`
@@ -21,7 +21,7 @@ that tells a client a stream was truncated
 The stub's streamed numbers and strings differ from its non-streaming ones, so a
 route rendering a stream out of the non-streaming path is visible here rather
 than accidentally right. No socket is opened, no provider key is read and no
-backing service is started (#66).
+backing service is started.
 """
 
 from __future__ import annotations
@@ -119,9 +119,9 @@ def deltas(parsed: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def test_stub_adapter_satisfies_the_protocol() -> None:
-    """Catches a stub that has `chat` but not the `stream_chat` the protocol grew in this
-    plan: every streaming case in this file would then pass against a contract no shipped
-    adapter implements, and the first real adapter would fail at runtime."""
+    """Catches a stub that has `chat` but not the `stream_chat` the protocol grew: every streaming
+    case in this file would then pass against a contract no shipped adapter implements, and the
+    first real adapter would fail at runtime."""
     stub = StubAdapter(name="anthropic")
 
     assert isinstance(stub, Adapter)
@@ -254,8 +254,8 @@ def test_streamed_tool_call_is_one_whole_delta(settings: Settings) -> None:
     assert STREAM_TOOL_INDEX != 0
 
 
-# The same table the non-streaming path is pinned against, unknown row included
-#. A client branches on this field to decide whether to run a
+# The same table the non-streaming path is pinned against, unknown row included.
+# A client branches on this field to decide whether to run a
 # tool or to report a truncated answer.
 FINISH_REASON_CASES: list[tuple[str, str, str]] = [
     ("a finished answer", "end_turn", "stop"),
@@ -407,7 +407,7 @@ def test_a_failure_after_the_first_event_emits_an_error_chunk_and_no_done(
     tell from a complete answer, and catches one that still sends `data: [DONE]` after the
     error frame, which tells the client the truncated answer was finished. The status is
     already 200 and cannot be changed, so the frame and the missing sentinel are the whole
-    report (decision E)."""
+    report."""
     stub = StubAdapter(
         name="anthropic",
         stream_error=ProviderError("anthropic: the connection dropped", retryable=True),
@@ -447,7 +447,7 @@ def test_every_frame_ends_with_a_blank_line(chat_client: TestClient) -> None:
 
 
 def test_an_untyped_failure_mid_stream_is_not_rendered_as_a_frame(settings: Settings) -> None:
-    """Pins the deliberate limit of decision E rather than a behaviour. An untyped
+    """Pins the deliberate limit of the behaviour rather than a behaviour. An untyped
     exception is a bug, there is nothing safe to say about one in a frame, and nothing in
     this gateway turns it into a body: it escapes the generator and the ASGI server logs
     it, which reaches a real client as a cut stream with no sentinel. Catches a bare
@@ -506,8 +506,8 @@ def test_closing_the_frame_generator_releases_the_provider_stream() -> None:
 
 def test_include_usage_false_is_422(chat_client: TestClient) -> None:
     """Catches a route that accepts `include_usage: false` and then streams usage anyway,
-    which is a promise silently broken, or one that honours it, which breaks the design's
-    guarantee that every stream reports what it consumed (decision D)."""
+    which is a promise silently broken, or one that honours it, which breaks the
+    guarantee that every stream reports what it consumed."""
     response = post_chat(chat_client, stream_body(stream_options={"include_usage": False}))
 
     assert_error_body(response, status=422, code="VALIDATION")

@@ -79,7 +79,7 @@ services:
       timeout: 3s
       retries: 10
     # No persistence on purpose: everything Redis holds here is a redaction map
-    # with an hour's TTL and, from an earlier change, a cache entry. Both are derived data,
+    # with an hour's TTL and a cache entry. Both are derived data,
     # and a disk image of them is personal data at rest that nothing needs.
 
   postgres:

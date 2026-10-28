@@ -1,6 +1,6 @@
 """What a tenant with `trace_content` on sends to Langfuse: the redacted talk and the answer.
 
-An earlier change and a design note. Every case is a real request through `TestClient`, read back from
+Every case is a real request through `TestClient`, read back from
 the in-memory span exporter. `evals` is the tenant under test: it is switched on in the
 shipped policy, and the off case runs on a copy where it is switched off.
 """

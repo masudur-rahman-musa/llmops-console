@@ -54,8 +54,8 @@ ERROR_RATE_QUERY: Final[str] = (
 """The share of requests answered 5xx over the last day, reused the same way."""
 
 CIRCUITS_QUERY: Final[str] = "max by (provider) (gateway_circuit_state)"
-"""The worst breaker state per provider across replicas. The breaker is in-process
-, so two pods can disagree and the page shows the worse of them."""
+"""The worst breaker state per provider across replicas. The breaker is in-process, so two pods
+can disagree and the page shows the worse of them."""
 
 
 AVAILABILITY_OBJECTIVE: Final[float] = 0.995

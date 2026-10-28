@@ -1,18 +1,18 @@
 # Postgres: the ledger, the eval runs and the budget windows. The same
-# `postgres:16` the local stack runs (decision E), so a developer debugs one
+# `postgres:16` the local stack runs, so a developer debugs one
 # version rather than two.
 #
-# Credentials arrive by reference only (decision D): `postgres-credentials`
-# carries POSTGRES_USER, POSTGRES_PASSWORD and POSTGRES_DB, and row 21 supplies
-# it SOPS-encrypted. Nothing in this repo writes that Secret, so an apply before
-# row 21 fails loudly on a missing one rather than coming up with a password
+# Credentials arrive by reference only: `postgres-credentials`
+# carries POSTGRES_USER, POSTGRES_PASSWORD and POSTGRES_DB, and the SOPS-encrypted
+# secrets file supplies it. Nothing else in this repo writes that Secret, so an apply before
+# it exists fails loudly on a missing one rather than coming up with a password
 # that is in git.
 #
 # `PGDATA` points at a SUBDIRECTORY of the mount, not at the mount itself: a
 # PersistentVolume arrives with a `lost+found` on several storage classes, and
 # initdb refuses a data directory that is not empty.
 #
-# `storageClassName` is deliberately absent (decision B). k3s defaults to
+# `storageClassName` is deliberately absent. k3s defaults to
 # `local-path` and EKS to `gp2`, so the manifest leaves neither StatefulSet
 # Pending on a class that does not exist there.
 ---

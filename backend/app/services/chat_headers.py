@@ -97,7 +97,7 @@ def resolution_attributes(alias: str, resolved: Resolved) -> SpanAttributes:
 def gateway_headers(
     resolved: Resolved, trace_id: str, *, redacted: bool, cache: str = CACHE_STATUS_MISS
 ) -> dict[str, str]:
-    """The six `X-Gateway-*` headers describing one served request (#9).
+    """The six `X-Gateway-*` headers describing one served request.
 
     `redacted` is keyword-only and has no default on purpose. A default would let
     a route report "nothing was redacted" for a request it did redact simply by

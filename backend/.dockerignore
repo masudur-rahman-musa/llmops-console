@@ -1,5 +1,4 @@
-# What never enters the shipped image. Mirror of the rule:
-# src/ is what runs, tests/ is what checks, dev/ is how we work.
+# What never enters the shipped image: app/ is what runs, tests/ is what checks.
 
 # version control and editor
 .git
@@ -24,8 +23,7 @@ infra
 .pre-commit-config.yaml
 Makefile
 
-# our working process and documentation
-dev-process
+# documentation
 docs
 README.md
 LICENSE
@@ -50,12 +48,3 @@ web
 
 # scripts: keep only if a script must run on the server (migrations, seed)
 # scripts
-
-# private working files (never in an image either)
-notes.md
-his.md
-REQUIREMENTS.md
-pl
-dev-process
-dev
-switches.md

@@ -1,4 +1,4 @@
--- The incidents table goes with the console's Incidents tab (ADR 0049).
+-- The incidents table goes with the console's Incidents tab.
 --
 -- This cannot be undone: every incident row is lost. Incidents are now written
 -- up as postmortems in docs/postmortems/. The releases table stays, because the

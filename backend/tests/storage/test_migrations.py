@@ -13,8 +13,7 @@ discovery, the published schema default, and the `SCHEMA_PATTERN` rejection
 table. That last one is the sharpest case in the file - the schema name is
 INTERPOLATED into DDL rather than bound as a parameter, because a `CREATE SCHEMA`
 cannot take a placeholder - so it is checked against a connection double that
-fails the test if a single statement reaches it (a project rule for the
-trailing-newline rows).
+fails the test if a single statement reaches it (the trailing-newline rows).
 """
 
 from __future__ import annotations
@@ -153,7 +152,7 @@ def test_the_pool_is_bounded() -> None:
     they report on the server rather than on the pool. Asserted exactly, because a
     range would admit the default this case exists to catch.
 
-    An earlier change also adds `POOL_WAIT_TIMEOUT`: a caller that cannot get a connection
+    `POOL_WAIT_TIMEOUT` is also pinned: a caller that cannot get a connection
     in 2.0 seconds gets an error rather than waiting indefinitely."""
     assert (MIN_POOL_SIZE, MAX_POOL_SIZE) == (1, 4)
     assert POOL_WAIT_TIMEOUT == 2.0
@@ -204,7 +203,8 @@ def test_a_schema_name_that_is_not_a_slug_is_refused_before_any_statement(
     schema name cannot be a bound parameter, so this pre-check is the ONLY thing standing
     between the argument and the statement; the connection double fails the test on any
     statement, which is what makes this "nothing ran" rather than "the statement errored".
-    The newline and CRLF rows are the ones `re.match` with a trailing `$` would accept, and a schema name with a line break in it is exactly the kind of
+    The newline and CRLF rows are the ones `re.match` with a trailing `$` would accept, and a
+    schema name with a line break in it is exactly the kind of
     object nobody can drop afterwards."""
     with pytest.raises(ValueError):
         apply_migrations(as_connection(ForbiddenConnection()), schema=schema_name)
@@ -280,8 +280,8 @@ def test_a_second_run_leaves_the_data_alone(pool: Pool, migrated_schema: str) ->
 def test_every_applied_version_is_recorded(pool: Pool, migrated_schema: str) -> None:
     """Catches bookkeeping written for some files and not others, which makes the runner
     re-apply exactly the migration it forgot on the next deploy. Compared against
-    `migrations()` rather than against a literal, so the second SQL file an earlier change added
-    is covered here without this case being edited, and so is every file after it."""
+    `migrations()` rather than against a literal, so the later SQL files
+    are covered here without this case being edited, and so is every file after it."""
     assert applied_versions(pool, migrated_schema) == [
         migration.version for migration in migrations()
     ]

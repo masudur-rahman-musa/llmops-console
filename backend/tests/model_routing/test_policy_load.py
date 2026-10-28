@@ -50,7 +50,7 @@ aliases:
       - {provider: a, model: m1}
 tenants: {}
 """
-"""One alias written the way every alias in the repository was written before #23:
+"""One alias written the way every alias in the repository was written before the switch existed:
 no `semantic_cache` key at all."""
 
 
@@ -61,7 +61,7 @@ def test_only_agent_default_carries_the_semantic_cache_switch() -> None:
     assertion anywhere. Asserted against the SHIPPED file rather than a fixture, because the
     file is what a deployment runs, and stated as an exhaustive pair (the one that is on,
     every other one off) so that a later alias added with the switch on cannot slip in
-    behind a check that only names today's aliases (#23, "off by default per alias")."""
+    behind a check that only names today's aliases ("off by default per alias")."""
     policy = load_policy(SHIPPED_POLICY_PATH, SHIPPED_PROVIDERS_DIR)
 
     enabled = {name for name, alias in policy.aliases.items() if alias.semantic_cache}
@@ -71,7 +71,7 @@ def test_only_agent_default_carries_the_semantic_cache_switch() -> None:
 
 def test_an_alias_that_omits_the_semantic_switch_is_off(policy_file: PolicyWriter) -> None:
     """Catches a switch whose default is `True`, or one Pydantic makes required: every alias
-    written before #23 omits the key, so a required field would refuse every policy file in
+    written before the switch omits the key, so a required field would refuse every policy file in
     existence and a `True` default would silently opt all of them into approximate reuse -
     the opposite of what "off by default per alias" means."""
     path = policy_file(ALIAS_WITHOUT_THE_SWITCH)
@@ -317,7 +317,7 @@ def test_a_zero_rate_limit_is_refused_at_load(
     empty level, so it can never be refilled into a servable state at all.
 
     Catches `rpm: int` left without `ge=1`, which is exactly the shape the field has
-    before this plan. The FIELD PATH is asserted rather than only the raise, because a
+    before the change. The FIELD PATH is asserted rather than only the raise, because a
     `PolicyInvalid` that says "validation failed" leaves an operator grepping a YAML file
     during an outage - which is why every other row of this module's invalid table
     asserts a path too. The four rows are two fields times two ways of being unservable,

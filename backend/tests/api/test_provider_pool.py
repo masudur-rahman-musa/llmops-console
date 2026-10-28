@@ -1,6 +1,6 @@
 """Provider pool: isolation, async shape, dispatch and stream teardown.
 
-An earlier change moves the chat and embeddings routes to `async def` and hands provider
+The chat and embeddings routes are `async def` and hand provider
 work to a dedicated bounded pool so one slow provider cannot hold the shared
 worker pool. These tests assert the constant, the shape and the wiring before
 the implementation exists.

@@ -42,7 +42,7 @@ from app.core.validation import IdentifierInvalid, checked_identifier
 from app.redaction.errors import RedactionMapStoreUnavailable
 
 REDACTION_MAP_TTL_SECONDS: Final[int] = 3600
-"""How long a placeholder map stays readable, in seconds (the design's one hour).
+"""How long a placeholder map stays readable, in seconds (one hour).
 
  The boundary is inclusive: a map is still
 there at exactly this many seconds and gone one second later."""
@@ -152,8 +152,8 @@ class RedisRedactionMapStore:
     rather than slept for. There is no clock
     to inject here, which is why this class takes none.
 
-    Both key segments are pre-checked before any command is sent (standing rule
-    1). `tenant` and `map_id` are client-supplied strings that shape the key, and
+    Both key segments are pre-checked before any command is sent. `tenant` and `map_id` are
+    client-supplied strings that shape the key, and
     a colon in either would forge a segment and address another tenant's
     namespace: `tenant` is checked against the gateway's own
     `IDENTIFIER_PATTERN` and `MAX_IDENTIFIER_LENGTH`, `map_id` against

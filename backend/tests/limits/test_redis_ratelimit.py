@@ -6,8 +6,8 @@ make.
 
 The half that needs NOTHING is the validation and failure half, over a client
 that records its calls and refuses to answer. "No token was taken" is asserted as
-"Redis was never called at all", which is the claim a project rule actually
-makes, and the fail-open rows (decision E) need a client that raises rather than
+"Redis was never called at all", which is the claim
+being made, and the fail-open rows need a client that raises rather than
 a server that is down.
 
 The half that needs a REAL Redis is the half whose claims are the Lua script's:
@@ -21,7 +21,7 @@ reads: exporting that one to run this file would hand every other test in the
 suite a Redis-backed gateway it never asked for, and the root `tests/conftest.py`
 clears it for exactly that reason.
 
-THE DIFFERENTIAL IS THE POINT OF THIS FILE. Section 5's second risk is that the
+THE DIFFERENTIAL IS THE POINT OF THIS FILE. The risk is that the
 Lua script cannot be exercised without a live Redis and this machine has never
 started the compose stack, so the in-process twin carries every enforcement case
 in tests/gateway/test_rate_limit_enforcement.py. That twin is only EVIDENCE about
@@ -37,7 +37,7 @@ The contract these cases are written against, before it exists:
 
 * `RedisRateLimitStore(client, *, key_prefix=RATE_LIMIT_KEY_PREFIX,
   clock=time.time)`, which registers its Lua script through
-  `client.register_script(...)` ONCE, at construction (decision A: one registered
+  `client.register_script(...)` ONCE, at construction (one registered
   script, no dependency added, and no `EVAL` of a whole script body per request);
 * the registered script is called ONCE per `take`, with `keys=[the bucket key]`
   and args carrying the capacity, the rate, the cost, the clock reading and the
@@ -49,7 +49,7 @@ The contract these cases are written against, before it exists:
   the dimension.
 
 `None` is "cannot answer", never "refused" and never "allowed" - the route reads
-it as "serve, and log" (decision E). A limiter that failed CLOSED would turn a
+it as "serve, and log". A limiter that failed CLOSED would turn a
 Redis blip into a total outage on traffic every provider would have served, which
 is the one thing a rate limit must not cause.
 """
@@ -199,7 +199,7 @@ def test_a_take_refuses_a_malformed_tenant_before_touching_redis(label: str, ten
     against `ratelimit:ev:als:req` shapes a bucket nobody reads, so the tenant named
     `ev` is limited by traffic that is not its own, and a glob character widens any later
     `SCAN` an operator runs over these keys. The assertion is on the recorded calls
-    rather than on "no key exists", because that is the claim a project rule makes - the
+    rather than on "no key exists", because that is the claim being made - the
     check runs BEFORE the effect, not instead of it. The trailing-newline row is standing
     rule 4's: a check written `^...$` with `.match` accepts it, and a line break inside a
     Redis key is a key nothing else can address."""
@@ -229,7 +229,7 @@ def test_the_token_dimension_refuses_the_same_tenants_before_touching_redis(
 
 
 def test_the_tenant_length_boundary_is_inclusive() -> None:
-    """The inclusive boundary a project rule asks for, on the store rather than on the key
+    """The inclusive boundary, on the store rather than on the key
     function. Catches a `>=` that refuses a tenant of exactly the permitted length - a
     name `gateway/context.py` already authenticated, so every request from that tenant
     would fail with an untyped error before it reached a provider."""
@@ -241,7 +241,7 @@ def test_the_tenant_length_boundary_is_inclusive() -> None:
 
 
 # --------------------------------------------------------------------------
-# the key and the one round trip (decision A)
+# the key and the one round trip
 # --------------------------------------------------------------------------
 
 
@@ -271,8 +271,8 @@ def test_the_default_prefix_is_the_one_the_key_is_written_under() -> None:
 
 def test_a_prefixed_store_writes_under_its_own_namespace() -> None:
     """Catches a `key_prefix` argument that is accepted and ignored, which would make every
-    live case below share one bucket and this file's isolation a fiction (standing rule
-    7): the differential would then be comparing a Redis bucket that another test had
+    live case below share one bucket and this file's isolation a fiction: the differential would
+    then be comparing a Redis bucket that another test had
     already drained."""
     client = RecordingRedis()
     store = RedisRateLimitStore(
@@ -285,7 +285,7 @@ def test_a_prefixed_store_writes_under_its_own_namespace() -> None:
 
 
 def test_the_script_is_registered_once_and_run_once_per_take() -> None:
-    """Decision A's whole justification, asserted as the two counts that carry it.
+    """The whole justification, asserted as the two counts that carry it.
 
     Registered once: a store that called `register_script` per take would ship the script
     body on every request, which is the round trip `register_script` exists to avoid.
@@ -311,8 +311,8 @@ def test_the_script_is_handed_the_cost_the_capacity_the_rate_and_the_ttl() -> No
     ever. The clock reading is asserted too, because a script that read Redis's own
     `TIME` would give two replicas two different notions of when the bucket was last
     seen. The order of the arguments is deliberately not asserted - the numbers are all
-    distinct, so containment is enough to catch an omission without pinning a layout the
-    plan never agreed."""
+    distinct, so containment is enough to catch an omission without pinning a layout nobody
+    agreed."""
     store, client = fake_store()
 
     store.take(TENANT, RateDimension.TOKENS, cost=166, capacity=TOKEN_CAPACITY, rate=TOKEN_RATE)
@@ -346,7 +346,7 @@ def test_the_scripts_answer_becomes_the_taken() -> None:
     """Catches a store that discards what the script decided and answers `allowed` from its
     own arithmetic - which would be a second bucket, in the process, disagreeing with the
     shared one - and one that drops the retry-after, leaving every 429 without the header
-    decision D exists for. Both fields are read from a scripted answer no local
+    the header exists for. Both fields are read from a scripted answer no local
     computation could produce."""
     refusing, _ = fake_store(answer=(0, 7))
     allowing, _ = fake_store(answer=(1, 0))
@@ -359,7 +359,7 @@ def test_the_scripts_answer_becomes_the_taken() -> None:
 
 
 # --------------------------------------------------------------------------
-# fail open (decision E)
+# fail open
 # --------------------------------------------------------------------------
 
 REDIS_FAILURES: list[tuple[str, Exception]] = [
@@ -374,11 +374,11 @@ REDIS_FAILURES: list[tuple[str, Exception]] = [
 def test_an_unreachable_redis_reads_unknown_rather_than_raising(
     label: str, error: Exception
 ) -> None:
-    """Decision E, at the seam where it is decided.
+    """At the seam where it is decided.
 
     Catches a store that lets `redis.RedisError` escape, which turns a Redis blip into a
     5xx on every request a provider would have served - the failure a rate limit must not
-    cause, and the reason the plan chose fail-open over fail-closed. And catches the two
+    cause, and the reason for choosing fail-open over fail-closed. And catches the two
     over-corrections, both of which are worse than raising: answering
     `Taken(allowed=False, ...)` fails CLOSED silently, refusing every tenant for as long
     as Redis is down; answering `Taken(allowed=True, ...)` is indistinguishable from a
@@ -388,7 +388,7 @@ def test_an_unreachable_redis_reads_unknown_rather_than_raising(
 
     Four failure rows because the swallow has to be on `redis.RedisError`, the base:
     catching `ConnectionError` alone passes the first row and raises on the other three.
-    `NOSCRIPT` is the row that is specific to decision A - a `ResponseError` is exactly
+    `NOSCRIPT` is the row that is specific to this store - a `ResponseError` is exactly
     what a flushed script cache answers, and it is the failure this store will meet in
     production before it ever meets a dropped connection."""
     store, client = fake_store(error=error)
@@ -398,10 +398,10 @@ def test_an_unreachable_redis_reads_unknown_rather_than_raising(
 
 
 def test_every_swallowed_failure_is_logged_with_the_tenant_and_the_dimension() -> None:
-    """The other half of decision E, and the half that is easy to leave out.
+    """The other half, and the half that is easy to leave out.
 
     Failing open means a ceiling silently stops being enforced: the request is served, no
-    metric family exists to notice it (decision F), and the log is then the ONLY place
+    metric family exists to notice it, and the log is then the ONLY place
     that window is visible at all. Catches a bare `except redis.RedisError: return None`,
     which is the obvious implementation and leaves an operator with no way to tell a
     quiet minute from an unreachable limiter. Both dimensions are asserted, because they
@@ -536,7 +536,7 @@ is what makes rows ten and eleven mean anything."""
 def test_the_two_stores_answer_identically_over_one_interleaved_sequence(
     live_store: RedisRateLimitStore, clock: list[float]
 ) -> None:
-    """The differential section 5's second risk asks for, and the only thing that makes the
+    """The differential check, and the only thing that makes the
     in-process twin evidence about the Lua script.
 
     Every enforcement case in tests/gateway/test_rate_limit_enforcement.py runs against

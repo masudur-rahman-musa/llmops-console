@@ -1,8 +1,8 @@
 r"""`.github/workflows/ci.yml` and the `Makefile`: the security checks run as `make security`.
 
-An earlier change moves the three security checks - the gitleaks scan over the whole history, the
+The three security checks - the gitleaks scan over the whole history, the
 Python dependency audit (`uv export` then pip-audit 2.9.0) and the console's `pnpm audit` -
-out of `ci.yml` and into ONE Make target, `security`, which `make verify` also runs. CI keeps
+live in ONE Make target, `security`, which `make verify` also runs. CI keeps
 one `security` job that does its own setup (a full-history checkout, uv, pnpm and Node, the
 console install) and then runs `make security` and nothing else. So the commands live in the
 `security` RECIPE, and this file pins two things:
@@ -17,13 +17,13 @@ console install) and then runs `make security` and nothing else. So the commands
   `$(call console,audit)`.
 
 None of these checks can be OBSERVED from a pytest run: the scan needs Docker and a
-full-depth clone, the audits need the advisory databases over the network. The plan's own
-last step runs `make security` once and pastes the result; that evidence is not a case here.
+full-depth clone, the audits need the advisory databases over the network. Running `make security`
+is the real check; its result is not a case here.
 
 Three things are checked against another file rather than written down twice:
 
 * the gitleaks version, read out of `.pre-commit-config.yaml`'s `rev: v8.24.3` and compared
-  to the image tag the recipe must carry LITERALLY. a project rule is the point and the
+  to the image tag the recipe must carry LITERALLY. The point and the
   cost: a tag factored into a Make variable is a reference this static reader sees as equal
   to nothing, so the drift this comparison catches - `make security` scanning with one
   version while the commit hook uses another - becomes invisible. The repetition is
@@ -35,7 +35,7 @@ Three things are checked against another file rather than written down twice:
   audits an empty or stale file and reports green.
 * `.gitleaksignore`'s fingerprints, whose PATHS are read out of the file itself rather than
   listed here. The file is the record of which literals were allowed; this suite keeps that
-  list to the exact shape decision A chose.
+  list to the exact shape it has.
 
 The workflow is read with `yaml.safe_load` and the repository root comes from this file's
 own `__file__`, never from the working directory, so the suite behaves the same run from
@@ -47,7 +47,7 @@ here rather than imported across trees.
 matters: the bare key `on` is YAML 1.1's boolean, so `yaml.safe_load` returns that block
 under the key `True` rather than under `"on"`.
 
-Selection, and a project rule. A line that merely ECHOES a fragment matches a fragment
+Selection. A line that merely ECHOES a fragment matches a fragment
 search exactly as the real command does - a banner, a visible-skip message, a comment
 explaining what is deliberately NOT passed. Every case that selects or scans by command
 text therefore goes through `command_lines()` (for `ci.yml`) or `recipe_commands()` (for the
@@ -75,17 +75,17 @@ PRE_COMMIT = REPO_ROOT / ".pre-commit-config.yaml"
 GITLEAKS_IGNORE = REPO_ROOT / ".gitleaksignore"
 GITLEAKS_CONFIG = REPO_ROOT / ".gitleaks.toml"
 
-#: The one CI job and the one Make target the plan adds, and the exact step that joins them.
+#: The one CI job and the one Make target that runs it, and the exact step that joins them.
 SECURITY_JOB = "security"
 SECURITY_TARGET = "security"
 MAKE_SECURITY = "make security"
 
-#: The two jobs an earlier change merges into `security`. Each one surviving is a second copy of a
-#: command the Makefile now owns, which is the drift the whole plan exists to end.
+#: The two jobs merged into `security`. Each one surviving is a second copy of a
+#: command the Makefile now owns, which is the drift this layout exists to end.
 RETIRED_JOBS = ("secrets", "audit")
 
 #: The tools no `ci.yml` step may run itself, each as a pattern over a COMMAND line. `pnpm`
-#: and `audit` may have flags between them (`pnpm -C web audit`), so that row is not a
+#: and `audit` may have flags between them (`pnpm -C web audit`), so that entry is not a
 #: plain substring.
 DIRECT_TOOLS = {
     "gitleaks": re.compile(r"gitleaks"),
@@ -129,17 +129,17 @@ SAMPLE_DIGEST = "a" * 64
 AUDIT_FILE = "backend/scratch/requirements-audit.txt"
 IGNORED_SCRATCH = "/backend/scratch/"
 
-#: Every path this plan names. The pytest fixture paths are here too, because a rename of
+#: Every path the security check names. The pytest fixture paths are here too, because a rename of
 #: any of them would leave the suite reading a file the build no longer uses.
 SECURITY_PATHS = (MAKEFILE, WORKFLOW, PRE_COMMIT, GITLEAKS_IGNORE, BACKEND)
 
-#: The count the full-history run produced at drafting time, exact, plus the two
+#: The count the full-history run produced when the file was reviewed, exact, plus the two
 #: `web/tests/screens.test.tsx` fingerprints reviewed after. A count is an absolute
 #:, so it is asserted by equality and not as a ceiling.
 EXPECTED_FINGERPRINTS = 16
 
 #: The fingerprint shape, run with `re.fullmatch` and therefore written WITHOUT the
-#: `^`/`$` the plan quotes it with: a project rule, since in Python `$` also matches before a
+#: `^`/`$` anchors, since in Python `$` also matches before a
 #: trailing newline and `.match` with anchors would accept a fingerprint carrying one.
 FINGERPRINT_PATTERN = re.compile(r"[0-9a-f]{40}:[^:]+:generic-api-key:\d+")
 
@@ -154,7 +154,7 @@ SAMPLE_COMMIT = "a" * 40
 SHORT_COMMIT = "a" * 39
 REJECTED_FINGERPRINT_PATH = "packages/opsconsole/x.py"
 
-#: The two `[allowlist]` keys decision A rejects. A path or a regex allowlist also hides a
+#: The two `[allowlist]` keys that are rejected. A path or a regex allowlist also hides a
 #: real key pasted into the same file later; a fingerprint pins one line of one blob.
 FORBIDDEN_ALLOWLIST_KEYS = ("paths", "regexes")
 
@@ -168,7 +168,7 @@ EXPORT_FLAGS = (
     "--all-groups",
 )
 
-#: The audit, with the version pinned in the `--from` reference (decision C: the tool is
+#: The audit, with the version pinned in the `--from` reference (the tool is
 #: the check's, not the package's, so it never enters the lockfile).
 AUDIT_COMMAND = "pip-audit"
 AUDIT_FLAGS = ("pip-audit==2.9.0", "--strict", "--require-hashes", "--disable-pip")
@@ -209,7 +209,7 @@ def with_of(step: dict[str, Any]) -> dict[str, Any]:
 
 
 def is_command(stripped: str) -> bool:
-    """a project rule: a blank line, a comment or a printer is not a command."""
+    """A blank line, a comment or a printer is not a command."""
     if stripped == "" or stripped.startswith("#"):
         return False
     return "echo" not in stripped and "printf" not in stripped
@@ -218,7 +218,7 @@ def is_command(stripped: str) -> bool:
 def command_lines(jobs: dict[str, Any]) -> list[str]:
     """Every EXECUTED line of every `run:` script: comment lines and printers dropped.
 
-    a project rule. A step that echoes `pnpm audit` into the log matches a fragment search
+    A step that echoes `pnpm audit` into the log matches a fragment search
     exactly as the real command does, and a comment explaining that a tool deliberately left
     this file carries the tool's name. Lines carrying `echo` or `printf` and lines whose first
     character is `#` are therefore not commands here.
@@ -348,7 +348,7 @@ def fingerprint_path(fingerprint: str) -> str:
 
 def allowlists() -> list[dict[str, Any]]:
     """Every `allowlist` table `.gitleaks.toml` declares, whether written as one table or as an
-    array of them. An absent file has none, which criterion 6 accepts."""
+    array of them. An absent file has none, which is accepted."""
     if not GITLEAKS_CONFIG.is_file():
         return []
     document = tomllib.loads(GITLEAKS_CONFIG.read_text(encoding="utf-8"))
@@ -375,7 +375,7 @@ def jobs(workflow: dict[str, Any]) -> dict[str, Any]:
 def test_the_security_job_runs_make_security(jobs: dict[str, Any]) -> None:
     """Catches a `security` job that runs the tools itself, or a neighbouring target
     (`make verify`, `make security-images`), instead of exactly `make security`: the laptop
-    and CI would then run different commands again, which is the drift the plan ends. Exactly
+    and CI would then run different commands again, which is the drift this layout ends. Exactly
     one such step, so a second copy cannot hide beside the first."""
     assert SECURITY_JOB in jobs, f"`ci.yml` declares no `{SECURITY_JOB}` job"
     runs = [str(step.get("run", "")).strip() for step in steps(jobs[SECURITY_JOB])]
@@ -413,7 +413,7 @@ def test_the_old_secrets_and_audit_jobs_are_gone(jobs: dict[str, Any], name: str
 def test_verify_runs_security() -> None:
     """Catches a `security` target that `verify` does not depend on: `make verify` is then
     green on a laptop while CI's `security` job is red on the same commit, which is exactly
-    the broken promise this plan closes."""
+    the broken promise this layout closes."""
     prerequisites = target_prerequisites("verify")
 
     assert SECURITY_TARGET in prerequisites, f"`verify` runs {prerequisites}"
@@ -458,8 +458,8 @@ def test_the_gitleaks_image_is_pinned_by_digest() -> None:
 def test_the_image_pin_refuses_a_tag_without_a_digest(candidate: str, accepted: bool) -> None:
     r"""The pin's unhappy rows, run against the same pattern the case above runs over the
     recipe. Catches a pattern loosened to make the digest optional, a quantifier written as a
-    minimum or a range (63 or 65 hex accepted), a tag other than the hook's, and (standing rule
-    4) an anchored `.match` accepting a trailing newline, CRLF or space. The digest is a
+    minimum or a range (63 or 65 hex accepted), a tag other than the hook's, and an anchored
+    `.match` accepting a trailing newline, CRLF or space. The digest is a
     repeated hex character on purpose: this repository's own scan reads this file."""
     assert (PINNED_IMAGE.fullmatch(candidate) is not None) is accepted
 
@@ -482,14 +482,14 @@ def test_the_audit_file_sits_in_an_ignored_folder() -> None:
 
 @pytest.mark.parametrize("path", SECURITY_PATHS, ids=lambda path: path.name)
 def test_every_named_security_path_exists(path: Path) -> None:
-    """a project rule. Catches one of the paths this plan names moved or renamed without the
-    plan following; the `backend/` row is the one no other case reads, and it catches the
+    """Catches one of the named paths moved or renamed without this list
+    following; the `backend/` entry is the one no other case reads, and it catches the
     project moved while the recipe still exports `--project backend`."""
     assert path.exists(), f"{path} does not exist"
 
 
 def test_the_secrets_job_checks_out_the_whole_history(jobs: dict[str, Any]) -> None:
-    """Now reads the `security` job. Catches its checkout left at the default
+    """Reads the `security` job. Catches its checkout left at the default
     `fetch-depth: 1`, which gives the runner ONE commit: the history scan then reports clean
     over a repository whose secret is three commits back. Catches the checkout dropped
     entirely. Every checkout step is counted, so a second shallow one cannot be the one the
@@ -508,7 +508,7 @@ def test_the_secrets_job_checks_out_the_whole_history(jobs: dict[str, Any]) -> N
 def test_the_secrets_job_scans_history_redacted_and_fails_on_a_finding(
     label: str, pattern: re.Pattern[str]
 ) -> None:
-    """Now reads the `security` recipe's one scan command, one row per fragment. `git` catches
+    """Reads the `security` recipe's one scan command, one row per fragment. `git` catches
     the scan pointed at the working directory (`dir`), which never reads the history;
     `--redact` catches a finding printed in full into a public Actions log; `--exit-code 1`
     catches a scan that reports and exits 0. Each row reads the SCAN command itself, so the
@@ -520,7 +520,7 @@ def test_the_secrets_job_scans_history_redacted_and_fails_on_a_finding(
 
 @pytest.mark.parametrize("flag", FORBIDDEN_SCAN_FLAGS)
 def test_the_secrets_job_carries_neither_staging_area_flag(flag: str) -> None:
-    """Now reads the `security` recipe, one row per flag. Both are the LOCAL hook's flags,
+    """Reads the `security` recipe, one row per flag. Both are the LOCAL hook's flags,
     and the likeliest way the recipe gets written is by copying the hook's entry from
     `.pre-commit-config.yaml` - at which point the scan narrows to a staging area, finds
     nothing by construction, and exits 0 forever. Command lines only, so a comment
@@ -533,10 +533,10 @@ def test_the_secrets_job_carries_neither_staging_area_flag(flag: str) -> None:
 
 
 def test_the_installed_version_is_the_one_the_commit_hook_pins() -> None:
-    """Now reads the recipe's image TAG, and a project rule. Catches `make security`
+    """Reads the recipe's image TAG. Catches `make security`
     scanning with a different gitleaks than the commit hook uses - say the hook bumped to a
     new `rev` while the recipe stayed: the two then disagree about what a secret is. The digest
-    pin above cannot see this row, because it pins its own copy of the tag."""
+    pin above cannot see this, because it pins its own copy of the tag."""
     images = gitleaks_images()
 
     assert len(images) == 1, f"the `security` recipe names {len(images)} gitleaks images: {images}"
@@ -565,7 +565,7 @@ def test_neither_new_job_may_fail_without_failing_the_build(
 
 
 def test_the_ignore_file_holds_exactly_the_sixteen_reviewed_fingerprints() -> None:
-    """Case 7, by COUNT equality. The count is the review: 16 findings
+    """By COUNT equality. The count is the review: 16 findings
     were read and each judged a fake literal in a test. A 17th line is a
     finding nobody read, added by whoever needed the job green that afternoon - which is exactly
     how a fingerprint file stops being an audited exception list. A count below 16 catches the
@@ -577,11 +577,11 @@ def test_the_ignore_file_holds_exactly_the_sixteen_reviewed_fingerprints() -> No
 
 
 def test_every_ignored_line_is_a_single_generic_api_key_fingerprint() -> None:
-    """Case 8, with `re.fullmatch`. Catches a line that is not a
+    """Uses `re.fullmatch`. Catches a line that is not a
     fingerprint at all: gitleaks also accepts a bare commit SHA there, which allowlists EVERY
-    finding in that commit, and a rule id on its own, which disables the rule repository-wide.
+    finding in that commit, and a rule id on its own, which disables that rule repository-wide.
     Both are one short line away from the correct form and neither is visible as a widening in
-    review. The rule field is pinned to `generic-api-key` so an exception for some other rule -
+    review. The rule id field is pinned to `generic-api-key` so an exception for some other rule -
     a real private key, an AWS credential - cannot be slipped in beside these."""
     for fingerprint in fingerprints():
         assert FINGERPRINT_PATTERN.fullmatch(fingerprint) is not None, (
@@ -598,24 +598,24 @@ def test_every_ignored_line_is_a_single_generic_api_key_fingerprint() -> None:
     ],
 )
 def test_the_fingerprint_pattern_refuses_a_short_commit(candidate: str, accepted: bool) -> None:
-    r"""Case 9's boundary, 40 against 39, asserted directly against the module's pattern so
+    r"""The boundary, 40 against 39, asserted directly against the module's pattern so
     the rows exercise the same constant the case above runs over the real file. The 39 row
     catches a quantifier written as a minimum or a range (`{7,40}`, `{40,}`), which would accept
     an ABBREVIATED commit - and an abbreviated prefix in a fingerprint matches nothing gitleaks
     emits, so the exception silently stops applying and the job goes red with no line to point
-    at. The trailing-newline row is a project rule: `$` in Python matches before a final
+    at. The trailing-newline row matters: `$` in Python matches before a final
     newline, so an anchored `.match` would accept a fingerprint with one and `re.fullmatch` is
     what refuses it. The commit fields are a repeated hex character on purpose - a realistic
-    digest written here is the first thing this plan's own scan would flag."""
+    digest written here is the first thing this repository's own scan would flag."""
     assert (FINGERPRINT_PATTERN.fullmatch(candidate) is not None) is accepted
 
 
 def test_every_ignored_path_sits_under_a_test_directory() -> None:
-    """Case 10. Catches a fingerprint allowing a literal in shipped code - a key pasted into
+    """Catches a fingerprint allowing a literal in shipped code - a key pasted into
     a provider adapter, a settings default, a manifest - which is precisely the find this whole
     job exists to make impossible, granted an exemption in the one file nobody re-reads. The
-    directories are the plan's two, so a path under `packages/` or `infra/` is red however
-    plausible its line looks. The failing row below shares this predicate, so a widened
+    allowed directories are the two above, so a path under `packages/` or `infra/` is red however
+    plausible its line looks. The failing case below shares this predicate, so a widened
     predicate cannot pass both."""
     offenders = [
         fingerprint
@@ -627,10 +627,10 @@ def test_every_ignored_path_sits_under_a_test_directory() -> None:
 
 
 def test_a_source_path_is_not_an_allowed_fingerprint_location() -> None:
-    """Case 10's unhappy row, run against the same predicate the file-wide case uses.
-    Without it that case passes vacuously the day somebody widens the prefix tuple to `("",)`
-    or to `"packages/"` while adding the exception they wanted: every real fingerprint still
-    passes, and nothing says the control stopped controlling. This row is the one that flips."""
+    """The unhappy case for the previous test, run against the same predicate the file-wide case
+    uses. Without it that case passes vacuously the day somebody widens the prefix tuple to `("",)`
+    or to `"packages/"` while adding the exception they wanted: every real fingerprint still passes,
+    and nothing says the control stopped controlling. This case is the one that flips."""
     source_fingerprint = f"{SAMPLE_COMMIT}:{REJECTED_FINGERPRINT_PATH}:generic-api-key:1"
 
     assert FINGERPRINT_PATTERN.fullmatch(source_fingerprint) is not None, "the row is malformed"
@@ -639,11 +639,11 @@ def test_a_source_path_is_not_an_allowed_fingerprint_location() -> None:
 
 @pytest.mark.parametrize("key", FORBIDDEN_ALLOWLIST_KEYS)
 def test_no_allowlist_widens_the_scan_by_path_or_regex(key: str) -> None:
-    """Case 11 and decision A, parsed with `tomllib`. Catches the cheap repair for a future
+    """Parsed with `tomllib`. Catches the cheap repair for a future
     finding: one `paths = ['tests/']` line allows every current literal AND every key pasted
     into any test file from then on, with no diff to review when it happens, whereas a
     fingerprint pins one line of one blob in one commit. `regexes` is the same widening by
-    another spelling. An absent `.gitleaks.toml` is the state the plan expects and passes
+    another spelling. An absent `.gitleaks.toml` is an expected state and passes
     without asserting anything about a file nobody wrote; both forms of the table - one table
     or an array of them - are walked, so a second allowlist cannot hide behind the first."""
     for table in allowlists():
@@ -652,7 +652,7 @@ def test_no_allowlist_widens_the_scan_by_path_or_regex(key: str) -> None:
 
 @pytest.mark.parametrize("flag", EXPORT_FLAGS)
 def test_the_audit_exports_the_locked_dependency_set(flag: str) -> None:
-    """Now reads the `security` recipe, one row per flag. `--locked` is the row that matters:
+    """Reads the `security` recipe, one row per flag. `--locked` is the row that matters:
     without it `uv export` may re-resolve, so the audit reads a dependency set the lockfile
     never had. `--format requirements-txt` catches an export pip-audit cannot read.
     `--no-emit-project` catches the local package emitted as an editable entry, which has no
@@ -666,7 +666,7 @@ def test_the_audit_exports_the_locked_dependency_set(flag: str) -> None:
 
 @pytest.mark.parametrize("flag", AUDIT_FLAGS)
 def test_the_audit_runs_the_pinned_pip_audit_strictly(flag: str) -> None:
-    """Now reads the `security` recipe, one row per flag. `pip-audit==2.9.0` catches an
+    """Reads the `security` recipe, one row per flag. `pip-audit==2.9.0` catches an
     unpinned `uvx pip-audit`, whose behaviour changes without a commit. `--strict` catches the
     default, where a dependency pip-audit cannot resolve is only a WARNING. `--require-hashes`
     catches an audit that accepts whatever the index serves rather than what the lockfile
@@ -678,7 +678,7 @@ def test_the_audit_runs_the_pinned_pip_audit_strictly(flag: str) -> None:
 
 
 def test_the_audit_reads_exactly_the_file_the_export_wrote() -> None:
-    """Now reads the `security` recipe, both ends EXTRACTED and compared rather than either
+    """Reads the `security` recipe, both ends EXTRACTED and compared rather than either
     one retyped here. Catches the export and the audit drifting apart - an export renamed
     while the audit still reads the old name - where pip-audit either fails unreadably or, if
     a stale file of that name exists from an earlier local run, audits the wrong dependency

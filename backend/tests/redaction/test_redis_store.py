@@ -5,9 +5,9 @@ Two halves, and the split is deliberate.
 The half that needs a REAL Redis is the half whose claims are Redis semantics:
 the round trip, the TTL read back with `TTL` (never by sleeping), the tenant half
 of the key, and the id rendering. A fake would prove those against a
-reimplementation of Redis rather than against Redis (plan decision E). Redis is
-required by an explicit conditional on `OPSCONSOLE_TEST_REDIS_URL` (standing rule
-9); the fixture below skips with that variable's name in the reason, so a suite
+reimplementation of Redis rather than against Redis. Redis is
+required by an explicit conditional on `OPSCONSOLE_TEST_REDIS_URL`; the fixture below skips with
+that variable's name in the reason, so a suite
 that silently checked nothing is legible in the run's own output rather than
 inferred. Deliberately NOT `OPSCONSOLE_REDIS_URL`, which `Settings` itself reads:
 exporting that one to run this file would hand every other test in the suite a
@@ -21,11 +21,11 @@ is a sharper witness than a live server - "no key was written" is asserted as
 The unavailable-store mapping lives there too, over a client that raises
 `redis.RedisError`.
 
-a project rule: one session-scoped client, built once. Per-test isolation is a
+One session-scoped client, built once. Per-test isolation is a
 unique `key_prefix` handed to the store, never `FLUSHDB` (which would delete a
 neighbouring suite's keys) and never a fresh client.
 
-a project rule on `MAP_ID_PATTERN`: the rejection table carries a trailing
+On `MAP_ID_PATTERN`: the rejection table carries a trailing
 newline, a trailing CRLF and a trailing space, because `re.match` with `[0-9a-f]{32}$`
 accepts the first of those and would hand Redis a key with a line break in it.
 """
@@ -279,7 +279,7 @@ def test_a_get_against_an_unreachable_redis_raises_the_typed_failure(
     case: str, error: Exception
 ) -> None:
     """Catches a conversion applied to the write path alone, and - worse - a `get` that
-    answered `None` on a connection failure: an earlier change's rehydration would then report "no
+    answered `None` on a connection failure: the rehydration would then report "no
     such map" for a map that is sitting in a Redis nobody could reach."""
     store, _ = fake_store(error=error)
 
@@ -340,9 +340,9 @@ def test_a_stored_map_id_is_thirty_two_lowercase_hex_characters(
 
 
 def test_an_unknown_but_well_formed_id_answers_absent(store: RedisRedactionMapStore) -> None:
-    """Catches a `get` that raises on a miss, or one that returns an empty mapping: plan
-    12 asks about ids a caller made up, and `{}` would be read as "this map redacted
-    nothing" rather than "there is no such map"."""
+    """Catches a `get` that raises on a miss, or one that returns an empty mapping: a caller can ask
+    about ids it made up, and `{}` would be read as "this map redacted nothing" rather than "there
+    is no such map"."""
     assert store.get(TENANT, WELL_FORMED_ID) is None
 
 

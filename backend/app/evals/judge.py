@@ -12,15 +12,14 @@ Four properties are worth more than the arithmetic.
   two classes and three samples there is always a majority, so no tie rule exists.
   The three reasons are kept in the order taken.
 * **The rubric and the reply are DATA.** The system message is the prompt file
-  verbatim, and both strings travel in the user message under their own labels
-. An answer that
+  verbatim, and both strings travel in the user message under their own labels.
+An answer that
   does not validate is a retry and then `None`, never a verdict, and the model's text
   is parsed and never scanned for the word pass.
 * **A sample that cannot be used is retried exactly once, then the reply is
   unjudged**. A judge
   outage is a fact about our own gateway, not about the help desk.
-* **The prompt is a FILE and its sha256 is the version**
-.
+* **The prompt is a FILE and its sha256 is the version**.
 
 Nothing here opens a socket of its own: the `httpx.Client` is injected.
 """

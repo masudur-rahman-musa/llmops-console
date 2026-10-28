@@ -1,6 +1,7 @@
 """Resolving (tenant, alias, data class) to an ordered candidate list.
 
-Every unhappy path here asserts the exact typed code and HTTP status, because an earlier change maps those values into the wire body and a
+Every unhappy path here asserts the exact typed code and HTTP status, because they are mapped into
+the wire body and a
 drift would be invisible until then.
 """
 
@@ -42,7 +43,7 @@ def judge_candidates(environ: dict[str, str]) -> list[tuple[str, str]]:
     """What `judge` resolves to when only `environ` is set, adapters as the health seam.
 
     The keys are injected rather than read from `os.environ`, so no case here
-    depends on a provider key being present in the environment (#66).
+    depends on a provider key being present in the environment.
     """
     policy = load_policy(SHIPPED_POLICY_PATH, SHIPPED_PROVIDERS_DIR)
     adapters = build_adapters(policy, environ)

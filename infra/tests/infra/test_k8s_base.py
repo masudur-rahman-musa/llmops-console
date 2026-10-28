@@ -1,9 +1,9 @@
-r"""`infra/k8s`: the resource envelope an earlier change agrees, read off what kustomize actually emits.
+r"""`infra/k8s`: the resource envelope, read off what kustomize actually emits.
 
-Decision D of an earlier change chose "build and parse" over reading the raw files under `base/`: a
+The tests "build and parse" rather than read the raw files under `base/`: a
 `resources:` entry that is mis-listed, or a `base/` the root never references, produces a
 perfectly valid set of files and an output stream missing the object. So the one session-scoped
-fixture here runs `kubectl kustomize <repo>/infra/k8s` once (a project rule - built once, no
+fixture here runs `kubectl kustomize <repo>/infra/k8s` once (built once, no
 per-test rebuild) and every case reads the parsed stream. `kubectl` v1.32.2 with embedded
 kustomize v5.5.0 is what this is probed against. That fixture now lives in
 `infra/tests/infra/conftest.py`, shared with `test_k8s_platform.py`; it is
@@ -11,7 +11,7 @@ requested by name here, and no assertion in this file changed when it moved.
 
 The fixture skips ONLY when `kubectl` is absent from `PATH`. A non-zero exit is a failure
 carrying kubectl's stderr, never a skip: a broken kustomization that skipped itself green would
-be exactly the `A && B || C` shape a project rule exists to refuse. The skip is survivable
+be exactly the `A && B || C` shape that hides a failure. The skip is survivable
 because CI's `k8s` job runs the same build for real on every pull request, which is the half
 this file's last two cases pin.
 
@@ -31,17 +31,17 @@ PyYAML quirk handled in `trigger()`: the bare key `on` is YAML 1.1's boolean, so
 `KeyError` on a perfectly correct workflow - the same reader as `test_hetzner_module.py` and
 `infra/tests/ci/test_eval_gate_workflow.py`, copied rather than imported.
 
-How decision E is resolved, which is the shape the last two cases pin. The Makefile grows a
+How the CI check is wired, which is the shape the last two cases pin. The Makefile grows a
 second target, `k8s-check`, holding the one `kustomize build infra/k8s | kubeconform ...`
 invocation in the repo; `infra-check` keeps its `if [ -f ... ]` guard exactly where it is and
 delegates to `$(MAKE) k8s-check` from inside it; the `k8s` job runs `make k8s-check`. All three
 halves of that are forced. The job cannot run `make infra-check`, because that pulls in the
-terraform steps decision E split the job to avoid. The guard cannot move into `k8s-check`,
+terraform steps the separate job exists to avoid. The guard cannot move into `k8s-check`,
 because `infra/tests/infra/test_hetzner_module.py`'s
 `test_infra_check_runs_terraform_for_real_and_skips_kustomize_when_absent` asserts the guard
-line inside `infra-check`'s recipe, and §8 says no existing test's expectation changes. And the
+line inside `infra-check`'s recipe, and no existing test's expectation changes. And the
 pipeline cannot be repeated in the CI step, because two copies drift, which is the thing
-decision E exists to prevent.
+the split exists to prevent.
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ ROOT_KUSTOMIZATION = K8S_ROOT / "kustomization.yaml"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 MAKEFILE = REPO_ROOT / "Makefile"
 
-#: Criterion 2, in the order §1 names them. Asserted by set EQUALITY, so a fifth namespace
+#: In the order they are applied. Asserted by set EQUALITY, so a fifth namespace
 #: and a missing one both redden.
 NAMESPACES = ("platform", "apps", "evals", "monitoring")
 
@@ -70,7 +70,7 @@ COMMON_LABELS = {
     "app.kubernetes.io/managed-by": "kustomize",
 }
 
-#: §1's quota table, decisions B and C, by value. `limits.cpu` is absent
+#: The quota table, by value. `limits.cpu` is absent
 #: from every row ON PURPOSE - see `FORBIDDEN_QUOTA_KEYS`.
 QUOTAS: dict[str, dict[str, str]] = {
     "platform": {
@@ -91,11 +91,11 @@ QUOTAS: dict[str, dict[str, str]] = {
     },
 }
 
-#: Decision C: a CPU limit throttles rather than kills, so forcing one onto every container
+#: A CPU limit throttles rather than kills, so forcing one onto every container
 #: would cost the gateway tail latency for no safety gained.
 FORBIDDEN_QUOTA_KEYS = ("limits.cpu",)
 
-#: Criterion 5, both resources, both directions of the LimitRange.
+#: Both resources, both directions of the LimitRange.
 LIMIT_RANGE_DEFAULT_REQUEST = {"memory": "64Mi", "cpu": "50m"}
 LIMIT_RANGE_DEFAULT = {"memory": "256Mi", "cpu": "500m"}
 
@@ -103,12 +103,12 @@ LIMIT_RANGE_DEFAULT = {"memory": "256Mi", "cpu": "500m"}
 #: change what admission rejects.
 LIMIT_RANGE_TYPE = "Container"
 
-#: Criterion 4's totals. Derived in the test from the four built quotas, stated here once as
+#: The totals. Derived in the test from the four built quotas, stated here once as
 #: the target: `6Gi` of requests inside the CAX21's 8 GiB, and 3 of its 4 vCPU.
 EXPECTED_MEMORY_REQUEST_BYTES = 6 * 1024**3
 EXPECTED_CPU_REQUEST_MILLICORES = 3000
 
-#: Criterion 1's other half: a document is legal without `metadata.namespace` only when its
+#: The other half: a document is legal without `metadata.namespace` only when its
 #: kind is cluster-scoped. Anything else with no namespace is the unhappy path.
 CLUSTER_SCOPED_KINDS = frozenset(
     {
@@ -127,21 +127,21 @@ CLUSTER_SCOPED_KINDS = frozenset(
     }
 )
 
-#: §5's kubeconform invocation, set now so 20b inherits a working one instead of discovering
+#: The kubeconform invocation, set so later additions inherit a working one instead of discovering
 #: that cert-manager's and Traefik's CRDs have no stock schema.
 KUBECONFORM_FLAGS = ("-strict", "-summary", "-schema-location")
 
-#: The flag that turns §5's risk into a silent green: unknown kinds are skipped, and 20b's
+#: The flag that turns a risk into a silent green: unknown kinds are skipped, and the
 #: `ClusterIssuer` would be validated by nothing at all.
 FORBIDDEN_KUBECONFORM_FLAG = "-ignore-missing-schemas"
 
-#: The one target CI and the Makefile share (decision E), and the only place the kustomize
+#: The one target CI and the Makefile share, and the only place the kustomize
 #: pipeline is written. The `k8s` job runs THIS, not `infra-check`, so it needs no Terraform.
 K8S_CHECK_TARGET = "k8s-check"
 SHARED_INFRA_COMMAND = "make k8s-check"
 
-#: The two tools the `k8s` job installs, pinned by value (a project rule and 37 - neither
-#: version was named by the plan, so the implementation invented them). `KUSTOMIZE_VERSION`
+#: The two tools the `k8s` job installs, pinned by value (neither
+#: version is fixed anywhere else). `KUSTOMIZE_VERSION`
 #: is the kustomize embedded in the kubectl the fixture above shells out to, so CI and a
 #: developer build the same stream; an unpinned kubeconform would change what the gate
 #: accepts underneath a diff that never touched it.
@@ -174,7 +174,7 @@ SECRET_CONDITION = re.compile(r"secrets\.|TOKEN|SECRET|API_KEY", re.IGNORECASE)
 
 
 def read(path: Path) -> str:
-    """Read a file the plan owes, failing the one case that needs it when it is absent."""
+    """Read a file the tests need, failing the one case that needs it when it is absent."""
     assert path.is_file(), f"{path} does not exist"
     return path.read_text(encoding="utf-8")
 
@@ -283,11 +283,11 @@ def quota_hard(quota: dict[str, Any]) -> dict[str, str]:
 def test_the_build_succeeds_and_emits_only_the_four_namespaces(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 1 and the unhappy path. Catches a fifth `Namespace` (a `staging` copied in
+    """The unhappy path. Catches a fifth `Namespace` (a `staging` copied in
     with a directory) and a missing one, because the assertion is EQUALITY on the name set;
     and catches a namespaced object that names a namespace outside the four, or declares none
     at all while its kind is namespaced - a Deployment with no `metadata.namespace` lands in
-    `default`, outside every quota this plan writes, which is the one way "requests and limits
+    `default`, outside every quota written here, which is the one way "requests and limits
     on everything" quietly stops being true."""
     names = {name_of(document) for document in objects_of_kind(built, "Namespace")}
     assert names == set(NAMESPACES), f"the build emits namespaces {sorted(names)}"
@@ -302,9 +302,9 @@ def test_the_build_succeeds_and_emits_only_the_four_namespaces(
 
 
 def test_every_namespace_carries_the_common_labels(built: list[dict[str, Any]]) -> None:
-    """Criterion 2's second half. Catches one of the two labels dropped from the root
+    """The second half. Catches one of the two labels dropped from the root
     kustomization's `labels:` block, and catches the block being moved into `base/` where a
-    later directory (20b's `platform/`) would not inherit it. Equality on each Namespace's
+    later directory (the `platform/`) would not inherit it. Equality on each Namespace's
     label mapping, not containment: a superset assertion passes with a label missing as long
     as something else is there."""
     carried = {
@@ -318,24 +318,24 @@ def test_every_namespace_carries_the_common_labels(built: list[dict[str, Any]]) 
 def test_each_namespace_has_one_resource_quota_with_the_agreed_values(
     namespace: str, expected: dict[str, str], built: list[dict[str, Any]]
 ) -> None:
-    """Criterion 3, decisions B and C, one row per namespace. Catches a quantity written as
+    """One row per namespace. Catches a quantity written as
     the wrong value (`4Gi` for `apps`, which the totals case then catches a second way);
     catches `limits.memory` dropped from a row, which is what makes a container with no memory
-    limit schedulable again and retires half of #55's claim; and catches `limits.cpu` creeping
-    in, which decision C refuses because a CPU limit throttles rather than kills. Equality on
+    limit schedulable again and retires half of that claim; and catches `limits.cpu` creeping
+    in, which is refused because a CPU limit throttles rather than kills. Equality on
     the whole `spec.hard` key set, so an extra key is a failure and not a silent addition."""
     quota = one_per_namespace(built, "ResourceQuota")[namespace]
     hard = quota_hard(quota)
 
     assert hard == expected, f"{namespace} quota is {hard}"
     for key in FORBIDDEN_QUOTA_KEYS:
-        assert key not in hard, f"{namespace} quota names {key} (decision C)"
+        assert key not in hard, f"{namespace} quota names {key}"
 
 
 def test_the_memory_requests_total_six_gibibytes_and_the_cpu_requests_total_three(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 4, derived and never re-stated: the four quantities are read
+    """Derived and never re-stated: the four quantities are read
     off the BUILT quotas and parsed, so the only literals here are the totals themselves.
     Catches a row raised in isolation - `apps` going `3Gi` to `4Gi` because one workload did
     not fit - which leaves each per-namespace assertion arguable and blows the 6Gi envelope the
@@ -354,11 +354,11 @@ def test_the_memory_requests_total_six_gibibytes_and_the_cpu_requests_total_thre
 def test_each_namespace_has_one_limit_range_with_the_agreed_defaults(
     namespace: str, built: list[dict[str, Any]]
 ) -> None:
-    """Criterion 5. The LimitRange is the backstop under the quota: without it a third-party
+    """The LimitRange is the backstop under the quota: without it a third-party
     manifest that declares no resources is REJECTED at admission rather than defaulted, so an
     unedited upstream chart stops being installable at all. Neither of this repo's two
-    candidates is an example of that any more: 20b's decision A installs cert-manager with all
-    three quantities set on the command line, and an earlier change's metrics stack is hand-written
+    candidates is an example of that any more: the cert-manager install sets all
+    three quantities on the command line, and the metrics stack is hand-written
     rather than the upstream chart, with all three declared on every container.
     Catches the `Container` entry retyped as `Pod` (which defaults nothing per container),
     catches `default` and `defaultRequest` swapped - a 256Mi request against a 64Mi ceiling is
@@ -377,16 +377,16 @@ def test_each_namespace_has_one_limit_range_with_the_agreed_defaults(
 
 
 def test_infra_check_runs_the_kustomize_half_for_real_now_that_the_file_exists() -> None:
-    """Criterion 6's Makefile half, across BOTH recipes, plus §5's flags. The conditional stays
+    """The Makefile half, across BOTH recipes, plus the kubeconform flags. The conditional stays
     inside `infra-check` - it is a skip-when-absent, and deleting it would turn a missing file
     into a target failure rather than a skip - so what this pins is that the guard is now
     SATISFIED and DELEGATES: `kustomization.yaml` exists and the guarded branch reaches
-    `k8s-check`. Catches the plan shipping its CI job while `infra/k8s` still holds only
+    `k8s-check`. Catches the CI job shipping while `infra/k8s` still holds only
     `.gitkeep`, leaving both gates green having validated nothing; catches the split being made
     with the guard left pointing at a target that no longer exists or at nothing at all, which
     `make` reports as success from a `@if` that ran no command; catches `k8s-check` missing
-    (`recipe()` fails on it by name); catches the kubeconform invocation left bare, which §5
-    says fails the moment 20b adds a `ClusterIssuer` kubeconform has no schema for; and catches
+    (`recipe()` fails on it by name); catches the kubeconform invocation left bare, which
+    fails the moment a `ClusterIssuer` is added kubeconform has no schema for; and catches
     the repair being `-ignore-missing-schemas`, which makes that failure a silent pass
     forever."""
     makefile = read(MAKEFILE)
@@ -417,14 +417,14 @@ def test_infra_check_runs_the_kustomize_half_for_real_now_that_the_file_exists()
 
 
 def test_the_k8s_job_builds_and_validates_on_every_pull_request() -> None:
-    """Criterion 6's CI half and decision E, pinned as `make k8s-check` (see the module
+    """The CI half, pinned as `make k8s-check` (see the module
     docstring for why that target and not `infra-check`). Catches the job being given an `if:`
     on a secret, the way the `tf` job's `plan` step legitimately is - kustomize and kubeconform
     need no credential, so a gated `k8s` job would be inert on exactly the fork pull requests it
     exists to check, and green because it never ran. Catches the job being dropped or renamed,
     catches the workflow's `pull_request` trigger going away so the gate only runs post-merge,
     catches the step re-spelling the pipeline inline instead of calling the shared target, which
-    is the drift decision E refuses, and catches it calling `make infra-check` instead, which
+    is the drift to refuse, and catches it calling `make infra-check` instead, which
     drags the terraform steps - and a Terraform setup this job does not install - into a
     kustomize check."""
     document = load_yaml(WORKFLOW)
@@ -447,7 +447,7 @@ def test_the_k8s_job_builds_and_validates_on_every_pull_request() -> None:
 
 
 def test_the_k8s_job_pins_both_tool_versions() -> None:
-    """a project rule: two constants the plan never named, so no case above reaches them.
+    """Two constants no case above reaches.
     Catches either version becoming `latest` or a floating tag, which is how a gate moves
     under a diff that did not touch it - a newer kustomize emits a different stream, a newer
     kubeconform accepts a different set of manifests, and both would land as an unexplained

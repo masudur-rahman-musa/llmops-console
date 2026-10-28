@@ -1,8 +1,8 @@
 """Where the backing-service clients and their stores are built, and when.
 
-An earlier change moves the four backing-service clients - the one `redis.Redis`, the one
+The four backing-service clients - the one `redis.Redis`, the one
 qdrant `httpx.Client`, the one Postgres pool and the Prometheus http client - and
-every store that wraps them out of `create_app` and into the app's `lifespan`.
+every store that wraps them live in the app's `lifespan`, not in `create_app`.
 `create_app` is left building only the things a misconfiguration should refuse at
 once (the key store, the policy, the adapters, the breaker, the prices) plus an
 empty probe registry; everything that opens a socket waits for startup and is
@@ -205,8 +205,8 @@ def patch_builders(monkeypatch: pytest.MonkeyPatch, builders: Builders) -> None:
 def test_building_the_app_opens_no_client(monkeypatch: pytest.MonkeyPatch) -> None:
     """Catches a `create_app` that still builds the backing-service clients itself: the
     four builders are spied and must be called zero times, and the four client slots must
-    be absent, so a factory that opens a connection pool at import time - the thing plan
-    61 moves into startup - turns one of these red."""
+    be absent, so a factory that opens a connection pool at import time - the thing that
+    belongs in startup - turns one of these red."""
     builders = Builders()
     patch_builders(monkeypatch, builders)
 
@@ -352,7 +352,7 @@ ROUTE_FILES = (
 
 def test_routes_do_not_read_app_state_by_hand() -> None:
     """Catches a route reaching into `request.app.state` instead of taking a typed
-    dependency: that is the pattern an earlier change removes so startup can own where state is
+    dependency: that is the pattern removed so startup can own where state is
     built, and the source text of all eight route files is scanned so a single leftover
     `app.state` fails here."""
     routes_dir = Path(main.__file__).resolve().parent / "api" / "routes"

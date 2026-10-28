@@ -15,16 +15,16 @@ asked for, and the root `tests/conftest.py` clears it for exactly that reason.
 The half that needs NOTHING is the validation half, over a client that records
 its calls and refuses to answer: both pre-checks run before any command is sent,
 so "no key was written" is asserted as "Redis was never called at all", which is
-what a project rule actually claims. Redis is an unsized store and there is no
+what the claim actually is. Redis is an unsized store and there is no
 backstop behind these two checks.
 
 The difference from the redaction map store is the point of the failure rows: a
 map store RAISES `RedactionMapStoreUnavailable` so a rehydration cannot silently
 answer "no such map", while this store SWALLOWS every `redis.RedisError` and
 answers absent, because a cache that raises turns a Redis incident into 5xx on
-requests the provider could have served (plan §5).
+requests the provider could have served.
 
-a project rule: one session-scoped client, built once. Per-test isolation is a
+One session-scoped client, built once. Per-test isolation is a
 unique `key_prefix` handed to the store, never `FLUSHDB` (which would delete a
 neighbouring suite's keys) and never a fresh client.
 """
@@ -246,7 +246,7 @@ def test_put_sends_the_ttl_with_the_write() -> None:
     """Catches a `SET` with no expiry, or one with the TTL passed as milliseconds: the
     argument is read off the call the client actually received, so a store that computed
     the right number and never handed it over fails here. Without it an entry lives until
-    Redis evicts it, and #22's twenty-four hours would be a comment."""
+    Redis evicts it, and the twenty-four hours would be a comment."""
     cache, client = fake_cache()
 
     cache.put(TENANT, WELL_FORMED_KEY, cached_answer())

@@ -73,7 +73,7 @@ def test_the_completions_path_is_appended_to_the_policy_base_url() -> None:
 def test_no_api_key_sends_no_authorization_header() -> None:
     """Catches an adapter that requires a key and sends `Authorization: Bearer None` (or
     an empty bearer) for the shipped `local` provider, which declares no `key_env` at all
-    because it sits on a private network - decision B."""
+    because it sits on a private network -."""
     adapter, scripted = make_local_adapter([local_ok("plain")], api_key=None)
 
     adapter.chat(REQUEST)
@@ -378,7 +378,7 @@ def raw_adapter(status: int, raw: bytes, sleeps: SleepRecorder) -> OpenAICompati
 
 
 def test_a_non_strict_schema_goes_through_to_openai() -> None:
-    """Catches the bug this plan fixes: a mapper adding `strict: true` (or tightening the
+    """Catches a mapper bug: a mapper adding `strict: true` (or tightening the
     schema with `additionalProperties: false`) on the caller's behalf, which OpenAI answers
     with a 400 for this schema; and catches an answer whose JSON content is lost."""
     adapter, scripted = make_local_adapter([local_ok("json_schema_answer")])

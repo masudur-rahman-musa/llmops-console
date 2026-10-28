@@ -3,7 +3,7 @@
 `ErrorCode` is closed on purpose: a caller writes code against these nine
 strings, so adding, renaming or dropping one is a change to the published API
 rather than an implementation detail. A test holds the whole table - each code's
-string, its HTTP status, and the requirement that exactly one concrete
+string, its HTTP status, and that exactly one concrete
 `GatewayError` subclass carries it - against a literal written out in the test,
 so any of those three drifting fails there.
 
@@ -81,7 +81,7 @@ class TenantMismatch(GatewayError):
 
 
 class BudgetExceeded(GatewayError):
-    """The tenant's spend cap for the period is reached (#27).
+    """The tenant's spend cap for the period is reached.
 
     Raised by `services/chat_pipeline.py::check_budget`, at the top of both the chat
     and the embeddings route and before anything is resolved or dialled, so a
@@ -107,7 +107,7 @@ class BudgetUnavailable(GatewayError):
 
 
 class RateLimited(GatewayError):
-    """The tenant has spent its minute's requests or its minute's tokens (#28).
+    """The tenant has spent its minute's requests or its minute's tokens.
 
     Raised by `services/chat_pipeline.py::check_rate_limit`, at the top of both the
     chat and the embeddings route and BEFORE `check_budget`, so a tenant over

@@ -1,4 +1,4 @@
-"""The six `X-Gateway-*` headers on a successful chat completion (#9).
+"""The six `X-Gateway-*` headers on a successful chat completion.
 
 They are the operator's view of one request: which provider served it, on which
 provider model, whether it was cached, whether it was redacted,
@@ -8,8 +8,8 @@ wrong is a claim about provider and cost that cannot be checked after the fact.
 
 Every value is asserted exactly, and the set is asserted whole,
 so an added header is a deliberate change rather than a surprise. The set grew
-from five to six when the cost ledger was wired to the route: an earlier change decision
-B kept `X-Gateway-Cost-USD` off the answer until a call could really be priced,
+from five to six when the cost ledger was wired to the route: `X-Gateway-Cost-USD` was kept off
+the answer until a call could really be priced,
 because a header reading `0.00` is a wrong number, and it is on the answer now
 that the number is the ledger row's own. It stays absent on a stream and on
 every error response, which tests/gateway/test_cost_wiring.py pins.
@@ -83,7 +83,7 @@ def gateway_headers(response: Response) -> dict[str, str]:
 def test_response_headers_on_success(chat_client: TestClient, policy: Policy) -> None:
     """Catches every wrong value in the set at once - a provider label taken from the
     vendor rather than the policy name, a cache
-    status of `hit` on a request that was never eligible for the an earlier change cache (this
+    status of `hit` on a request that was never eligible for the cache (this
     body states no `temperature: 0` and sends no `X-Gateway-Cache: allow`), or a
     redaction flag of `true` on a route that redacts nothing - each of which is an
     unverifiable claim about where a tenant's data went."""
@@ -103,8 +103,8 @@ def test_response_headers_on_success(chat_client: TestClient, policy: Policy) ->
 
 def test_the_header_set_is_exactly_six(chat_client: TestClient) -> None:
     """Catches both directions: a header quietly dropped (an operator loses the trace id
-    on the one request they need it for) and one quietly added ahead of the plan that
-    specifies it, which would ship an unpinned value into a published contract."""
+    on the one request they need it for) and one quietly added before it is specified, which would
+    ship an unpinned value into a published contract."""
     headers = gateway_headers(post_chat(chat_client, chat_body()))
 
     assert set(headers) == EXPECTED_HEADER_NAMES
@@ -112,7 +112,7 @@ def test_the_header_set_is_exactly_six(chat_client: TestClient) -> None:
 
 
 def test_the_cost_header_is_the_booked_cost(chat_client: TestClient) -> None:
-    """The positive claim that replaced the absence an earlier change decision B pinned. Catches a
+    """The positive claim that replaced the old absence of the header. Catches a
     header that carries a number the route computed for itself rather than the ledger
     row's - the two would then drift apart on the first pricing change, and only the
     ledger would be audited - and catches a placeholder `0` or `0.00`, since the value is

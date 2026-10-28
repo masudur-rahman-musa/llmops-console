@@ -235,8 +235,8 @@ class EmbeddingUsage(_Contract):
 
     An embedding has no completion tokens, on this wire or in the response this
     product publishes, so reusing `Usage` could only mean writing a zero into a
-    field with no meaning - and a zero-filled count is exactly what the rule
-    against zero-filling usage exists to prevent, hidden behind a field that
+    field with no meaning - and a zero-filled count is exactly what the habit
+    of never zero-filling usage exists to prevent, hidden behind a field that
     always looks populated.
     """
 

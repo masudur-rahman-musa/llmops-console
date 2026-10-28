@@ -13,7 +13,7 @@ The contract these cases are written against, before it exists:
 * `Clients.month_spend: MonthSpendReader`, handed from `app.state.month_spend`;
 * `check_budget` and `check_user_budget` read the month through `seeded_spend` /
   `seeded_user_spend` with a loader over that reader;
-* a refusal carries the exact messages of the plan, with the contact from
+* a refusal carries the exact published messages, with the contact from
   `Settings.budget_contact`;
 * `LedgerUnreadable` becomes 503 `BUDGET_UNAVAILABLE`.
 """
@@ -283,7 +283,7 @@ def test_a_valid_override_still_serves_over_a_loaded_total(
     ledger_client: TestClient, reader: FakeMonthSpend
 ) -> None:
     """Catches a new refusal path that skips the override check: a tenant over its loaded
-    total with a good override header is served, as before this plan."""
+    total with a good override header is served, as before."""
     reader.tenant_spend = LEDGER_OVER
     month = current_month()
     signature = hmac.new(

@@ -1,4 +1,4 @@
--- The prompt version a request was sent under (ADR 0047).
+-- The prompt version a request was sent under.
 --
 -- NULLABLE on purpose: `X-Prompt-Version` is an optional header, and a request
 -- sent without it is still a request that cost money. Every row written before

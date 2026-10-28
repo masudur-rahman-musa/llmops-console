@@ -1,4 +1,4 @@
-r"""`.sops.yaml`, `infra/secrets/` and the three Makefile targets an earlier change agrees: the POLICY
+r"""`.sops.yaml`, `infra/secrets/` and the three Makefile targets: the POLICY
 and the GUARD, never the ciphertext. `sops` and `age` are not installed on this machine (hard
 rule 12 makes installing them a question, not a step), so every case here asserts on file
 structure, on `git ls-files`, and on the stream the session-scoped `built` fixture already
@@ -12,14 +12,14 @@ Nothing here builds a second time. The two cases that need the stream are SPLIT 
 that read files only, so the file-against-README comparison - the half that catches a drifting
 template - still runs on a machine with no `kubectl`, where `built` skips.
 
-Criterion 3 is the reason this file has a README parser at all. The contract
+The README comparison is the reason this file has a README parser at all. The contract
 `{name: (namespaces, keys)}` is compared file-against-README, never file-against-a-literal:
 a constant restated here would let the templates and the table a human reads before an apply
-drift together in silence, which is exactly the failure the criterion names. Only the five
-NAMES and their NAMESPACES are written down (the plans pin them, and the build's own
-references are the third side of the comparison); the KEY SETS live in the two places the
-criterion says they must agree, and nowhere else - `grafana-admin`'s included, which is why
-an earlier change's own module does not restate them here either.
+drift together in silence, which is exactly the failure to avoid. Only the five
+NAMES and their NAMESPACES are written down (pinned here, and the build's own
+references are the third side of the comparison); the KEY SETS live in the two places they
+must agree, and nowhere else - `grafana-admin`'s included, which is why
+the own module does not restate them here either.
 
 The five `tls[*].secretName` values (`gateway-tls`, `gateway-healthz-tls`, `helpdesk-tls`,
 `helpdesk-healthz-tls`, `grafana-tls`) are EXCLUDED from the reference comparison and pinned
@@ -58,10 +58,10 @@ SECRETS_DIR = REPO_ROOT / "infra" / "secrets"
 SOPS_CONFIG = REPO_ROOT / ".sops.yaml"
 GITIGNORE = REPO_ROOT / ".gitignore"
 
-#: The Secrets, by name. The plans pin these; the key SETS are deliberately absent (see
-#: the module docstring) because criterion 3 compares them file-against-README. `grafana-admin`
-#: is an earlier change's criterion 8, the fifth contract this repo publishes and does not supply.
-#: `alertmanager-secrets` is an earlier change's, the sixth. `backup-secrets` is an earlier change's, the seventh.
+#: The Secrets, by name. Pinned here; the key SETS are deliberately absent (see
+#: the module docstring) because they are compared file-against-README. `grafana-admin`
+#: is the fifth contract this repo publishes and does not supply.
+#: `alertmanager-secrets` is the sixth. `backup-secrets` is the seventh.
 POSTGRES_CREDENTIALS = "postgres-credentials"
 TRAEFIK_BASIC_AUTH = "traefik-basic-auth"
 GATEWAY_SECRETS = "gateway-secrets"
@@ -71,7 +71,7 @@ ALERTMANAGER_SECRETS = "alertmanager-secrets"
 BACKUP_SECRETS = "backup-secrets"
 CONSOLE_SECRETS = "console-secrets"
 
-#: An earlier change criterion 16: the pull secret the four Helpdesk pod specs name, the one contract here
+#: The pull secret the four Helpdesk pod specs name, the one contract here
 #: a workload reads through `imagePullSecrets` rather than `envFrom`.
 GHCR_PULL = "ghcr-pull"
 
@@ -80,7 +80,7 @@ APPS = "apps"
 MONITORING = "monitoring"
 EVALS = "evals"
 
-#: Criterion 3's namespaces, which the plans pin. `traefik-basic-auth` exists TWICE: a
+#: The namespaces, pinned here. `traefik-basic-auth` exists TWICE: a
 #: `Middleware` reads its Secret from its own namespace, so one copy per routing namespace.
 EXPECTED_NAMESPACES: dict[str, frozenset[str]] = {
     POSTGRES_CREDENTIALS: frozenset({PLATFORM}),
@@ -91,11 +91,11 @@ EXPECTED_NAMESPACES: dict[str, frozenset[str]] = {
     ALERTMANAGER_SECRETS: frozenset({MONITORING}),
     BACKUP_SECRETS: frozenset({PLATFORM}),
     CONSOLE_SECRETS: frozenset({APPS}),
-    # An earlier change: the Helpdesk's registry credential.
+    # The Helpdesk's registry credential.
     GHCR_PULL: frozenset({APPS}),
 }
 
-#: One template per Secret (decision B), `traefik-basic-auth`'s being one file of two
+#: One template per Secret, `traefik-basic-auth`'s being one file of two
 #: documents so the two namespace copies cannot drift.
 EXAMPLE_FILENAMES: frozenset[str] = frozenset(
     {
@@ -111,9 +111,9 @@ EXAMPLE_FILENAMES: frozenset[str] = frozenset(
     }
 )
 
-#: The two keys a Secret's values live under, and the only mapping either criterion 1 or
-#: criterion 4 reads. `metadata.name`, `metadata.namespace`, `apiVersion`, `kind` and every
-#: label are NOT values in this sense and are never scanned for the placeholder.
+#: The two keys a Secret's values live under, and the only mapping either the README
+#: comparison or the placeholder scan reads. `metadata.name`, `metadata.namespace`, `apiVersion`,
+#: `kind` and every label are NOT values in this sense and are never scanned for the placeholder.
 DATA_KEYS = ("data", "stringData")
 
 SECRET_KIND = "Secret"
@@ -123,27 +123,27 @@ SECRET_KIND = "Secret"
 MIDDLEWARE_KIND = "Middleware"
 TRAEFIK_API_VERSION = "traefik.io/v1alpha1"
 
-#: Criterion 1: the exact prefix `sops` writes in front of every encrypted value. Pinned as a
+#: The exact prefix `sops` writes in front of every encrypted value. Pinned as a
 #: literal prefix rather than as a loose "contains ENC" band: a value
 #: encrypted with a different algorithm, or a half-written placeholder, is not this string.
 ENCRYPTED_VALUE_PREFIX = "ENC[AES256_GCM,data:"
 
-#: Criterion 2, exactly: the keys `.sops.yaml` encrypts, as the literal string the policy file
+#: Exactly: the keys `.sops.yaml` encrypts, as the literal string the policy file
 #: has to carry. Asserted by EQUALITY - a regex that merely mentions `data` could also match
 #: `metadata`, which would encrypt a Secret's own name.
 ENCRYPTED_REGEX = "^(data|stringData)$"
 
-#: Criterion 2's two probe paths: the file the rule MUST cover and the one it must NOT. The
+#: The two probe paths: the file the creation rule MUST cover and the one it must NOT. The
 #: example templates live in the same directory and are plaintext by design, so a rule written
 #: as `infra/secrets/.*\.yaml` would tell `sops` to encrypt them too.
 ENCRYPTED_PROBE = "infra/secrets/gateway-secrets.enc.yaml"
 EXAMPLE_PROBE = "infra/secrets/gateway-secrets.example.yaml"
 
-#: Criterion 4, decision C: the literal placeholder, greppable and never read as a credential
+#: The literal placeholder, greppable and never read as a credential
 #: by gitleaks. `<value>` would be neither.
 PLACEHOLDER = "REPLACE_ME"
 
-#: An earlier change criterion 10: the eight keys `helpdesk-secrets` carries, under the bare names the
+#: The eight keys `helpdesk-secrets` carries, under the bare names the
 #: companion repo reads. Pinned here as well as compared against the README, because a rename
 #: made on both sides at once is the one edit the file-against-README equality cannot see.
 HELPDESK_SECRET_KEYS: frozenset[str] = frozenset(
@@ -159,18 +159,18 @@ HELPDESK_SECRET_KEYS: frozenset[str] = frozenset(
     }
 )
 
-#: An earlier change criteria 16 and 17: the type the kubelet reads a registry credential from, and the
+#: The type the kubelet reads a registry credential from, and the
 #: one key that type requires.
 DOCKERCONFIGJSON_TYPE = "kubernetes.io/dockerconfigjson"
 DOCKERCONFIGJSON_KEY = ".dockerconfigjson"
 
-#: An earlier change criterion 17: the GHCR token scope the template's comment must name, since a token
+#: The GHCR token scope the template's comment must name, since a token
 #: without it cannot pull a private package.
 READ_PACKAGES_SCOPE = "read:packages"
 
-#: An earlier change criteria 11 to 13: what the `helpdesk-secrets` template's COMMENTS must state, as
+#: What the `helpdesk-secrets` template's COMMENTS must state, as
 #: `(what, pattern)`. Loose on wording on purpose: each pattern is the fact
-#: the criterion names and nothing more.
+#: the comment must state and nothing more.
 HELPDESK_COMMENT_FACTS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("the helpdesk_app role", re.compile(r"helpdesk_app")),
     ("the asyncpg DSN scheme", re.compile(re.escape("postgresql+asyncpg://"))),
@@ -185,12 +185,12 @@ HELPDESK_COMMENT_FACTS: tuple[tuple[str, re.Pattern[str]], ...] = (
 #: newline, so a value ending in one would otherwise pass as a clean single line.
 HTPASSWD_LINE = re.compile(r"(?P<user>[^:\s]+):(?P<password>\S+)")
 
-#: Criterion 2: the three patterns that must be untracked AND ignored. `*.agekey` is already
+#: The three patterns that must be untracked AND ignored. `*.agekey` is already
 #: in `.gitignore` today; `keys.txt` (age's own default output file) and `*.dec.yaml` (a
-#: decrypted secret left in the tree) are what this plan adds.
+#: decrypted secret left in the tree) are the additions.
 IGNORED_PATTERNS = ("*.agekey", "keys.txt", "*.dec.yaml")
 
-#: Criterion 5's targets, plus `secrets-check`. Only the two that SHELL OUT to `sops` are
+#: The targets, plus `secrets-check`. Only the two that SHELL OUT to `sops` are
 #: parametrised for the unhappy path - `secrets-check` is the guard itself and is expected to
 #: run with neither binary installed.
 SOPS_TARGETS = ("secrets-encrypt", "secrets-decrypt")
@@ -201,12 +201,12 @@ SOPS_TARGETS = ("secrets-encrypt", "secrets-decrypt")
 PATH_WITHOUT_SOPS = "/usr/bin:/bin"
 
 #: cert-manager writes these five from the Ingresses' `spec.tls[*].secretName`; this repo
-#: supplies none of them. They are subtracted from the referenced set in criterion 3's build
+#: supplies none of them. They are subtracted from the referenced set in the build
 #: half, because "every referenced Secret is one of the five" and "every Ingress names a tls
 #: secret" are both true only with this exclusion named. Pinned
-#: rather than filtered by shape so a stale exclusion is a readable red. `grafana-tls` is plan
-#: 23b's, and its disjointness from `grafana-admin` is what keeps an issued certificate from
-#: overwriting the admin credential in one namespace.
+#: rather than filtered by shape so a stale exclusion is a readable red. `grafana-tls` is the
+#: Grafana certificate's, and its disjointness from `grafana-admin` is what keeps an issued
+#: certificate from overwriting the admin credential in one namespace.
 INGRESS_TLS_SECRETS: frozenset[str] = frozenset(
     {
         "gateway-tls",
@@ -214,7 +214,7 @@ INGRESS_TLS_SECRETS: frozenset[str] = frozenset(
         "helpdesk-tls",
         "helpdesk-healthz-tls",
         "grafana-tls",
-        # An earlier change's three console routers.
+        # The three console routers.
         "console-tls",
         "console-healthz-tls",
         "console-login-tls",
@@ -222,7 +222,7 @@ INGRESS_TLS_SECRETS: frozenset[str] = frozenset(
 )
 
 #: The header the secrets table in `infra/k8s/README.md` carries, cell for cell. The table is
-#: found by this row and not by a line number or by the first line mentioning "Secret".
+#: found by this header and not by a line number or by the first line mentioning "Secret".
 README_HEADER_CELLS = ["Secret", "namespace", "keys", "read by"]
 
 #: A backticked token in a README cell. The implementation rewrites the `keys` column from
@@ -231,7 +231,7 @@ BACKTICKED = re.compile(r"`([^`]+)`")
 
 #: Every key a kustomization can name a PATH under, not `resources` alone: a `secretGenerator`
 #: pointed at `infra/secrets/` puts a Secret in the stream exactly as a `resources` entry
-#: would, and criterion 5's claim is about the directory, not about one field.
+#: would, and the claim is about the directory, not about one field.
 KUSTOMIZATION_PATH_KEYS = (
     "resources",
     "components",
@@ -247,7 +247,7 @@ FORBIDDEN_PATH_FRAGMENTS = ("infra/secrets", "../secrets")
 
 
 def read(path: Path) -> str:
-    """Read a file the plan owes, failing the one case that needs it when it is absent."""
+    """Read a file the tests need, failing the one case that needs it when it is absent."""
     assert path.is_file(), f"{path} does not exist"
     return path.read_text(encoding="utf-8")
 
@@ -263,8 +263,8 @@ def documents_in(path: Path) -> list[dict[str, Any]]:
 
 
 def encrypted_files() -> list[Path]:
-    """Every `infra/secrets/*.enc.yaml`, sorted. EMPTY today and empty after this plan: the
-    ciphertext lands in a later `/quick`, and the guard has to be green over zero files."""
+    """Every `infra/secrets/*.enc.yaml`, sorted. EMPTY today: the
+    ciphertext lands later, and the guard has to be green over zero files."""
     return sorted(SECRETS_DIR.glob("*.enc.yaml")) if SECRETS_DIR.is_dir() else []
 
 
@@ -376,8 +376,8 @@ def envfrom_secret_names(document: dict[str, Any]) -> set[str]:
     list of kinds, so a Job added later is scanned without editing this file. A CronJob is
     NOT one of those: its template sits one level deeper, at `spec.jobTemplate.spec.template`,
     so this unwraps that one extra key when present - found by running this scan against
-    an earlier change's two CronJobs and getting back an empty set, disproving the claim this
-    docstring made before that plan existed.
+    the two CronJobs and getting back an empty set, disproving an earlier claim in
+    this docstring.
     """
     spec = document.get("spec")
     if not isinstance(spec, dict):
@@ -427,7 +427,7 @@ def middleware_secret_names(document: dict[str, Any]) -> set[str]:
 
 
 def tls_secret_names(document: dict[str, Any]) -> set[str]:
-    """An Ingress's `spec.tls[*].secretName` - cert-manager's to create, never this plan's to
+    """An Ingress's `spec.tls[*].secretName` - cert-manager's to create, never this repo's to
     supply. Collected so the exclusion can be a named subtraction rather than a silent gap."""
     spec = document.get("spec")
     if not isinstance(spec, dict):
@@ -475,7 +475,7 @@ def referenced_secret_names(
 ) -> tuple[set[str], set[str]]:
     """`(supplied, issued)`: the Secret names the build expects someone to SUPPLY, and the
     ones cert-manager ISSUES. Walked over the parsed stream, never grepped out of text. The
-    supplied set reads `envFrom`, a `Middleware`'s `basicAuth.secret` and, since an earlier change,
+    supplied set reads `envFrom`, a `Middleware`'s `basicAuth.secret` and, now,
     `imagePullSecrets`."""
     supplied: set[str] = set()
     issued: set[str] = set()
@@ -533,9 +533,9 @@ def tracked_files() -> list[str]:
     return [line for line in completed.stdout.splitlines() if line]
 
 
-#: Criterion 1's parametrisation. The fallback row keeps an EMPTY glob a passing case rather
-#: than a skipped or an erroring one: zero encrypted files is the agreed state at the end of
-#: this plan, and a skip there would read as "unknown" in every report from now on.
+#: The parametrisation. The fallback row keeps an EMPTY glob a passing case rather
+#: than a skipped or an erroring one: zero encrypted files is the agreed state for now,
+#: and a skip there would read as "unknown" in every report from now on.
 ENCRYPTED_FILE_PARAMS: list[Path | None] = list(encrypted_files()) or [None]
 ENCRYPTED_FILE_IDS = [path.name for path in encrypted_files()] or ["no-enc-file-yet"]
 
@@ -544,7 +544,7 @@ ENCRYPTED_FILE_IDS = [path.name for path in encrypted_files()] or ["no-enc-file-
 def test_every_encrypted_secret_is_ciphertext_under_a_named_age_recipient(
     path: Path | None,
 ) -> None:
-    """Criterion 1. Catches an implementation that commits a `*.enc.yaml` written by hand or
+    """Catches an implementation that commits a `*.enc.yaml` written by hand or
     copied from a template - a file with the right name, the right keys, and the credentials
     in the clear, which every other case in this file would pass. Catches a file `sops` has
     only PARTIALLY encrypted: the prefix is asserted on every leaf under `data`/`stringData`,
@@ -553,7 +553,7 @@ def test_every_encrypted_secret_is_ciphertext_under_a_named_age_recipient(
     would fail at CD time rather than here."""
     if path is None:
         # Zero `*.enc.yaml` is the agreed state: `sops` and `age` are not installed, so the
-        # ciphertext is a later `/quick`. The guard must be green over the empty glob.
+        # ciphertext is not committed yet. The guard must be green over the empty glob.
         return
     document = yaml.safe_load(read(path))
     assert isinstance(document, dict), f"{path.name} is not a YAML mapping"
@@ -583,10 +583,10 @@ def test_every_encrypted_secret_is_ciphertext_under_a_named_age_recipient(
 def test_the_sops_rule_covers_the_encrypted_file_and_leaves_the_example_alone(
     candidate: str, should_match: bool
 ) -> None:
-    r"""Criterion 1's policy half, on the boundary that decides it: the two probe paths differ
+    r"""The policy half, on the boundary that decides it: the two probe paths differ
     only in the segment before `.yaml`, and they live in the same directory. Catches a
     `path_regex` written as `infra/secrets/.*` or `infra/secrets/.*\.yaml$`, which tells `sops`
-    to encrypt the plaintext templates too - after which criterion 4's placeholder case and
+    to encrypt the plaintext templates too - after which the placeholder case and
     every reader of the examples get ciphertext where the contract should be. Catches a
     `path_regex` anchored so tightly (a leading `^/`, a missing directory segment) that it
     matches NOTHING, which is the silent failure: `sops` then writes a file it has not
@@ -602,11 +602,11 @@ def test_the_sops_rule_covers_the_encrypted_file_and_leaves_the_example_alone(
 
 
 def test_the_sops_policy_encrypts_exactly_the_two_data_keys() -> None:
-    r"""Criterion 1's second policy half, by EXACT string equality. Catches
+    r"""The second policy half, by EXACT string equality. Catches
     an `encrypted_regex` of `data` or `.*data.*`, which also matches `metadata` and encrypts
     the Secret's own name and namespace - a file `kubectl apply` cannot route anywhere and
     `kustomize` cannot read. Catches `^(data)$` alone, which leaves every `stringData` value
-    in the clear in a file whose `sops:` block claims it is encrypted, and which criterion 1's
+    in the clear in a file whose `sops:` block claims it is encrypted, and which the placeholder
     leaf scan cannot see until such a file exists."""
     rules = sops_creation_rules()
     assert len(rules) == 1, f"{SOPS_CONFIG} has {len(rules)} creation rules, not 1"
@@ -619,7 +619,7 @@ def test_the_sops_policy_encrypts_exactly_the_two_data_keys() -> None:
 def test_gitignore_carries_every_private_key_and_decrypted_secret_pattern(
     pattern: str,
 ) -> None:
-    """Criterion 2's `.gitignore` half, which never skips. Catches an implementation that
+    """The `.gitignore` half, which never skips. Catches an implementation that
     relies on nobody happening to run `age-keygen -o keys.txt` or `sops -d > x.dec.yaml` in
     the repo: the tracked-files case is red only AFTER the accident, and this one is red
     before it. Each pattern is required as a WHOLE line - `*.dec.yaml` appearing inside a
@@ -630,7 +630,7 @@ def test_gitignore_carries_every_private_key_and_decrypted_secret_pattern(
 
 
 def test_no_private_key_and_no_decrypted_secret_is_tracked_by_git() -> None:
-    """Criterion 2's tracked half. Catches the accident the whole plan exists to prevent: an
+    """The tracked half. Catches the accident the whole setup exists to prevent: an
     age private key or a decrypted Secret committed - `git ls-files` and not the working tree,
     because a file deleted from the tree after the commit is still in history and still in
     everybody's clone. Runs over the whole index rather than over `infra/secrets/`, since the
@@ -649,7 +649,7 @@ def test_no_private_key_and_no_decrypted_secret_is_tracked_by_git() -> None:
 
 
 def test_the_example_templates_state_the_same_contracts_as_the_readme_table() -> None:
-    """Criterion 3's file half, by EQUALITY of `{name: (namespaces, keys)}` - and neither side
+    """The file half, by EQUALITY of `{name: (namespaces, keys)}` - and neither side
     is a literal in this file, which is the whole point: the templates an operator fills in
     and the table a reader consults before an apply are the two places the contract lives, and
     a constant restated here would let them drift together while this case stayed green.
@@ -658,7 +658,7 @@ def test_the_example_templates_state_the_same_contracts_as_the_readme_table() ->
     operator supplying a Secret the gateway starts without and fails on at runtime. Catches
     `traefik-basic-auth` shipped for one namespace, since the namespace sets are compared too
     and a `Middleware` reads its Secret only from its own namespace. The NAME set and the
-    namespaces are additionally pinned against the plan's own constants, so a wholesale rename
+    namespaces are additionally pinned against this file's own constants, so a wholesale rename
     on BOTH sides at once - the one edit equality alone cannot see - is still red."""
     from_files = example_contracts()
     from_readme = readme_contracts()
@@ -687,11 +687,11 @@ NUMBER_WORDS = {"eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12}
 
 
 def test_the_secrets_readme_lists_every_template_and_counts_them() -> None:
-    """Criterion 18's `infra/secrets/README.md` half. The contracts table names exactly the
+    """The `infra/secrets/README.md` half. The contracts table names exactly the
     templates in the directory, each with its own filename, and the counts in its opening line,
     its heading and `infra/k8s/README.md`'s "Secrets nothing here writes" line equal the number
     of templates. Catches the next contract landing without a row. That table had already
-    fallen three rows behind before an earlier change, and nothing went red."""
+    fallen three rows behind once, and nothing went red."""
     lines = read(SECRETS_README).splitlines()
     headers = [
         index
@@ -743,17 +743,18 @@ def test_the_secrets_readme_lists_every_template_and_counts_them() -> None:
 def test_every_secret_the_build_references_is_one_the_templates_supply(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 3's build half, by EQUALITY between the templates' NAME set and the names the
+    """The build half, by EQUALITY between the templates' NAME set and the names the
     built stream actually references (`envFrom[*].secretRef.name`, each `Middleware`'s
-    `spec.basicAuth.secret`, and since an earlier change criterion 26 each pod's
+    `spec.basicAuth.secret`, and each pod's
     `imagePullSecrets[*].name`). Catches `ghcr-pull` contracted and named by no pod spec, and a
     pod spec naming a pull secret nothing contracts. Catches a template named for a Secret
     nothing reads - a file an operator fills in for nothing - and catches a manifest naming a
-    fifth Secret this plan supplies no template for, which is an apply that fails on a Secret
+    fifth Secret no template is supplied for, which is an apply that fails on a Secret
     nobody wrote down.
     `test_k8s_apps.py` pins the same names against four LITERALS build-wide; that case cannot
     see a template renamed or never written, because no literal changes when a FILE does, and
-    this one is read off the files. The four `tls[*].secretName` values are subtracted by name: cert-manager creates those, so including them would make a correct
+    this one is read off the files. The four `tls[*].secretName` values are subtracted by name:
+    cert-manager creates those, so including them would make a correct
     build red, and the subtraction is asserted to have removed exactly the four pinned ones so
     a stale exclusion list cannot hide a real reference behind it."""
     supplied, issued = referenced_secret_names(built)
@@ -771,7 +772,7 @@ def test_every_secret_the_build_references_is_one_the_templates_supply(
 
 
 def test_no_kustomization_lists_a_path_under_infra_secrets() -> None:
-    """Criterion 5's file half. Catches the convenient repair of an apply failing on a missing
+    """The file half. Catches the convenient repair of an apply failing on a missing
     Secret: adding `../../secrets/gateway-secrets.enc.yaml` to a kustomization's `resources`,
     which makes `kustomize build` emit the ciphertext as a resource the API server rejects,
     and makes `make verify` the place credentials start flowing through the build. Scans every
@@ -791,12 +792,12 @@ def test_no_kustomization_lists_a_path_under_infra_secrets() -> None:
 
 
 def test_the_build_emits_no_secret_object(built: list[dict[str, Any]]) -> None:
-    """Criterion 5's build half, over the WHOLE stream: whatever a kustomization lists, what
+    """The build half, over the WHOLE stream: whatever a kustomization lists, what
     reaches a cluster is what kustomize emits. Catches the same repair as the case above
     arriving by a route the path scan cannot see - a `secretGenerator` with inline `literals`,
     which names no path at all and produces a Secret with the credentials in the build output.
     `test_k8s_apps.py` asserts the same emptiness; that case is scoped by its own module to
-    the `apps` story, and criterion 5 is the claim for the whole build, so it is stated here
+    the `apps` story, and this one is the claim for the whole build, so it is stated here
     against the stream rather than inherited."""
     emitted = [document for document in built if document.get("kind") == SECRET_KIND]
     assert emitted == [], f"the build emits Secrets: {[name_of(document) for document in emitted]}"
@@ -804,7 +805,7 @@ def test_the_build_emits_no_secret_object(built: list[dict[str, Any]]) -> None:
 
 @pytest.mark.parametrize("filename", sorted(EXAMPLE_FILENAMES), ids=sorted(EXAMPLE_FILENAMES))
 def test_every_example_value_is_the_literal_placeholder(filename: str) -> None:
-    """Criterion 4, across EVERY document in a file - `traefik-basic-auth.example.yaml` is two
+    """Across EVERY document in a file - `traefik-basic-auth.example.yaml` is two
     documents, and a reader of the first would never see a real password left in the second.
     Only values under `data`/`stringData` are in scope: `metadata.name`, `metadata.namespace`,
     `apiVersion`, `kind` and every label are the contract itself, not credentials, and a scan
@@ -848,7 +849,7 @@ def comment_text(path: Path) -> str:
 
 
 def test_the_ghcr_pull_contract_is_a_dockerconfigjson_secret_in_apps() -> None:
-    """An earlier change criteria 16 and 17, read off the template itself rather than through
+    """Read off the template itself rather than through
     `example_contracts`, so a red here names this file and not whichever other template is
     missing. Catches the template written as `type: Opaque`, which applies cleanly and which
     the kubelet ignores for a pull, so every Helpdesk pod sits in `ImagePullBackOff`. Catches it
@@ -876,7 +877,7 @@ def test_the_ghcr_pull_contract_is_a_dockerconfigjson_secret_in_apps() -> None:
 
 
 def test_the_helpdesk_secret_template_carries_the_published_keys() -> None:
-    """An earlier change criterion 10, the exact key set, read off the template itself rather than through
+    """The exact key set, read off the template itself rather than through
     `example_contracts`, so a missing neighbouring template cannot be what reddens it. Catches a
     prefixed name left where the companion repo reads a bare one, which is a pod that starts on
     its localhost default and never says so. Catches the singular gateway key name kept where
@@ -907,14 +908,13 @@ def test_the_helpdesk_secret_template_carries_the_published_keys() -> None:
 def test_the_helpdesk_secret_template_comments_state_the_published_formats(
     fact: str, pattern: re.Pattern[str]
 ) -> None:
-    """An earlier change criteria 11 to 13, one stated fact per row, over the template's COMMENT lines only.
+    """One stated fact per row, over the template's COMMENT lines only.
     Every value is `REPLACE_ME`, so the comment is the only place these formats can live.
     Catches a template whose comments leave out one of the three things an operator cannot
     guess from a key name: the role and driver scheme of the DSN (guessed wrong, the Helpdesk
     runs as the owner role or fails to load its driver), the `tenant:key` list shape and where
     the digests go (guessed wrong, every model call is a 401), and the 32-byte floor on the
-    signing secret. Each row is only the fact the criterion names, never wording (standing rule
-    64)."""
+    signing secret. Each row is only the fact stated, never wording."""
     path = SECRETS_DIR / f"{HELPDESK_SECRETS}.example.yaml"
     assert pattern.search(comment_text(path)), (
         f"no comment in {path.name} states {fact} (`{pattern.pattern}`)"
@@ -923,7 +923,7 @@ def test_the_helpdesk_secret_template_comments_state_the_published_formats(
 
 @pytest.mark.parametrize("target", SOPS_TARGETS, ids=list(SOPS_TARGETS))
 def test_the_sops_targets_refuse_to_run_when_sops_is_missing(target: str) -> None:
-    """Criterion 6, the unhappy path. Catches a target written as a bare `sops --encrypt ...`
+    """The unhappy path. Catches a target written as a bare `sops --encrypt ...`
     over a glob: with no `sops` on `PATH` the shell exits 127 with `sops: command not found`,
     which `make` reports as an error nobody reads - and with `-` or `|| true` in front of it,
     or a `for` loop over an empty glob, it reports SUCCESS over a no-op, which is an operator
@@ -954,7 +954,7 @@ def test_the_sops_targets_refuse_to_run_when_sops_is_missing(target: str) -> Non
 def test_the_sops_targets_refuse_to_report_success_over_an_empty_glob(
     target: str, tmp_path: Path
 ) -> None:
-    """Criterion 6's second half, and the branch the case above can never reach: with `sops`
+    """The second half, and the branch the case above can never reach: with `sops`
     absent the guard fires first, so the loop underneath it is unexercised. A STUB `sops` on
     `PATH` - an executable that exits 0 and does nothing - gets past the guard without needing
     the real binary installed, and leaves the empty glob as the only thing
@@ -965,7 +965,7 @@ def test_the_sops_targets_refuse_to_report_success_over_an_empty_glob(
     does nothing and exits 0. An operator who ran the target in the wrong directory, or who
     edited `postgres-credentials.yaml` rather than `postgres-credentials.dec.yaml`, would be
     told four Secrets were encrypted when none were - the no-op reported as success that this
-    criterion exists to forbid. The message is asserted with the exit code: `nothing to` is
+    check exists to forbid. The message is asserted with the exit code: `nothing to` is
     what separates it from the missing-binary refusal above, which would otherwise satisfy a
     bare non-zero check."""
     if shutil.which("make") is None:

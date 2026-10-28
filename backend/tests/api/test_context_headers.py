@@ -57,7 +57,7 @@ def test_every_known_data_class_is_carried(data_class: str, harness_client: Test
 
 
 # An unknown value is a rejection, never a silent downgrade to the default. The
-# whitespace rows are a project rule: `confidential\n` is not `confidential`.
+# whitespace rows matter: `confidential\n` is not `confidential`.
 UNKNOWN_DATA_CLASS_CASES: list[tuple[str, str]] = [
     ("a class that does not exist", "secret"),
     ("empty", ""),
@@ -201,7 +201,7 @@ def test_absent_traceparent_generates_one(harness_client: TestClient) -> None:
     assert first["trace_id"] != second["trace_id"]
 
 
-# Decision C: a malformed traceparent is ignored and a new trace started, never
+# A malformed traceparent is ignored and a new trace started, never
 # a 422. The rows cover each part of the W3C format independently.
 MALFORMED_TRACEPARENT_CASES: list[tuple[str, str]] = [
     ("empty", ""),

@@ -97,7 +97,7 @@ def test_a_stage_step_starts_with_the_bare_lines() -> None:
 
 def test_the_step_default_lines_are_the_published_ones() -> None:
     """Catches a reworded default: a stage that never records a decision shows these two
-    lines in Langfuse, and the plan names them word for word."""
+    lines in Langfuse, and the published wording is exact."""
     assert STEP_INPUT_DEFAULT == "not recorded"
     assert STEP_OUTPUT_DEFAULT == "no decision recorded"
 

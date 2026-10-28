@@ -1,4 +1,4 @@
-r"""An earlier change: the repo root keeps only what a tool must find there.
+r"""The repo root keeps only what a tool must find there.
 
 Two compose overlays move next to the kits they run (`infra/load/compose.yml`,
 `infra/tradeoff/compose.yml`), the owner's values move from a root `.env` to `backend/.env`,

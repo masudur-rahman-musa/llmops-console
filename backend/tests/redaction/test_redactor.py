@@ -4,7 +4,7 @@ r"""Overlap resolution, placeholder assignment, the map and the input cap.
 text, because a text-driven overlap depends on which patterns happen to collide
 today: the tie-break rows would then be passing for whichever detector fired,
 not for the merge rule they claim to pin. The tie-break rows read the real
-`KIND_PRECEDENCE` by index instead of hard-coding an order the plan leaves to
+`KIND_PRECEDENCE` by index instead of hard-coding an order left to
 the implementation, so they redden on a reversed or ignored precedence and stay
 green on a re-ordering that is still honoured.
 
@@ -186,7 +186,7 @@ def test_distinct_values_of_one_kind_never_share_a_placeholder() -> None:
 
 def test_mapping_keys_are_exactly_the_placeholders_present_in_the_output() -> None:
     """Catches a map that carries entries for candidates the overlap merge dropped,
-    which an earlier change would store and then never be able to rehydrate."""
+    which would be stored and then never be able to rehydrate."""
     text = f"Pay {IBAN_A} from {IPV4_A}, ring {PHONE_A}."
 
     result = redact(text)
@@ -197,7 +197,7 @@ def test_mapping_keys_are_exactly_the_placeholders_present_in_the_output() -> No
 
 def test_mapping_round_trips_the_redacted_text_back_to_the_original() -> None:
     """Catches a map holding a normalised value (stripped spaces, upper-cased) - the
-    text no longer reconstructs, which is what #20's rehydration will need."""
+    text no longer reconstructs, which is what rehydration needs."""
     text = f"Mail {EMAIL_A}, pay {IBAN_A}, ring {PHONE_A}, mail {EMAIL_A}."
 
     result = redact(text)
@@ -276,7 +276,7 @@ def test_placeholder_assignment_is_a_bijection_over_distinct_values(values: list
 @given(values=st.lists(st.sampled_from(PROPERTY_POOL), min_size=1, max_size=6))
 def test_every_placeholder_in_the_output_round_trips_through_the_map(values: list[str]) -> None:
     """Catches a map missing an entry for a placeholder that reached the output,
-    which is unrehydratable and would surface only in an earlier change."""
+    which is unrehydratable and would surface only at rehydration."""
     text = " and ".join(values) + "."
 
     result = redact(text)
@@ -298,7 +298,7 @@ class DetectRecorder:
     calls: list[str] = field(default_factory=list)
 
     def __call__(self, text: str, directory: NameDirectory | None = None) -> list[Detection]:
-        """The arity `detect_all` has carried since an earlier change.
+        """The arity `detect_all` has carried so far.
 
         `redactor` calls it as `detect_all(text, directory)`, so a stub taking `text`
         alone raises `TypeError` at the seam instead of recording the one call this
@@ -309,8 +309,8 @@ class DetectRecorder:
 
 
 def test_max_redaction_input_chars_is_16384() -> None:
-    """Catches a drift between the engine's cap and an earlier change's request validator,
-    which imports this same constant (a project rule: exact literal)."""
+    """Catches a drift between the engine's cap and the request validator,
+    which imports this same constant (exact literal)."""
     assert MAX_REDACTION_INPUT_CHARS == 16384
 
 

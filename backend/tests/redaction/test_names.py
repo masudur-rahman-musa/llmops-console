@@ -17,7 +17,7 @@ a compiled alternation goes wrong.
 * The invariant every other detector holds: `value == text[start:end]`, and the
   kind is `PERSON`.
 
-The worst case (decision G's `MAX_DIRECTORY_NAMES` compiled and run over a
+The worst case (the `MAX_DIRECTORY_NAMES` compiled and run over a
 `MAX_REDACTION_INPUT_CHARS` input) is asserted as a BOUND and never timed: a
 wall-clock assertion is a flake on a loaded machine, and what the risk section
 actually needs to know is that the largest legal directory over the largest legal
@@ -104,7 +104,7 @@ REJECTED_CONTEXTS: list[tuple[str, str]] = [
 )
 def test_a_name_inside_a_longer_word_is_not_a_candidate(case: str, text: str) -> None:
     """Catches an alternation compiled with no boundary lookarounds, which is the
-    precision failure decision D exists to prevent: a two-character minimum name would
+    precision failure this guards against: a two-character minimum name would
     otherwise redact a substring of every ordinary word a tenant sends. The same
     directory matches the bare name in the row above, so "matched nothing" is not what
     makes these pass."""
@@ -247,7 +247,7 @@ def test_a_name_at_the_very_end_of_the_input_is_still_a_candidate() -> None:
 def test_punctuation_around_a_name_is_not_part_of_the_span(case: str, text: str) -> None:
     """Catches a span that swallows the character after the name: the redactor slices by
     these offsets, so a comma inside the span disappears from the caller's text and
-    rehydration puts it back in the wrong place. a project rule's analogue for a
+    rehydration puts it back in the wrong place. the project's analogue for a
     free-text detector, the same one `test_detectors.py` applies to the nine patterns."""
     start = text.index(FULL_NAME)
 
@@ -258,9 +258,9 @@ def test_punctuation_around_a_name_is_not_part_of_the_span(case: str, text: str)
 
 def test_the_largest_legal_directory_over_the_largest_legal_input_still_answers() -> None:
     r"""Catches a matcher that compiles per name and scans the text once per entry, or one
-    whose alternation exceeds a regex engine limit at the cap decision G set: 2000 names
+    whose alternation exceeds a regex engine limit at the cap: 2000 names
     is a legal directory and 16384 characters is a legal redaction input, so this pair is
-    reachable in production. Asserted as a bound and never timed (section 5).
+    reachable in production. Asserted as a bound and never timed.
 
     The filler is cut to length and then given a trailing SPACE, because truncating it
     at an arbitrary offset can end mid-word: the matcher's `(?<!\w)` boundary is right

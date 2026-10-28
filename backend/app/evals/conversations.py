@@ -12,8 +12,7 @@ Two things are worth more than the model itself.
   A misspelt `confirm_turns` inside `expected` would otherwise load cleanly and the
   check for a change before the yes would quietly stop applying.
 * The id and turn limits are the help desk route's own, so a file the route would
-  refuse is refused here, before the reset has been paid for
-.
+  refuse is refused here, before the reset has been paid for.
 
 `load_cases` loads a file whole or not at all, names the 1-based FILE line of a bad
 case (blank lines count), and refuses a missing or empty file: a run over zero cases

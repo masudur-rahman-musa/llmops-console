@@ -22,7 +22,6 @@ MONITORING_DIR = REPO_ROOT / "infra" / "k8s" / "monitoring"
 DASHBOARDS = MONITORING_DIR / "dashboards"
 ALERTING_FILE = MONITORING_DIR / "grafana-alerting.yml"
 COMPOSE_FILE = REPO_ROOT / "docker-compose.yml"
-HANDBOOK = REPO_ROOT / "dev" / "docs" / "ci-cd-deploy.md"
 
 DASHBOARD_FILES = (
     "gateway-overview.json",
@@ -48,7 +47,7 @@ PATH_PATTERN = re.compile(r"infra/[\w./-]+")
 
 
 def read(path: Path) -> str:
-    """Read a file the plan owes, failing the one case that needs it when it is absent."""
+    """Read a file the tests need, failing the one case that needs it when it is absent."""
     assert path.is_file(), f"{path} does not exist"
     return path.read_text(encoding="utf-8")
 
@@ -349,10 +348,9 @@ def named_paths(text: str) -> set[str]:
 
 
 def test_every_path_the_changed_files_name_exists() -> None:
-    """Catches a path written into the new file's comments, compose's Grafana block or the
-    handbook's Files line that does not exist (a typo, or a file named before it was made).
-    Each source must name at least one path, so a source that names none cannot pass by
-    having nothing to check, and the alerting file's own path must be among the handbook's."""
+    """Catches a path written into the new file's comments or compose's Grafana block that does
+    not exist (a typo, or a file named before it was made). Each source must name at least
+    one path, so a source that names none cannot pass by having nothing to check."""
     alerting_comments = "\n".join(
         line for line in read(ALERTING_FILE).splitlines() if line.lstrip().startswith("#")
     )
@@ -369,16 +367,9 @@ def test_every_path_the_changed_files_name_exists() -> None:
     )
     compose_block = "\n".join(compose_lines[start:end])
 
-    handbook_lines = [
-        line for line in read(HANDBOOK).splitlines() if "grafana-alerting.yml" in line
-    ]
-    assert handbook_lines, "the handbook's Files section does not name grafana-alerting.yml"
-    handbook_text = "\n".join(handbook_lines)
-
     sources = {
         "alerting file": named_paths(alerting_comments),
         "compose grafana": named_paths(compose_block),
-        "handbook": named_paths(handbook_text),
     }
     missing: list[str] = []
     for label, paths in sources.items():
@@ -388,4 +379,3 @@ def test_every_path_the_changed_files_name_exists() -> None:
         )
 
     assert missing == []
-    assert "infra/k8s/monitoring/grafana-alerting.yml" in sources["handbook"]

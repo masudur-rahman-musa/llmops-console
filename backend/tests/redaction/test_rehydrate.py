@@ -1,7 +1,7 @@
-r"""`rehydrate(text, mapping)`: the pure substitution an earlier change's route is built on.
+r"""`rehydrate(text, mapping)`: the pure substitution the route is built on.
 
 Everything here is in-process string work - no store, no app, no backing service
-- so a project rule has nothing to apply to and there is no fixture to share.
+- so there is nothing to scope or isolate and no fixture to share.
 The map literals are the shape `redact` hands over: `<KIND_N>` -> the raw value.
 
 Three cases carry the claims that are not obvious from the signature, and each is
@@ -76,7 +76,7 @@ NESTED_MAPPING: Mapping[str, str] = {
     "<EMAIL_2>": "carol@example.org",
 }
 
-# The `<EMAIL_1>` / `<EMAIL_11>` pair from the plan's section 6.
+# The `<EMAIL_1>` / `<EMAIL_11>` pair, where one id is a prefix of another.
 DOUBLE_DIGIT_MAPPING: Mapping[str, str] = {
     "<EMAIL_1>": EMAIL_A,
     "<EMAIL_11>": "kim@example.org",
@@ -280,7 +280,7 @@ def test_a_placeholder_split_one_character_at_a_time_is_rehydrated() -> None:
     ],
 )
 def test_text_that_cannot_complete_a_placeholder_is_not_held(text: str) -> None:
-    """Catches decision B's rejected alternative - holding everything after the last
+    """Catches the rejected alternative - holding everything after the last
     unclosed `<` - which keeps `< 3 and 4 > 1` buffered until the stream ends and turns a
     live answer into one block delivered at the finish. `flush` is asserted empty as well
     as the feed being whole, so an implementation that emitted the text AND kept a copy
@@ -321,7 +321,7 @@ def test_a_restored_value_is_not_rescanned_by_a_later_delta() -> None:
     """Catches a rehydrator that buffers its OUTPUT instead of the raw text: this map's
     first value ends in `<EMAIL_2`, so an output-side hold keeps those characters back,
     the `>` of the next feed completes them, and the answer carries
-    `bob+carol@example.org` - a value nobody wrote, which is the injection 12b's single
+    `bob+carol@example.org` - a value nobody wrote, which is the injection the single
     pass exists to prevent. A raw buffer cannot see a span it has already emitted."""
     rehydrator = StreamRehydrator(TRAILING_PREFIX_MAPPING)
 

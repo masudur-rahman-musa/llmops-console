@@ -34,7 +34,7 @@ def script() -> str:
 def test_the_scenario_offers_fifty_requests_a_second_for_ten_minutes(
     script: str, pinned: str
 ) -> None:
-    """Criterion 11: catches a closed-model executor (which slows its offered rate
+    """Catches a closed-model executor (which slows its offered rate
     when the gateway slows), a shorter run, or a VU pool too small for 50 RPS."""
     assert pinned in script
 
@@ -49,14 +49,14 @@ def test_the_scenario_offers_fifty_requests_a_second_for_ten_minutes(
     ids=["chat-p95", "availability", "dropped-iterations"],
 )
 def test_the_thresholds_are_the_slo_values(script: str, pinned: str) -> None:
-    """Criteria 14-16 and the unhappy path: catches a loosened SLO bound, a p95
+    """The unhappy path: catches a loosened SLO bound, a p95
     measured over embeddings too, or a missing dropped-iterations threshold that
     lets a run under 50 RPS pass."""
     assert pinned in script
 
 
 def test_the_mix_is_driven_by_the_global_iteration_counter(script: str) -> None:
-    """Criteria 12-13: catches a mix from `Math.random()` (not reproducible run to
+    """Catches a mix from `Math.random()` (not reproducible run to
     run) or from a per-VU counter (which repeats across VUs)."""
     assert re.search(r"import\s+exec\s+from\s+'k6/execution'", script)
     assert "exec.scenario.iterationInTest" in script
@@ -64,7 +64,7 @@ def test_the_mix_is_driven_by_the_global_iteration_counter(script: str) -> None:
 
 
 def test_the_bucket_boundaries_are_checked_chat_first_then_stream(script: str) -> None:
-    """Criterion 12: every boundary match is scanned. Catches the two
+    """Every boundary match is scanned. Catches the two
     checks in reverse order, which sends 90% to streaming and none to plain chat."""
     eighty = [match.start() for match in re.finditer(r"bucket < 80\b", script)]
     ninety = [match.start() for match in re.finditer(r"bucket < 90\b", script)]
@@ -75,7 +75,7 @@ def test_the_bucket_boundaries_are_checked_chat_first_then_stream(script: str) -
 def test_the_boundaries_in_the_script_produce_80_10_10_and_a_20_percent_repeat(
     script: str,
 ) -> None:
-    """Criteria 12-13: re-derives the mix from the numbers the script carries.
+    """Re-derives the mix from the numbers the script carries.
     Catches any modulus or boundary set (e.g. `bucket < 85`) whose buckets are
     not 80/10/10 with 18 of the 90 chat buckets repeating."""
     moduli = {int(value) for value in re.findall(r"iteration % (\d+);", script)}
@@ -115,7 +115,7 @@ def test_the_boundaries_in_the_script_produce_80_10_10_and_a_20_percent_repeat(
     ],
 )
 def test_requests_use_the_load_tenant_aliases_and_environment_key(script: str, pinned: str) -> None:
-    """Criteria 12 and 18: catches a different tenant or alias (budget and cache
+    """Catches a different tenant or alias (budget and cache
     booked elsewhere), or a key or address written into the script."""
     assert pinned in script
 
@@ -124,24 +124,24 @@ def test_requests_use_the_load_tenant_aliases_and_environment_key(script: str, p
 def test_requests_are_tagged_so_the_chat_threshold_excludes_embeddings(
     script: str, pinned: str
 ) -> None:
-    """Criterion 14: catches an untagged request, for which the `{kind:chat}`
+    """Catches an untagged request, for which the `{kind:chat}`
     threshold has no samples and passes vacuously."""
     assert pinned in script
 
 
 def test_unique_prompts_carry_the_iteration_counter(script: str) -> None:
-    """Criterion 13 and risk 3: catches unique prompts that do not interpolate the
+    """Catches unique prompts that do not interpolate the
     counter, which would make every chat an exact-cache hit."""
     assert "${iteration}" in script
 
 
 def test_the_summary_is_written_to_the_mounted_results_directory(script: str) -> None:
-    """Criterion 17: catches no `handleSummary`, or a summary path outside the
+    """Catches no `handleSummary`, or a summary path outside the
     `/results` mount, which is lost when the container is removed."""
     assert "export function handleSummary(data)" in script
     assert "'/results/summary.json'" in script
 
 
 def test_the_script_carries_no_key_literal(script: str) -> None:
-    """Criterion 18: catches a generated key or its digest pasted into the script."""
+    """Catches a generated key or its digest pasted into the script."""
     assert re.search(r"(?<![0-9a-fA-F])[0-9a-fA-F]{64}(?![0-9a-fA-F])", script) is None

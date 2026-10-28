@@ -5,11 +5,12 @@ explicit conditional on `OPSCONSOLE_TEST_DATABASE_URL`: the
 `requires_postgres` marker below skips with that variable's NAME in the reason,
 so a run that checked nothing says so in its own output rather than leaving it
 to be inferred. Deliberately not `OPSCONSOLE_DATABASE_URL`, which `Settings`
-itself reads and which the root `tests/conftest.py` clears for the whole session: exporting that one to run this directory would hand every
+itself reads and which the root `tests/conftest.py` clears for the whole session: exporting that
+one to run this directory would hand every
 app in the suite a `postgres` readiness probe and a Postgres ledger writer
 neither asked for.
 
-a project rule: ONE session-scoped pool, opened once. Per-test isolation is a
+ONE session-scoped pool, opened once. Per-test isolation is a
 unique SCHEMA that `apply_migrations` runs into - never a fresh database, never a
 fresh pool, never a wipe of a shared schema, which would delete a neighbouring
 suite's tables. The schema name is a uuid4 hex under a fixed prefix, so it is a

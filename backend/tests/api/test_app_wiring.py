@@ -9,14 +9,14 @@ turns one of them red.
 
 Every `create_app` call in this file passes an explicit environment, the three
 refusal cases included: they raise on the key store or the policy before the
-adapters are built, but that ordering is nothing this file pins, and a later plan
+adapters are built, but that ordering is nothing this file pins, and a later change
 that builds adapters first would silently construct a live-keyed client from a
 developer's exported key.
 
-An earlier change adds the adapter set to the same list. It is built here rather than per
-request (decision D), it is built from an injected environment rather than the
-process's own (#66), and it is closed on shutdown - the half of decision D that
-an earlier change's policy reload reuses, and the half nothing would otherwise notice: a
+The adapter set is on the same list. It is built here rather than per
+request, it is built from an injected environment rather than the
+process's own and it is closed on shutdown - the half that
+the policy reload reuses, and the half nothing would otherwise notice: a
 leaked `httpx` connection pool costs file descriptors, not a failing assertion.
 """
 
@@ -86,7 +86,7 @@ def test_create_app_builds_the_adapter_set() -> None:
 
     adapters = app.state.adapters
     # `local_embed` declares no `key_env`, so it is built from its file alone and
-    # needs nothing in the environment (06a decision B). The two chat providers
+    # needs nothing in the environment. The two chat providers
     # are built because both keys are set.
     assert set(adapters) == {"anthropic", "openai", "local_embed"}
     assert isinstance(adapters["anthropic"], Adapter)
@@ -96,7 +96,7 @@ def test_create_app_builds_the_adapter_set() -> None:
 
 
 def test_create_app_reads_keys_only_from_the_given_environ() -> None:
-    """Catches a factory that reads `os.environ` behind the injected mapping (#66): with a
+    """Catches a factory that reads `os.environ` behind the injected mapping: with a
     real key exported, every app the suite builds would hold a live client against the
     provider, and a test that made a real billed call would pass locally and fail in CI."""
     app = create_app(wiring_settings(), NO_PROVIDER_KEYS)
@@ -123,7 +123,7 @@ class ClosingStub(StubAdapter):
 def test_adapters_are_closed_on_shutdown() -> None:
     """Catches a `create_app` built without its lifespan, or a lifespan that closes nothing:
     every dropped adapter leaks an `httpx` connection pool, and nothing else in the suite
-    would go red - an earlier change's reload churns the same path once per policy change."""
+    would go red - the reload churns the same path once per policy change."""
     app = create_app(wiring_settings(), NO_PROVIDER_KEYS)
     stub = ClosingStub()
     app.state.adapters = {stub.name: stub}
@@ -282,7 +282,7 @@ def test_create_app_refuses_an_empty_env_without_backing_urls() -> None:
         )
 
 
-# --- an earlier change: the lease middleware releases every hold after the response ----
+# --- The lease middleware releases every hold after the response ----
 
 
 def test_boot_refuses_a_policy_that_routes_to_an_unpriced_model(tmp_path: Path) -> None:

@@ -1,4 +1,4 @@
--- The old location log and every `region` column go (ADR 0044).
+-- The old location log and every `region` column go.
 --
 -- This cannot be undone: the old region values are lost. The daily rollup is
 -- rebuilt without `region`, so it starts empty and fills on the next

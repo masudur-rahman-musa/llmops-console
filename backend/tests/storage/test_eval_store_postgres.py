@@ -9,8 +9,8 @@ is invisible to PostgreSQL and to mypy both. The `numeric` scale is the same gap
 in the other direction - a column narrower than six places rounds a cost the
 ledger computed exactly, and a run's spend then stops matching the ledger's own.
 
-These cases live in tests/storage/ rather than beside the pure ones (an earlier change
-decision D): a project rule wants ONE session-scoped pool for the suite, and the
+These cases live in tests/storage/ rather than beside the pure ones because the suite
+wants ONE session-scoped pool for the suite, and the
 fixtures in tests/storage/conftest.py already have it. Per-test isolation is a
 throwaway SCHEMA, never a fresh pool and never a wipe. Skipped without
 `OPSCONSOLE_TEST_DATABASE_URL`.
@@ -29,11 +29,11 @@ The contract these cases are written against, before it exists:
   the columns named below, `eval_cases.run_id` a foreign key to `eval_runs.id`
   ON DELETE CASCADE, an index on `eval_cases (run_id)` and one on
   `eval_runs (started_at DESC)`, and a CHECK over `run_kind`'s three words
-  (decision C);
+ ;
 * `app.storage.eval_store` publishes `EVAL_RUNS` and `EVAL_CASES`, the two table
   names its statements build their identifiers from;
 * `PostgresEvalStore(pool, *, schema=...).write(run_row, case_rows)` writes both
-  in ONE transaction (decision G).
+  in ONE transaction.
 """
 
 from __future__ import annotations
@@ -215,7 +215,7 @@ def test_both_tables_exist_with_their_foreign_key_and_their_two_indexes(
 
 @requires_postgres
 def test_the_run_kind_check_refuses_a_fourth_value(pool: Pool, migrated_schema: str) -> None:
-    """Decision C's CHECK, and the only guard left once somebody edits a row by hand or a
+    """The CHECK constraint, and the only guard left once somebody edits a row by hand or a
     later writer forgets the pre-check. Catches `run_kind` declared as plain `text`: row
     18 filters on these three words, so a fourth one is a run that no query ever counts
     and no constraint ever complained about. Written as an UPDATE of a row the store
@@ -240,14 +240,14 @@ def test_the_run_kind_check_refuses_a_fourth_value(pool: Pool, migrated_schema: 
 
 @requires_postgres
 def test_a_report_round_trips_into_the_two_tables(pool: Pool, migrated_schema: str) -> None:
-    """The plan's schema-drift risk in one case. Catches a statement whose column list
+    """The schema-drift risk in one case. Catches a statement whose column list
     disagrees with the SQL file: `set_name`, `set_sha`, `git_sha`, `tenant` and `target`
     are all `text`, so two of them swapped is a run attributed to the wrong tenant and
     PostgreSQL accepts it without a murmur. `metrics` is asserted as the same mapping
     because it is what the eval gate reads back, and a `jsonb` column handed a Python dict with
     no adapter is the first thing that breaks here. The expected mapping is the report's
     own JSON form (`model_dump(mode="json")["metrics"]`), the exact bytes the store writes,
-    so `check_score` and `judge_score` come back as the numbers jsonb holds. Decision F's two
+    so `check_score` and `judge_score` come back as the numbers jsonb holds. The two
     columns are asserted NULL in the same row, so a store that filled them with zeros fails."""
     report = a_report()
 
@@ -284,11 +284,11 @@ def test_every_case_row_lands_with_its_own_measurements_and_its_details(
     pool: Pool, migrated_schema: str
 ) -> None:
     """Catches the four measured columns declared NOT NULL, which would refuse exactly the
-    rows a failing target produces, and a store that wrote `0` and `''` into them instead
-    - a broken turn would then be averaged in as a free, instant, EU-served case and lift
-    every number `evals/scores.py` reports. `tags` is asserted as the empty array
-    rather than as NULL
-    (decision F), because a NULL array is a value every later `unnest` has to know about."""
+     rows a failing target produces, and a store that wrote `0` and `''` into them instead
+     - a broken turn would then be averaged in as a free, instant, EU-served case and lift
+     every number `evals/scores.py` reports. `tags` is asserted as the empty array
+     rather than as NULL
+    , because a NULL array is a value every later `unnest` has to know about."""
     store_report(pool, migrated_schema, a_report())
 
     rows = case_rows(pool, migrated_schema)
@@ -311,7 +311,7 @@ def test_every_case_row_lands_with_its_own_measurements_and_its_details(
 
 
 # --------------------------------------------------------------------------
-# two runs, and a write that fails part way (decision G)
+# two runs, and a write that fails part way
 # --------------------------------------------------------------------------
 
 
@@ -343,11 +343,11 @@ def test_two_runs_of_the_same_set_are_two_rows_whose_cases_point_at_their_own(
 def test_a_write_that_fails_part_way_leaves_neither_table_changed(
     pool: Pool, migrated_schema: str
 ) -> None:
-    """Decision G's whole reason. Catches a store issuing the run INSERT and the case
+    """The whole reason. Catches a store issuing the run INSERT and the case
     INSERTs in separate transactions - or in none - which leaves a run row whose cases are
     missing, and every later query counts that as a run with fewer cases and cannot tell
     it from a shorter golden set. The failure is a latency no integer column can hold,
-    which no pre-check in the plan covers, so the statement really does fail AFTER the run
+    which no pre-check covers, so the statement really does fail AFTER the run
     row has been issued; both tables are asserted empty, because "the run row survived" is
     exactly the corruption."""
     report = a_report()

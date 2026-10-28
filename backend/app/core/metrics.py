@@ -255,7 +255,7 @@ def request_metrics(scope: Scope) -> RequestMetrics | None:
 def start_request(scope: Scope) -> RequestMetrics | None:
     """Open a label record for a counted path, and answer `None` for every other.
 
-    This is the single place decision G is enforced: a path outside
+    This is the single place the rule is enforced: a path outside
     `COUNTED_PATH_PREFIX` gets no record, so every later emission finds nothing
     and no probe or scrape can reach a counter.
     """
@@ -345,7 +345,7 @@ def record_tokens(
 
 
 def record_cost_usd(*, tenant: str, provider: str, model: str, usd: Decimal) -> None:
-    """Book one request's spend, exactly as the ledger row records it (#29).
+    """Book one request's spend, exactly as the ledger row records it.
 
     The number comes from the row `app.storage.record_cost` ANSWERS, never
     from a second pricing: the counter, the `X-Gateway-Cost-USD` header and the
@@ -370,7 +370,7 @@ def record_cost_usd(*, tenant: str, provider: str, model: str, usd: Decimal) -> 
 
 
 def record_budget_ratio(*, tenant: str, ratio: float) -> None:
-    """Publish how much of one tenant's monthly budget its spend has now consumed (#27).
+    """Publish how much of one tenant's monthly budget its spend has now consumed.
 
     Set after every SERVED request, from the total the budget counter answered
     for that request's own debit, so the gauge includes the request in hand
@@ -475,7 +475,7 @@ tier is one query rather than a join."""
 
 
 def record_cache_hit(*, tenant: str, kind: str) -> None:
-    """Count one answer served from a cache instead of from a provider (#24).
+    """Count one answer served from a cache instead of from a provider.
 
     Only a HIT moves this counter. A miss is already visible as
     `gateway_requests_total`'s `cache="miss"` label, and a second family counting

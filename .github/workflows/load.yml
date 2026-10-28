@@ -1,5 +1,5 @@
 name: load
-# #68 (part, k6 load): the gateway at 50 RPS for ten minutes over the
+# k6 load: the gateway at 50 RPS for ten minutes over the
 # fixed-delay mock provider, run by hand. Never on a pull request or a push: ten
 # minutes of a shared runner's noisy CPU per change buys no signal a local run
 # does not already give.

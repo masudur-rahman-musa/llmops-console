@@ -1,9 +1,9 @@
--- The two console tables nothing else in the system produces (SPEC §18, §16.4).
+-- The two console tables nothing else in the system produces.
 --
 -- Every other table in this directory is filled by a code path: `cost_ledger` and
 -- `residency_log` by a served request, `eval_runs` and `eval_cases` by an eval run.
 -- These two are filled by a human and by CI through `/admin/incidents` and
--- `/admin/releases`, which is why plan 28a arrives as an endpoint rather than as a
+-- `/admin/releases`, which is why they arrive as an endpoint rather than as a
 -- writer behind one.
 --
 -- `incidents.resolved_at` is NULLABLE and that is the whole definition of "open":
@@ -20,12 +20,12 @@
 -- another way, and a release joined to a missing run shows a deploy with no quality
 -- number and no error.
 --
--- The primary key is `(git_sha, deployed_at)` rather than `git_sha` (plan 28a
--- decision B). SPEC §17 calls the page "deploys", plural, and a rollback re-deploys
+-- The primary key is `(git_sha, deployed_at)` rather than `git_sha`.
+-- The page is called "deploys", plural, and a rollback re-deploys
 -- an earlier sha; a `git_sha` key with an upsert would overwrite the first deploy's
 -- timestamp and lose the rollback entirely.
 --
--- An applied migration is never edited - a later plan needing another column adds
+-- An applied migration is never edited - a later change needing another column adds
 -- 005, exactly as 002 and 003 say of themselves.
 --
 -- `{schema}` is substituted by `opsconsole.ledger.db.apply_migrations`, which
@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS {schema}.incidents (
     CONSTRAINT incidents_severity_check CHECK (severity IN ('sev1', 'sev2', 'sev3'))
 );
 
--- `id` is a `uuid4` hex the route generates per incident (decision A), so no client
+-- `id` is a `uuid4` hex the route generates per incident, so no client
 -- string shapes a primary key and two incidents filed in the same second cannot
 -- collide on a slug someone typed twice.
 

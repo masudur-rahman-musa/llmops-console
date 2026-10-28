@@ -18,12 +18,11 @@ The half that needs NOTHING is the failure half, over an `httpx.MockTransport`
 that opens no socket. Those four rows are where this class earns its contract: a
 Qdrant that is unreachable, one that answers a non-2xx to a search, one that
 answers a non-2xx to an upsert, and a stored payload this build cannot read are
-each a MISS or a swallow. Nothing in this package raises for a store reason
-(plan decision G), because turning a Qdrant incident into 5xx on requests a
-provider would have served is the failure this tier is arranged to make
-impossible.
+each a MISS or a swallow. Nothing in this package raises for a store reason, because turning a
+Qdrant incident into 5xx on requests a provider would have served is the failure this tier is
+arranged to make impossible.
 
-a project rule: one session-scoped client, built once. Per-test isolation is a
+One session-scoped client, built once. Per-test isolation is a
 unique `collection_prefix` handed to the cache, never a fresh client and never a
 sweep over collections this suite does not own; the session's own collections
 are removed at the end by name, and they all begin with `SESSION_PREFIX`.
@@ -31,7 +30,8 @@ are removed at the end by name, and they all begin with `SESSION_PREFIX`.
 Contract this file assumes, beyond the one recorded in
 `tests/cache/test_vectors.py`: an entry's Qdrant payload carries `alias`,
 `system_hash`, `tools_hash` and `answer`, where `answer` is
-`ChatResponse.model_dump_json()` - the same neutral value the exact tier stores - and a search reads the top hit's `score` and `payload`
+`ChatResponse.model_dump_json()` - the same neutral value the exact tier stores - and a search
+reads the top hit's `score` and `payload`
 from Qdrant's `{"result": [...]}` body.
 
 The exact-0.97 boundary is asserted in `tests/cache/test_vectors.py` and not
@@ -199,9 +199,9 @@ def test_a_non_2xx_answer_to_a_search_is_a_miss(case: str, status: int) -> None:
 @pytest.mark.parametrize(("case", "status"), NON_2XX_ROWS, ids=[row[0] for row in NON_2XX_ROWS])
 def test_a_non_2xx_answer_to_a_put_is_swallowed(case: str, status: int) -> None:
     """Catches a write path that raises on a refused create or a refused upsert: a
-    collection created with the wrong vector size rejects every later write for that tenant
-    (plan §5), and if that rejection escaped, the tenant's every request would 5xx after the
-    provider had already answered - a cache failure taking down a working gateway."""
+     collection created with the wrong vector size rejects every later write for that tenant
+    , and if that rejection escaped, the tenant's every request would 5xx after the
+     provider had already answered - a cache failure taking down a working gateway."""
     cache_over(answering(status, {"status": {"error": "no"}})).put(
         TENANT,
         PROBE,
@@ -383,8 +383,8 @@ def test_a_search_before_any_write_creates_no_collection(
 def test_the_collection_is_created_on_the_first_write_with_the_written_vector_size(
     cache: QdrantSemanticCache, qdrant_client: httpx.Client
 ) -> None:
-    """Catches a collection created with a hardcoded size - 384, the fastembed default the
-    plan explicitly refused (decision F) - or with the wrong distance. A collection created
+    """Catches a collection created with a hardcoded size - 384, the fastembed default, which is
+    refused - or with the wrong distance. A collection created
     with the wrong size rejects every later write for that tenant, silently, forever, and a
     Euclidean distance makes every score in this file meaningless while the round trip still
     passes. The size asserted is the length of the vector that was actually written."""
@@ -455,7 +455,7 @@ def test_a_query_differing_in_one_filter_field_misses_at_cosine_one(
     field - the in-process implementation can hold all six and this one could still send a
     `must` clause short. The query vector is IDENTICAL to the stored one, so the score
     cannot be what refuses it, and a dropped clause means the nearest neighbour is another
-    conversation's answer (plan §5)."""
+    conversation's answer."""
     put(cache)
 
     assert (

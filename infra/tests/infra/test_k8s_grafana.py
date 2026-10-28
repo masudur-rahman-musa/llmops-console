@@ -7,33 +7,34 @@ The stream comes from the session-scoped `built` fixture in `infra/tests/infra/c
 BUILT stream rather than off a file, so a manifest written and never listed in a `resources:`
 block is the same failure as a manifest never written.
 
-This module OWNS the `monitoring` namespace's object inventory from an earlier change on (its §8 entry 1).
+This module OWNS the `monitoring` namespace's object inventory now.
 `test_k8s_monitoring.py` keeps the scrape plane's behaviour - the scrape config, the retention
 window, the RBAC and the scrape policies - and no longer asserts the namespace's
-`(kind, name, namespace)` equality, because 23e, 23c and 23d each add to this namespace and two
+`(kind, name, namespace)` equality, because every addition to this
+namespace is a new object, and two
 files pinning one set is two places to edit for every later object.
 
 Everything is asserted by EQUALITY in both directions, never by containment: an object nobody
 agreed to is as dangerous as a missing one, and for the middleware list an EXTRA entry is a
 router behaviour nobody reviewed.
 
-Three scoping decisions this file inherits or makes, because the plan's criteria cannot all be
+Three scoping decisions this file makes, because the constraints cannot all be
 read literally at once:
 
-* Criterion 1 names "23a's eleven plus exactly these nine" while criterion 5 keeps the
-  pre-existing `ResourceQuota/monitoring-envelope` and `LimitRange/monitoring-defaults` in that
-  same namespace and criterion 7 puts six NetworkPolicies in it. `MONITORING_OBJECTS` is
-  therefore the eleven, plus the two envelope objects, plus this plan's nine - twenty-two rows -
+* The expected set is "the eleven plus exactly these nine", while the pre-existing
+  `ResourceQuota/monitoring-envelope` and `LimitRange/monitoring-defaults` stay in that
+  same namespace and six NetworkPolicies are in it too. `MONITORING_OBJECTS` is
+  therefore the eleven, plus the two envelope objects, plus the nine - twenty-two rows -
   and the policies are excluded from the scan and pinned by `test_k8s_netpol.py` instead.
 * `ClusterRole/kube-state-metrics` and `ClusterRoleBinding/kube-state-metrics` are cluster scoped
   and carry no `metadata.namespace`, so they are scoped into the inventory by KIND, exactly as
-  an earlier change's module did - every `ClusterRole` and `ClusterRoleBinding` ANYWHERE in the build is
+  the module did - every `ClusterRole` and `ClusterRoleBinding` ANYWHERE in the build is
   expected to be one of the two.
-* Criterion 1's "no CustomResource" is read as decision A of an earlier change, verbatim: no
+* "No CustomResource" is read verbatim: no
   `CustomResourceDefinition` kind at all and no document in the `monitoring.coreos.com` group.
   `Middleware` (`traefik.io/v1alpha1`) is a custom resource the build already carries in `apps`
   and `platform`, and two more of them land in `monitoring` here; they are deliberately NOT
-  forbidden, because what decision A forbids is an operator install, which is what would force
+  forbidden, because what is forbidden is an operator install, which is what would force
   `kubeconform -strict` into the `-ignore-missing-schemas` `test_k8s_base.py` refuses by name.
 
 Metric names are RESOLVED against `packages/opsconsole/opsconsole/core/metrics.py` at run time
@@ -65,14 +66,14 @@ from app.core.metrics import registry
 #: sibling module in this directory derives it the same way rather than importing it.
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
-#: The directory the `configMapGenerator` reads (criterion 2, decision A): the dashboards live
+#: The directory the `configMapGenerator` reads: the dashboards live
 #: where kustomize can read them, which is inside the kustomization root.
 DASHBOARDS_DIR = REPO_ROOT / "infra" / "k8s" / "monitoring" / "dashboards"
 
-#: The contract templates this repo publishes for Secrets it does NOT supply (criterion 8).
+#: The contract templates this repo publishes for Secrets it does NOT supply.
 SECRETS_DIR = REPO_ROOT / "infra" / "secrets"
 
-#: The page whose secrets table criterion 8 says the contract's keys must agree with.
+#: The page whose secrets table the contract's keys must agree with.
 K8S_README = REPO_ROOT / "infra" / "k8s" / "README.md"
 
 MONITORING = "monitoring"
@@ -91,9 +92,9 @@ NAME_LABEL = "app.kubernetes.io/name"
 #: carry no `metadata.namespace` to be found by - see the module docstring.
 RBAC_KINDS = ("ClusterRole", "ClusterRoleBinding")
 
-#: Criterion 1, as `(kind, name, namespace)`, and the equality this module now owns. The first
-#: eleven rows are an earlier change's, the next two are the envelope objects criterion 5 keeps UNCHANGED,
-#: the next nine are 23b's, and the last three are an earlier change's Alertmanager (its manifest's own
+#: As `(kind, name, namespace)`, and the equality this module now owns. The first
+#: eleven rows are the scrape plane's, the next two are the envelope objects kept UNCHANGED,
+#: the next nine are Grafana's, and the last three are the Alertmanager (its manifest's own
 #: "emits exactly" wording). `None` is what a cluster-scoped object's namespace reads as.
 MONITORING_OBJECTS: frozenset[tuple[str, str, str | None]] = frozenset(
     {
@@ -120,28 +121,27 @@ MONITORING_OBJECTS: frozenset[tuple[str, str, str | None]] = frozenset(
         ("Ingress", GRAFANA, MONITORING),
         ("Middleware", "rate-limit", MONITORING),
         ("Middleware", "security-headers", MONITORING),
-        # An earlier change's three (its §7 step 5 sweep, this file's own entry).
+        # The Alertmanager three.
         ("Deployment", ALERTMANAGER, MONITORING),
         ("Service", ALERTMANAGER, MONITORING),
         ("ConfigMap", "alertmanager-config", MONITORING),
     }
 )
 
-#: An earlier change decision A, the half the build can actually contradict: an operator install would
+#: The half the build can actually contradict: an operator install would
 #: bring this kind, and `kubeconform -strict` has no stock schema for what it declares.
 FORBIDDEN_KIND = "CustomResourceDefinition"
 
-#: An earlier change decision A's other half: the API group every `kube-prometheus-stack` custom resource
+#: The other half: the API group every `kube-prometheus-stack` custom resource
 #: lives in. `traefik.io` and `cert-manager.io` are custom resources too and are deliberately NOT
 #: forbidden - see the module docstring.
 FORBIDDEN_API_GROUP = "monitoring.coreos.com"
 
-#: Criterion 2 and decision E: the generated ConfigMap's name with the hash suffix disabled, and
+#: The generated ConfigMap's name with the hash suffix disabled, and
 #: therefore also the prefix every hashed spelling of it would start with.
 DASHBOARDS_CONFIGMAP = "grafana-dashboards"
 
-#: Criterion 2 and 23e criterion 1: the five dashboards this plan ships (gateway shipped in 23b,
-#: the other four in 23e), and the case compares the ConfigMap's keys against the DIRECTORY as
+#: The five dashboards shipped, and the case compares the ConfigMap's keys against the DIRECTORY as
 #: well, both directions, by equality.
 DASHBOARD_FILENAMES: frozenset[str] = frozenset(
     {
@@ -153,25 +153,25 @@ DASHBOARD_FILENAMES: frozenset[str] = frozenset(
     }
 )
 
-#: Criterion 3 and criterion 4: the uid the provisioned datasource declares, which is also the
+#: The uid the provisioned datasource declares, which is also the
 #: uid every panel target has to name. A target naming anything else renders an empty panel with
 #: no error anywhere.
 DATASOURCE_UID = "prometheus"
 
-#: Criterion 4, each by exact value: the in-cluster Service DNS Grafana proxies to, the access
+#: Each by exact value: the in-cluster Service DNS Grafana proxies to, the access
 #: mode that keeps the query server-side (`direct` would have the BROWSER dial a ClusterIP), and
 #: the default flag that makes a panel with no explicit datasource still resolve.
 DATASOURCE_URL = "http://prometheus.monitoring.svc.cluster.local:9090"
 DATASOURCE_ACCESS = "proxy"
 
-#: 23e decision C: the only cluster-infra metric names platform.json's (and the Helpdesk pod
+#: The only cluster-infra metric names platform.json's (and the Helpdesk pod
 #: panels') kube-state-metrics/node-exporter panels may use, verified against
 #: `infra/k8s/monitoring/exporters.yaml`'s RBAC and scrape targets - kept separate from
 #: `registered_metric_names()` (which reads only the gateway's own registry) so a typo'd
 #: `gateway_` name still fails against the real registry instead of being waved through here.
 CLUSTER_INFRA_METRIC_NAMES: frozenset[str] = frozenset(
     {
-        # An earlier change: the Helpdesk's own counters, scraped from its agent api and scheduler.
+        # The Helpdesk's own counters, scraped from its agent api and scheduler.
         "helpdesk_turn_endings_total",
         "helpdesk_turns_to_file_bucket",
         "helpdesk_chats_waiting",
@@ -193,8 +193,8 @@ DATASOURCE_IS_DEFAULT = True
 DATASOURCES_CONFIGMAP = "grafana-datasources"
 PROVIDERS_CONFIGMAP = "grafana-dashboard-providers"
 
-#: Criterion 5, decision C, by value. Asserted as the WHOLE flattened mapping, so a `limits.cpu`
-#: nobody agreed to is a failure rather than a silent addition (an earlier change decision C: a CPU limit
+#: By value. Asserted as the WHOLE flattened mapping, so a `limits.cpu`
+#: nobody agreed to is a failure rather than a silent addition (a CPU limit
 #: throttles rather than protects).
 GRAFANA_RESOURCES: dict[str, str] = {
     "requests.memory": "128Mi",
@@ -202,15 +202,15 @@ GRAFANA_RESOURCES: dict[str, str] = {
     "limits.memory": "256Mi",
 }
 
-#: Criterion 5's totals, DERIVED in the case from the built pod templates rather than restated
+#: The totals, DERIVED in the case from the built pod templates rather than restated
 #:: 256 + 32 + 64 + 128 + 32 = 512Mi, 150 + 50 + 50 + 100 + 50 = 400m,
-#: 512 + 64 + 128 + 256 + 64 = 1024Mi - the fifth term each time is an earlier change's Alertmanager,
+#: 512 + 64 + 128 + 256 + 64 = 1024Mi - the fifth term each time is the Alertmanager,
 #: which fills what this namespace used to leave over.
 EXPECTED_REQUEST_MEMORY_BYTES = 512 * 1024**2
 EXPECTED_REQUEST_CPU_MILLICORES = 400
 EXPECTED_LIMIT_MEMORY_BYTES = 1024 * 1024**2
 
-#: Criterion 5's other half: the envelope is UNCHANGED, so these three are asserted as STRINGS
+#: The other half: the envelope is UNCHANGED, so these three are asserted as STRINGS
 #: against the built quota - the API server compares quantities, and a test that parsed first
 #: would accept `1024Mi` for a table that says `1Gi`.
 MONITORING_QUOTA = {
@@ -219,7 +219,7 @@ MONITORING_QUOTA = {
     "limits.memory": "1Gi",
 }
 
-#: An earlier change's Alertmanager fills what this row used to leave over, to the byte - the reason
+#: The Alertmanager fills what was left over, to the byte - the reason
 #: `EXPECTED_REQUEST_MEMORY_BYTES` and its two siblings above already read the totals AT quota
 #: (512Mi/400m/1Gi) rather than the 480Mi/350m/960Mi four pods alone would sum to: 480 + 32 =
 #: 512Mi, 350 + 50 = 400m, 960 + 64 = 1024Mi. `HEADROOM_*` is now the remainder left after
@@ -228,29 +228,29 @@ HEADROOM_REQUEST_MEMORY_BYTES = 0
 HEADROOM_REQUEST_CPU_MILLICORES = 0
 HEADROOM_LIMIT_MEMORY_BYTES = 0
 
-#: The five pod templates `monitoring` carries after an earlier change (23a's three, this plan's Grafana,
-#: 23c's Alertmanager). Pinned so the totals cannot be reached by a sixth workload that happens
+#: The five pod templates `monitoring` carries (the scrape plane's three, Grafana and
+#: Alertmanager). Pinned so the totals cannot be reached by a sixth workload that happens
 #: to cancel a wrong quantity out.
 MONITORING_WORKLOADS: frozenset[str] = frozenset(
     {PROMETHEUS, NODE_EXPORTER, KUBE_STATE_METRICS, GRAFANA, ALERTMANAGER}
 )
 
-#: Decision D: Grafana's container port serves the UI the Ingress points at, so it is named
-#: `http` and NOT `metrics` - the shared name an earlier change's ingress policy resolves against.
+#: Grafana's container port serves the UI the Ingress points at, so it is named
+#: `http` and NOT `metrics` - the shared name the ingress policy resolves against.
 GRAFANA_PORT_NAME = "http"
 
-#: Criterion 6, by value: the one public host, the one path, and the `pathType` that path is
+#: By value: the one public host, the one path, and the `pathType` that path is
 #: worth. `Prefix` on `/` is the whole Grafana app behind one router.
 GRAFANA_HOST = "grafana.example.com"
 GRAFANA_PATH = "/"
 PATH_TYPE_PREFIX = "Prefix"
 
-#: Criterion 6: the Secret cert-manager WRITES from this Ingress's `tls` block. Disjoint from
-#: `grafana-admin` by criterion 8 - if the two names ever collided, an issued certificate would
+#: The Secret cert-manager WRITES from this Ingress's `tls` block. Disjoint from
+#: `grafana-admin` by design - if the two names ever collided, an issued certificate would
 #: overwrite the admin credential.
 GRAFANA_TLS_SECRET = "grafana-tls"
 
-#: Criterion 6 and a design note: Traefik reads middlewares off this annotation as a comma-separated
+#: Traefik reads middlewares off this annotation as a comma-separated
 #: list, per Ingress rather than per path.
 MIDDLEWARE_ANNOTATION = "traefik.ingress.kubernetes.io/router.middlewares"
 
@@ -261,29 +261,29 @@ MIDDLEWARE_REFERENCE = re.compile(
     r"(?P<namespace>[a-z0-9]+)-(?P<name>[a-z0-9][a-z0-9-]*)@kubernetescrd"
 )
 
-#: Criterion 6: the parsed annotation, by EQUALITY as `(namespace, name)` pairs. Both resolve to
+#: The parsed annotation, by EQUALITY as `(namespace, name)` pairs. Both resolve to
 #: `Middleware`s this build emits in `monitoring`, which the case checks against the stream.
 GRAFANA_MIDDLEWARES: frozenset[tuple[str, str]] = frozenset(
     {(MONITORING, "rate-limit"), (MONITORING, "security-headers")}
 )
 
-#: Decision B: the middleware the `grafana.` host is the one public host NOT to carry. A 401 in
+#: The middleware the `grafana.` host is the one public host NOT to carry. A 401 in
 #: front of `/api/annotations` would break the release annotation `deploy.yml` POSTs with a
 #: Bearer token for a credential Grafana is already asking for.
 FORBIDDEN_MIDDLEWARE = "basic-auth"
 
-#: Criterion 8: the fifth Secret this repo contracts for and does not supply, its template, and
+#: The fifth Secret this repo contracts for and does not supply, its template, and
 #: the two keys it carries. The keys are ALSO compared against the README secrets table, which is
 #: the comparison `test_secrets.py` keeps for the other four.
 ADMIN_SECRET = "grafana-admin"
 ADMIN_EXAMPLE_FILENAME = f"{ADMIN_SECRET}.example.yaml"
 ADMIN_KEYS: frozenset[str] = frozenset({"GF_SECURITY_ADMIN_USER", "GF_SECURITY_ADMIN_PASSWORD"})
 
-#: Criterion 8: the literal placeholder every value in a contract template carries, the same one
+#: The literal placeholder every value in a contract template carries, the same one
 #: `test_secrets.py` pins for the other four - greppable, and never read as a credential.
 PLACEHOLDER = "REPLACE_ME"
 
-#: Criterion 9: the variable family that turns the login page off entirely, and the one flag that
+#: The variable family that turns the login page off entirely, and the one flag that
 #: hides the login form. Asserted by ABSENCE over the whole `env` list AND the contract's key set,
 #: so the case cannot pass because the variable moved from one to the other.
 ANONYMOUS_PREFIX = "GF_AUTH_ANONYMOUS"
@@ -297,15 +297,15 @@ README_HEADER_CELLS = ["Secret", "namespace", "keys", "read by"]
 #: A backticked token in a README cell, which is what turns the `keys` column into a set.
 BACKTICKED = re.compile(r"`([^`]+)`")
 
-#: Criterion 7: the two policies this plan adds, and what each is allowed to do. `grafana-ingress`
+#: The two policies for Grafana, and what each is allowed to do. `grafana-ingress`
 #: admits k3s's own namespace, where Traefik runs: the browser's packet reaches Grafana from the
 #: ingress controller's pod, never from `monitoring`.
 GRAFANA_INGRESS_POLICY = "grafana-ingress"
 GRAFANA_EGRESS_POLICY = "grafana-egress"
 KUBE_SYSTEM = "kube-system"
 
-#: Criterion 7: every destination `grafana-egress` may reach, as `(workload, resolved port)`.
-#: Prometheus alone, on the number 23a pinned - the DNS allow is NOT here, it lives in
+#: Every destination `grafana-egress` may reach, as `(workload, resolved port)`.
+#: Prometheus alone, on its pinned number - the DNS allow is NOT here, it lives in
 #: `allow-dns`, which selects every pod in `monitoring`.
 GRAFANA_EGRESS_DESTINATIONS: frozenset[tuple[str, int]] = frozenset({(PROMETHEUS, 9090)})
 
@@ -344,7 +344,7 @@ FAMILY_SUFFIXES: dict[str, tuple[str, ...]] = {
 #: A PromQL identifier that is NOT preceded by a word character, so the `m` of `5m` inside a
 #: range selector is never read as a metric name, and NOT followed by one, which is what stops
 #: the engine backtracking `sum(` into the identifier `su` when the function lookahead refuses
-#: the whole word (a project rule found exactly that; it read `rat` and `su` as metrics).
+#: the whole word (that happened once; it read `rat` and `su` as metrics).
 PROMQL_IDENTIFIER = re.compile(
     r"(?<![0-9A-Za-z_:])[A-Za-z_:][A-Za-z0-9_:]*(?![0-9A-Za-z_:])(?!\s*\()"
 )
@@ -463,7 +463,7 @@ def containers_of(template: dict[str, Any]) -> list[dict[str, Any]]:
 
 def sole_container(template: dict[str, Any], label: str) -> dict[str, Any]:
     """The one container of a pod template, asserting there is exactly one - the budget table
-    and criterion 5 both have one row per workload."""
+    has one row per workload."""
     containers = containers_of(template)
     assert len(containers) == 1, f"{label} declares {len(containers)} containers, not 1"
     return containers[0]
@@ -589,10 +589,9 @@ def mount_path_of_config_map(template: dict[str, Any], config_map: str) -> str:
     """The `mountPath` the volume backed by `config_map` is mounted at, asserting exactly one
     volume names it and exactly one mount names that volume.
 
-    Resolved through the volume rather than matched on the path, because criterion 4 compares the
-    provider's `options.path` against THIS value: a case that read the path off a literal would
-    be green with the ConfigMap mounted somewhere else entirely.
-    """
+    Resolved through the volume rather than matched on the path, because the provider's
+    `options.path` is compared against THIS value: a case that read the path off a literal would be
+    green with the ConfigMap mounted somewhere else entirely."""
     named = [
         volume
         for volume in template["spec"].get("volumes", [])
@@ -758,7 +757,7 @@ def registered_metric_names() -> set[str]:
 
 
 def read(path: Path) -> str:
-    """Read a file the plan owes, failing the one case that needs it when it is absent."""
+    """Read a file the tests need, failing the one case that needs it when it is absent."""
     assert path.is_file(), f"{path} does not exist"
     return path.read_text(encoding="utf-8")
 
@@ -1016,7 +1015,7 @@ def egress_destinations(
 
     Every peer of a rule is crossed with every port of that rule, which is what the rule means:
     grouping two targets and two numbers into one rule allows all four, and this set says so
-    rather than flattering the manifest into the pairs the criterion names.
+    rather than flattering the manifest into the expected pairs.
     """
     namespace = namespace_of(document)
     assert namespace is not None, f"{name_of(document)} declares no metadata.namespace"
@@ -1052,11 +1051,11 @@ def ip_blocks(document: dict[str, Any]) -> list[dict[str, Any]]:
 def test_the_monitoring_namespace_emits_grafana_and_nothing_else_new(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 1, by `(kind, name, namespace)` EQUALITY in both directions over everything the
+    """By `(kind, name, namespace)` EQUALITY in both directions over everything the
     build files into `monitoring`, plus every `ClusterRole` and `ClusterRoleBinding` anywhere in
-    the build - the twenty-three rows of `MONITORING_OBJECTS` (an earlier change added
-    `ConfigMap/grafana-alerting`), which this module owns from an earlier change on (its §8 entry 1). The
-    CRD and `monitoring.coreos.com` scoping is an earlier change's, unchanged.
+    the build - the twenty-three rows of `MONITORING_OBJECTS` (including
+    `ConfigMap/grafana-alerting`), which this module owns. The
+    CRD and `monitoring.coreos.com` scoping is unchanged.
 
     Catches the commonest failure of a new manifest: `grafana.yaml`, `middlewares.yaml`,
     `ingress.yaml` or the `configMapGenerator` block written correctly and never added to
@@ -1065,13 +1064,12 @@ def test_the_monitoring_namespace_emits_grafana_and_nothing_else_new(
     middlewares Traefik cannot resolve and therefore silently does not apply. Catches an object
     that forgets its own `metadata.namespace`, which the API server would file into whatever
     namespace the apply ran against. Catches the generated dashboards ConfigMap emitted under a
-    hashed name, which is decision E reversed and which no other inventory in this suite sees.
-    Catches a third `Middleware` copied into `monitoring` - a `basic-auth` nobody references is
-    a document that exists to be pasted into the next Ingress by mistake (§3). Catches an
-    operator install sneaking in through `helmCharts:`, which would bring a
-    CustomResourceDefinition and `monitoring.coreos.com` documents that force `kubeconform
-    -strict` into the `-ignore-missing-schemas` infra/tests/infra/test_k8s_base.py refuses by name.
-    """
+    hashed name, which is the reverse of the intended setup and which no other inventory in this
+    suite sees. Catches a third `Middleware` copied into `monitoring` - a `basic-auth` nobody
+    references is a document that exists to be pasted into the next Ingress by mistake. Catches an
+    operator install sneaking in through `helmCharts:`, which would bring a CustomResourceDefinition
+    and `monitoring.coreos.com` documents that force `kubeconform -strict` into the
+    `-ignore-missing-schemas` infra/tests/infra/test_k8s_base.py refuses by name."""
     emitted = {
         (str(document.get("kind")), name_of(document), namespace_of(document))
         for document in built
@@ -1105,14 +1103,14 @@ def test_the_monitoring_namespace_emits_grafana_and_nothing_else_new(
 def test_the_dashboards_config_map_carries_exactly_the_files_in_the_directory(
     built: list[dict[str, Any]],
 ) -> None:
-    r"""Criterion 2 and decision E: the generated ConfigMap's emitted name is exactly
+    r"""The generated ConfigMap's emitted name is exactly
     `grafana-dashboards` with no hash suffix, its key set equals the `*.json` file names in
-    `infra/k8s/monitoring/dashboards/`, that directory holds exactly the one dashboard this plan
-    ships, and every value parses as JSON.
+    `infra/k8s/monitoring/dashboards/`, that directory holds exactly the one dashboard
+    shipped, and every value parses as JSON.
 
     Catches `generatorOptions.disableNameSuffixHash` omitted: the ConfigMap would be emitted as
-    `grafana-dashboards-<hash>`, which builds and applies perfectly and which every later plan's
-    inventory would have to chase - the name half is asserted as "the ConfigMaps in `monitoring`
+    `grafana-dashboards-<hash>`, which builds and applies perfectly and which every later inventory
+    would have to chase - the name half is asserted as "the ConfigMaps in `monitoring`
     whose name starts with `grafana-dashboards` are exactly the one", so a hashed spelling is a
     readable red rather than a missing object. Catches a dashboard JSON added to the directory
     and the `files:` entry never widened (or the reverse): the file provider polls the mounted
@@ -1152,11 +1150,11 @@ def test_the_dashboards_config_map_carries_exactly_the_files_in_the_directory(
 def test_every_dashboard_target_names_the_provisioned_datasource_and_a_registered_family(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 3: every panel target in every dashboard key names the datasource uid
+    """Every panel target in every dashboard key names the datasource uid
     `prometheus`, and every metric name in every `expr` is either one
     `packages/opsconsole/opsconsole/core/metrics.py` registers - resolved from that module at run
     time and never from a list copied here - or one of the nine cluster-infra
-    names in `CLUSTER_INFRA_METRIC_NAMES` (23e decision C).
+    names in `CLUSTER_INFRA_METRIC_NAMES`.
 
     The accepted spellings are each family's `name` expanded by the series suffixes its TYPE
     exposes, probed against the installed `prometheus_client`: a Counter registered as
@@ -1165,7 +1163,7 @@ def test_every_dashboard_target_names_the_provisioned_datasource_and_a_registere
 
     Catches a panel whose `expr` names a family the gateway never registers - a typo, or a metric
     copied from a tutorial - which renders an EMPTY panel forever with no build error, no schema
-    error and no log line anywhere (§5's second risk). Catches a target left on Grafana's
+    error and no log line anywhere. Catches a target left on Grafana's
     `${DS_PROMETHEUS}` export placeholder or on a uid from the Grafana instance the JSON was
     exported from, which is a panel querying a datasource that does not exist. Catches a
     dashboard whose panels are nested inside a collapsed row and whose targets a flat read would
@@ -1197,7 +1195,7 @@ def test_every_dashboard_target_names_the_provisioned_datasource_and_a_registere
 def test_the_provisioning_files_point_at_prometheus_and_at_the_mounted_directory(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 4: `grafana-datasources` declares exactly ONE datasource, with the in-cluster
+    """`grafana-datasources` declares exactly ONE datasource, with the in-cluster
     Prometheus url, `access: proxy`, uid `prometheus` and `isDefault: true`; and
     `grafana-dashboard-providers` declares exactly ONE provider whose `options.path` EQUALS the
     `mountPath` of the volume the dashboards ConfigMap is mounted at - one equality against the
@@ -1259,11 +1257,11 @@ def test_the_provisioning_files_point_at_prometheus_and_at_the_mounted_directory
 def test_grafana_fits_what_the_scrape_plane_left_and_leaves_alertmanager_its_row(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 5 and decision C: Grafana's resources by VALUE as the whole flattened mapping,
+    """Grafana's resources by VALUE as the whole flattened mapping,
     the three namespace totals DERIVED from the built pod templates rather than restated
-    (a project rule, now summed over FIVE pod templates since an earlier change's Alertmanager fills
+    (now summed over FIVE pod templates since the Alertmanager fills
     what this namespace used to leave over), the `monitoring-envelope` quota still reading the
-    three quantities an earlier change set, and the remainder pinned as EXACTLY zero on every quantity -
+    three quantities set, and the remainder pinned as EXACTLY zero on every quantity -
     an equality, never a `<=`.
 
     The remainder is the assertion with teeth even at zero. A Grafana sized at 96Mi would still
@@ -1341,9 +1339,9 @@ def test_grafana_fits_what_the_scrape_plane_left_and_leaves_alertmanager_its_row
 def test_the_grafana_ingress_publishes_one_host_behind_two_middlewares_and_no_basic_auth(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 6 and decision B: one host, one `/` Prefix path, TLS secret `grafana-tls`, a
+    """One host, one `/` Prefix path, TLS secret `grafana-tls`, a
     backend resolved all the way from the Ingress's port reference through `Service/grafana`'s
-    `targetPort` to the container port Grafana itself declares (named `http`, decision D), and a
+    `targetPort` to the container port Grafana itself declares (named `http`), and a
     middleware annotation parsing to EXACTLY the two namespace-qualified references, each of
     which resolves to a `Middleware` this build emits in `monitoring`.
 
@@ -1351,7 +1349,7 @@ def test_the_grafana_ingress_publishes_one_host_behind_two_middlewares_and_no_ba
     prefix copied from the gateway Ingress, a missing `@kubernetescrd` - which Traefik treats as
     NO middleware rather than as an error, so the host is served with no rate limit and no
     security headers and nothing reports it. Catches `basic-auth` added "for consistency" with
-    the `apps` hosts, which is decision B's rejected alternative and which puts a Traefik 401 in
+    the `apps` hosts, which is a rejected alternative and which puts a Traefik 401 in
     front of the `/api/annotations` POST `deploy.yml` makes with a Bearer token. Catches a backend
     port number that drifts from the port the Service targets, which resolves to no endpoint and
     serves a 503 on the whole host. Catches the `tls` block naming `gateway-tls`, which would have
@@ -1406,7 +1404,7 @@ def test_the_grafana_ingress_publishes_one_host_behind_two_middlewares_and_no_ba
         f"missing: {sorted(GRAFANA_MIDDLEWARES - parsed)}"
     )
     assert FORBIDDEN_MIDDLEWARE not in {name for _, name in parsed}, (
-        f"the grafana host is behind {FORBIDDEN_MIDDLEWARE}, which decision B refuses"
+        f"the grafana host is behind {FORBIDDEN_MIDDLEWARE}, which is refused"
     )
     emitted = {
         (str(namespace_of(document)), name_of(document))
@@ -1420,7 +1418,7 @@ def test_the_grafana_ingress_publishes_one_host_behind_two_middlewares_and_no_ba
 def test_the_only_way_into_grafana_is_the_secret_this_repo_does_not_supply(
     built: list[dict[str, Any]],
 ) -> None:
-    r"""Criteria 8 and 9: the Grafana container's `envFrom` names exactly the `grafana-admin`
+    r"""The Grafana container's `envFrom` names exactly the `grafana-admin`
     Secret, that contract's template carries exactly `GF_SECURITY_ADMIN_USER` and
     `GF_SECURITY_ADMIN_PASSWORD` with every value `REPLACE_ME`, the same two keys as the
     `infra/k8s/README.md` secrets table row, the Secret name is disjoint from `grafana-tls`, and
@@ -1432,7 +1430,7 @@ def test_the_only_way_into_grafana_is_the_secret_this_repo_does_not_supply(
     the Secret the cluster actually reads. Catches `GF_AUTH_ANONYMOUS_ENABLED=true` added to get
     a dashboard onto a screen without logging in, which publishes every panel - including the
     cost views - to anyone who resolves the public host. Catches
-    `GF_AUTH_DISABLE_LOGIN_FORM`, which is decision B's rejected alternative and which leaves no
+    `GF_AUTH_DISABLE_LOGIN_FORM`, which is a rejected alternative and which leaves no
     way to mint the service-account token `deploy.yml`'s annotation step needs. Catches a real
     password committed into the template instead of the placeholder, which is the one thing that
     would put a working credential for a public host into a public repo. Catches the contract
@@ -1482,7 +1480,7 @@ def test_the_only_way_into_grafana_is_the_secret_this_repo_does_not_supply(
 def test_grafana_is_reachable_only_from_the_router_and_reaches_only_prometheus(
     built: list[dict[str, Any]],
 ) -> None:
-    """Criterion 7's second half, by EQUALITY in both directions: `grafana-ingress` selects
+    """The second half, by EQUALITY in both directions: `grafana-ingress` selects
     Grafana alone, admits `kube-system` and no other peer, and opens exactly ONE port - Grafana's
     own serving port, resolved against the built pod template rather than compared to a literal;
     `grafana-egress` reaches exactly `prometheus` on 9090 in `monitoring` and carries no

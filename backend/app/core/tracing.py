@@ -127,8 +127,8 @@ class SpanAttributes(BaseModel):
     the help desk sends in `X-User`, never a name or an email; only the help desk
     can map it to a person.
 
-    `cache` and `cost_usd` are named in the design and nothing sets them yet.
-    They are declared here so the plans that need them add a value rather than a
+    `cache` and `cost_usd` are part of the trace shape and nothing sets them yet.
+    They are declared here so that setting them later adds a value rather than a
     field. The `cache` STAGE SPAN is a different thing and does now exist, on
     every chat request: the outcome it
     would put in this field is on the response header and on

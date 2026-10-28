@@ -12,7 +12,7 @@ Two controls, arranged so each test catches only the control it names:
 
 from __future__ import annotations
 
-# These imports are expected to FAIL before an earlier change is implemented:
+# These imports are expected to FAIL before the adapter base is implemented:
 # - `HttpAdapter` does not exist yet in `app.providers.base`
 # The tests therefore serve as the acceptance check: they go green only
 # once the implementation adds `HttpAdapter` and removes `healthcheck`.

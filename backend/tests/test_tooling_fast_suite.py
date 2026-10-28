@@ -1,12 +1,11 @@
-"""The fast-test tooling this plan adds is pinned by reading the files it touches.
+"""The fast-test tooling is pinned by reading the files it touches.
 
-Every case reads a committed file (Makefile, pyproject, ci.yml, rules.md); none
+Every case reads a committed file (Makefile, pyproject, ci.yml); none
 runs a service, so none carries the `db` marker.
 """
 
 from __future__ import annotations
 
-import ast
 import re
 import tomllib
 from pathlib import Path
@@ -17,18 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 MAKEFILE = REPO_ROOT / "Makefile"
 PYPROJECT = REPO_ROOT / "backend" / "pyproject.toml"
 CI = REPO_ROOT / ".github" / "workflows" / "ci.yml"
-RULES = REPO_ROOT / "dev" / "docs" / "rules.md"
 TRACING = REPO_ROOT / "backend" / "tests" / "api" / "test_tracing.py"
-AFTER_TIMING = REPO_ROOT / "dev" / "ops" / "test-timing-after.txt"
-
-# The two tracing tests an earlier change's timing found at about seven seconds each. Plan
-# 57 bounds the OTLP export retry in `conftest.py` so both drop under a second;
-# either that (they are absent above 2s in the after timing) or a `slow` marker
-# satisfies this file.
-SLOW_TRACING_TESTS = (
-    "test_a_fallback_is_recorded_on_the_trace_as_a_count",
-    "test_a_gateway_error_raised_in_middleware_keeps_its_status_and_code",
-)
 
 
 def _makefile_recipe(name: str) -> str:
@@ -107,35 +95,6 @@ def test_ci_check_job_runs_the_backing_tests() -> None:
     assert "OPSCONSOLE_TEST_QDRANT_URL" in env, env
 
 
-def _rule_block(text: str, number: int) -> str:
-    """The text of rule `number`, up to the next numbered rule or end of file."""
-    lines = text.splitlines()
-    start = re.compile(rf"^\s*{number}\.")
-    nxt = re.compile(r"^\s*\d+\.")
-    block: list[str] = []
-    collecting = False
-    for line in lines:
-        if start.match(line):
-            collecting = True
-            block.append(line)
-            continue
-        if collecting:
-            if nxt.match(line):
-                break
-            block.append(line)
-    return "\n".join(block)
-
-
-def test_rules_name_the_two_minute_fast_run() -> None:
-    """Catches rules.md that does not add rule 70 naming `make fast` and the
-    two-minute budget, so the fast run would have no written rule behind it.
-    """
-    block = _rule_block(RULES.read_text(encoding="utf-8"), 70)
-    assert block, "no rule numbered 70 found in rules.md"
-    assert "make fast" in block, block
-    assert any(phrase in block for phrase in ("two minutes", "2 minutes")), block
-
-
 def test_make_test_runs_in_parallel() -> None:
     """Catches a `test` recipe that drops `-n auto`, so the full suite (backing tests
     included) would run on one core instead of across workers.
@@ -147,7 +106,7 @@ def test_make_test_runs_in_parallel() -> None:
 def test_make_test_runs_the_infra_tests() -> None:
     """Catches a `test` recipe that never calls `test-infra`, or a `test-infra` recipe
     that does not run `pytest infra/tests` in parallel, so the infra tests would stay
-    out of `make test` (the gap an earlier change closes).
+    out of `make test`.
     """
     test_recipe = _makefile_recipe("test")
     assert re.search(r"(\$\(MAKE\)|\bmake)\s+test-infra\b", test_recipe), test_recipe
@@ -168,57 +127,10 @@ def test_infra_tests_carry_no_coverage_gate() -> None:
     assert "--cov-fail-under" not in recipe, recipe
 
 
-def _carries_slow_marker(source: str, test_name: str) -> bool:
-    """True when the named function in `source` is decorated `@pytest.mark.slow`."""
-    tree = ast.parse(source)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == test_name:
-            for decorator in node.decorator_list:
-                target = decorator.func if isinstance(decorator, ast.Call) else decorator
-                if isinstance(target, ast.Attribute) and target.attr == "slow":
-                    return True
-    return False
-
-
-def _slowest_seconds(timing: str, test_name: str) -> float:
-    """The largest duration the after-timing records for one test, or 0.0 if absent.
-
-    A `--durations` line reads `<seconds>s <phase> <nodeid>`, so this reads every
-    setup, call and teardown row the named test has and keeps the worst.
-    """
-    pattern = re.compile(rf"^\s*([\d.]+)s\s+\w+\s+\S*::{re.escape(test_name)}\b", re.MULTILINE)
-    return max((float(value) for value in pattern.findall(timing)), default=0.0)
-
-
-def test_the_two_slow_tracing_tests_are_fast_or_slow_marked() -> None:
-    """Catches the two 7-second tracing tests coming back: each must either carry the
-    `slow` marker, or be absent above 2s from the recorded after timing. Read against the
-    tracing source and the project notes together, so marking one slow or
-    making it fast both satisfy the file, but doing neither does not.
-    """
-    tracing_source = TRACING.read_text(encoding="utf-8")
-    timing = AFTER_TIMING.read_text(encoding="utf-8")
-    for name in SLOW_TRACING_TESTS:
-        slow_marked = _carries_slow_marker(tracing_source, name)
-        slowest = _slowest_seconds(timing, name)
-        assert slow_marked or slowest <= 2.0, (name, slow_marked, slowest)
-
-
-def test_after_timing_records_before_and_after() -> None:
-    """Catches an after-timing file that does not report the before wall, the after wall
-    and the test count side by side, which is the whole point of recording it.
-    """
-    text = AFTER_TIMING.read_text(encoding="utf-8").lower()
-    assert "before" in text, text
-    assert "after" in text, text
-    assert "wall" in text, text
-    assert re.search(r"\d[\d,]*\s+passed", text), text
-
-
 def test_every_tool_path_exists() -> None:
-    """Catches a stale name: a tooling file this plan references that does not
+    """Catches a stale name: a tooling file referenced here that does not
     exist, or the `backend/tests` path the Make recipes run against going away.
     """
-    for path in (MAKEFILE, PYPROJECT, CI, RULES, TRACING, AFTER_TIMING):
+    for path in (MAKEFILE, PYPROJECT, CI, TRACING):
         assert path.exists(), path
     assert (REPO_ROOT / "backend" / "tests").exists()

@@ -1,8 +1,8 @@
 r"""The one `kubectl kustomize infra/k8s` of the session, shared by every `infra` test module.
 
-An earlier change decision G. Two files now read the same built stream - `test_k8s_base.py` for the
+Two files now read the same built stream - `test_k8s_base.py` for the
 resource envelope and `test_k8s_platform.py` for what `platform/` adds - and a file-local
-fixture in each would mean two builds per session (a project rule says built ONCE) and two
+fixture in each would mean two builds per session (it must be built ONCE) and two
 copies of the skip and its message that would have to stay in step. Both live here instead,
 so the skip condition, the failure text and the parse exist exactly once.
 
@@ -31,7 +31,7 @@ K8S_ROOT = REPO_ROOT / "infra" / "k8s"
 def built() -> list[dict[str, Any]]:
     """`kubectl kustomize infra/k8s`, run ONCE for the whole session.
 
-    Skips only when `kubectl` is absent from `PATH` (decision D). A non-zero exit fails, with
+    Skips only when `kubectl` is absent from `PATH`. A non-zero exit fails, with
     kubectl's stderr in the message, because a build that cannot run is the failure this file
     exists to report - not a reason to report nothing.
     """
@@ -99,7 +99,7 @@ def server_built() -> list[dict[str, Any]]:
 
     The same body shape as `built`: skips only when `kubectl` is absent from `PATH`, and a
     non-zero exit fails with kubectl's stderr, because a the server build that cannot run is the
-    failure `test_k8s_server.py` exists to report (a project rule: built once per session).
+    failure `test_k8s_server.py` exists to report (built once per session).
     """
     if shutil.which("kubectl") is None:
         pytest.skip("kubectl is not on PATH; CI's `k8s` job is the copy that cannot skip")

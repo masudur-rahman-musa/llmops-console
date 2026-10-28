@@ -1,4 +1,4 @@
-"""Structure tests for an earlier change: the chat pipeline moves out of the fat route modules."""
+"""Structure tests: the chat pipeline lives outside the route modules."""
 
 from __future__ import annotations
 
@@ -146,7 +146,7 @@ def test_the_admin_routes_are_split() -> None:
 
 
 # ---------------------------------------------------------------------------
-# An earlier change: storage-only-data
+# Storage-only-data
 # ---------------------------------------------------------------------------
 
 _COST_NAMES = ("record_cost",)

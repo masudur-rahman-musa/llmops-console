@@ -103,28 +103,25 @@ being true.
 ## What broke
 
 Five things that went wrong while building this, and what each one changed.
-Every standing rule below is one the build paid for.
+Every rule below is one the build paid for.
 
 - Failing tests went unseen for days because no run of the whole suite happened
-  in that window. The fix was a blameless incident record, a visible unverified
-  list, and a gate that has to be cleared before new work opens:
+  in that window. The fix was a blameless incident record, a visible
+  list of unchecked work, and a gate that has to be cleared before new work opens:
   [docs/postmortems/2026-09-17-red-tests-went-unseen.md](docs/postmortems/2026-09-17-red-tests-went-unseen.md).
 - An identifier pattern anchored with `$` accepted a value with a trailing
   newline, because in Python `$` also matches before one. Every key and
   identifier pattern now uses `re.fullmatch`, and every rejection table carries
-  a trailing newline, a CRLF and a space: the project notes
+  a trailing newline, a CRLF and a space.
 - A shell gate reported success while its middle step failed, because
   `A && B || C` exits zero when `B` does not. A gate is now reported as passing
-  only from the exact command its definition names, never from a variation:
-  the project notes
+  only from the exact command its definition names, never from a variation.
 - The formatter removed an import between two edits and the next edit failed on
   the name it had just deleted. An import now lands in the same edit as its
-  first use, and removing the last use removes the import in that edit:
-  the project notes
+  first use, and removing the last use removes the import in that edit.
 - A local load run failed at startup because the companion project's stack was
   already publishing the same Redis, Postgres and Qdrant ports. Host ports are
-  now listed and checked free before a stack is started:
-  the project notes
+  now listed and checked free before a stack is started.
 
 ## How the evals work
 
@@ -262,9 +259,7 @@ lands this endpoint answers 502: the provider is configured and unreachable.
 
 ## The decisions
 
-Every non-obvious choice was recorded when it was made, so a reader can see the
-alternative that was rejected and why. The full set is in
-the project notes these are the ones that shape the system most.
+These are the choices that shape the system most.
 
 - Digests, not keys, are what the gateway stores
 - Embeddings go through the routed local provider rather than a second path
@@ -278,22 +273,16 @@ the project notes these are the ones that shape the system most.
 - Console sources are flags, never errors
 - Console pages render server-side and degrade to a notice
 
-The threat model that sits behind several of them, STRIDE over the system's
-trust boundaries with one row per real threat, is in
-the project notes
-
 ## SLOs
 
 Seven objectives, each with its indicator, target, window, error budget formula
-and alert: the project notes Two are measured from the
+and alert. Two are measured from the
 gateway's own metrics (availability and latency) and show their
 remaining error budget on the Grafana overview dashboard and on the console's
 Reliability page. An error budget is never clamped at zero: how far past the
 allowance a month went is the information.
 
-Every alert in [infra/k8s/monitoring/alerts/](infra/k8s/monitoring/alerts/) has a response section
-in the project notes Incidents are recorded on the console's
-timeline, each linking its postmortem.
+Incidents are recorded on the console's timeline, each linking its postmortem.
 
 ## Scaling
 

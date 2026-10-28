@@ -1,6 +1,6 @@
 """The ledger writer's retry buffer: what is sent again, what is dropped, and what is counted.
 
-An earlier change and a design note. A write fails in one of three places, and the place decides:
+A write fails in one of three places, and the place decides:
 
 * getting a connection, or the INSERT failing on a lost connection: nothing landed, so
   the row goes to a retry buffer and is sent again;
@@ -80,7 +80,7 @@ def counter(result: str) -> float:
 
 
 def snapshot() -> dict[str, float]:
-    """Every result value this plan names, as it stands now."""
+    """Every result value, as it stands now."""
     return {
         result: counter(result) for result in ("ok", "retry", "dropped_full", *DROPPED_RESULTS[1:])
     }
@@ -347,8 +347,8 @@ def test_the_retry_wait_doubles_from_one_second_to_a_thirty_second_cap() -> None
 def test_close_counts_rows_still_buffered_as_dropped_shutdown(
     writers: list[PostgresCostLedgerWriter],
 ) -> None:
-    """Catches a close that discards buffered rows without a count (the quiet loss this
-    plan removes), one that counts them `retry` or `dropped_full`, and one that hangs
+    """Catches a close that discards buffered rows without a count (the quiet loss that was
+    removed), one that counts them `retry` or `dropped_full`, and one that hangs
     waiting for a database that is down. Two rows, pool down, `dropped_shutdown` +2."""
     pool = ScriptedPool()
     pool.take_down()

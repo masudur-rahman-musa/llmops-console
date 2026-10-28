@@ -1,11 +1,8 @@
-r"""An earlier change: the public documents - README, threat model, Azure page and CUSTOMIZING.
+r"""The public documents - README, Azure page and CUSTOMIZING.
 
 Text reads over committed files; no build, no service, no network. Every case resolves
 its links against the repository itself, so a renamed file is a red test rather than a
 silently stale document.
-
-This module is deliberately NOT one of the files `SCANNED_FOR_PRIVATE_REFERENCES` reads:
-it has to spell the banned names out to ban them.
 """
 
 from __future__ import annotations
@@ -19,9 +16,8 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 README = REPO_ROOT / "README.md"
 CUSTOMIZING = REPO_ROOT / "docs/customizing.md"
 AZURE = REPO_ROOT / "docs" / "azure.md"
-THREAT_MODEL = REPO_ROOT / "dev" / "ops" / "threat-model.md"
 
-#: §1's thirteen level-two headings, in the request's order. Compared as a list.
+#: The thirteen level-two headings, in order. Compared as a list.
 README_HEADINGS = [
     "## The problem",
     "## Video and screenshots",
@@ -49,69 +45,20 @@ GUARANTEE_TESTS = [
     "backend/tests/storage/test_cost_ledger.py",
 ]
 
-#: A the project notes entry links the committed rules file or a committed postmortem.
-WHAT_BROKE_PREFIXES = ("dev/docs/rules.md", "docs/postmortems/")
-
-ADR_PREFIX = "dev/adr/"
-ADR_TEMPLATE = "dev/adr/0000-template.md"
-MINIMUM_ADRS = 10
-
 AZURE_LINK = "docs/azure.md"
 AWS_LINK = "docs/aws-evidence/"
 
-#: The three claims §1 requires of `docs/azure.md`, by literal phrase.
+#: The three claims `docs/azure.md` must make, by literal phrase.
 AZURE_CLAIMS = ("recorded fixtures", "ships disabled", "configuration change")
 AZURE_ADAPTER = "backend/app/providers/azure_openai.py"
 AZURE_ROUTING_ROW = "azure.yaml"
 
-THREAT_MODEL_HEADING = "# Threat model"
-THREAT_TABLE_HEADER = "| Component | Threat (S/T/R/I/D/E) | Scenario | Mitigation | Status |"
-#: The unfilled template's placeholder row. Its survival means the table was never filled.
-THREAT_PLACEHOLDER_CELL = "ADAPT"
-
-#: One short distinctive phrase per threat, so a failure names the threat that is missing.
-#: Four from the request (#69) and five the file's own header always requires.
-THREAT_SCENARIOS = [
-    "key leakage",
-    "ssrf",
-    "cache poisoning",
-    "override forgery",
-    "secrets exposure",
-    "injection",
-    "authz bypass",
-    "replay",
-    "leakage through logs",
-]
-
-ALLOWED_STATUSES = {"mitigated", "accepted", "open"}
-
-#: Columns of the STRIDE table, by position in a `|`-delimited row.
-COMPONENT_COLUMN = 0
-SCENARIO_COLUMN = 2
-MITIGATION_COLUMN = 3
-STATUS_COLUMN = 4
-
 CUSTOMIZING_MUST_EDIT = re.compile(r"only two things", re.IGNORECASE)
 MUST_EDIT_FILES = {"backend/config/routing.yaml"}
-#: The provider folder, the other must-edit thing since a design note (a folder, so not a `.yaml`).
+#: The provider folder, the other must-edit thing (a folder, so not a `.yaml`).
 MUST_EDIT_FOLDER = "backend/config/providers/"
 #: Any `.yaml` or `.py` path written on the must-edit line, backticked or bare.
 YAML_OR_PY_PATH = re.compile(r"[A-Za-z0-9_./-]+\.(?:yaml|py)")
-
-SCANNED_FOR_PRIVATE_REFERENCES = (README, CUSTOMIZING, AZURE, THREAT_MODEL)
-
-#: Each ban is an ANCHORED name match, never a bare substring:
-#: bare `his.md` matches the legitimate word "this.md", bare `pl/` matches any path
-#: segment ending in "pl", and both would redden a document the plan requires.
-PRIVATE_REFERENCES = [
-    ("dev-process/plans/", re.compile(r"dev-process/plans/")),
-    ("dev/plans/", re.compile(r"(?<![A-Za-z0-9_-])dev/plans/")),
-    ("notes.md", re.compile(r"(?<![A-Za-z0-9_-])notes\.md")),
-    ("REQUIREMENTS.md", re.compile(r"(?<![A-Za-z0-9_-])REQUIREMENTS\.md")),
-    ("his.md", re.compile(r"(?<![A-Za-z0-9_-])his\.md")),
-    ("pl/", re.compile(r"(?<![A-Za-z0-9_-])pl/")),
-    ("a plan by its number", re.compile(r"(?<![A-Za-z0-9_-])plan\s+\d", re.IGNORECASE)),
-]
 
 MARKDOWN_LINK = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 BACKTICKED = re.compile(r"`([^`]+)`")
@@ -169,22 +116,6 @@ def backticked_paths(text: str) -> list[str]:
     return [token for token in BACKTICKED.findall(text) if looks_like_path(token)]
 
 
-def table_rows(text: str) -> list[list[str]]:
-    """The STRIDE table's data rows as stripped cell lists, header and separator dropped."""
-    rows: list[list[str]] = []
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("|"):
-            continue
-        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
-        if cells and cells[COMPONENT_COLUMN] == "Component":
-            continue
-        if all(re.fullmatch(r":?-{2,}:?", cell) for cell in cells if cell):
-            continue
-        rows.append(cells)
-    return rows
-
-
 def missing_paths(targets: list[str]) -> list[str]:
     """Those targets that do not resolve to a committed path under the repository root."""
     return sorted({target for target in targets if not (REPO_ROOT / target).exists()})
@@ -209,36 +140,6 @@ def test_the_seven_guarantees_link_the_seven_tests() -> None:
     assert missing_paths(linked) == []
 
 
-def test_what_broke_carries_exactly_five_entries() -> None:
-    """Catches a the project notes section with four or six entries, and an entry told as a story
-    with no link back to the committed rule or postmortem it produced: an entry is counted as
-    a line carrying a link under one of the two evidence prefixes, so an unlinked entry is not
-    an entry."""
-    body = section_body(read(README), "## What broke")
-
-    entries = [
-        line
-        for line in body.splitlines()
-        if any(target.startswith(WHAT_BROKE_PREFIXES) for target in relative_targets(line))
-    ]
-    assert len(entries) == 5, entries
-
-    evidence = [target for line in entries for target in relative_targets(line)]
-    assert missing_paths(evidence) == []
-
-
-def test_the_decisions_link_at_least_ten_distinct_adrs() -> None:
-    """Catches a decisions section that reaches ten by linking one ADR ten times, that pads the
-    count with the ADR template instead of a real decision, or that links an ADR number nobody
-    ever wrote."""
-    body = section_body(read(README), "## The decisions")
-    linked = {target for target in relative_targets(body) if target.startswith(ADR_PREFIX)}
-
-    assert ADR_TEMPLATE not in linked
-    assert len(linked) >= MINIMUM_ADRS, sorted(linked)
-    assert missing_paths(sorted(linked)) == []
-
-
 def test_the_azure_and_aws_sections_link_their_documents() -> None:
     """Catches an Azure or AWS section that describes the path in prose instead of linking the
     document the request asked for, and a link to a document that was never written."""
@@ -255,51 +156,6 @@ def test_every_relative_readme_link_resolves() -> None:
     screenshot never added, a document renamed, a typo in a directory name - anywhere in the
     file, including the sections no other case reads."""
     assert missing_paths(relative_targets(read(README))) == []
-
-
-def test_the_threat_model_covers_all_nine_named_threats() -> None:
-    """Catches a threat model left as the unfilled template, and one filled with a convenient
-    subset: each of the nine threats the request and the file's own header name must appear in
-    some row's scenario cell, and the template's placeholder row must be gone."""
-    text = read(THREAT_MODEL)
-
-    assert THREAT_MODEL_HEADING in text.splitlines()
-    assert THREAT_TABLE_HEADER in [line.strip() for line in text.splitlines()]
-
-    rows = table_rows(text)
-    placeholders = [row for row in rows if row[COMPONENT_COLUMN] == THREAT_PLACEHOLDER_CELL]
-    assert placeholders == []
-
-    scenarios = " ".join(row[SCENARIO_COLUMN] for row in rows if len(row) > SCENARIO_COLUMN).lower()
-    missing = [threat for threat in THREAT_SCENARIOS if threat not in scenarios]
-    assert missing == [], f"no scenario cell covers {missing}"
-
-
-def test_every_threat_model_status_is_one_of_three_words() -> None:
-    """Catches a row whose status is left blank or invented ("partial", "planned", "TODO"),
-    which is how an unmitigated threat gets to look handled: the honest answers are exactly
-    mitigated, accepted and open."""
-    rows = table_rows(read(THREAT_MODEL))
-    assert rows, "the threat model has no data rows; this case would assert nothing"
-
-    statuses = {row[STATUS_COLUMN].strip("`").lower() for row in rows if len(row) > STATUS_COLUMN}
-    assert statuses <= ALLOWED_STATUSES, sorted(statuses - ALLOWED_STATUSES)
-
-
-def test_every_path_a_mitigation_names_exists() -> None:
-    """Catches a mitigation cell citing a control file that is not committed - a module that
-    was renamed, a policy that was only ever planned - which would let the table claim a
-    defence the repository does not contain."""
-    rows = table_rows(read(THREAT_MODEL))
-
-    cited = [
-        token
-        for row in rows
-        if len(row) > MITIGATION_COLUMN
-        for token in backticked_paths(row[MITIGATION_COLUMN])
-    ]
-    assert cited, "no mitigation cell cites a file; this case would assert nothing"
-    assert missing_paths(cited) == []
 
 
 def test_azure_says_the_path_is_disabled_and_configuration_only() -> None:
@@ -333,17 +189,3 @@ def test_every_path_customizing_names_exists() -> None:
     earlier layout, a directory that was renamed - in either a backticked path or a link."""
     text = read(CUSTOMIZING)
     assert missing_paths(backticked_paths(text) + relative_targets(text)) == []
-
-
-def test_no_public_document_references_a_private_working_file() -> None:
-    """Catches a project rule being broken by a public document: a reference to the private plan,
-    notes, requirements or standing-orders files, or a section that explains a change by naming
-    the plan number it came from, in any of the four documents this plan writes."""
-    found: list[str] = []
-    for path in SCANNED_FOR_PRIVATE_REFERENCES:
-        text = read(path)
-        for label, pattern in PRIVATE_REFERENCES:
-            for match in pattern.finditer(text):
-                found.append(f"{path.relative_to(REPO_ROOT)}: {label} -> {match.group(0)!r}")
-
-    assert found == []

@@ -9,8 +9,8 @@ The rules, all in POINTS, 0 to 100:
 * the run FAILS when `check_score` is below the baseline's, or is missing. There is no
   drop allowance. Equal passes.
 * the run also fails when `judge_score` is below the baseline's, but ONLY while the
-  calibration shows a kappa of `JUDGE_TRUST_MIN` or better
-. Below that, or with no calibration at
+  calibration shows a kappa of `JUDGE_TRUST_MIN` or better.
+Below that, or with no calibration at
   all, the judge is reported in a note and decides nothing.
 * a case that both passed and failed across repeat runs is already out of `check_score`;
   the gate names every such case in one note so it stays visible.

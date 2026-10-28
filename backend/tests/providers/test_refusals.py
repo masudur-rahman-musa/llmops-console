@@ -1,6 +1,6 @@
 """A provider refusing a request for content policy: how the shared transport spots it.
 
-An earlier change. A refusal is a failure no other provider should be asked to overrule, so the
+A refusal is a failure no other provider should be asked to overrule, so the
 transport marks it (`ProviderError.refused`) and never calls it retryable. Everything
 runs over `httpx.MockTransport` with recorded-shape bodies in `fixtures/openai/` and
 `fixtures/azure/`: no socket, no key, no real wait (`sleep` is a recorder).

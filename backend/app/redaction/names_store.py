@@ -9,14 +9,14 @@ Shaped deliberately like `store.py`, because the two answer the same questions.
 `DirectoryStore` is a Protocol with an in-process implementation for a bare local
 run and the suite, and a Redis one `create_app` picks when
 `OPSCONSOLE_REDIS_URL` is set. The differences from the map
-store are the two the design asks for: a directory has no TTL, because it is
+store are two: a directory has no TTL, because it is
 configuration rather than the residue of one request, and it is keyed
 `(tenant,)` alone rather than `(tenant, id)`.
 
 Three things are deliberate here rather than incidental.
 
-The entry is `sha256(normalised name) -> plaintext name`, which is the design's
-"hashed + plaintext" read literally. The hash is what makes
+The entry is `sha256(normalised name) -> plaintext name`, which is a
+"hashed + plaintext" entry read literally. The hash is what makes
 a re-push idempotent: an operator who types `  ANNA SCHMIDT ` after having
 pushed `Anna Schmidt` writes the same field rather than a second entry that
 burns one of the 2000 slots and compiles a duplicate branch into the alternation.
@@ -24,7 +24,7 @@ burns one of the 2000 slots and compiles a duplicate branch into the alternation
 A push MERGES. A caller that pages a large directory would
 otherwise silently delete everything it had already sent, and nothing in the
 answer would say so. There is
-no delete in this plan.
+no delete.
 
 Every cap is checked over the WHOLE push before anything is written, and the
 count cap over the resulting TOTAL rather than over one push.
@@ -49,8 +49,8 @@ MIN_DIRECTORY_NAME_CHARS: Final[int] = 2
 
 The cap that matters. A one-character name redacts every
 `a` in every request that tenant sends, so a single typo in a push is a precision
-failure across the tenant's whole traffic - and precision is a number this plan
-has to keep above a floor."""
+failure across the tenant's whole traffic - and precision is a number that
+has to stay above a floor."""
 
 MAX_DIRECTORY_NAME_CHARS: Final[int] = 128
 """The longest name an operator may push, in normalised characters.
@@ -62,7 +62,7 @@ and bracketed by the same three tests as the minimum."""
 MAX_DIRECTORY_NAMES: Final[int] = 2000
 """How many names one tenant's directory may hold in total.
 
-The compiled alternation is the only unbounded thing this plan introduces, and
+The compiled alternation is the only unbounded thing here, and
 this is what bounds it. Over the TOTAL and not over one push: a per-push reading
 lets a paged caller build a directory of any size at all.
 """
@@ -94,8 +94,8 @@ def normalise_name(name: str) -> str:
 def name_field(name: str) -> str:
     """The hash one name is stored under: sha256 of its normalised form, as hex.
 
-    the design's hashed half. It is a stable id for an entry, which is what makes a
-    re-push idempotent and what a later plan's delete would address.
+    The hashed half of an entry. It is a stable id for an entry, which is what makes a
+    re-push idempotent and what a later delete would address.
     """
     return hashlib.sha256(normalise_name(name).encode("utf-8")).hexdigest()
 
@@ -104,7 +104,7 @@ def checked_entries(names: Sequence[str], held: Sequence[str]) -> dict[str, str]
     """Validate a whole push and answer the entries it should write, or raise.
 
     Nothing is written by a caller of this function until it has returned, which
-    is what a project rule asks of the three caps: a name outside the length
+    is what the three caps require: a name outside the length
     bounds, or a push that would take the directory past
     `MAX_DIRECTORY_NAMES`, raises `DirectoryNameInvalid` with none of the push
     applied.
@@ -186,7 +186,7 @@ class InProcessDirectoryStore:
 
         The caps are checked over the whole push first, against what this tenant
         already holds, so a refusal leaves the directory exactly as it was. Merging, not
-        replacing, is the rule.
+        replacing, is intended.
         """
         held = self._directories.get(tenant, {})
         entries = checked_entries(names, tuple(held.values()))
@@ -207,7 +207,7 @@ class RedisDirectoryStore:
     One tenant is one Redis HASH, field `name_field(name)`, value the plaintext
     name. A hash rather than a set because the hash gives every entry
     a stable handle: a re-push overwrites its own field instead of adding a
-    duplicate, and a later plan's delete has something to address. No TTL
+    duplicate, and a later delete has something to address. No TTL
     is written, unlike a placeholder map's key: a directory is configuration.
 
     `tenant` is pre-checked before any command is sent, on BOTH
@@ -223,8 +223,7 @@ class RedisDirectoryStore:
     request redacted without the tenant's names and served.
 
     `key_prefix` exists for the suite: per-test isolation is a namespace rather
-    than a `FLUSHDB` that would delete keys this suite does not own (standing rule
-    7). The default is the shipped one.
+    than a `FLUSHDB` that would delete keys this suite does not own. The default is the shipped one.
 
     Not annotated `redis.Redis[bytes]`: the installed client is not generic at
     runtime, so a parametrised annotation fails `mypy --strict` with `type-arg`.

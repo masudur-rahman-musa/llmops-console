@@ -35,7 +35,7 @@ def load(path: Path) -> dict[str, Any]:
 def trigger(document: dict[str, Any]) -> dict[str, Any]:
     """The `on:` block, found under either the string key or PyYAML's boolean `True`
     (`infra/tests/ci/test_eval_gate_workflow.py`'s own `trigger` helper, copied rather
-    than imported per a project rule)."""
+    than imported)."""
     for key in (True, "on"):
         if key in document:
             block = document[key]
@@ -81,7 +81,7 @@ def job(jobs: dict[str, Any]) -> dict[str, Any]:
 def test_the_workflow_triggers_on_pull_requests_and_pushes_into_main(
     workflow: dict[str, Any],
 ) -> None:
-    """Acceptance criterion 1. `branches: [main]` on both, the same way
+    """Acceptance. `branches: [main]` on both, the same way
     `eval-gate.yml`'s own trigger is asserted as the whole list - a second branch
     added to either is a scope nobody agreed to run this on."""
     block = trigger(workflow)
@@ -92,7 +92,7 @@ def test_the_workflow_triggers_on_pull_requests_and_pushes_into_main(
 def test_the_kind_action_and_binary_versions_are_both_pinned(
     job: dict[str, Any],
 ) -> None:
-    """Criterion 1: "a pinned `kind` and `kind`-action version" - two separate
+    """ "a pinned `kind` and `kind`-action version" - two separate
     pins, since the action's own version and the `kind` binary it installs move
     independently."""
     kind_steps = [step for step in steps(job) if "helm/kind-action@" in uses_of(step)]
@@ -104,7 +104,7 @@ def test_the_kind_action_and_binary_versions_are_both_pinned(
 def test_both_images_are_built_locally_and_loaded_into_kind(
     job: dict[str, Any],
 ) -> None:
-    """Criterion 1 and decision D: the gateway's and the stub's images are built
+    """The gateway's and the stub's images are built
     in the runner and `kind load docker-image`d, never pulled from GHCR - a PR
     run has no image published under its SHA at all."""
     scripts = [run_of(step) for step in steps(job)]
@@ -132,7 +132,7 @@ def test_the_overlay_is_applied_with_the_relaxed_load_restrictor(
 def test_the_workflow_waits_for_the_gateway_and_stub_rollouts(
     job: dict[str, Any],
 ) -> None:
-    """Criterion 3: both Deployments, each with the five-minute ceiling."""
+    """Both Deployments, each with the five-minute ceiling."""
     scripts = " ".join(run_of(step) for step in steps(job))
     assert "kubectl -n apps rollout status deployment/gateway --timeout=5m" in scripts
     assert "kubectl -n apps rollout status deployment/eval-target-stub --timeout=5m" in scripts
@@ -164,7 +164,7 @@ def test_the_run_checks_the_gateway_with_the_model_free_smoke_script(
 def test_the_kind_run_plays_the_small_conversation_file_against_the_stub(
     job: dict[str, Any],
 ) -> None:
-    """a design note: the kind run uses a small conversation file in this repo and the stub target
+    """The kind run uses a small conversation file in this repo and the stub target
     on the conversation route. Catches the removed `ops-eval run`, a run against the real
     help desk's file (not in this checkout), and a cases file that is not there. Exactly one
     step, so a second silent run cannot hide a failure."""
@@ -184,7 +184,7 @@ def test_the_kind_run_plays_the_small_conversation_file_against_the_stub(
 def test_the_report_artifact_is_uploaded_even_when_the_run_fails(
     job: dict[str, Any],
 ) -> None:
-    """Criterion 7: the unhappy path - a cluster-up failure, a rollout timeout or
+    """The unhappy path - a cluster-up failure, a rollout timeout or
     a failed case - still uploads the report, `eval-gate.yml`'s own reason:
     `always()` exactly, because `failure()` would drop it on the passing runs."""
     uploads = [step for step in steps(job) if "actions/upload-artifact" in uses_of(step)]
@@ -195,7 +195,7 @@ def test_the_report_artifact_is_uploaded_even_when_the_run_fails(
 def test_no_step_can_reach_a_real_registry_with_a_write_token(
     job: dict[str, Any],
 ) -> None:
-    """Input validation criterion: every image this job runs is built in the
+    """Input validation: every image this job runs is built in the
     runner and loaded straight into `kind` - nothing here logs into a registry or
     pushes, so a pull request from a fork has nothing that could exfiltrate a
     write-scoped `GITHUB_TOKEN` even if one were granted."""

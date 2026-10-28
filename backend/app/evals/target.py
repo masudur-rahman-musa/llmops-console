@@ -11,8 +11,8 @@ tool call of that turn with its arguments, whether it worked and what it returne
 That is what the three checks read.
 
 Every model forbids extras at every level, and an answer must hold exactly one
-record per turn, numbered 1 to n, for the same case id
-. An answer with no turn
+record per turn, numbered 1 to n, for the same case id.
+An answer with no turn
 records would pass every check over nothing, and score higher than a correct one.
 
 Two error types, because the two failures are not the same event. A reset that did
@@ -125,10 +125,9 @@ class TargetClient:
     def play(self, case: ConversationCase) -> ConversationAnswer:
         """Play one case and answer the target's record of it, or raise `TurnFailed`.
 
-                Only `case_id`, `tenant`, `principal_user` and `turns` are sent: the expected
-                calls and the rubrics stay here, so the system under test never sees them
-        .
-                The status is checked BEFORE the body is parsed.
+        Only `case_id`, `tenant`, `principal_user` and `turns` are sent: the expected
+        calls and the rubrics stay here, so the system under test never sees them.
+        The status is checked BEFORE the body is parsed.
         """
         url = self._url(CONVERSATION_PATH)
         payload = {

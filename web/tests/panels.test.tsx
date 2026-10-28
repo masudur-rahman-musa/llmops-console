@@ -164,7 +164,7 @@ describe("panels", () => {
   });
 
   it("there are twelve panels across the four pages", async () => {
-    // Catches a plan that panels only some pages, leaving the total short of the twelve named sections.
+    // Catches a page set that covers only some pages, leaving the total short of the twelve named sections.
     let total = 0;
     for (const name of NAMES) total += panels(await render(name)).length;
     expect(total).toBe(12);

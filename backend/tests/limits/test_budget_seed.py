@@ -1,6 +1,6 @@
 r"""Loading a month's counter from the ledger: `seeded_spend` on both budget stores.
 
-An earlier change. The counter used to start at zero whenever it was missing, so a tenant
+The counter used to start at zero whenever it was missing, so a tenant
 whose ledger already held its month's spend was served. These cases pin the load:
 the first read of a counter asks the ledger once, marks the counter loaded, and
 counts on from the ledger's number.
@@ -127,7 +127,7 @@ class ScriptedRedis:
 
 def test_a_missing_counter_loads_the_ledger_spend_once() -> None:
     """Catches a store that asks the ledger on every request (a read of the ledger per
-    request, which the plan forbids), and one that ignores the loader's answer and keeps
+    request, which is forbidden), and one that ignores the loader's answer and keeps
     answering zero, the bug that served a tenant $0.07 over its cap."""
     store = InProcessBudgetStore()
     loader = CountingLoader(LEDGER)
@@ -293,7 +293,7 @@ def test_an_unreachable_redis_answers_unknown_without_reading_the_ledger() -> No
 
 def test_a_present_marker_reads_the_counter_and_skips_the_ledger() -> None:
     """Catches a store that asks the ledger even when the counter is already loaded: the
-    plan says the ledger is not read again that month."""
+    ledger is not read again that month."""
     client = ScriptedRedis(marker_present=True, counter=LEDGER)
     store = RedisBudgetStore(as_client(client))
     loader = CountingLoader(LEDGER)

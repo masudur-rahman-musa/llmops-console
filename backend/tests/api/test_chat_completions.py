@@ -19,7 +19,7 @@ Three things are under test here and they are kept apart on purpose.
 
 No socket is opened, no provider key is read and no backing service is started:
 the successful cases answer from `StubAdapter`, the two adapter-level cases from
-recorded payloads under `tests/providers/fixtures/anthropic/` (#66).
+recorded payloads under `tests/providers/fixtures/anthropic/`.
 """
 
 from __future__ import annotations
@@ -174,7 +174,7 @@ def test_successful_completion_is_openai_shaped(chat_client: TestClient) -> None
 
 def test_completion_id_is_random_and_the_pinned_length(chat_client: TestClient) -> None:
     """Catches a shortened, counted or per-process completion id. `COMPLETION_ID_BYTES` is a
-    bound this plan introduced, and the ledger and the trace store key rows by this id: a
+    bound, and the ledger and the trace store key rows by this id: a
     counter restarting with the process would merge two tenants' calls into one row, and
     every other assertion in this file would stay green."""
     first = ok_body(post_chat(chat_client, chat_body()))["id"]
@@ -567,7 +567,7 @@ def test_stream_false_is_accepted(chat_client: TestClient) -> None:
 def test_unknown_body_field_is_422(chat_client: TestClient) -> None:
     """Catches a request model left on Pydantic's default `extra="ignore"`: a misspelled
     `max_token` would be dropped and the call served with the default ceiling, truncating
-    an answer the caller thought it had paid to widen (decision F)."""
+    an answer the caller thought it had paid to widen."""
     response = post_chat(chat_client, chat_body(max_token=16))
 
     assert_error_body(response, status=422, code="VALIDATION")

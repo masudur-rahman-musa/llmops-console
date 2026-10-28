@@ -1,4 +1,4 @@
-"""Tests for an earlier change: thin routes and one shared fallback loop.
+"""Tests for thin routes and one shared fallback loop.
 
 Each test's docstring names what wrong implementation it would catch.
 """

@@ -2,15 +2,14 @@
 
 `agent-strong` is given the WHOLE conversation (every user turn, every reply, every
 tool call with its arguments and result) and the rubric, and grades one reply three
-times, each with a reason. A reply becomes a label only when all three agree
-; a split reply is dropped and the next is
+times, each with a reason. A reply becomes a label only when all three agree; a split reply is
+dropped and the next is
 used, until `LABEL_TARGET` are kept. The judge being checked sees only the reply and the
 rubric, so the maker must see more, or the two would not be an independent check.
 
 The maker asks for at most what it needs: candidates are read lazily and no more is
 graded once the target is kept, because
-every grade is three paid requests. The file is written once and never overwritten
-.
+every grade is three paid requests. The file is written once and never overwritten.
 
 The labels are placeholders made by a model, not by a person. Each line says
 `"source": "model-reference"`; a person's later label says `human`.

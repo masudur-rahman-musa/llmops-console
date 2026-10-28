@@ -10,11 +10,11 @@
 # CRD fails the WHOLE apply rather than skipping just that object - not a matter of
 # taste, the same reason this overlay carries no Ingress at all. `backup.yaml` is
 # left out too: its two CronJobs read a `backup-secrets` this overlay does not
-# supply, and it proves nothing this plan's ten cases need.
+# supply, and it proves nothing the ten kind cases need.
 #
 # `infra/k8s/apps/helpdesk.yaml`, `middlewares.yaml` and `ingress.yaml` are left out
-# for the acceptance criteria's own reason: the four Helpdesk images and
-# `services/console` do not exist anywhere to pull (STATUS's Known issues), and kind
+# because the four Helpdesk images and
+# `services/console` do not exist anywhere to pull, and kind
 # has no DNS/TLS/basic-auth path for an Ingress to exercise.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
@@ -73,8 +73,7 @@ patches:
       name: postgres|qdrant
 
 # `gateway`'s tag names what THIS workflow builds and `kind load docker-image`s
-# rather than `build.yml`'s published SHA (plan decision D: no dependency on GHCR
-# from a PR run). `eval-target-stub` has no production counterpart to copy a tag
+# rather than `build.yml`'s published SHA (so a PR run has no dependency on GHCR). `eval-target-stub` has no production counterpart to copy a tag
 # from at all.
 images:
   - name: gateway

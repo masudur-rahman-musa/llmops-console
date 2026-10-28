@@ -19,7 +19,7 @@ and `document["on"]` would raise `KeyError` on a perfectly correct workflow.
 
 Two deliberate choices about selection:
 
-* An earlier change adds a second job, `console`, with the `image` job's shape, so a step located across
+* A second job, `console`, has the `image` job's shape, so a step located across
   EVERY job would find two of each. The `build` fixture and every `step_using` caller of the
   gateway cases therefore read the `image` job alone (`image_job`), and the console cases read
   the `console` job alone (`only_job` inside each case, so a missing job is a failure of the
@@ -27,7 +27,8 @@ Two deliberate choices about selection:
   its `uses`. Actions in this repo are pinned by major tag (`actions/checkout@v4`), so an
   exact ref would go red on a legitimate bump; the substring is the action's `owner/name`.
 * Selection is by `uses` only, never by a fragment of a `run` script, because a step that
-  merely ECHOES `--severity CRITICAL` or the image name would match a fragment search. For the same reason the "no floating tag" case reads the `tags` value
+  merely ECHOES `--severity CRITICAL` or the image name would match a fragment search. For the
+  same reason the "no floating tag" case reads the `tags` value
   of the build step and nothing else: the workflow's own trigger says `main`, and so will
   its comments, so a whole-file search for that word could never distinguish a correct
   file from a `:main` tag.
@@ -50,14 +51,14 @@ LOGIN_ACTION = "docker/login-action"
 UPLOAD_ACTION = "actions/upload-artifact"
 TRIVY_ACTION = "aquasecurity/trivy-action"
 
-#: a design note: the live node is x86_64. The Hetzner CAX21 path is arm64 and adds it back.
+#: The live node is x86_64. The Hetzner CAX21 path is arm64 and adds it back.
 EXPECTED_PLATFORMS = "linux/amd64"
 
-#: The two jobs, by id: an earlier change's gateway image and an earlier change's console image (decision B).
+#: The two jobs, by id: the gateway image and the console image.
 IMAGE_JOB = "image"
 CONSOLE_JOB = "console"
 
-#: An earlier change criterion: the console job's build inputs, and the single tag it publishes, written
+#: The console job's build inputs, and the single tag it publishes, written
 #: out literally so the comparison with the overlay is between two files that both SAY it.
 CONSOLE_CONTEXT = "web"
 CONSOLE_DOCKERFILE = "web/Dockerfile"
@@ -197,7 +198,7 @@ def build(image_job: dict[str, Any]) -> dict[str, Any]:
 def test_the_workflow_builds_on_a_push_to_main_and_on_tags(
     workflow: dict[str, Any],
 ) -> None:
-    """Criterion 1. Catches a `push` trigger with no `branches` filter, which builds and
+    """Catches a `push` trigger with no `branches` filter, which builds and
     pushes an image for every branch anyone happens to push, and catches a workflow wired to
     `main` alone: with no `tags` entry a release tag produces no image at all, and the tag
     that names a release points at nothing in the registry. `main` is asserted as the whole
@@ -210,14 +211,14 @@ def test_the_workflow_builds_on_a_push_to_main_and_on_tags(
 
 
 def test_the_workflow_can_be_dispatched_by_hand(workflow: dict[str, Any]) -> None:
-    """Criterion 1. Catches a workflow that can only be reached by pushing a commit, which
+    """Catches a workflow that can only be reached by pushing a commit, which
     makes the only way to rebuild an image - after a base-image CVE, or a runner change -
     an empty commit on `main`."""
     assert "workflow_dispatch" in trigger(workflow)
 
 
 def test_the_workflow_has_no_pull_request_trigger(workflow: dict[str, Any]) -> None:
-    """Criteria 1 and 7, the unhappy path: a `pull_request` run from a FORK would carry a
+    """The unhappy path: a `pull_request` run from a FORK would carry a
     `GITHUB_TOKEN` and reach the login step with `packages: write` requested. Catches the
     trigger a reviewer would add for the best of reasons ("scan the image before merge"),
     which is the one shape that lets an untrusted contributor's Dockerfile run against this
@@ -229,7 +230,7 @@ def test_the_workflow_has_no_pull_request_trigger(workflow: dict[str, Any]) -> N
 def test_the_permissions_are_exactly_the_three_the_push_needs(
     workflow: dict[str, Any], jobs: dict[str, Any]
 ) -> None:
-    """Criterion 4, by dict EQUALITY. Catches a missing `packages: write`,
+    """By dict EQUALITY. Catches a missing `packages: write`,
     where the login succeeds and the push 403s; catches a missing `id-token: write`, which
     the attestation half needs; and catches a FOURTH permission added later - `contents:
     write`, say, which would let a compromised action in this pipeline rewrite the
@@ -247,11 +248,11 @@ def test_the_permissions_are_exactly_the_three_the_push_needs(
 def test_the_login_step_authenticates_to_ghcr_with_the_workflow_token(
     image_job: dict[str, Any],
 ) -> None:
-    """Criterion 4. Catches a login pointed at Docker Hub (the action's default registry when
+    """Catches a login pointed at Docker Hub (the action's default registry when
     `registry` is omitted), which would push this image somewhere nobody deploys from, and
     catches a password taken from a long-lived personal access token in `secrets`: the
-    `GITHUB_TOKEN` is scoped to this run and expires with it, which is the whole reason the
-    plan names it."""
+    `GITHUB_TOKEN` is scoped to this run and expires with it, which is the whole reason to use
+    it."""
     login = with_of(step_using(image_job, LOGIN_ACTION))
 
     assert login["registry"] == "ghcr.io"
@@ -259,7 +260,7 @@ def test_the_login_step_authenticates_to_ghcr_with_the_workflow_token(
 
 
 def test_the_build_pushes_the_repositorys_one_dockerfile(build: dict[str, Any]) -> None:
-    """Criterion 2. Catches `push: false`, which leaves a green tick, an SBOM and a Trivy
+    """Catches `push: false`, which leaves a green tick, an SBOM and a Trivy
     scan over an image that exists only inside the runner - the most convincing shape of a
     pipeline that ships nothing. Also catches a `file:` naming a path that is not in the
     tree, which fails only once the workflow runs; the path is resolved against the repo
@@ -269,7 +270,7 @@ def test_the_build_pushes_the_repositorys_one_dockerfile(build: dict[str, Any]) 
 
 
 def test_the_build_targets_the_live_nodes_architecture(build: dict[str, Any]) -> None:
-    """a design note, pinned exactly. Catches an arm64-only build, which fails
+    """Pinned exactly. Catches an arm64-only build, which fails
     at the pull on the x86_64 node with `exec format error`, and an emulated arm64 half
     creeping back, which was most of every run's time. The string is compared whole
     because the action takes `platforms` as one comma-separated value."""
@@ -279,7 +280,7 @@ def test_the_build_targets_the_live_nodes_architecture(build: dict[str, Any]) ->
 def test_the_pushed_image_is_the_name_the_apps_overlay_deploys(
     build: dict[str, Any],
 ) -> None:
-    """Criterion 2, checked against `infra/k8s/apps/kustomization.yaml` rather than against a
+    """Checked against `infra/k8s/apps/kustomization.yaml` rather than against a
     hardcoded string. Catches a push to a repository the overlay does not deploy from - a
     typo in the owner or the image segment, or `.../ai-operations-console` without
     `/gateway` - which produces a green build and a cluster that still cannot pull. Every
@@ -290,7 +291,7 @@ def test_the_pushed_image_is_the_name_the_apps_overlay_deploys(
 
 
 def test_every_published_tag_is_the_commit_sha(build: dict[str, Any]) -> None:
-    """Criterion 3. Catches a tag built from anything but the commit - `github.ref_name`,
+    """Catches a tag built from anything but the commit - `github.ref_name`,
     `github.run_number`, a `metadata-action` output - which gives the cluster an image
     reference that no commit in this repository identifies. `github.sha` is the 40-character
     SHA; `github.sha` truncated by an expression would still contain the fragment, which is
@@ -301,7 +302,7 @@ def test_every_published_tag_is_the_commit_sha(build: dict[str, Any]) -> None:
 
 @pytest.mark.parametrize("floating", ["latest", "main"])
 def test_no_floating_tag_is_published(build: dict[str, Any], floating: str) -> None:
-    """Criterion 3's prohibition, one row per name a pipeline drifts to. Catches a build that
+    """The prohibition, one row per name a pipeline drifts to. Catches a build that
     publishes the SHA tag AND a moving alias, which is the shape that passes the case above
     while making a rollback meaningless: `:latest` and `:main` mean different bytes on
     different days, so the cluster's running code is no longer named by a commit. Scoped to
@@ -313,7 +314,7 @@ def test_no_floating_tag_is_published(build: dict[str, Any], floating: str) -> N
 
 
 def test_the_build_produces_an_sbom(build: dict[str, Any]) -> None:
-    """Criterion 5. Catches the input being dropped or written as the string `"true"`, which
+    """Catches the input being dropped or written as the string `"true"`, which
     buildx does not read as the flag: with no SBOM there is nothing to answer "which
     version of that library was in the image we shipped in March" with, and the upload step
     below would publish an empty artefact. `is True`, because a truthy string is a
@@ -322,8 +323,8 @@ def test_the_build_produces_an_sbom(build: dict[str, Any]) -> None:
 
 
 def test_the_sbom_is_uploaded_as_an_artifact(image_job: dict[str, Any]) -> None:
-    """Criterion 5's second half. Catches an SBOM generated inside the runner and thrown away
-    with it, which is criterion 5 held only in appearance, and catches an upload step
+    """The second half. Catches an SBOM generated inside the runner and thrown away
+    with it, which keeps the SBOM in appearance only, and catches an upload step
     retargeted at the Trivy report or the build log - the inputs must NAME the SBOM (`sbom`
     or `spdx`), or what is published is some other file. Located by `uses`, so a step that
     merely echoes the word cannot satisfy it."""
@@ -344,11 +345,11 @@ def test_the_sbom_is_uploaded_as_an_artifact(image_job: dict[str, Any]) -> None:
 def test_the_trivy_step_fails_the_job_on_a_critical_finding(
     image_job: dict[str, Any], input_name: str, expected: object
 ) -> None:
-    """Criterion 6, one row per input, each pinned exactly.
+    """One row per input, each pinned exactly.
 
     `severity` catches a widened band (`CRITICAL,HIGH` fails the build on findings nobody
     agreed to block, `HIGH` blocks on the wrong class and lets a CRITICAL through as a
-    warning). `exit-code` catches the action's DEFAULT of `0`, which is criterion 7's exact
+    warning). `exit-code` catches the action's DEFAULT of `0`, which is the exact
     failure: Trivy prints a CRITICAL table and the job is a green tick. It is compared to
     the STRING `"1"` because that is what the action reads and what `yaml.safe_load` returns
     only when the YAML says `'1'` - a bare `1` parses to the int and reddens here, which is
@@ -361,7 +362,7 @@ def test_the_trivy_step_fails_the_job_on_a_critical_finding(
 def test_trivy_scans_the_image_the_build_just_pushed(
     image_job: dict[str, Any], build: dict[str, Any]
 ) -> None:
-    """Criterion 6, the target rather than the thresholds. Catches an `image-ref` pointed at
+    """The target rather than the thresholds. Catches an `image-ref` pointed at
     a floating tag or at the base image - a scan that passes while the artefact actually
     published was never looked at. The reference must name the overlay's repository and
     resolve from `github.sha`, the same two properties the tag cases pin, so the scanned
@@ -376,7 +377,7 @@ def test_trivy_scans_the_image_the_build_just_pushed(
 def test_the_console_job_builds_the_console_dockerfile_for_the_live_nodes_architecture(
     jobs: dict[str, Any],
 ) -> None:
-    """An earlier change decision B. Catches a console job built from the repository root context or
+    """Catches a console job built from the repository root context or
     the root `Dockerfile` (which is the gateway image pushed under the console name), a job
     built for any platform set but the x86_64 node's, a `push: false` build that
     scans nothing real, and a job with no GHCR login,
@@ -399,7 +400,7 @@ def test_the_console_job_builds_the_console_dockerfile_for_the_live_nodes_archit
 def test_the_console_image_is_the_name_the_apps_overlay_deploys(
     jobs: dict[str, Any],
 ) -> None:
-    """An earlier change decision B, the reference half. Catches a console job pushing to the gateway's
+    """The reference half. Catches a console job pushing to the gateway's
     repository (a copied `tags` line), which overwrites the gateway image at the same SHA with
     the console; catches a second tag, including a floating `latest` or `main`; and catches the
     workflow and `infra/k8s/apps/kustomization.yaml` naming different console repositories,
@@ -419,7 +420,7 @@ def test_the_console_image_is_the_name_the_apps_overlay_deploys(
 def test_the_console_job_scans_and_publishes_its_sbom(
     jobs: dict[str, Any], image_job: dict[str, Any]
 ) -> None:
-    """An earlier change decision B, the supply-chain half, in the console job itself. Catches a
+    """The supply-chain half, in the console job itself. Catches a
     console job with no SBOM (`sbom` dropped or written as a string), no artefact upload, or
     an upload under the SAME artefact name as the gateway job's - `upload-artifact@v4` refuses
     a second artefact of one name in one run, so one of the two SBOMs is lost. Catches a Trivy

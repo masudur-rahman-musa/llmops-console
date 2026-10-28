@@ -27,7 +27,7 @@ from .conftest import TEST_KEYS, assert_error_body, auth_headers
 
 NORDLICHT_KEY = TEST_KEYS["nordlicht"]
 
-# code string -> HTTP status. the design, an earlier change acceptance criterion 4.
+# code string -> HTTP status.
 ERROR_CONTRACT: dict[str, int] = {
     "UNAUTHORIZED": 401,
     "TENANT_MISMATCH": 403,
@@ -96,7 +96,7 @@ def test_error_code_set_is_exhaustive() -> None:
 def test_routing_errors_are_gateway_errors(
     error_class: type[GatewayError], code: str, status: int
 ) -> None:
-    """Re-parenting `RoutingError` keeps the codes an earlier change pinned (decision E)."""
+    """Re-parenting `RoutingError` keeps the codes it had."""
     assert issubclass(error_class, GatewayError)
     assert error_class.code == code
     assert error_class.http_status == status

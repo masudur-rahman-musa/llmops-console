@@ -93,8 +93,8 @@ def empty_scores() -> dict[Kind, KindScore]:
 # --------------------------------------------------------------------------
 
 
-def test_the_seed_and_template_file_are_the_ones_the_adr_names() -> None:
-    """Catches a changed seed or a moved template file: a design note publishes seed 82 and the
+def test_the_seed_and_template_file_are_the_published_ones() -> None:
+    """Catches a changed seed or a moved template file: the published numbers use seed 82 and the
     templates path, and a different seed would quietly give different published numbers."""
     assert HELDOUT_SEED == 82
     assert TEMPLATES_PATH.name == "heldout-templates.json"

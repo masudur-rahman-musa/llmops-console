@@ -1,7 +1,7 @@
 """Shared data for the exact-cache tests: one clock, one answer, one key input set.
 
-Everything here is in-process and immutable, so a project rule has nothing to
-apply to beyond the session-scoped Redis client that lives beside the cases that
+Everything here is in-process and immutable, so there is nothing to scope or isolate beyond the
+session-scoped Redis client that lives beside the cases that
 need it (`tests/cache/test_redis_cache.py`).
 
 Two pieces carry weight:
@@ -9,7 +9,7 @@ Two pieces carry weight:
 * `FakeClock` is the injected clock every TTL boundary is asserted against, so no
   case sleeps and the "readable at exactly the TTL, gone one second past" pair is
   a pair of assertions rather than a day of waiting.
-* `KEY_FIELDS` is the seven keyed fields of the design with a DIFFERENT value for
+* `KEY_FIELDS` is the seven keyed fields with a DIFFERENT value for
   each, which is what the per-field miss table in `test_key.py` is built from: a
   key that omits one field serves a wrong answer to a different request, so each
   field gets a row rather than a sample.
@@ -60,7 +60,7 @@ def cached_answer(
     finish_reason: str = "end_turn",
     with_tool_call: bool = True,
 ) -> ChatResponse:
-    """One neutral `ChatResponse`, the value this cache stores (plan decision E).
+    """One neutral `ChatResponse`, the value this cache stores.
 
     Carries a tool call by default: the wire body is not what is cached, so the
     round trip has to survive every field of the neutral answer and a store that
@@ -75,7 +75,7 @@ def cached_answer(
     )
 
 
-# --- the seven keyed fields (the design) -----------------------------------------
+# --- the seven keyed fields -----------------------------------------
 
 BASE_MESSAGES: tuple[dict[str, Any], ...] = (
     {"role": "user", "content": "Which city is the capital of Germany?"},

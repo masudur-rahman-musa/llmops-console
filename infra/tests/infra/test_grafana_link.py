@@ -1,9 +1,9 @@
-"""An earlier change: the Overview's "Health details in Grafana" link.
+"""The Overview's "Health details in Grafana" link.
 
 On the server the link is the gateway's own Grafana dashboard, built from the Grafana Ingress host
 and the dashboard `uid`; locally it is the compose Grafana's gateway overview on port 3002.
-An earlier change: the build runs Grafana, so its link is the `.dev` host's gateway overview.
-An earlier change: the local stack runs Grafana, so `backend/.env.demo` holds the 3002 link.
+the build runs Grafana, so its link is the `.dev` host's gateway overview.
+The local stack runs Grafana, so `backend/.env.demo` holds the 3002 link.
 """
 
 from __future__ import annotations

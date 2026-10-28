@@ -5,7 +5,7 @@
 # other caller does, over `GATEWAY_URL`.
 #
 # All four are written INTO the `Helpdesk reserve, 3 pods` envelope
-# `../README.md` has held since row 20a - 576Mi of requests, 300m of CPU, 1152Mi
+# `../README.md` has held all along - 576Mi of requests, 300m of CPU, 1152Mi
 # of limits - rather than on top of it, so the apps budget's three totals do not
 # move and `../base/quotas.yaml` is untouched. That costs something and the
 # README says what: the agent-api keeps the reserve's own 192Mi and the other
@@ -13,15 +13,15 @@
 # traffic. If one of the other three needs more, the conversation is that table.
 #
 # No `limits.cpu` on any of the four. A CPU limit throttles rather than kills,
-# and the agent-api is the workload the design puts a tail-latency SLO on.
+# and the agent-api is the workload with a tail-latency SLO.
 #
-# Decision B - which of these is public: `helpdesk-web` alone, through the
+# Which of these is public: `helpdesk-web` alone, through the
 # `helpdesk.` Ingress pair in `ingress.yaml`. All three Services stay ClusterIP
 # and the other two are reachable in-cluster only. A browser reaching the agent-api
-# directly is the shape a project rule rejects for the console, and the MCP server
+# directly is the shape this repo rejects for the console, and the MCP server
 # is a tool endpoint that no host should resolve to.
 #
-# Decision E - the env contract. The names below are the companion repo's
+# The env contract. The names below are the companion repo's
 # published ones: bare and unprefixed, one name per value, read from its
 # `.env.example`. `../README.md`'s "What the Helpdesk reads" table mirrors them.
 # The risk is unchanged: a name that drifts on either side leaves the pod
@@ -37,13 +37,13 @@
 # `JWT_SECRET` and the database DSN it never uses. Per-workload `secretKeyRef`
 # would close that; it is a separate least-privilege change.
 #
-# Decision F - the scheduler has no ports and no probes. It serves nothing: it
+# The scheduler has no ports and no probes. It serves nothing: it
 # holds a Redis leader lock and runs jobs, so `replicas: 1` with `Recreate` is
 # what keeps exactly one copy through a rollout, and inventing a health port or
 # an exec probe for a process no code in this repo defines would be worse than
 # the gap - a liveness probe against a command that does not exist restarts the
 # pod forever. What it costs is stated rather than half-fixed: a wedged
-# scheduler is visible in kube-state-metrics from row 23a, and row 23c's
+# scheduler is visible in kube-state-metrics, and the
 # `PodCrashLooping` alert pages on a container that keeps RESTARTING - a
 # scheduler that hangs without crashing still trips no alert at all, since
 # nothing here reads a liveness signal it does not have.
@@ -189,7 +189,7 @@ spec:
             periodSeconds: 20
             timeoutSeconds: 5
           # The reserve's own per-pod row: the one Helpdesk workload sized for
-          # real traffic (decision A).
+          # real traffic.
           resources:
             requests:
               memory: 192Mi
@@ -377,7 +377,7 @@ spec:
   replicas: 1
   # `Recreate`, not `RollingUpdate`: the rolling default starts the new pod
   # before the old one stops, which is two schedulers for the length of every
-  # deploy. The Redis leader lock the design names is what makes a brief second
+  # deploy. The Redis leader lock is what makes a brief second
   # copy survivable if one ever happens; it is not a reason to arrange for one.
   strategy:
     type: Recreate
@@ -394,7 +394,7 @@ spec:
       containers:
         - name: helpdesk-scheduler
           image: helpdesk-scheduler
-          # Still no probes (decision F): it serves no traffic. It does serve
+          # Still no probes: it serves no traffic. It does serve
           # its stuck chat counters on 8082, so that port and the Service
           # below exist for Prometheus to scrape, and for nothing else.
           ports:

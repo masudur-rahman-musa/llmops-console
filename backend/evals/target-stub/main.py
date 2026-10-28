@@ -1,7 +1,8 @@
 r"""The kind e2e's eval target: the help desk's conversation contract, played from a small
 case file instead of a real agent.
 
-Stdlib only (`http.server`, `urllib.request`), so the throwaway image installs nothing. The contract is duplicated here, never imported: the stub's image carries
+Stdlib only (`http.server`, `urllib.request`), so the throwaway image installs nothing. The
+contract is duplicated here, never imported: the stub's image carries
 none of `opsconsole`.
 
 Two endpoints, both POST:

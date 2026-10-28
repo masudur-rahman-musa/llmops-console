@@ -10,12 +10,12 @@ the same number".
 No backing service. The app is built with no Redis URL, so
 `app.state.budget_store` is the in-process twin; every case here wraps it in
 `RecordingBudgetStore`, which is the only way to tell "debited zero" (what a
-cache hit owes) from "did not debit at all" (a call site the plan missed). The
+cache hit owes) from "did not debit at all" (a call site that was missed). The
 store is reached by NAME, `app.state.budget_store`, never by shape: this app
 already holds several collaborators with a `get`-and-`put` pair, and selecting
-one of them by its methods is what a project rule exists for.
+one of them by its methods is how the wrong one gets picked.
 
-a project rule: one app for the module, built once. Per-test isolation is a
+One app for the module, built once. Per-test isolation is a
 fresh `budget_store`, `cost_ledger`, `response_cache` and `semantic_cache` on
 `app.state` and the stubs' recorded calls cleared - never a new app.
 
@@ -32,15 +32,15 @@ Three arrangements are worth reading before the assertions:
   `semantic_cache: true`, so a chat request here really does embed through the
   `embed` alias against `local`; that is what makes the semantic-hit path
   reachable, and it is also what would expose an implementation that debited the
-  internal embedding as a second charge (a project rule's fourth target).
+  internal embedding as a second charge.
 
 The contract these cases are written against, before it exists:
 
 * `create_app` builds `app.state.budget_store` - `RedisBudgetStore` with a Redis
   URL, `InProcessBudgetStore` without one;
 * both routes check the tenant's spend against its `budget_usd_month` after
-  `Context` resolves and BEFORE anything is resolved, redacted or dialled
-  (decision D), raising `BudgetExceeded` for `BudgetDecision.REJECT`;
+  `Context` resolves and BEFORE anything is resolved, redacted or dialled, raising
+  `BudgetExceeded` for `BudgetDecision.REJECT`;
 * the check logs one warning through `app.limits.budget` in the warn
   band, carrying `tenant`, `spend_usd` and `cap_usd`;
 * every `book_cost` call site debits the counter by `to_micro_usd` of the
@@ -161,8 +161,8 @@ class RecordingBudgetStore:
     """The in-process twin, with every call kept.
 
     `debits` is what separates "this path debited zero" from "this path never
-    debited", which no total can express and which is exactly the failure section
-    5's first risk names: a `book_cost` call site the plan missed leaves budgets
+    debited", which no total can express and which is exactly the failure:
+    a `book_cost` call site that was missed leaves budgets
     permanently under-reported, and on the three paths whose cost is zero it
     leaves no trace at all.
     """
@@ -190,7 +190,7 @@ class RecordingBudgetStore:
 
 
 class UnreachableRedis:
-    """A client whose every command raises, for the fail-open case (decision B)."""
+    """A client whose every command raises, for the fail-open case."""
 
     def incrby(self, name: str, amount: int) -> int:
         raise redis.ConnectionError("connection refused")
@@ -358,7 +358,7 @@ def test_the_shipped_cap_for_this_tenant_is_the_one_these_cases_arrange_against(
 
 
 # --------------------------------------------------------------------------
-# the refusal (criterion 3)
+# the refusal
 # --------------------------------------------------------------------------
 
 
@@ -385,7 +385,7 @@ def test_a_tenant_one_micro_under_the_cap_is_served(
     """The other side of the same boundary, and the case that stops the one above passing
     against a route that refuses everybody. Catches a `>=` on the wrong quantity - a
     check comparing the spend PLUS this request's cost would refuse here, which is
-    decision E's reservation the plan explicitly did not take."""
+    a reservation the gateway deliberately does not take."""
     budget_store.arrange(TENANT, month(), CAP - 1)
 
     response = post(budget_client, chat_body(model=ALIAS))
@@ -409,8 +409,8 @@ def test_the_embeddings_route_refuses_over_cap_too(
 def test_a_streamed_request_over_cap_is_refused_before_the_stream_opens(
     budget_client: TestClient, budget_store: RecordingBudgetStore, chat_stub: StubAdapter
 ) -> None:
-    """Catches a check placed inside the serving loop rather than at the top of the route
-    (decision D): the response would already be a 200 `text/event-stream` by the time the
+    """Catches a check placed inside the serving loop rather than at the top of the route: the
+    response would already be a 200 `text/event-stream` by the time the
     budget was consulted, and the client would receive a stream that carries an error in
     a frame instead of the typed 429 body."""
     budget_store.arrange(TENANT, month(), CAP)
@@ -424,7 +424,7 @@ def test_a_streamed_request_over_cap_is_refused_before_the_stream_opens(
 def test_a_refused_request_dials_no_provider_and_books_no_row(
     budget_client: TestClient, budget_store: RecordingBudgetStore, chat_stub: StubAdapter
 ) -> None:
-    """Criterion 3's other three halves in the arrangement that can see them.
+    """The requirement's other three halves in the arrangement that can see them.
 
     The request is exact-cache eligible and identical to one sent afterwards under a cap
     that allows it, so "no cache entry was stored" is asserted as the LATER request
@@ -470,7 +470,7 @@ def test_a_tenant_the_policy_does_not_carry_is_still_the_resolvers_403(
 
 
 # --------------------------------------------------------------------------
-# the gauge (criterion 1)
+# the gauge
 # --------------------------------------------------------------------------
 
 
@@ -496,7 +496,7 @@ def test_an_unreachable_store_serves_and_moves_no_gauge(
     budget_store: RecordingBudgetStore,
     metrics_registry: CollectorRegistry,
 ) -> None:
-    """Decision B end to end, in the only arrangement that can see it.
+    """The behaviour end to end, in the only arrangement that can see it.
 
     A served request first, so the gauge holds a real level; then the same request
     against a store that cannot answer. Catches a route that lets the store's failure
@@ -517,7 +517,7 @@ def test_an_unreachable_store_serves_and_moves_no_gauge(
 
 
 # --------------------------------------------------------------------------
-# the warning (criterion 2)
+# the warning
 # --------------------------------------------------------------------------
 
 
@@ -570,7 +570,7 @@ def test_a_tenant_just_under_eighty_percent_is_served_without_a_warning(
 
 
 # --------------------------------------------------------------------------
-# the debit (criterion 5)
+# the debit
 # --------------------------------------------------------------------------
 
 Send = Callable[[TestClient, RecordingBudgetStore], Response]
@@ -626,7 +626,7 @@ PATHS: list[tuple[str, Send, int]] = [
     ("the semantic-cache hit path", send_semantic_hit, ZERO_MICRO),
     ("the embeddings path", send_embeddings, ZERO_MICRO),
 ]
-"""The five `book_cost` call sites section 5's first risk names, and the exact
+"""The five `book_cost` call sites, and the exact
 micro-USD each owes. Three of the five owe zero - two cache hits and a
 zero-priced `local` row - which is precisely why the assertion below is about the
 recorded CALL and not about a total: a total cannot tell a site that debited zero
@@ -681,7 +681,7 @@ def usageless_client(settings: Settings) -> Iterator[TestClient]:
 def test_a_stream_that_reports_no_usage_still_debits_its_estimated_row(
     usageless_client: TestClient,
 ) -> None:
-    """The SIXTH `book_cost` call site, which the plan's list of five does not name: a
+    """The SIXTH `book_cost` call site, which the list of five does not include: a
     stream that ends without a usage frame books an ESTIMATED row from a second sink
     (`_estimated_cost_sink` in `services/chat_pipeline.py`).
 
@@ -786,7 +786,7 @@ def test_the_debit_is_booked_under_the_requesting_tenant_and_the_current_month(
 def test_the_check_reads_the_counter_before_the_provider_is_dialled(
     budget_client: TestClient, budget_store: RecordingBudgetStore
 ) -> None:
-    """Decision D, stated as an ordering the recording store can see: the spend is read for
+    """Stated as an ordering the recording store can see: the spend is read for
     a request the route goes on to serve, not only for one it refuses. Catches an
     implementation that checks the cap only inside the refusal path it never reaches
     under cap - which is a gateway whose budget is enforced by nothing until someone

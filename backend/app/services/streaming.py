@@ -145,7 +145,7 @@ def sse_frames(
     buffer and are substituted whole.
 
     The held text is flushed before EVERY non-text event, before the error frame
-    and before `[DONE]` (decisions E and F), so a `finish_reason` can never
+    and before `[DONE]` (the rules), so a `finish_reason` can never
     overtake the last of the answer and nothing the provider produced is dropped.
 
     `on_close` runs last in the `finally`, after every frame this generator
@@ -195,8 +195,8 @@ def sse_frames(
                     on_text(event.text)
                 emitted = rehydrator.feed(event.text)
                 if not emitted and event.text:
-                    # Everything the provider sent is still held: no frame at all
-                    # . `event.text` guards the other way round - a
+                    # Everything the provider sent is still held: no frame at all.
+                    # `event.text` guards the other way round - a
                     # provider delta that was empty to begin with is rendered
                     # exactly as it was before this parameter existed.
                     continue
@@ -272,7 +272,7 @@ def streamed(
     with no code.
 
     Returns a `StreamPlan` so the route builds the HTTP response and the
-    response type stays out of the service layer (§3.3).
+    response type stays out of the service layer.
     """
     events = adapter.stream_chat(to_neutral(body, chosen.model))
     first = next(events, None)

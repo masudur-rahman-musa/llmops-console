@@ -7,7 +7,7 @@ default, or that looked up "the tenant's most recent map", serves the raw addres
 and reddens; a route that reads the header cannot.
 
 The refusals all share one shape - 422 `VALIDATION` or 502 `PROVIDER_ERROR`, with
-the fake adapter's `requests` asserted EMPTY - because the plan's claim is not
+the fake adapter's `requests` asserted EMPTY - because the claim is not
 merely "it fails" but "it fails before a provider is dialled", which is what makes
 a stale id cost no tokens. `call_count` is the only witness for that, and it is
 why the stub records every request it is handed.
@@ -19,7 +19,7 @@ Two arrangements are worth reading before the assertions:
   `test_the_map_id_rejection_table` therefore asserts `map_store.gets == []`,
   while `test_an_unknown_map_id_is_422_with_no_outbound_call` asserts the
   opposite - exactly one read - so the two cases cannot both pass an
-  implementation missing either control (a project rule's boundary, and the
+  implementation missing either control (the project's boundary, and the
   neighbouring-guard trap).
 * THE OTHER TENANT'S ID. `test_an_id_live_for_another_tenant_is_absent` files a
   real map for `cuan` and spends its id as `evals`, so "unknown id" cannot be
@@ -27,15 +27,15 @@ Two arrangements are worth reading before the assertions:
   map and serve `cuan`'s data.
 
 The map store is reached by NAME, `app.state.redaction_map_store`, never by
-shape: this directory has two stores with a `put` and a `get` since an earlier change, and
-selecting one of them by its methods is what a project rule exists for.
+shape: this directory has two stores with a `put` and a `get`, and
+selecting one of them by its methods is how the wrong one gets picked.
 
-a project rule: one app for the module, built once, with per-test isolation from
+One app for the module, built once, with per-test isolation from
 resetting the stub's script and the store's recorded reads. The 502 case is the
 one exception - its store must refuse every read, so it gets an app of its own
 rather than leaving every later case here talking to a broken store.
 
-An earlier change adds the streamed half, and the arrangements there are chosen the same
+The streamed half is covered too, and the arrangements there are chosen the same
 way:
 
 * THE FLUSH POINTS. Each of the three has its script arranged so that only its
@@ -45,15 +45,15 @@ way:
   been told the answer ended. The `[DONE]` case ends its script on the text delta
   itself, with no `finish_reason` and no usage chunk after it, so the flush before
   a non-text event cannot be what saves it.
-* THE REFUSALS ON A STREAM. An earlier change answered 422 to the header on ANY streamed
-  body before it looked at the id at all, and this plan deletes that guard; the
+* THE REFUSALS ON A STREAM. The route used to answer 422 to the header on ANY streamed
+  body before it looked at the id at all, and that guard is gone; the
   four rows re-assert the remaining refusals on a streamed body, and each is
   separated from its neighbour exactly as the non-streamed four are - by whether
   the store was asked (`gets == []` for the malformed id, one read for the
   unknown one).
 * THE STUB'S SCRIPT. `RehydrationStub.events` is per test for the same reason
   `response` is: every streamed case needs a different fragment sequence, and one
-  app per case would be the rebuild a project rule forbids.
+  app per case would be the rebuild the suite avoids.
 
 No provider key is read and no network is touched: the adapter is a stub and the
 map store is the in-process one `create_app` builds.
@@ -135,7 +135,7 @@ WELL_FORMED_ID = "fedcba9876543210fedcba9876543210"
 # The published set, lowercased as httpx returns header names. These five are the
 # ones a STREAM carries: they are on the wire before the first frame, which is
 # before the usage a cost could be priced from exists. This module asserts a
-# rehydrated stream still carries exactly them and no more (decision G).
+# rehydrated stream still carries exactly them and no more.
 EXPECTED_HEADER_NAMES = {
     "x-gateway-provider",
     "x-gateway-model",
@@ -175,7 +175,7 @@ class RehydrationStub:
     `StubAdapter` in this directory's `conftest.py` fixes its response at
     construction, and every case here needs a different one (a placeholder in the
     content, a placeholder in a tool call, an unnamed placeholder), so one app per
-    case would be the rebuild a project rule forbids. `response` and `reset()`
+    case would be the rebuild the suite avoids. `response` and `reset()`
     are the same public-script shape `FallbackStubAdapter` uses.
 
     `events` is the streamed half of the same script and is set the
@@ -184,7 +184,7 @@ class RehydrationStub:
     stops without a `finish_reason` at all.
 
     `stream_error` is raised AFTER the scripted events have been yielded, which
-    is the mid-stream position an earlier change decision E is about: the 200 and the
+    is the mid-stream position that matters: the 200 and the
     first frames are already on the wire, so the failure can only be a frame.
 
     `requests` is the load-bearing part: every refusal in this module asserts it
@@ -352,7 +352,7 @@ def map_store_reads(client: TestClient) -> list[tuple[str, str]]:
     """Every `(tenant, map_id)` this module's store was asked for since the last reset.
 
     Read off `app.state.redaction_map_store` by NAME. Two stores on this app carry
-    a `put` and a `get` since an earlier change, so a helper that went looking for the
+    a `put` and a `get`, so a helper that went looking for the
     shape would pick whichever came first.
     """
     store = cast(RecordingMapStore, app_of(client).state.redaction_map_store)
@@ -503,7 +503,7 @@ def test_a_placeholder_in_a_tool_calls_arguments_is_rehydrated(
     rehydration_stub: RehydrationStub,
     live_map_id: str,
 ) -> None:
-    """Catches a route that substitutes into `content` only (the half of decision D that
+    """Catches a route that substitutes into `content` only (the half of the behaviour that
     is easy to forget): a tool call handed `<EMAIL_1>` is a broken tool call, and the
     content here carries no placeholder at all, so a content-only implementation returns
     a 200 that looks entirely correct. The call's `id` and `name` are pinned unchanged,
@@ -553,11 +553,11 @@ def test_a_rehydrated_answer_carries_the_same_headers(
     rehydration_stub: RehydrationStub,
     live_map_id: str,
 ) -> None:
-    """Catches the header decision G refuses - an `X-Gateway-Rehydrated: true` added
+    """Catches the header that is refused - an `X-Gateway-Rehydrated: true` added
     because it seemed helpful - and the opposite mistake of a rehydrating branch that
     returns its own response object and drops the ones a caller's dashboard reads. The
     set is compared whole, and against a request that really did rehydrate. It is the
-    six of a non-streamed answer since an earlier change: rehydration changes what a header
+    six of a non-streamed answer now: rehydration changes what a header
     SAYS about the body, never which headers there are."""
     rehydration_stub.response = stub_response(content="write to <EMAIL_1>")
 
@@ -612,7 +612,7 @@ def test_a_stream_without_the_header_reads_the_map_store_zero_times(
 def test_a_streamed_placeholder_comes_back_as_the_raw_value(
     rehydration_client: TestClient, rehydration_stub: RehydrationStub, live_map_id: str
 ) -> None:
-    """Catches the route still refusing the combination 12b turned down (decision G), and
+    """Catches the route still refusing the combination that was turned down, and
     catches the opposite half-fix: a 200 `text/event-stream` whose frames were never
     passed the map, which hands the caller `<EMAIL_1>` while telling it the request
     succeeded. Both placeholders are asserted gone from the WHOLE body and both raw values
@@ -636,7 +636,8 @@ def test_a_streamed_tool_calls_arguments_are_rehydrated(
     all, so a content-only implementation streams a 200 that looks entirely correct and
     hands the client a tool call whose `to` field is `<EMAIL_1>`. `index`, `id` and `name`
     are pinned unchanged, so a wrap that rebuilt the call around the substitution - or
-    reset its index to 0 - is caught as well. `ToolCallDelta` carries a COMPLETE call, which is why its arguments need no buffer."""
+    reset its index to 0 - is caught as well. `ToolCallDelta` carries a COMPLETE call, which is
+    why its arguments need no buffer."""
     rehydration_stub.events = stream_events(
         fragments=(),
         tool_calls=(
@@ -668,7 +669,7 @@ def test_a_streamed_tool_calls_arguments_are_rehydrated(
 def test_held_text_is_flushed_before_the_finish_reason(
     rehydration_client: TestClient, rehydration_stub: RehydrationStub, live_map_id: str
 ) -> None:
-    """Catches a wrap that flushes only at the end of the stream (decision E's rejected
+    """Catches a wrap that flushes only at the end of the stream (a rejected
     half). The text is all delivered either way, so the assembled answer cannot tell the
     two apart - the ORDER can: a client that renders as it reads paints a visibly
     truncated answer, then finishes it after `finish_reason` said the answer was over. The
@@ -712,11 +713,11 @@ def test_held_text_is_flushed_before_an_error_frame(
     rehydration_client: TestClient, rehydration_stub: RehydrationStub, live_map_id: str
 ) -> None:
     """Catches an error path that returns straight from the `except` without flushing
-    (decision F): the held span is text the provider produced and the caller paid for, and
-    at worst it is a partial placeholder, which is what the model wrote anyway. The
-    truncation report of an earlier change decision E is asserted unchanged in the same case - one
-    error frame, last, and no sentinel - so a flush bolted on by re-running the whole
-    stream, or one that let `[DONE]` follow the error, is caught here too."""
+    : the held span is text the provider produced and the caller paid for, and
+     at worst it is a partial placeholder, which is what the model wrote anyway. The
+     truncation report is asserted unchanged in the same case - one
+     error frame, last, and no sentinel - so a flush bolted on by re-running the whole
+     stream, or one that let `[DONE]` follow the error, is caught here too."""
     rehydration_stub.events = (
         StreamStart(),
         TextDelta(text=f"write to <EMAIL_1> or {HELD_PARTIAL}"),
@@ -739,7 +740,7 @@ def test_held_text_is_flushed_before_an_error_frame(
 def test_a_rehydrated_stream_carries_the_same_headers(
     rehydration_client: TestClient, rehydration_stub: RehydrationStub, live_map_id: str
 ) -> None:
-    """Catches the header decision G refuses - an `X-Gateway-Rehydrated: true` added
+    """Catches the header that is refused - an `X-Gateway-Rehydrated: true` added
     because it seemed helpful - and the opposite mistake of a rehydrating branch that
     builds its own `StreamingResponse` and drops the five an operator's dashboard reads,
     or the two SSE headers without which a proxy buffers the whole answer and delivers it
@@ -803,7 +804,7 @@ def test_an_unknown_map_id_is_422_with_no_outbound_call(
     other_tenant_map_id: str,
 ) -> None:
     """Catches two things at once: a route that serves the answer un-rehydrated when the
-    map has expired (decision B - `<PERSON_1>` reaching an end user reads as a bug with
+    map has expired (- `<PERSON_1>` reaching an end user reads as a bug with
     no header to explain it), and an error message that names WHY the id failed. The
     unknown-id body and the other-tenant body are compared whole, so a message quoting
     the id, or saying "belongs to another tenant", hands a caller an oracle for which
@@ -823,7 +824,7 @@ def test_an_unknown_map_id_is_422_with_no_outbound_call(
 def test_a_malformed_map_id_on_a_stream_is_422_with_no_outbound_call(
     rehydration_client: TestClient, rehydration_stub: RehydrationStub
 ) -> None:
-    """Catches a route that lifts 12b's streamed refusal and hands the id straight to the
+    """Catches a route that lifts the streamed refusal and hands the id straight to the
     store on the streamed path only: the in-process store answers `None` for anything it
     does not hold, so the request would still 422 and the missing pre-check would be
     invisible. `gets == []` is the whole discriminator, exactly as on the non-streamed

@@ -322,7 +322,7 @@ rejection of it names."""
 def checked_tenant(value: str) -> str:
     """Validate the `?tenant=` filter before it is used to look anything up.
 
-    a project rule applied to the one client-supplied string on this surface.
+    It is checked like every client-supplied string on this surface: a pattern and a cap.
     The cap and the pattern are the resolver's own rather than numbers copied
     here, so the filter and the request path can never disagree about what a
     tenant name is; `IDENTIFIER_PATTERN` is a `fullmatch`, which is what keeps a

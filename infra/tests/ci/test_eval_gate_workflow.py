@@ -1,10 +1,10 @@
 """`.github/workflows/eval-gate.yml`: the wiring nothing else in this repo can exercise.
 
-Risk 1 of an earlier change says it plainly - there is no eval target, so the `eval` job can
+There is no eval target, so the `eval` job can
 be WIRED but never run here, and this file is the only thing holding its shape
-between now and the row that gives it something to run against. What is asserted is
-therefore wiring and not behaviour: the trigger, the two job names, decision A's
-condition, `fetch-depth: 0`, `if: always()` on the upload, the fork guard on the
+until it has something to run against. What is asserted is
+therefore wiring and not behaviour: the trigger, the two job names, the
+`EVAL_TARGET_URL` condition, `fetch-depth: 0`, `if: always()` on the upload, the fork guard on the
 comment, and the flags the gate step must carry. The comparison those flags drive is
 pinned in `tests/evals/test_gate.py` and `tests/evals/test_cli.py`.
 
@@ -87,7 +87,7 @@ def jobs(workflow: dict[str, Any]) -> dict[str, Any]:
 def test_the_workflow_triggers_on_pull_requests_into_main(
     workflow: dict[str, Any],
 ) -> None:
-    """Criterion 1. Catches a workflow wired to `push`, where the guard runs after the merge
+    """Catches a workflow wired to `push`, where the guard runs after the merge
     it was supposed to block, and catches a `pull_request` with no `branches` filter, which
     spends the eval budget on every PR between feature branches. `main` is asserted as the
     whole list, because an added branch is a second target nobody agreed to gate on."""
@@ -95,7 +95,7 @@ def test_the_workflow_triggers_on_pull_requests_into_main(
 
 
 def test_the_workflow_carries_exactly_the_two_jobs(jobs: dict[str, Any]) -> None:
-    """Criterion 1 and decision E: `eval-gate.yml` is a required check by NAME, so a third
+    """`eval-gate.yml` is a required check by NAME, so a third
     job added here silently becomes part of that check, and a renamed one makes the branch
     protection rule point at a job that no longer exists. Equality catches both."""
     assert set(jobs) == {"baseline-guard", "eval"}
@@ -104,9 +104,9 @@ def test_the_workflow_carries_exactly_the_two_jobs(jobs: dict[str, Any]) -> None
 def test_the_baseline_guard_job_runs_on_every_pull_request(
     jobs: dict[str, Any],
 ) -> None:
-    """Criterion 2: #42's guard is the half that really executes, so it carries NO condition
-    at all. Catches decision A's `EVAL_TARGET_URL` condition being copied onto this job
-    too, which would make the baseline rule inert in exactly the repository state it ships
+    """The baseline guard is the half that really executes, so it carries NO condition
+    at all. Catches the `EVAL_TARGET_URL` condition being copied onto this job
+    too, which would make the baseline check inert in exactly the repository state it ships
     in - a gate that is green because it never ran."""
     assert "if" not in jobs["baseline-guard"]
 
@@ -125,9 +125,9 @@ def test_the_baseline_guard_checks_out_the_full_history(jobs: dict[str, Any]) ->
 
 
 def test_the_baseline_guard_job_invokes_the_subcommand(jobs: dict[str, Any]) -> None:
-    """Criterion 2 end to end: catches a job that checks out the history, syncs the
+    """End to end: catches a job that checks out the history, syncs the
     dependencies and never runs the guard - the shape a green tick is most misleading in,
-    since every step in it succeeds. Decision B put the logic in `ops-eval baseline-guard`
+    since every step in it succeeds. The logic lives in `ops-eval baseline-guard`
     precisely so this line is the only thing the YAML has to get right."""
     guard_steps = [
         step for step in steps(jobs["baseline-guard"]) if "ops-eval baseline-guard" in run_of(step)
@@ -139,7 +139,7 @@ def test_the_baseline_guard_job_invokes_the_subcommand(jobs: dict[str, Any]) -> 
 def test_the_eval_job_has_no_condition_and_always_runs(
     jobs: dict[str, Any],
 ) -> None:
-    """An earlier change (a design note replaces decision A): the help desk now serves the eval turn, so the
+    """The help desk now serves the eval turn, so the
     eval half runs on every pull request. Catches the old `EVAL_TARGET_URL` condition coming
     back, or any other `if` on the job, which would make the gate green because it skipped."""
     assert "if" not in jobs["eval"]
@@ -148,7 +148,7 @@ def test_the_eval_job_has_no_condition_and_always_runs(
 def test_the_report_artifact_is_uploaded_even_when_the_gate_fails(
     jobs: dict[str, Any],
 ) -> None:
-    """Criterion 6: a FAILED gate is exactly when the report is needed, and a step with no
+    """A FAILED gate is exactly when the report is needed, and a step with no
     `if` is skipped once an earlier step fails. Catches the upload inheriting the default
     success condition, which publishes evidence only for the runs nobody needs it for.
     `always()` exactly, because `failure()` would drop it on the passing runs."""
@@ -161,7 +161,7 @@ def test_the_report_artifact_is_uploaded_even_when_the_gate_fails(
 def test_the_comment_step_is_skipped_on_a_fork_pull_request(
     jobs: dict[str, Any],
 ) -> None:
-    """The unhappy path in criterion 8: a fork PR's `GITHUB_TOKEN` is read-only, so posting
+    """The unhappy path: a fork PR's `GITHUB_TOKEN` is read-only, so posting
     would fail the job on every contributor's pull request. Catches an unguarded comment
     step. The upload above is deliberately NOT guarded this way, so the evidence still
     reaches a fork PR - which is why the two are separate cases."""
@@ -174,7 +174,7 @@ def test_the_comment_step_is_skipped_on_a_fork_pull_request(
 def test_the_gate_step_passes_the_report_the_baseline_and_the_comment(
     jobs: dict[str, Any],
 ) -> None:
-    """Criterion 6: the three flags are what turn 18a's comparison into a CI verdict. Catches
+    """The three flags are what turn the comparison into a CI verdict. Catches
     `ops-eval gate` invoked with the report alone, which compares the run against nothing
     and can only ever pass, and catches `--comment` being dropped, which leaves the comment
     step with no file to post. All four fragments must be in ONE step's script, since a
@@ -192,7 +192,7 @@ def test_the_gate_step_passes_the_report_the_baseline_and_the_comment(
 def test_the_eval_job_runs_make_eval_on_the_real_model_with_its_key(
     jobs: dict[str, Any],
 ) -> None:
-    """a design note: the PR gate plays the conversations on the real cheap model, so the mock
+    """The PR gate plays the conversations on the real cheap model, so the mock
     routing overlay is gone and the job carries `ANTHROPIC_API_KEY` as a secret. Catches a
     job still pointing every provider at a mock (it would score a mock, not a chat), and one
     with no key (the gate would fail on every pull request for a missing secret that the
@@ -208,7 +208,7 @@ def test_the_eval_job_runs_make_eval_on_the_real_model_with_its_key(
 
 
 def test_the_ci_overlay_caps_the_evals_tenant_at_two_dollars() -> None:
-    """Decision D's number, pinned by value. Catches an overlay carrying the
+    """The budget number, pinned by value. Catches an overlay carrying the
     prod `10.00`, and catches the budget written as a bare YAML number: the policy loader
     reads these as strings, so `2.00` unquoted parses to a float and the overlay that
     looked right stops merging. Only this path is asserted - the file is a partial document

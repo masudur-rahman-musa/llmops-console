@@ -19,7 +19,8 @@ below). A refusal and a missing overlay BOTH exit 2, so the two are told apart b
 a pattern refusal prints the pattern, a missing overlay prints the path it looked for. That is
 what makes the boundary rows (1 and 32 characters accepted, 33 refused) observable at all.
 
-The script lives in `dev/scripts/`, which is not a package, so its pure functions are loaded by file
+The script lives in `infra/scripts/`, which is not a package, so its pure functions are loaded by
+file
 path with `importlib.util` - the same technique `test_eval_target_stub.py` uses for the stub.
 Exit codes go through `subprocess`; merge semantics go through the import. No backing service,
 no network: the three end-to-end runs are made once for the module.
@@ -65,7 +66,7 @@ def read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-#: Section 1's three overlays, in SPEC section 11's order, with the ONE candidate each pins.
+#: The three overlays, in the order the spec lists them, with the ONE candidate each pins.
 #: Provider and model are required TOGETHER: a file naming the right
 #: provider with the wrong model is the drift this table exists to see.
 OPTIONS: tuple[tuple[str, dict[str, str]], ...] = (
@@ -79,7 +80,7 @@ OPTION_IDS = tuple(option_id for option_id, _candidate in OPTIONS)
 #: The two options whose cost comes from the ledger.
 API_OPTIONS = ("cheap-api", "strong-api")
 
-#: Criterion 28's URL, written out literally; its port is compared to the manifest's nodePort.
+#: The requirement's URL, written out literally; its port is compared to the manifest's nodePort.
 VLLM_BASE_URL = "http://host.docker.internal:30800/v1"
 
 #: The alias every overlay narrows, and the tenant the run is made as.
@@ -90,16 +91,16 @@ TENANT = "evals"
 SHORTEST_ID = "a"
 LONGEST_ID = "a" + "b" * 31
 
-#: A well-formed id whose overlay will never exist (criterion 18).
+#: A well-formed id whose overlay will never exist.
 ABSENT_ID = "no-such-option"
 
-#: Literals no overlay may carry (criterion 29). Each is checked against the overlays' own
+#: Literals no overlay may carry. Each is checked against the overlays' own
 #: required content first: no candidate or URL above contains them.
 FORBIDDEN_LITERALS = ("key_env", "Bearer", "sk-")
 
 
 def _load_script() -> ModuleType:
-    """Load `tradeoff_policy.py` by path: `dev/scripts/` carries no `__init__.py`."""
+    """Load `tradeoff_policy.py` by path: `infra/scripts/` carries no `__init__.py`."""
     assert SCRIPT.is_file(), f"{SCRIPT} does not exist"
     spec = importlib.util.spec_from_file_location("tradeoff_policy", SCRIPT)
     assert spec is not None and spec.loader is not None
@@ -210,7 +211,7 @@ def effective(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
 def test_a_malformed_option_id_is_refused_before_any_file_is_touched(
     tmp_path: Path, option_id: str
 ) -> None:
-    """Criteria 15 and 17, the refused rows. Catches a check written as `re.match(r"^...$")`,
+    """The refused rows. Catches a check written as `re.match(r"^...$")`,
     which accepts the trailing-newline and CRLF rows and then happily merges `cheap-api`'s real
     overlay and writes an output file; a `{0,32}` bound, which accepts the 33-character row; a
     class holding `A-Z` or `_`; and no check at all, which reaches the filesystem with `../a`
@@ -231,7 +232,7 @@ def test_a_malformed_option_id_is_refused_before_any_file_is_touched(
     [pytest.param(SHORTEST_ID, id="one-character"), pytest.param(LONGEST_ID, id="32-characters")],
 )
 def test_the_inclusive_length_boundaries_pass_the_pre_check(tmp_path: Path, option_id: str) -> None:
-    """Criterion 17's accepted rows. Both ids are well-formed and have no overlay, so the only
+    """The requirement's accepted rows. Both ids are well-formed and have no overlay, so the only
     observable difference from a refusal is WHICH message the script prints: this passes when
     the run reached the filesystem and named the path it wanted. Catches a bound written as
     `{1,31}` (the 32-character row is then refused) or a pattern demanding two characters (the
@@ -253,7 +254,7 @@ def test_the_inclusive_length_boundaries_pass_the_pre_check(tmp_path: Path, opti
 def test_a_well_formed_id_with_no_overlay_names_the_path_and_writes_nothing(
     tmp_path: Path,
 ) -> None:
-    """Criterion 18. Catches a script that treats a missing overlay as an empty one and writes
+    """Catches a script that treats a missing overlay as an empty one and writes
     `routing.yaml` back out unchanged - the run would then measure the shipped three-candidate
     alias under the option's name, which is a wrong MEASUREMENT rather than a crash. Catches an
     output file opened for writing before the overlay is read, too."""
@@ -273,7 +274,7 @@ def test_a_well_formed_id_with_no_overlay_names_the_path_and_writes_nothing(
 
 
 def test_the_merge_is_recursive_over_mappings(builder: ModuleType) -> None:
-    """Criterion 19's first half and section 6. The overlay names ONE leaf three levels down;
+    """The first half of the merge rule. The overlay names ONE leaf three levels down;
     catches a top-level `dict.update` (which drops `nordlicht` and `budget_usd_month` whole),
     a merge that replaces the whole `data_class_rules` mapping (which drops `pii`, so the
     tenant's strictest rule silently disappears), and one that replaces `confidential` whole
@@ -303,7 +304,7 @@ def test_the_merge_is_recursive_over_mappings(builder: ModuleType) -> None:
 
 
 def test_the_merge_replaces_a_list_whole(builder: ModuleType) -> None:
-    """Criterion 19's second half. Catches a merge that EXTENDS lists: the effective alias would
+    """The requirement's second half. Catches a merge that EXTENDS lists: the effective alias would
     then carry the overlay's candidate plus the shipped three, the resolver would answer from
     whichever is first, and every option would measure the same provider."""
     base = {"aliases": {ALIAS: {"candidates": [{"provider": "a"}, {"provider": "b"}]}}}
@@ -315,7 +316,7 @@ def test_the_merge_replaces_a_list_whole(builder: ModuleType) -> None:
 
 
 def test_the_merge_does_not_mutate_the_shipped_document(builder: ModuleType) -> None:
-    """Criterion 14's "the shipped file never edited", at the object level. Catches a merge
+    """The requirement's "the shipped file never edited", at the object level. Catches a merge
     written as an in-place walk over `base`: the write-back would then be correct by accident
     and any second merge in the same process would start from the first one's result."""
     base = {"aliases": {ALIAS: {"semantic_cache": True, "candidates": [{"provider": "a"}]}}}
@@ -331,7 +332,7 @@ def test_the_merge_does_not_mutate_the_shipped_document(builder: ModuleType) -> 
 
 
 def test_routing_yaml_is_byte_identical_after_a_merge(tmp_path: Path) -> None:
-    """Criterion 14's "the shipped file never edited", at the file level. Catches a script that
+    """The requirement's "the shipped file never edited", at the file level. Catches a script that
     writes the merged document back over its input when the output path is defaulted or
     mis-parsed - the shipped policy would then carry one option's narrowing for every tenant."""
     before = ROUTING.read_bytes()
@@ -346,10 +347,10 @@ def test_routing_yaml_is_byte_identical_after_a_merge(tmp_path: Path) -> None:
 def test_each_effective_policy_loads_and_carries_exactly_one_candidate(
     effective: dict[str, Path], option_id: str, candidate: dict[str, str]
 ) -> None:
-    """Criteria 19, 21, 26 and 30. `load_policy` is the gateway's own reader, so a merge that
+    """`load_policy` is the gateway's own reader, so a merge that
     produces valid YAML the resolver refuses is caught here and not four hours into a GPU run.
     Catches the shipped three candidates surviving the merge, the wrong provider/model pair for
-    an option, `semantic_cache` left at the shipped `true` (decision F: option two would then
+    an option, `semantic_cache` left at the shipped `true` (option two would then
     read option one's answers and report a cost no provider charged), and a merge that loses the
     other aliases or tenants entirely."""
     policy = load_policy(effective[option_id], providers_of(effective[option_id]))
@@ -381,7 +382,7 @@ def test_each_api_option_keeps_the_shipped_redaction_rules(
 def test_the_gpu_option_enables_vllm_at_the_published_node_port(
     effective: dict[str, Path],
 ) -> None:
-    """Criterion 28. The gateway runs in a container and the model server behind a NodePort, so
+    """The gateway runs in a container and the model server behind a NodePort, so
     the two numbers live in two files and are compared here. Catches the option's own
     `vllm` provider file left out of its folder or switched off (every GPU turn would
     resolve to nothing), the container reaching `vllm.gpu.svc.cluster.local` which does not
@@ -400,7 +401,7 @@ def test_the_gpu_option_enables_vllm_at_the_published_node_port(
 
 
 def test_the_overlay_directory_holds_exactly_the_option_files() -> None:
-    """Criterion 20. Catches a fifth overlay left behind from a trial run, which `tradeoff.json`
+    """Catches a fifth overlay left behind from a trial run, which `tradeoff.json`
     does not name and no test reads, and an option file named for an id the manifest never uses
     - the run would build a policy nobody measures."""
     assert OVERLAY_DIR.is_dir(), f"{OVERLAY_DIR} does not exist"
@@ -418,7 +419,7 @@ def test_the_overlay_directory_holds_exactly_the_option_files() -> None:
 def test_each_overlay_pins_its_one_candidate_and_turns_the_cache_off(
     option_id: str, candidate: dict[str, str]
 ) -> None:
-    """Criteria 21 and 26, read from the overlay rather than from the merged result. The merge
+    """Read from the overlay rather than from the merged result. The merge
     could produce the right answer from a WRONG overlay if it appended defaults, so this is the
     independent half. Provider and model are required together: an overlay
     naming `anthropic` with `claude-haiku-5-5` under `strong-api` measures the cheap tier twice
@@ -430,7 +431,7 @@ def test_each_overlay_pins_its_one_candidate_and_turns_the_cache_off(
 
 
 def test_no_overlay_names_a_credential() -> None:
-    """Criterion 29 and a project rule. Catches a `key_env` redefined so an option reads a
+    """Catches a `key_env` redefined so an option reads a
     different environment variable (the run then silently uses the wrong account), an
     `Authorization: Bearer ...` header pasted in, and any token-shaped value assigned to a
     secret-shaped name. The name-anchored scan is deliberate: a bare

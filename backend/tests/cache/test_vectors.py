@@ -2,7 +2,7 @@ r"""The semantic tier's seam: the cosine rule, the three filters, and the collec
 
 Everything here runs in one process. The cosine arithmetic is asserted against
 `InProcessSemanticCache`, which is the implementation a bare local run and this
-suite get (plan decision D); the Qdrant class appears only where the claim is
+suite get; the Qdrant class appears only where the claim is
 about a name or a pre-check, over an `httpx` transport that records requests and
 never opens a socket. The cases needing a real Qdrant live in
 `tests/cache/test_qdrant_cache.py`.
@@ -18,7 +18,7 @@ Four claims, each arranged so that only the control it names can decide it:
 * THE THREE FILTERS get one miss case each at cosine 1.0 - the SAME vector, so
   distance cannot be what refuses it - and one control row where all three match.
   A query that dropped a filter serves another conversation's answer, and the
-  nearest neighbour will happily be one (plan §5).
+  nearest neighbour will happily be one.
 * TENANT SCOPING is asserted with a vector that is genuinely LIVE for the other
   tenant, so "nothing stored at all" cannot be what makes it pass.
 * THE COLLECTION NAME is `cache_{tenant}`, and the tenant is checked against the
@@ -47,7 +47,7 @@ Contract this file assumes (the implementation follows it):
 
 The `httpx.Client` carries the Qdrant `base_url`; the class sends paths relative
 to it. Neither method raises for a store reason - a failure is a miss and a
-failed write is swallowed (plan decision G) - but a malformed tenant raises
+failed write is swallowed - but a malformed tenant raises
 `IdentifierInvalid` before any effect, exactly as `cache/store.py` does.
 """
 
@@ -212,7 +212,7 @@ def test_a_search_against_an_empty_cache_is_absent() -> None:
 
 
 def test_a_neighbour_at_exactly_the_threshold_is_a_hit() -> None:
-    """Catches the comparison written `>` where the plan says `>=` (decision E): this is the
+    """Catches the comparison written `>` where it must be `>=`: this is the
     only row in the suite that separates the published 0.97 from a shipped 0.971, and the
     vector is built so its cosine is exactly the double `SEMANTIC_THRESHOLD` holds rather
     than a value that happens to round above it."""
@@ -243,7 +243,7 @@ def test_the_nearest_of_two_eligible_neighbours_is_the_one_returned(
     """Catches a search that returns the FIRST entry over the threshold rather than the
     nearest one: both entries below are eligible, so a threshold check alone cannot tell
     them apart, and the two insertion orders are what stop "returns the last written" and
-    "returns the first written" from passing. The plan's own words are "the nearest
+    "returns the first written" from passing. The rule is "the nearest
     neighbour among the entries that are exactly comparable"."""
     near = cached_answer(content="the answer for the nearer probe")
     far = cached_answer(content="the answer for the further probe")
@@ -296,7 +296,7 @@ def test_a_query_differing_in_one_filter_field_misses_at_cosine_one(
     vector is IDENTICAL to the stored one, so similarity cannot be what refuses it and the
     row for the dropped field is the only thing that reddens. A dropped filter serves
     another conversation's answer - a different system prompt's, a different alias's, a
-    different provider's - and the nearest neighbour will happily be one (plan §5)."""
+    different provider's - and the nearest neighbour will happily be one."""
     assert (
         search(
             stored(),
@@ -391,7 +391,7 @@ class RecordingTransport(httpx.BaseTransport):
 
     It is what makes "the pre-check ran before any effect" observable: an empty
     `requests` list is the only evidence that no collection name was built and no
-    call was sent, which is what a project rule actually claims.
+    call was sent, which is what the claim actually is.
     """
 
     def __init__(self) -> None:
@@ -419,7 +419,7 @@ def test_the_collection_prefix_is_the_published_one() -> None:
 
 def test_a_tenants_collection_is_the_prefix_and_the_tenant() -> None:
     """Catches a collection name built in another shape - one collection for everybody with
-    the tenant as a payload filter, or the segments swapped: the plan says `cache_{tenant}`,
+    the tenant as a payload filter, or the segments swapped: it must be `cache_{tenant}`,
     an operator's tooling and every later migration depend on it, and a shared collection
     would make tenant scoping a filter that a dropped `must` clause silently removes."""
     cache, _ = qdrant_cache()
@@ -462,7 +462,7 @@ REJECTED_TENANTS: list[tuple[str, str]] = [
 def test_search_refuses_a_malformed_tenant_before_touching_qdrant(case: str, tenant: str) -> None:
     r"""Catches a collection name built from an unchecked tenant: the path rows would address
     another collection or another endpoint entirely, and the three trailing-whitespace rows
-    are what separate `fullmatch` from `match` (a project rule, where `$` also matches
+    are what separate `fullmatch` from `match` (where `$` also matches
     before a final newline). Asserting the transport saw NO request is what pins "sends
     nothing" rather than "sends something and fails afterwards". Qdrant is an unsized store,
     so this check has no backstop behind it."""

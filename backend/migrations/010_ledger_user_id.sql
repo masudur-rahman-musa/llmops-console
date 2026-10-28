@@ -1,4 +1,4 @@
--- The random user id a request carried in `X-User` (ADR 0056).
+-- The random user id a request carried in `X-User`.
 --
 -- Nullable: old rows and requests with no `X-User` have no user. The id is `u_`
 -- and 32 hex characters, never a name or an email; only the help desk can map it

@@ -11,11 +11,11 @@ Every rejection row asserts BOTH directions of the contract: that
 `IdentifierInvalid` was raised, and that it names the field it was raised about,
 in `.param` and at the start of its message.
 
-a project rule on the patterned field `git_sha`: its rejection table carries a
+On the patterned field `git_sha`: its rejection table carries a
 trailing newline, a trailing CRLF and a trailing space.
 
-An earlier change removed the incident half (the incident rows, writer calls and checks);
-the release tests below are unchanged.
+The incident half (the incident rows, writer calls and checks) is gone;
+only the release tests remain.
 
 The contract these cases are written against:
 
@@ -129,7 +129,7 @@ def test_the_status_table(case: str, value: str, accepted: bool) -> None:
 
 
 # --------------------------------------------------------------------------
-# the url length bound (a project rule: inclusive, both sides)
+# the url length bound (inclusive, both sides)
 # --------------------------------------------------------------------------
 
 
@@ -202,7 +202,7 @@ def test_the_git_sha_boundaries_are_inclusive(case: str, value: str) -> None:
 
 
 # --------------------------------------------------------------------------
-# the in-memory writer (decision C)
+# the in-memory writer
 # --------------------------------------------------------------------------
 
 
@@ -223,7 +223,7 @@ def test_the_in_memory_writer_answers_that_every_eval_run_exists() -> None:
     """Catches `eval_run_exists` left off the in-memory writer or answering False there:
     the route runs this pre-check before the insert on every writer, so a False here
     would turn every `POST /admin/releases` naming a run into a 422 on a laptop with no
-    `database_url` - the one configuration decision C exists to keep answering. The
+    `database_url` - the one configuration that must keep answering. The
     writer has no `eval_runs` table to consult, so True for a well-formed id IS the
     documented behaviour, and this case is what makes that a decision rather than an
     accident.

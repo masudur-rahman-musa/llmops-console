@@ -1,7 +1,7 @@
 """The provider-neutral adapter contract: the tool name pre-check and the pinned constants.
 
-The tool name is the only client-supplied string in an earlier change that becomes an
-identifier on an outbound call, so a project rule applies: a typed pre-check
+The tool name is the only client-supplied string in this contract that becomes an
+identifier on an outbound call, so it is checked: a typed pre-check
 against the store's own constant, with the inclusive boundary asserted here and
 the "before any effect" half asserted in `test_anthropic_mapping.py`. Standing
 rule 4 is why the rejection table below carries a trailing newline, a trailing
@@ -166,7 +166,7 @@ def test_adapter_satisfies_the_runtime_protocol() -> None:
 
 
 # Provider vocabulary that must never appear in the neutral contract, so the
-# OpenAI, Azure and llama.cpp adapters of later plans implement it unchanged.
+# OpenAI, Azure and llama.cpp adapters added later implement it unchanged.
 FORBIDDEN_VOCABULARY: list[str] = [
     "anthropic",
     "claude",
@@ -299,7 +299,7 @@ ACCEPTED_ROLES: list[str] = ["system", "user", "assistant", "tool"]
 @pytest.mark.parametrize("role", ACCEPTED_ROLES)
 def test_role_set_accepts_the_four_turns(role: str) -> None:
     """Catches a contract that adds `tool` to the response side only, leaving a tool result
-    inexpressible on the way in - the half of the loop an earlier change exists to close."""
+    inexpressible on the way in - the half of the loop this contract exists to close."""
     assert ChatMessage(role=role, content="x").role == role
 
 
@@ -367,7 +367,7 @@ def test_chat_request_tool_choice_defaults_to_unset() -> None:
 
 # --- the embedding contract ---------------------------------------
 #
-# A separate protocol beside `Adapter`, not an `embed()` on it (decision B). The
+# A separate protocol beside `Adapter`, not an `embed()` on it. The
 # two cases that matter are the two ends of that choice: the OpenAI-compatible
 # adapter satisfies `EmbeddingAdapter`, and the Anthropic one does not - which is
 # what the embeddings route turns into the resolver's health seam, so an alias
@@ -430,10 +430,10 @@ def test_embedding_contract_models_are_frozen(
 
 def test_embedding_usage_has_exactly_two_counts() -> None:
     """Catches an `EmbeddingUsage` that reused the chat contract's three-field `Usage`
-    (decision F): this wire has no completion tokens for an embedding, so the third field
-    could only ever be written as a zero - and a zero-filled count is exactly what the
-    "no usage raises" rule exists to prevent, hidden behind a field that always looks
-    populated."""
+    : this wire has no completion tokens for an embedding, so the third field
+     could only ever be written as a zero - and a zero-filled count is exactly what the
+     "no usage raises" rule exists to prevent, hidden behind a field that always looks
+     populated."""
     assert set(EmbeddingUsage.model_fields) == {"prompt_tokens", "total_tokens"}
 
 
@@ -452,7 +452,7 @@ def test_the_anthropic_adapter_does_not_satisfy_the_embedding_protocol() -> None
     """Catches `embed()` being put on `Adapter` after all, or on a shared base class: the
     Anthropic wire has no embeddings endpoint, so an `embed()` there could only raise - and
     the route's health seam would then offer a chat-only provider an embedding request and
-    answer the caller a 500 instead of the resolver's 503 (decision B)."""
+    answer the caller a 500 instead of the resolver's 503."""
     adapter, _ = make_adapter([ok("plain")])
 
     assert isinstance(adapter, Adapter)

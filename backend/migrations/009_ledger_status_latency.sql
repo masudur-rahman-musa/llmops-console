@@ -1,4 +1,4 @@
--- The HTTP status and the time a request took (ADR 0054).
+-- The HTTP status and the time a request took.
 --
 -- `status` is NOT NULL with a default of 200: every row written before this
 -- migration was a served request, so 200 is true for them. `latency_ms` is

@@ -1,9 +1,9 @@
-r"""An earlier change: ruff checks and formats the whole repo, with the project's own settings.
+r"""Ruff checks and formats the whole repo, with the project's own settings.
 
 The settings live in `backend/pyproject.toml` (line length 100, the selected rules).
 Every place that runs ruff - the pre-commit hooks, the Makefile's `lint` and `format`, and
 the CI format check - passes `--config backend/pyproject.toml` and runs from the repo root
-over `.`, so `infra/` and `dev/` are held to the same rules as `backend/`.
+over `.`, so `infra/` is held to the same rules as `backend/`.
 
 Text and YAML reads of the three tooling files, plus ruff subprocesses run from the repo root
 through `uv run --project backend`. No services, no import of any `app` or `infra` module.
@@ -204,7 +204,7 @@ def test_makefile_lint_and_format_use_backend_config() -> None:
 
 def test_ci_format_check_covers_whole_repo() -> None:
     """Catches a CI format check still limited to `backend` or run without the project
-    config, so a badly formatted file in `infra/` or `dev/` would pass CI."""
+    config, so a badly formatted file in `infra/` would pass CI."""
     format_lines = [line for line in _ci_run_lines() if _is_ruff_format(shlex.split(line))]
     assert format_lines, "no `ruff format` step in ci.yml"
     assert any(
@@ -219,8 +219,8 @@ def test_ci_format_check_covers_whole_repo() -> None:
 
 
 def test_ruff_check_clean_with_project_settings() -> None:
-    """Catches a tree that still holds lint errors outside `backend/` once the project's
-    rules apply to the whole repo."""
+    """Catches a tree that still holds lint errors outside `backend/` once the lint
+    settings apply to the whole repo."""
     result = _run([*RUFF, "check", "--config", CONFIG_PATH, "--no-cache", "."])
     assert result.returncode == 0, (result.stdout + result.stderr)[-4000:]
 
@@ -241,13 +241,6 @@ def test_long_line_outside_backend_fails() -> None:
     assert "E501" in over.stdout, over.stdout
     at_limit = _check_stdin("infra/tests/x.py", _string_line(LINE_LENGTH) + "\n")
     assert at_limit.returncode == 0, at_limit.stdout + at_limit.stderr
-
-
-def test_dev_scripts_are_skipped_from_root() -> None:
-    """Catches a `dev/**` exclude that no longer matches when ruff runs from the repo root,
-    so `make lint` and `make format` would start reading the private helper scripts."""
-    result = _check_stdin("dev/scripts/x.py", _string_line(LINE_LENGTH + 1) + "\n")
-    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_named_config_paths_exist() -> None:

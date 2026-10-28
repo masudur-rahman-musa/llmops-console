@@ -1,4 +1,4 @@
-# Nightly Postgres and Qdrant backups (REQUIREMENTS #57), the design's "CronJob
+# Nightly Postgres and Qdrant backups: a "CronJob
 # to a PVC and to Hetzner Object Storage" taken literally. Two CronJobs share
 # one `backups-data` PVC (RWO, 2Gi): each writes its own artifact into its own
 # subdirectory with an initContainer, then a main `rclone/rclone` container
@@ -6,7 +6,7 @@
 # pod, so two CronJobs mounting it at once on this single-node k3s cluster is
 # not a conflict; a multi-node cluster would need to pin both to the same node.
 #
-# `backup-secrets` carries only the account-specific values (decision B):
+# `backup-secrets` carries only the account-specific values:
 # `RCLONE_CONFIG_HETZNER_TYPE` and `_PROVIDER` are not credentials, so they are
 # literal `env` entries on each `rclone-sync` container instead of a public
 # constant sitting behind SOPS for no reason. rclone reads a remote entirely
@@ -28,9 +28,8 @@
 # `POST /snapshots` with no `wait=false` blocks until the snapshot is written
 # and returns its name in the same response (`?wait=false` does not - it
 # answers `{"status":"accepted"}` with no name at all, disproving the
-# create-then-poll design this plan's own risk section assumed, caught by
-# running the real call once against the local stack rather than trusting the
-# assumption - a project rule). So the flow is create (synchronous, its own
+# create-then-poll design, as found by running the real call once against the
+# local stack rather than trusting an assumption). So the flow is create (synchronous, its own
 # wait), then list to confirm the name it returned is really there, then
 # download it - three calls, `curl -f` on every one so a 4xx/5xx cannot read
 # as success.

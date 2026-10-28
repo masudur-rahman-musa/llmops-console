@@ -1,4 +1,4 @@
-"""The eval gate's wiring for the conversation run: baseline, workflow, overlay, ADRs.
+"""The eval gate's wiring for the conversation run: baseline, workflow, overlay.
 
 Only files are read; nothing runs. The workflow is read with `yaml.safe_load`, which loads
 the bare key `on` as `True`, so nothing here reads the trigger. The repository root comes
@@ -26,7 +26,6 @@ OLD_BASELINE = EVALS / "baseline.json"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "eval-gate.yml"
 MAKEFILE = REPO_ROOT / "Makefile"
 OVERLAY_COMPOSE = REPO_ROOT / "infra" / "evals" / "compose.yml"
-ADR_DIR = REPO_ROOT / "dev" / "adr"
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -117,27 +116,10 @@ def test_the_eval_recipe_gates_against_the_conversation_baseline() -> None:
 
 
 def test_the_eval_compose_overlay_has_no_golden_set_mode() -> None:
-    """Catches the mock still started in golden-set mode (a design note removes it): the real
+    """Catches the mock still started in golden-set mode: the real
     cheap model answers, and a mock reading the help desk's old set would answer from the
     wrong file. Checked on the whole file text so no spelling hides it."""
     text = OVERLAY_COMPOSE.read_text(encoding="utf-8")
 
     assert "MOCK_GOLDEN_SET" not in text
     assert "/golden" not in text
-
-
-def test_adr_0037_says_it_is_superseded_by_0039() -> None:
-    """Catches an a design note that still reads as the live decision ("the gate runs on the mock")
-    after 0039 replaced it: it must say superseded and point at 0039."""
-    text = next(ADR_DIR.glob("0037-*.md")).read_text(encoding="utf-8")
-
-    assert "superseded" in text.lower()
-    assert "0039" in text
-
-
-def test_adr_0009_still_says_it_is_superseded() -> None:
-    """Catches the older chain being broken: 0009 stays superseded by 0037."""
-    text = next(ADR_DIR.glob("0009-*.md")).read_text(encoding="utf-8")
-
-    assert "superseded" in text.lower()
-    assert "0037" in text

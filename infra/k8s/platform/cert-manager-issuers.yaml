@@ -1,16 +1,16 @@
 # The two ACME issuers. cert-manager itself is NOT vendored here: the controller
 # is installed by hand from a pinned chart into this same namespace, so its
 # three pods are admitted against the platform quota and the LimitRange like
-# everything else (decision A). `../README.md` carries the command.
+# everything else. `../README.md` carries the command.
 #
-# Both issuers ship (decision F). Let's Encrypt's production rate limits are
+# Both issuers ship. Let's Encrypt's production rate limits are
 # real and a first HTTP-01 attempt against a misconfigured Ingress burns them,
 # so `letsencrypt-staging` exists for the rehearsal and the public Ingresses name
 # `letsencrypt-prod`. Separate `privateKeySecretRef` names because they are
 # separate ACME accounts: sharing one would let whichever issuer reconciles
 # first decide the account both then use.
 #
-# HTTP-01 rather than DNS-01, and it works because a design note keeps every record
+# HTTP-01 rather than DNS-01, and it works because every record stays
 # DNS-only: Let's Encrypt reaches our Traefik on port 80 directly rather than
 # Cloudflare's edge. The solver's ingress class is what k3s ships.
 ---

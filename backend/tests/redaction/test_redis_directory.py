@@ -22,14 +22,14 @@ stored" is asserted as "Redis was never called at all", which is the claim the
 criterion actually makes. The unavailable-store mapping lives there too, over a
 client that raises `redis.RedisError`.
 
-a project rule: one session-scoped client, built once. Per-test isolation is a
+One session-scoped client, built once. Per-test isolation is a
 unique `key_prefix` handed to the store, never `FLUSHDB` (which would delete a
 neighbouring suite's keys) and never a fresh client. A directory key carries no
 TTL - unlike a placeholder map, it is meant to outlive the request - so the
 `store` fixture deletes the keys IT wrote, by their exact names, when the test
 ends. That is not a flush: no key this file did not write is named.
 
-a project rule on the tenant: the rejection table carries a trailing newline, a
+On the tenant: the rejection table carries a trailing newline, a
 trailing CRLF and a trailing space, because a check written `re.match` with
 `$` accepts the first of those and would put a caller-controlled line break into
 a Redis key.
@@ -147,8 +147,8 @@ REJECTED_TENANTS: list[tuple[str, str]] = [
 def test_put_refuses_a_malformed_tenant_before_touching_redis(case: str, tenant: str) -> None:
     """Catches a store that builds its key from an unchecked tenant: the colon row would
     otherwise write another tenant's directory, which is this store's one unacceptable
-    failure, the newline rows are what separate `fullmatch` from `match` (standing rule
-    4), and asserting the client saw NO call is what pins "writes nothing" rather than
+    failure, the newline rows are what separate `fullmatch` from `match`, and asserting the client
+    saw NO call is what pins "writes nothing" rather than
     "writes and then fails"."""
     store, client = fake_store()
 
@@ -268,7 +268,7 @@ def test_a_get_against_an_unreachable_redis_raises_the_typed_failure(
     case: str, error: Exception
 ) -> None:
     """Catches a `get` that answers an EMPTY TUPLE on a connection failure, which is the
-    dangerous direction decision H exists for: the request would be redacted without the
+    dangerous direction: the request would be redacted without the
     tenant's names and served, so the very values this control removes would leave the box
     while the response still reported a redaction."""
     store, _ = fake_store(error=error)
@@ -331,7 +331,7 @@ def test_the_key_carries_the_prefix_and_the_tenant(
     store: RedisDirectoryStore, redis_client: redis.Redis, key_prefix: str
 ) -> None:
     """Catches a key built in another shape, and a directory written as a STRING or a SET
-    rather than the hash decision B chose: the type is read back off the server, because a
+    rather than the hash that was chosen: the type is read back off the server, because a
     set answers the same `get` and has no per-entry handle at all."""
     store.put(TENANT, [NAME_A])
 
@@ -344,7 +344,7 @@ def test_the_key_carries_the_prefix_and_the_tenant(
 def test_the_field_is_the_hashed_name_and_the_value_is_the_plaintext(
     store: RedisDirectoryStore, redis_client: redis.Redis, key_prefix: str
 ) -> None:
-    """Catches a hash keyed on the plaintext name, which is the design's "hashed" half thrown
+    """Catches a hash keyed on the plaintext name, which is the "hashed" half thrown
     away: the field is read straight off the server under the digest this suite computes
     itself, so a store hashing something else - the raw string, the tenant plus the name -
     misses."""
@@ -371,7 +371,7 @@ def test_re_pushing_a_name_leaves_the_directory_unchanged(
 
 def test_a_second_push_merges_rather_than_replacing(store: RedisDirectoryStore) -> None:
     """Catches a `DEL` before the write, or a `HSET` of a freshly built mapping over a
-    deleted key: decision C is merge, and replace-whole makes a paged push silently delete
+    deleted key: a push is a merge, and replace-whole makes a paged push silently delete
     everything the caller already stored."""
     store.put(TENANT, [NAME_A])
 

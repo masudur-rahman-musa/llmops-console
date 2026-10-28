@@ -26,12 +26,6 @@ crash.log
 keys.txt
 *.dec.yaml
 
-# local working files
-switches.md
-notes.md
-REQUIREMENTS.md
-his.md
-pl/
 # AI
 backend/evals/reports/
 infra/load/results/
@@ -52,6 +46,3 @@ crash.log
 # Scratch work, never committed
 /scratch/
 /backend/scratch/
-
-# Private working notes
-dev/notes/

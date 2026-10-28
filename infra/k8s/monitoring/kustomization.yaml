@@ -29,11 +29,11 @@ resources:
 # unformattable.
 #
 # They live HERE, under the kustomization root, and not beside the other
-# observability docs in the project notes: a `files:` entry pointing above the root is
+# observability docs: a `files:` entry pointing above the root is
 # refused outright (`security; file '...' is not in or below '...'`), and so is a
 # symlink to the same place, against the resolved path. The alternative is
 # `--load-restrictor LoadRestrictionsNone` on every build, which `make k8s-check`,
-# CI's `k8s` job and the tests would each have to carry. a design note records why.
+# CI's `k8s` job and the tests would each have to carry.
 configMapGenerator:
   - name: grafana-dashboards
     # Per-entry, because there is no `namespace:` transformer in this file (see

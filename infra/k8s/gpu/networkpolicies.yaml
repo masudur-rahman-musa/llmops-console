@@ -10,7 +10,7 @@
 # The API-server rules name a port and no peer. The API server is reached
 # through the `kubernetes` Service's cluster IP, which a NetworkPolicy peer
 # cannot select, and on k3s it is the node itself. So those rules are wider
-# than a pod selector: any destination on 6443 or 443. a design note records that.
+# than a pod selector: any destination on 6443 or 443.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -51,7 +51,7 @@ spec:
 # address, which no pod or namespace selector can name, so it is admitted by
 # CIDR. The range is AWS's default VPC, which is where `infra/terraform/aws-gpu`
 # puts the instance, and the rule is scoped to TCP 8000 on a host that lives
-# about four hours and is destroyed with the run. a design note records it.
+# about four hours and is destroyed with the run.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

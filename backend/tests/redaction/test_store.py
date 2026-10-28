@@ -1,9 +1,9 @@
 """The redaction map store: its two constants, the TTL boundary, and tenant scoping.
 
 Everything here is in-process and the clock is injected, so no test sleeps and no
-backing service is started; a project rule has nothing to apply to beyond that.
+backing service is started, so there is nothing to scope or isolate.
 
-Three claims carry the plan's criteria and each is arranged so that only the
+Three claims carry the criteria and each is arranged so that only the
 control it names can decide the outcome:
 
 * the TTL is a boundary PAIR against one clock (present at exactly
@@ -75,7 +75,7 @@ def test_the_id_is_exactly_sixteen_random_bytes() -> None:
 @pytest.mark.parametrize("elapsed", [0.0, 1.0, 3599.0, 3600.0])
 def test_a_map_is_readable_up_to_and_including_the_ttl(elapsed: float) -> None:
     """Catches an expiry written `now - stored_at >= TTL` (or an off-by-one on the
-    clock): the 3600.0 row is exactly the moment the plan says the map is still
+    clock): the 3600.0 row is exactly the last moment the map is still
     there, and the earlier rows keep a store that expires everything immediately
     from passing the pair by accident."""
     clock = FakeClock()
@@ -102,8 +102,8 @@ def test_a_map_is_gone_past_the_ttl(elapsed: float) -> None:
 
 
 def test_an_unknown_id_answers_absent_rather_than_raising() -> None:
-    """Catches a store implementing `get` as a bare `self._maps[key]`: an earlier change's
-    rehydration asks about ids a caller made up, and a KeyError there is a 500 with
+    """Catches a store implementing `get` as a bare `self._maps[key]`: rehydration
+    asks about ids a caller made up, and a KeyError there is a 500 with
     no typed code instead of the "no such map" the endpoint owes."""
     store = InProcessRedactionMapStore(clock=FakeClock())
 
@@ -174,7 +174,7 @@ def test_the_in_process_store_satisfies_the_protocol() -> None:
     """Catches an implementation whose method names or signatures drift from
     `RedactionMapStore` - the annotation below is what `mypy --strict` checks, and
     the round trip through the protocol-typed name is what proves the two methods
-    are callable in the shape an earlier change's Redis store will have to match."""
+    are callable in the shape the Redis store will have to match."""
     store: RedactionMapStore = InProcessRedactionMapStore()
 
     map_id = store.put(TENANT, MAPPING)

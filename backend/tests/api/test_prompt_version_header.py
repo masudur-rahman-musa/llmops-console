@@ -2,7 +2,7 @@
 
 No backing service. The shared `chat_client` app answers from a stub adapter, and each
 case puts a fresh in-memory ledger on the app, then puts the old one back, so the rows
-read are exactly the ones this case's request booked (a project rule: never a new app).
+read are exactly the ones this case's request booked (never a new app).
 
 The header is a lowercase slug of at most `MAX_IDENTIFIER_LENGTH` (64) characters, so a
 SHA-256 hex digest fits exactly. It is checked the same way as `X-Session`.

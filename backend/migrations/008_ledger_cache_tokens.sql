@@ -1,4 +1,4 @@
--- Tokens a provider read from, or wrote to, its prompt cache (ADR 0051).
+-- Tokens a provider read from, or wrote to, its prompt cache.
 --
 -- NOT NULL with a default of 0: a provider that reports no cache, and every row
 -- written before this migration, reads back 0. They are priced at their own

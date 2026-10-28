@@ -19,7 +19,7 @@ Every pattern is checked with `fullmatch`: `tenant`, `provider`, `case_id` and
 `report.SET_SHA_PATTERN`, `run_kind` against the three words `ops-eval` accepts. Each
 rejection table below carries a trailing newline, a trailing CRLF and a trailing space.
 
-An earlier change rewrote this file for the conversation report. A case row's `details` holds the
+This file is written for the conversation report. A case row's `details` holds the
 three checks, the judged replies and the error. The four measured columns stay NULL
 because a conversation answer measures none of them. `category` is any slug, because the
 help desk names its own categories, so the old closed list of twelve is gone with the
@@ -454,7 +454,7 @@ def test_a_run_row_value_one_character_over_its_cap_is_refused_before_the_borrow
 
 def test_a_case_id_at_exactly_the_identifier_cap_is_accepted_and_one_over_is_refused() -> None:
     """Catches a `case_id` cap restated as this module's own literal, which would then
-    drift from the one 16a's loader applies: a case id a golden set may legally carry
+    drift from the one the loader applies: a case id a golden set may legally carry
     would become a run whose rows are refused at the end, after every case has been paid
     for. Both directions in one case, so an off-by-one either way fails here."""
     pool = RecordingPool()
@@ -512,9 +512,9 @@ def test_write_refuses_a_malformed_provider_before_any_sql(label: str, value: st
 )
 def test_write_refuses_a_malformed_case_id_before_any_sql(label: str, value: str) -> None:
     """Catches a `case_id` written straight through from a report that was never loaded by
-    16a's loader - a report file is a document anyone can hand this store. The case id is
+    the loader - a report file is a document anyone can hand this store. The case id is
     what a regression is chased by, so `alpha\\n` and `Alpha` beside `alpha` are three
-    cases nobody can join, and the trailing rows are a project rule's."""
+    cases nobody can join, and the trailing rows are the standard rejection rows."""
     case_write_refused(case_id=value)
 
 
@@ -685,12 +685,12 @@ def test_write_refuses_a_malformed_category_before_any_sql(label: str, value: st
 
 
 # --------------------------------------------------------------------------
-# the shape of the write (decision G)
+# the shape of the write
 # --------------------------------------------------------------------------
 
 
 def test_the_run_row_and_its_cases_are_written_in_one_transaction() -> None:
-    """Decision G before a server can be involved. Catches a store issuing a statement per
+    """The behaviour before a server can be involved. Catches a store issuing a statement per
     case with no transaction around them: a run whose cases half-landed is counted by
     every later query as a run with fewer cases, and nothing downstream can tell that from
     a shorter golden set. One `executemany` over the cases is asserted with it, because a
@@ -708,7 +708,7 @@ def test_the_run_row_and_its_cases_are_written_in_one_transaction() -> None:
 
 
 # --------------------------------------------------------------------------
-# judge_kappa, filled from the run's own calibration record (17f)
+# judge_kappa, filled from the run's own calibration record
 # --------------------------------------------------------------------------
 
 
@@ -738,7 +738,7 @@ def calibrated_report(kappa: float | None) -> RunReport:
 
 
 def test_the_judge_kappa_column_is_filled_from_the_reports_calibration_record() -> None:
-    """Criterion 5, the column 16d declared and left NULL on every run since. Catches
+    """The column that was declared and left NULL on every run since. Catches
     `rows_from_report` still shipping `judge_kappa=None` while the report carries a number -
     the prediction this row fills - and catches the value read out of the `metrics` mapping
     instead of off the typed field: `metrics` is `dict[str, object]`, so that route needs a
@@ -751,7 +751,7 @@ def test_the_judge_kappa_column_is_filled_from_the_reports_calibration_record() 
 
 
 def test_a_calibration_whose_own_kappa_is_null_stores_null_rather_than_zero() -> None:
-    """17e's undefined kappa arriving on the stored row, and the state the two neighbouring
+    """the undefined kappa arriving on the stored row, and the state the two neighbouring
     cases cannot see: the report DOES carry a calibration, so "no calibration" is not what
     empties the column. Catches `report.calibration.kappa or 0.0` and any other falsy
     coalescing, which would publish "the judge agrees no better than chance" as a

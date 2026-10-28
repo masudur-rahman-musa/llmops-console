@@ -13,8 +13,8 @@ The contract these cases are written against, before it exists:
   checks live in the key function rather than in each store method, so "before
   any command is sent" is a property of the only thing a command needs.
 * `current_month(now=None)` - the `YYYY-MM` a spend is booked under, in UTC.
-* `to_micro_usd(usd)` - a `Decimal` cost as the integer counter's unit
-  (decision C), `ROUND_HALF_UP` at the ledger's own quantum.
+* `to_micro_usd(usd)` - a `Decimal` cost as the integer counter's unit, `ROUND_HALF_UP` at the
+ledger's own quantum.
 * `decide(spend_micro_usd=..., cap_micro_usd=...)` - `BudgetDecision.SERVE`,
   `WARN` or `REJECT`, both boundaries inclusive.
 * `budget_ratio(spend_micro_usd=..., cap_micro_usd=...)` - what
@@ -23,9 +23,9 @@ The contract these cases are written against, before it exists:
   a token this gateway minted, for THIS tenant and THIS month.
 * `BUDGET_KEY_TTL_SECONDS`, `WARN_RATIO`, `MAX_OVERRIDE_HEADER_CHARS`,
   `BUDGET_OVERRIDE_HEADER`, `MONTH_PATTERN`, `MICRO_USD_PER_USD` - the constants
-  a project rule requires a test to pin exactly.
+  a test pins exactly.
 
-a project rule on both patterns: the month is matched with `re.fullmatch`, and
+Both patterns: the month is matched with `re.fullmatch`, and
 the rejection table below carries a trailing newline, a trailing CRLF and a
 trailing space, because a check written `^...$` with `.match` accepts the first
 of those and would put a caller-controlled line break into a Redis key.
@@ -154,8 +154,8 @@ def test_a_malformed_tenant_is_refused_before_any_command(label: str, tenant: st
     the key: `ev:als` would address the counter of a tenant named `als` under a month
     named `ev`, and `evals\\n` puts a caller-controlled line break into a Redis key. The
     refusal happens in the key function, which is what every command needs first, so
-    there is no order in which a command could be sent with one of these (standing
-    rule 1). The trailing-newline row is also a project rule's: a check written `^...$`
+    there is no order in which a command could be sent with one of these. The trailing-newline row
+    is also a standard rejection row: a check written `^...$`
     with `.match` accepts it."""
     with pytest.raises(IdentifierInvalid):
         month_key(tenant, MONTH)
@@ -251,7 +251,7 @@ def test_the_current_month_defaults_to_now() -> None:
 
 
 # --------------------------------------------------------------------------
-# the counter's unit (decision C)
+# the counter's unit
 # --------------------------------------------------------------------------
 
 
@@ -304,7 +304,7 @@ literal so a renamed member fails here rather than silently comparing unequal.""
     ("label", "spend", "cap", "expected"), DECISION_ROWS, ids=[row[0] for row in DECISION_ROWS]
 )
 def test_the_decision_table(label: str, spend: int, cap: int, expected: BudgetDecision) -> None:
-    """The two inclusive boundaries in one table (criteria 2 and 3).
+    """The two inclusive boundaries in one table.
 
     Catches `>` where the criteria say "at or above" - at exactly 80% the tenant would
     never be warned and at exactly the cap it would be served, which is the request the
@@ -363,7 +363,7 @@ def test_the_budget_key_ttl_is_pinned() -> None:
     """Pins the exact constant, because both wrong values are silent.
     Too short and a counter expires mid-month, resetting a tenant's spend to zero and
     handing it a second budget; absent (or infinite) and one key per tenant per month
-    accumulates in Redis for ever, which is the risk section 5 names. Sixty-two days is
+    accumulates in Redis for ever, which is the risk. Sixty-two days is
     two of the longest months, so a key written on the first of a 31-day month is still
     readable through the whole of the next one."""
     assert BUDGET_KEY_TTL_SECONDS == 5_356_800
@@ -372,7 +372,7 @@ def test_the_budget_key_ttl_is_pinned() -> None:
 
 
 # --------------------------------------------------------------------------
-# the override (decision A)
+# the override
 # --------------------------------------------------------------------------
 
 
@@ -485,7 +485,7 @@ def test_an_over_length_override_header_is_refused_before_it_is_parsed() -> None
 
 
 def test_a_zero_cap_has_no_ratio_rather_than_a_division_error() -> None:
-    """A branch the plan did not name, pinned where it is introduced.
+    """A branch no other case names, pinned where it is introduced.
 
     A tenant whose `budget_usd_month` is `0.00` is refused by `decide` on every request,
     so the ratio would never be computed - except on the one request that carries a

@@ -26,7 +26,7 @@ Postgres probe runs `SELECT 1` and the Qdrant probe reads the status of a real
 request.
 
 The provider probe is the exception to that last rule, and it is honest about it
-here rather than in a plan file: it proves only that the adapter mapping is
+here: it proves only that the adapter mapping is
 non-empty, which tells an operator that at least one provider key reached the
 process. The circuit breaker (`providers/breaker.py`) learns from the outcomes
 of real requests through the routes' `is_healthy` seam; a provider it has taken

@@ -33,7 +33,7 @@ from app.redaction.errors import (
 )
 
 # Built explicitly, not by scanning the filesystem: this is the exact set of ten
-# library failures the plan re-parents, and a drift in either direction is a
+# library failures that are re-parented, and a drift in either direction is a
 # finding this list must be edited to show.
 LIBRARY_FAILURES: list[type[LibraryError]] = [
     RedactionInputTooLong,

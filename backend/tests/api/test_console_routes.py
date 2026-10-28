@@ -14,7 +14,8 @@ What is pinned, each case naming the wrong implementation it catches:
   working tenant key are all 401, before anything is read.
 * `days` and `tenant` are refused before any query runs, at the inclusive
   boundaries, because `tenant` is interpolated into PromQL.
-* A source that is unconfigured or failing is a FLAG beside a 200, never an error: its own fields go empty, the other source's survive, and a
+* A source that is unconfigured or failing is a FLAG beside a 200, never an error: its own fields
+go empty, the other source's survive, and a
   failure logs at ERROR.
 * The bodies carry what the reader and the named queries answered, and the
   derived parts - budgets, circuit state names, regressions - are computed right.
@@ -244,7 +245,7 @@ class PromStub:
     """A mock Prometheus recording every request; `mode` says how it answers.
 
     `ok` answers the fixed samples above, `empty` answers well-formed empty results,
-    and `timeout`, `500` and `error-status` are the three failures the plan names.
+    and `timeout`, `500` and `error-status` are the three failures.
     """
 
     def __init__(self) -> None:
@@ -817,7 +818,7 @@ def test_an_empty_home_sample_is_null_and_still_ok(wired: Wired) -> None:
 
 def test_the_cost_body_carries_the_reader_answer_and_is_estimated(wired: Wired) -> None:
     """Catches a cost route that drops or renames a reader field, labels savings as measured
-    (`estimated` is always true, decision D), reports Prometheus as anything but
+    (`estimated` is always true), reports Prometheus as anything but
     `null` (it reads no Prometheus), or asks Prometheus anything at all."""
     response = wired.get(COST, days=14)
 

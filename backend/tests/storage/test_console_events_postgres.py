@@ -24,7 +24,7 @@ The contract these cases are written against, before it exists:
 
 * `migrations/004_console_events.sql` creating `{schema}.releases`, with a CHECK on `status`, a
   nullable FK from `releases.eval_run_id` to `eval_runs (id)` and the composite
-  primary key `(git_sha, deployed_at)` decision B fixes;
+  primary key `(git_sha, deployed_at)` that is fixed;
 * `PostgresConsoleEventWriter(pool, *, schema=...)` with `write_release` and `eval_run_exists`.
 """
 
@@ -114,7 +114,7 @@ def test_the_status_check_refuses_an_unknown_word(pool: Pool, migrated_schema: s
 
 @requires_postgres
 def test_two_deploys_of_one_sha_are_two_rows(pool: Pool, migrated_schema: str) -> None:
-    """Catches decision B being implemented as a `git_sha` primary key with an upsert.
+    """Catches this being implemented as a `git_sha` primary key with an upsert.
     Under that shape the second write here would not raise - it would OVERWRITE the
     first deploy's timestamp, so a rollback that re-deploys an earlier sha erases the
     original deploy and the deploys page shows one row where two happened. Only a count

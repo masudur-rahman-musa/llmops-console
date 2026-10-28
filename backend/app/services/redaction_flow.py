@@ -45,7 +45,7 @@ class RedactedBatch:
         """Whether at least one value was actually replaced.
 
         This is what `X-Gateway-Redacted` reports: evidence about the
-        payload, not about the rule. A clean body on a redact class answers False.
+        payload, not about the policy. A clean body on a redact class answers False.
         """
         return bool(self.mapping)
 
@@ -79,7 +79,7 @@ def tenant_directory(store: DirectoryStore, tenant: str) -> NameDirectory:
     is the difference between microseconds and a visible pause.
 
     `DirectoryStoreUnavailable` becomes `ProviderError` - 502, `PROVIDER_ERROR` -
-    and never an empty directory. That is decision H, and it is the
+    and never an empty directory. That is, and it is the
     deny-by-default rule: a request redacted without the tenant's
     names and served anyway carries the values this control exists to remove out
     to a provider, with `X-Gateway-Redacted: true` on the answer. The

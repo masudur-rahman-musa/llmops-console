@@ -1,7 +1,7 @@
 """Ledger off the reply path: queue, non-blocking writes, metrics, error handling.
 
-An earlier change moves the Postgres ledger write off the hot path. `PostgresCostLedgerWriter`
-now owns a bounded in-memory queue and a daemon worker; `write` enqueues and
+The Postgres ledger write is off the hot path. `PostgresCostLedgerWriter`
+owns a bounded in-memory queue and a daemon worker; `write` enqueues and
 returns at once, and a full queue drops and counts the row. Three cases need a
 real Postgres (insert landing + metric, error metric, flush on close); those carry
 `requires_postgres` and `db`, and are skipped without `OPSCONSOLE_TEST_DATABASE_URL`.

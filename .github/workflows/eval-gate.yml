@@ -10,9 +10,8 @@ name: eval-gate
 # answering, then checks the result against the stored baseline. It needs the
 # `ANTHROPIC_API_KEY` secret and costs roughly $1 to $2 a run. Until the owner adds
 # the secret the job fails, like the checkout does without `HELPDESK_REPO_TOKEN`.
-# See the project notes.
 #
-# Its own workflow rather than two more jobs in `ci.yml`: the design blocks a deploy
+# Its own workflow rather than two more jobs in `ci.yml`: the deploy is blocked
 # unless `ci.yml` AND `eval-gate.yml` are green, which is two required checks by
 # name.
 on:

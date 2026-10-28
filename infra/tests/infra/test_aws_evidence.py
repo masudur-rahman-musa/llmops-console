@@ -9,7 +9,7 @@ first on `PATH` in `tmp_path`. Each fake appends `<tool> <argv joined by space>`
 `$FAKE_LOG`, exits 1 when `FAKE_FAIL_<TOOL>` is set, and prints the canned output the script
 parses. `kubectl ... -f -` copies its stdin to `$FAKE_STDIN_DIR/kubectl-<N>.stdin`, which is
 how the Secret is read without the script ever writing it anywhere. `python3` and `mktemp` stay
-real. `AWS_EVIDENCE_TEST_ROOT` (a `_TEST_` name no application setting reads, a project rule)
+real. `AWS_EVIDENCE_TEST_ROOT` (a `_TEST_` name no application setting reads)
 sends the evidence under `tmp_path`, so no case writes into the repository. `HOME` is pointed
 into `tmp_path` too, which is what lets a case see that `~/.kube` was never touched. `TMPDIR` is
 NOT overridden: macOS `mktemp -d` ignores it, so the kubeconfig case pins what holds on both
@@ -23,7 +23,7 @@ on `kustomization.yaml` go through the PARSED document, never the raw text: its 
 expected to describe the files it leaves out.
 
 Every path is taken from this file's own `__file__`, and every read goes through `read()`, so a
-file the plan has not written yet fails the one case that needs it instead of the collection.
+file that is not written yet fails the one case that needs it instead of the collection.
 `read`, `load_yaml`, `steps` and `recipe` come from `test_hetzner_module.py`, and `is_printer`
 from `test_aws_module.py`, rather than being copied.
 """
@@ -62,8 +62,8 @@ WORKFLOW = WORKFLOWS / "ci.yml"
 #: A real-looking commit SHA: 40 lowercase hex, with letters so `.upper()` changes it.
 VALID_SHA = "3f9c2a7e1b4d6f8a0c2e4b6d8f0a1c3e5b7d9f1a"
 
-#: Section 1's overlay resources, in the form kustomize reads them. The local chat model
-#: left with a design note, so `../apps/llama.yaml` is gone.
+#: The overlay resources, in the form kustomize reads them. The local chat model
+#: is not in the build, so `../apps/llama.yaml` is gone.
 EXPECTED_RESOURCES = (
     "../base",
     "../platform/qdrant.yaml",
@@ -75,7 +75,7 @@ EXPECTED_RESOURCES = (
 #: A key the script hands to the Secret it pipes to the fake kubectl. Not a real one.
 FAKE_ANTHROPIC_KEY = "test-key-not-a-real-one"
 
-#: The captures section 1 names under `docs/aws-evidence/<UTC date>/`.
+#: The captures written under `docs/aws-evidence/<UTC date>/`.
 CAPTURES = ("terraform-output.json", "nodes.txt", "pods.txt", "smoke.json", "irsa.txt")
 
 #: The captures whose fake source carries the account ID, so each must show the redaction.
@@ -99,7 +99,7 @@ REDIS_URL = (
 )
 GATEWAY_IMAGE = "ghcr.io/masudur-rahman-musa/llmops-console/gateway"
 
-#: The literals the Secret on stdin carries (criteria 6 to 8).
+#: The literals the Secret on stdin carries (to 8).
 SECRET_LITERALS = (
     "gateway-secrets",
     "OPSCONSOLE_DATABASE_URL",
@@ -119,10 +119,10 @@ XTRACE = re.compile(r"(?m)^\s*set\s+(-[a-z]*x|-o\s+xtrace)")
 
 DATE_NAME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
-#: The stale claim on the root kustomization (criterion 26), whitespace-normalised.
+#: The stale claim on the root kustomization, whitespace-normalised.
 STALE_ROOT_CLAIM = "deploys this same kustomization unchanged"
 
-#: One fake for all four tools, dispatched on its own name. a project rule's stub run
+#: One fake for all four tools, dispatched on its own name. the project's stub run
 #: exercised every branch below against a correct script.
 FAKE_TOOL = r"""#!/usr/bin/env bash
 tool=$(basename "$0")
@@ -406,7 +406,7 @@ def happy(tmp_path_factory: pytest.TempPathFactory) -> Run:
     ],
 )
 def test_run_refuses_a_malformed_sha_before_any_tool(tmp_path: Path, sha: str) -> None:
-    """Criteria 1 and 2, the refused rows; the accepted 40-lowercase row is the happy path.
+    """The refused rows; the accepted 40-lowercase row is the happy path.
     Catches a check written as `grep -Eq '^[0-9a-f]{40}$'`, which accepts the trailing-newline
     row because grep matches per line, a `{39,41}` or `[0-9a-fA-F]` class, and a check placed
     after `terraform apply` - every fake succeeds, so without the check the run completes."""
@@ -429,7 +429,7 @@ def test_run_refuses_a_malformed_sha_before_any_tool(tmp_path: Path, sha: str) -
 def test_cost_refuses_a_malformed_or_empty_window_before_any_tool(
     tmp_path: Path, start: str, end: str
 ) -> None:
-    """Criteria 14 and 15. Catches a date check on the start only (the short-day end passes),
+    """Catches a date check on the start only (the short-day end passes),
     a grep-per-line check (the newline row), `-le` in place of a strict comparison (the equal
     row, a zero-day window Cost Explorer rejects), and no ordering check at all (the reversed
     row). The fake `aws` succeeds, so without the check `cost` would call it and exit 0."""
@@ -449,7 +449,7 @@ def test_cost_refuses_a_malformed_or_empty_window_before_any_tool(
     ],
 )
 def test_a_missing_or_unknown_subcommand_is_refused(tmp_path: Path, arguments: list[str]) -> None:
-    """Criterion 1's input validation for the argument shape. Catches a dispatcher whose default
+    """The input validation for the argument shape. Catches a dispatcher whose default
     branch falls through to `run`, and a missing positional expanding to an empty string that a
     later `terraform apply` never sees refused."""
     run = invoke(tmp_path, arguments)
@@ -463,7 +463,7 @@ def test_a_missing_or_unknown_subcommand_is_refused(tmp_path: Path, arguments: l
 
 
 def test_run_applies_connects_deploys_and_destroys_in_that_order(happy: Run) -> None:
-    """Criterion 3. Catches `apply -auto-approve` (the owner never reviews the plan), the
+    """Catches `apply -auto-approve` (the owner never reviews the plan), the
     kubeconfig fetched before `output -json` has named the cluster, a `kubectl` call placed
     before the kubeconfig exists, and destroy run before capture finishes or twice (an explicit
     destroy plus the trap), which shows as a destroy that is not the single last call."""
@@ -490,7 +490,7 @@ def test_run_applies_connects_deploys_and_destroys_in_that_order(happy: Run) -> 
 
 
 def test_a_failing_kubectl_still_destroys_the_cluster(tmp_path: Path) -> None:
-    """Criterion 4. Catches a script with `set -e` and a destroy at the end but no EXIT trap:
+    """Catches a script with `set -e` and a destroy at the end but no EXIT trap:
     the first failing `kubectl` exits it and leaves EKS, RDS and ElastiCache billing. The fakes
     for terraform and aws succeed, so the only thing that can stop destroy is the missing trap."""
     run = invoke(tmp_path, ["run", VALID_SHA], FAKE_FAIL_KUBECTL="1")
@@ -504,7 +504,7 @@ def test_a_failing_kubectl_still_destroys_the_cluster(tmp_path: Path) -> None:
 
 
 def test_the_kubeconfig_lives_in_a_temp_dir_removed_on_exit(happy: Run) -> None:
-    """Criterion 5. Catches `--kubeconfig ~/.kube/aioc` or no `--kubeconfig` at all (the
+    """Catches `--kubeconfig ~/.kube/aioc` or no `--kubeconfig` at all (the
     owner's default context rewritten to a cluster about to be destroyed), a kubeconfig written
     into the evidence folder that is about to be committed, a path whose directory was never
     created, and a temp directory the EXIT trap never removes."""
@@ -525,7 +525,7 @@ def test_the_kubeconfig_lives_in_a_temp_dir_removed_on_exit(happy: Run) -> None:
 
 
 def test_the_secret_is_built_from_the_rds_secret_and_piped_on_stdin(happy: Run) -> None:
-    """Criteria 6 to 8. Catches the password fetched from a guessed secret name instead of the
+    """The requirement. Catches the password fetched from a guessed secret name instead of the
     ARN the RDS instance names, a `DATABASE_URL` without `sslmode=require` (RDS then refuses or
     downgrades), a Secret missing one of the four keys, the raw tenant key where its 64-hex
     digest belongs, and a Secret written to a file and applied with `-f <path>`."""
@@ -546,7 +546,7 @@ def test_the_secret_is_built_from_the_rds_secret_and_piped_on_stdin(happy: Run) 
 
 
 def test_each_run_generates_a_fresh_tenant_key(happy: Run, tmp_path: Path) -> None:
-    """Criterion 8's "fresh per run". Catches a key hard-coded in the script or derived from the
+    """The "fresh per run". Catches a key hard-coded in the script or derived from the
     SHA, which makes every evidence run share one credential that is now in git history."""
     succeeded(happy)
     second = invoke(tmp_path, ["run", VALID_SHA])
@@ -563,7 +563,7 @@ def test_each_run_generates_a_fresh_tenant_key(happy: Run, tmp_path: Path) -> No
 def test_the_gateway_is_pointed_at_elasticache_over_tls_and_the_sha_image(
     happy: Run,
 ) -> None:
-    """Criterion 9. Catches `redis://` (ElastiCache has transit encryption on and refuses it),
+    """Catches `redis://` (ElastiCache has transit encryption on and refuses it),
     the endpoint without `:6379/0`, an image tagged with a short SHA or `latest`, and an image
     path other than the one `build.yml` pushes."""
     succeeded(happy)
@@ -579,7 +579,7 @@ def test_the_gateway_is_pointed_at_elasticache_over_tls_and_the_sha_image(
 def test_the_backups_service_account_carries_the_role_arn_and_the_job_runs(
     happy: Run,
 ) -> None:
-    """Criterion 11. Catches the annotation missing or naming a different key, so the IRSA Job
+    """Catches the annotation missing or naming a different key, so the IRSA Job
     runs with the node role and the evidence proves nothing, and the overlay or the Job never
     being handed to `kubectl` at all."""
     succeeded(happy)
@@ -592,7 +592,7 @@ def test_the_backups_service_account_carries_the_role_arn_and_the_job_runs(
 
 
 def test_capture_writes_the_five_files_under_todays_utc_date(happy: Run) -> None:
-    """Criterion 12. Catches a local-time directory name, a date format other than
+    """Catches a local-time directory name, a date format other than
     `YYYY-MM-DD`, evidence written under the repository instead of the test root, and any of
     the five captures skipped."""
     succeeded(happy)
@@ -603,7 +603,7 @@ def test_capture_writes_the_five_files_under_todays_utc_date(happy: Run) -> None
 
 
 def test_every_captured_account_id_is_redacted(happy: Run) -> None:
-    """Criterion 13. Catches captures written straight from the command, where the fake account
+    """Catches captures written straight from the command, where the fake account
     ID reaches a file meant for a public repository, and a redaction that empties the file
     instead of substituting, which the placeholder check below makes visible."""
     succeeded(happy)
@@ -622,7 +622,7 @@ def test_every_captured_account_id_is_redacted(happy: Run) -> None:
 
 
 def test_the_database_password_never_leaves_stdin(happy: Run) -> None:
-    """Criterion 7's "never stdout". Catches `echo "$DATABASE_URL"` for debugging, the secret
+    """The "never stdout". Catches `echo "$DATABASE_URL"` for debugging, the secret
     JSON captured as evidence, and a Secret manifest written into the evidence folder. The
     secret case above proves the password did reach the Secret, so this scan is not vacuous."""
     succeeded(happy)
@@ -638,7 +638,7 @@ def test_the_database_password_never_leaves_stdin(happy: Run) -> None:
 
 
 def test_cost_queries_the_whole_account_daily_by_service(tmp_path: Path) -> None:
-    """Criteria 15 and 16. Catches a `--filter` on the project tag (decision F: the tag is not
+    """Catches a `--filter` on the project tag (the tag is not
     active before the run, so the filter misses it), `MONTHLY` granularity, `BlendedCost`, no
     `SERVICE` group-by, a one-day window refused, and `cost` touching terraform or kubectl."""
     run = invoke(tmp_path, ["cost", "2026-09-01", "2026-09-02"])
@@ -660,7 +660,7 @@ def test_cost_queries_the_whole_account_daily_by_service(tmp_path: Path) -> None
 
 
 def test_the_script_is_executable_never_traces_and_never_names_the_default_kubeconfig() -> None:
-    """Criteria 5 and 7. Catches `set -x` or `set -euxo pipefail` (every expanded command, the
+    """Catches `set -x` or `set -euxo pipefail` (every expanded command, the
     database URL included, printed to the owner's terminal and scrollback), `.kube/config`
     named anywhere, and the file committed without its execute bit, where `make aws-evidence`
     fails with permission denied."""
@@ -676,7 +676,7 @@ def test_the_script_is_executable_never_traces_and_never_names_the_default_kubec
 
 
 def test_the_overlay_holds_exactly_the_six_resources() -> None:
-    """Criteria 17 and 18, on the parsed list. Catches `../apps` whole, which
+    """On the parsed list. Catches `../apps` whole, which
     brings `ingress.yaml`'s Traefik objects and `helpdesk.yaml`'s unpublished images, `../platform`
     whole, which brings in-cluster postgres and redis and the cert-manager issuers, a duplicate
     entry, and the backups ServiceAccount left out."""
@@ -704,7 +704,7 @@ def test_the_overlay_patches_no_local_chat_model() -> None:
 
 
 def test_the_overlay_deletes_exactly_the_llama_embed_claim_by_inline_patch() -> None:
-    """Criterion 19's deletions. Catches a deleted claim left out (EKS has no EBS CSI driver, so
+    """The deletions. Catches a deleted claim left out (EKS has no EBS CSI driver, so
     it stays Pending and the pod never schedules), a delete aimed at a claim in the wrong
     namespace, and an extra `$patch: delete` removing an object the run needs. The deletes are
     inline `patch:` entries, never in `emptydir-patch.yaml`: kustomize 5.5.0 (CI's pin) panics
@@ -726,7 +726,7 @@ def test_the_overlay_deletes_exactly_the_llama_embed_claim_by_inline_patch() -> 
 
 
 def test_the_emptydir_patch_drops_qdrants_claim_template_for_an_emptydir() -> None:
-    """Criterion 19 for qdrant. Catches the StatefulSet keeping `volumeClaimTemplates` (a PVC
+    """The requirement for qdrant. Catches the StatefulSet keeping `volumeClaimTemplates` (a PVC
     with no provisioner, so qdrant stays Pending), and the template removed without a `storage`
     emptyDir in its place, where the container's mount names a volume that does not exist."""
     qdrant = the_one(EMPTYDIR_PATCH, "StatefulSet", "qdrant")
@@ -739,7 +739,7 @@ def test_the_emptydir_patch_drops_qdrants_claim_template_for_an_emptydir() -> No
 
 @pytest.mark.parametrize("name", ["llama-embed"])
 def test_the_emptydir_patch_swaps_each_llama_models_volume(name: str) -> None:
-    """Criterion 19 for the llama-embed Deployment. Catches `emptyDir` added beside the claim
+    """The requirement for the llama-embed Deployment. Catches `emptyDir` added beside the claim
     without nulling `persistentVolumeClaim` (a strategic merge keeps both, which the API
     rejects as two volume sources), and the patch naming a volume other than `models`."""
     deployment = the_one(EMPTYDIR_PATCH, "Deployment", name)
@@ -751,7 +751,7 @@ def test_the_emptydir_patch_swaps_each_llama_models_volume(name: str) -> None:
 
 
 def test_the_overlay_pins_the_same_llama_image_as_the_apps_kustomization() -> None:
-    """Criterion 21. Catches the overlay floating on `server` or pinning a different build than
+    """Catches the overlay floating on `server` or pinning a different build than
     the k3s cluster runs, so the evidence is for a server nobody deploys, and an entry that is
     missing so the bare `llama` name is pulled from Docker Hub."""
     aws = image_entry(AWS_KUSTOMIZATION, "llama")
@@ -763,8 +763,8 @@ def test_the_overlay_pins_the_same_llama_image_as_the_apps_kustomization() -> No
 
 
 def test_the_backups_service_account_is_platform_backups() -> None:
-    """Criterion 17's ServiceAccount and decision G. Catches it in `apps` or named `backup`,
-    where 26a's role trust names `system:serviceaccount:platform:backups` and the IRSA Job's
+    """The ServiceAccount. Catches it in `apps` or named `backup`,
+    where the role trust names `system:serviceaccount:platform:backups` and the IRSA Job's
     token is refused."""
     identities = {identity(doc) for doc in documents(BACKUPS_SA)}
 
@@ -772,7 +772,7 @@ def test_the_backups_service_account_is_platform_backups() -> None:
 
 
 def test_the_irsa_job_runs_as_backups_on_a_pinned_cli_image() -> None:
-    """Criterion 11 and section 6's pin. Catches `amazon/aws-cli:latest` or an untagged image,
+    """Catches `amazon/aws-cli:latest` or an untagged image,
     a Job with no `serviceAccountName` (it then runs as `default` with no role), and the Job in
     a namespace other than the service account's."""
     job = the_one(IRSA_JOB, "Job", "irsa-evidence")
@@ -791,7 +791,7 @@ def test_the_irsa_job_runs_as_backups_on_a_pinned_cli_image() -> None:
 
 
 def test_the_root_kustomization_no_longer_claims_aws_deploys_it_unchanged() -> None:
-    """Criterion 26 and decision B. Catches the comment left as it was, now false: the AWS run
+    """Catches the comment left as it was, now false: the AWS run
     deploys a narrowed overlay. Whitespace is normalised, so a reflowed line cannot hide it."""
     text = " ".join(read(ROOT_KUSTOMIZATION).split())
 
@@ -803,7 +803,7 @@ def test_the_root_kustomization_no_longer_claims_aws_deploys_it_unchanged() -> N
 
 
 def test_k8s_aws_check_builds_the_overlay_with_k8s_checks_own_flags() -> None:
-    """Criterion 22. Catches the build without `--load-restrictor=LoadRestrictionsNone` (the
+    """Catches the build without `--load-restrictor=LoadRestrictionsNone` (the
     kind patch's `../../../` path is then refused), `|| true` swallowing a failure, a second
     line so only the last exit code counts, and kubeconform flags that drift from `k8s-check`,
     `-strict` or a schema location dropped."""
@@ -829,8 +829,8 @@ def test_k8s_aws_check_builds_the_overlay_with_k8s_checks_own_flags() -> None:
     ],
 )
 def test_the_evidence_targets_call_the_script(target: str, command: str) -> None:
-    """Criterion 24. Catches a target that only prints its usage (an `echo` naming the script
-    is excluded, a project rule), and the two subcommands swapped between the targets."""
+    """Catches a target that only prints its usage (an `echo` naming the script
+    is excluded), and the two subcommands swapped between the targets."""
     lines = [
         line for line in recipe(read(MAKEFILE), target) if not line.lstrip("@-").startswith("echo")
     ]
@@ -839,7 +839,7 @@ def test_the_evidence_targets_call_the_script(target: str, command: str) -> None
 
 
 def test_the_k8s_job_runs_k8s_aws_check_once_unconditionally() -> None:
-    """Criterion 23. Catches the step missing, so the overlay's kustomize build is proven
+    """Catches the step missing, so the overlay's kustomize build is proven
     nowhere, the step given an `if` or `continue-on-error` that makes it inert, and a second
     copy. An `echo` step naming the command is excluded."""
     jobs = load_yaml(WORKFLOW)["jobs"]
@@ -856,9 +856,9 @@ def test_the_k8s_job_runs_k8s_aws_check_once_unconditionally() -> None:
 
 
 def test_no_workflow_runs_the_evidence_tooling() -> None:
-    """Criterion 24 and decision A. Catches an `aws-evidence.yml` dispatch workflow, or a step in
+    """Catches an `aws-evidence.yml` dispatch workflow, or a step in
     any workflow, calling either target or the script directly: that needs a write-capable AWS
-    role on the repository, which a project rule keeps off it."""
+    role on the repository, which is kept off the repository."""
     assert WORKFLOWS.is_dir(), f"{WORKFLOWS} does not exist"
     files = sorted(path for path in WORKFLOWS.rglob("*") if path.is_file())
     assert files, f"{WORKFLOWS} holds no workflow"

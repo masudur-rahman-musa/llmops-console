@@ -1,6 +1,6 @@
 """Per-tenant API keys: the store, the digest comparison and the two failures.
 
-Every value this file pins is a value the plan fixes: 401 for a
+Every value this file pins is a fixed value: 401 for a
 missing or unknown key, 403 for a key whose tenant does not match `X-Tenant`, and
 `MAX_KEY_LENGTH` for the bearer pre-check, asserted against the imported constant
 rather than a retyped number.
@@ -257,7 +257,7 @@ def test_key_store_looks_up_by_digest() -> None:
     ids=["newline", "crlf", "space"],
 )
 def test_key_store_rejects_whitespace_padded_keys(case: str, suffix: str) -> None:
-    """a project rule at the store: a padded key is a different key, never trimmed."""
+    """At the store, a padded key is a different key, never trimmed."""
     store = SettingsKeyStore(API_KEYS)
 
     assert store.tenant_for(NORDLICHT_KEY + suffix) is None

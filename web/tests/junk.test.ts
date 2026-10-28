@@ -26,7 +26,7 @@ describe("findJunk", () => {
   });
 
   it("41 hex characters is past the hash range", () => {
-    // Catches a hash check with no upper end, so the 7 to 40 range the plan names is not what the code does.
+    // Catches a hash check with no upper end, so the 7 to 40 range is not what the code does.
     expect(findJunk(`<p>${SHA_40}a</p>`).filter((item) => item.startsWith("bare hash"))).toEqual([]);
   });
 

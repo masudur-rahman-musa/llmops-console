@@ -14,9 +14,9 @@ case takes IS the claim it makes:
 The cases needing a real server live in tests/storage/test_cost_ledger_postgres.py
 and are skipped without `OPSCONSOLE_TEST_DATABASE_URL`.
 
-a project rule on the three patterns: `tenant`, `alias`, `provider`
+The three patterns: `tenant`, `alias`, `provider`
 and `session` are checked against the resolver's identifier rule, `model` against
-this module's own wider one (decision D), and `trace_id` against 32 lowercase hex
+this module's own wider one, and `trace_id` against 32 lowercase hex
 characters, so each rejection table carries a trailing newline, a trailing CRLF
 and a trailing space. The trace id rows are built so the WHOLE value is still
 exactly `TRACE_ID_LENGTH` characters long (31 hex plus a newline, 30 hex plus a
@@ -25,7 +25,7 @@ case would then pass without the pattern being involved at all.
 
 The contract these cases are written against, before it exists:
 
-* `CostLedgerRow`, a frozen model with the design's thirteen columns, `session`
+* `CostLedgerRow`, a frozen model with thirteen columns, `session`
   nullable and `cost_usd` a `Decimal`;
 * `PostgresCostLedgerWriter(pool, *, schema=...)`, whose `write` runs every
   pre-check, then borrows a connection with `pool.connection()` and issues one
@@ -33,8 +33,8 @@ The contract these cases are written against, before it exists:
 * `record_cost(ledger, *, table, tenant, alias, provider, model, usage,
   prompt_chars=0, completion_chars=0, cached, session, trace_id, price_key,
   now=...)`, which PRICES the request itself through
-  `app.limits.cost.cost_for` (decision C, so there is no `cost_usd`
-  parameter to fill) and never raises (decision E).
+  `app.limits.cost.cost_for` (so there is no `cost_usd`
+  parameter to fill) and never raises.
 """
 
 from __future__ import annotations
@@ -147,7 +147,7 @@ def record(ledger: CostLedgerWriter, **overrides: Any) -> CostLedgerRow:  # noqa
     Every argument is keyword-only on `record_cost` itself, so this helper is the
     one place the full call is spelled out and a case names only what it changes.
 
-    The return is decision G: `record_cost` answers the row it built,
+    The return value matters: `record_cost` answers the row it built,
     so the header, the metric and the row are one number computed once. The cases
     written before that decision read the row off the writer instead and ignore
     what this hands back, which is why the change is a signature and not a
@@ -249,7 +249,7 @@ def policy() -> Policy:
 
 
 # --------------------------------------------------------------------------
-# the constants this plan introduces
+# the constants
 # --------------------------------------------------------------------------
 
 
@@ -262,7 +262,7 @@ def test_the_table_names_are_the_ones_the_migration_creates() -> None:
 
 
 def test_the_model_and_price_version_caps_are_pinned() -> None:
-    """Catches a cap silently widened or narrowed. `MAX_MODEL_LENGTH` is decision D's
+    """Catches a cap silently widened or narrowed. `MAX_MODEL_LENGTH` is the
     whole point - it is deliberately NOT the resolver's 64, because the shipped policy
     already names ids the resolver's rule refuses - and a value narrowed back to the
     resolver's would drop every row it used to accept. A range would admit both."""
@@ -346,7 +346,7 @@ REJECTED_IDENTIFIERS: list[tuple[str, str]] = [
 
 IDENTIFIER_FIELDS = ("tenant", "alias", "provider", "session")
 """The five slug-shaped strings on the row. `model` has its own wider rule
-(decision D) and `trace_id` its own narrower one, so both are checked separately."""
+ and `trace_id` its own narrower one, so both are checked separately."""
 
 
 @pytest.mark.parametrize("field", IDENTIFIER_FIELDS)
@@ -360,8 +360,8 @@ def test_write_refuses_a_malformed_identifier_before_any_sql(
     on the row is well-formed, so the field under test is the ONLY thing that can refuse
     it; the pool double fails the test on any connection, which makes the claim "no SQL
     was attempted" rather than "the INSERT came back with an error". The newline and
-    CRLF rows separate `re.fullmatch` from `re.match` with a trailing `$` (standing rule
-    4), and parametrising the FIELD catches a check applied to `tenant` alone - `session`
+    CRLF rows separate `re.fullmatch` from `re.match` with a trailing `$`, and parametrising the
+    FIELD catches a check applied to `tenant` alone - `session`
     is the one that arrives straight from a client header."""
     writer = writer_over(ForbiddenPool())
 
@@ -389,7 +389,7 @@ REJECTED_MODELS: list[tuple[str, str]] = [
     ("case", "value"), REJECTED_MODELS, ids=[case for case, _ in REJECTED_MODELS]
 )
 def test_write_refuses_a_malformed_model_before_any_sql(case: str, value: str) -> None:
-    r"""Catches decision D's rule being widened into "anything goes": `model` is the one
+    r"""Catches the check being widened into "anything goes": `model` is the one
     field the resolver's slug check deliberately does not cover, so if this pre-check is
     missing nothing else refuses it and a provider id carrying a quote or a line break
     reaches the audit table. Every rejected value here is under the length cap except the
@@ -463,7 +463,7 @@ def test_an_identifier_at_exactly_the_length_cap_is_accepted(field: str) -> None
 
 
 def test_a_model_at_exactly_the_length_cap_is_accepted() -> None:
-    """The inclusive boundary of decision D's own cap, with the row one character over
+    """The inclusive boundary of its own cap, with the row one character over
     it asserted in the same case so an off-by-one in either direction fails here. Catches
     a cap that accepts 129 characters as readily as 128, which is how a `text` column
     ends up with no bound at all."""
@@ -529,14 +529,14 @@ def test_a_row_with_every_field_at_its_cap_is_still_written() -> None:
 
 
 # --------------------------------------------------------------------------
-# decision D: the pattern has to admit what the shipped policy resolves to
+# The pattern has to admit what the shipped policy resolves to
 # --------------------------------------------------------------------------
 
 
 def test_every_model_the_shipped_policy_can_resolve_to_passes_the_pattern(
     policy: Policy,
 ) -> None:
-    """Decision D's trap, caught here rather than in production. `routing.yaml` names
+    """The trap, caught here rather than in production. `routing.yaml` names
     `qwen2.5-3b-instruct` and `bge-small-en-v1.5`, and both fail the resolver's slug rule
     because of the dots - so a `model` pre-check that reused `IDENTIFIER_PATTERN` would
     refuse, and therefore silently lose, every ledger row for the local provider while
@@ -559,11 +559,11 @@ def test_every_model_the_shipped_policy_can_resolve_to_passes_the_pattern(
 
 def test_the_embedding_provider_id_passes_the_ledger_pre_check(policy: Policy) -> None:
     """The `provider` half of the same trap, swept off the shipped file rather than off a
-    literal. Row 20e splits the local provider in two, and `provider` is a column the ledger
+    literal. Splits the local provider in two, and `provider` is a column the ledger
     pre-checks against the RESOLVER's identifier rule before any SQL runs - so a provider id
     that rule refuses raises `IdentifierInvalid` and silently loses every row booked under it,
     while the gateway goes on answering normally. Catches an implementation that names the new
-    provider anything the rule refuses: `localEmbed` and `local.embed` fail the pattern,
+    provider anything that is refused: `localEmbed` and `local.embed` fail the pattern,
     `local-embed-` and `local__embed` fail its separator rule, and a very long id fails the
     cap - none of which `routing.yaml`'s own schema, the resolver's happy path or any manifest
     test would notice. Swept over EVERY provider key, so the same failure introduced by a later
@@ -586,7 +586,7 @@ ACCEPTED_MODELS = [
 
 @pytest.mark.parametrize("model", ACCEPTED_MODELS)
 def test_the_model_pattern_admits_the_shapes_provider_ids_actually_take(model: str) -> None:
-    r"""The other direction for decision D's pattern, one row per character class it has
+    r"""The other direction for its pattern, one row per character class it has
     to admit: a dot, a slash, a colon and an uppercase letter. Catches a pattern narrowed
     one class at a time - dropping `/` alone would lose every hosted open-weights id, and
     dropping `:` alone every fine-tune - which no single rejection case can see."""
@@ -594,12 +594,12 @@ def test_the_model_pattern_admits_the_shapes_provider_ids_actually_take(model: s
 
 
 # --------------------------------------------------------------------------
-# `record_cost`: the price comes from the table (decision C)
+# `record_cost`: the price comes from the table
 # --------------------------------------------------------------------------
 
 
 def test_the_cost_is_priced_from_the_table_and_cannot_be_supplied_by_the_caller() -> None:
-    """Decision C. Catches a `record_cost` that takes a finished cost from its caller -
+    """Catches a `record_cost` that takes a finished cost from its caller -
     the shape that records the gateway's belief rather than the price table's answer, and
     that lets the number in the row disagree with the `price_version` beside it. The two
     prices in the table differ per direction, so a row that priced both token counts at
@@ -698,7 +698,7 @@ def test_a_null_session_is_accepted_and_reaches_the_writer_as_none() -> None:
 
 
 def test_a_failing_write_is_swallowed() -> None:
-    """Decision E, and the same rule as an earlier change decision D. Catches an unguarded call:
+    """Catches an unguarded call:
     the provider has already charged by the time this runs, so a Postgres blip would turn
     a served request into a 500 and lose the answer as well as the row. The attempt count
     is what stops a `record_cost` that never writes at all from passing - it would
@@ -722,7 +722,7 @@ class RefusingWriter:
 
 
 def test_a_row_failing_its_pre_check_is_counted_dropped_invalid() -> None:
-    """An earlier change. Catches a `record_cost` that only logs a row its writer refused: the row
+    """Catches a `record_cost` that only logs a row its writer refused: the row
     is lost and no metric, so no alert, says so. It still must not raise (the provider has
     charged), so the call count and the counter are what show it was handed over and counted."""
     from app.core.metrics import registry
@@ -745,7 +745,7 @@ def test_a_row_failing_its_pre_check_is_counted_dropped_invalid() -> None:
 
 
 # --------------------------------------------------------------------------
-# a cached request costs zero, and the ledger is what says so (14c decision C)
+# a cached request costs zero, and the ledger is what says so
 # --------------------------------------------------------------------------
 
 ZERO = Decimal("0.000000")
@@ -776,11 +776,11 @@ def test_a_cached_request_is_booked_at_zero_with_the_price_version_in_force(
     version: str,
     estimated: bool,
 ) -> None:
-    """An earlier change decision C: the zero rule lives HERE, not in the route. Catches a
+    """The zero rule lives HERE, not in the route. Catches a
     `record_cost` that prices a cache hit at the cost it AVOIDED, which puts money that
     was never spent into the spend column where no `WHERE cached = false` can find it;
     catches one that answers a NULL or `unpriced` version on a hit, which would lose the
-    price a hit was measured against and with it an earlier change's cache-savings figure; and
+    price a hit was measured against and with it the cache-savings figure; and
     catches a route-side zero being the only thing that makes a hit free, since nothing
     in this file is a route. The exponent is asserted because `Decimal("0") ==
     Decimal("0.000000")`, so equality alone would not see a number that lost its scale."""
@@ -797,7 +797,7 @@ def test_a_cached_request_is_booked_at_zero_with_the_price_version_in_force(
 
 
 def test_a_cached_row_keeps_the_replayed_answers_token_counts() -> None:
-    """The other half of decision C, and the half a zero cost makes easy to lose. Catches
+    """The other half, and the half a zero cost makes easy to lose. Catches
     a `record_cost` that zeroes the TOKENS along with the cost on a hit - the shape that
     reads as "this request consumed nothing" - which would make the cached rows useless
     for the one thing they are kept for: saying how much a tenant did not spend. The
@@ -814,12 +814,12 @@ def test_a_cached_row_keeps_the_replayed_answers_token_counts() -> None:
 
 
 # --------------------------------------------------------------------------
-# `record_cost` answers the row it built (14c decision G)
+# `record_cost` answers the row it built
 # --------------------------------------------------------------------------
 
 
 def test_record_cost_answers_the_row_it_wrote() -> None:
-    """An earlier change decision G. Catches a `record_cost` that stays `-> None` and leaves the
+    """Catches a `record_cost` that stays `-> None` and leaves the
     route to re-price for the header and the metric, which is how the row, the counter and
     `X-Gateway-Cost-USD` become three numbers that can disagree; and catches one that
     answers a SECOND row built from the same arguments, which would carry a different
@@ -835,10 +835,10 @@ def test_record_cost_answers_the_row_it_wrote() -> None:
 
 
 def test_record_cost_answers_the_row_even_when_the_write_failed() -> None:
-    """Decision G's whole point, and the case that separates it from a convenience. The
+    """The whole point, and the case that separates it from a convenience. The
     header describes what the request COST, not what the database managed to keep, so a
-    writer that raised must still yield the number the caller reports - 14b decision E
-    already says the ledger is a lower bound during an incident. Catches a `record_cost`
+    writer that raised must still yield the number the caller reports - the ledger is a lower bound
+    during an incident. Catches a `record_cost`
     that answers `None` on a failed write, which would leave the route with nothing to put
     in the header and the counter exactly when a Postgres blip is under way, and catches
     one that answers a zero-cost row as a placeholder. The attempt count is what stops a

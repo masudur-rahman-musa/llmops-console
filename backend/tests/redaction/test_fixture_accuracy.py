@@ -5,8 +5,8 @@ precision and recall are only meaningful if the ground truth is real, and a
 fixture whose "card number" fails Luhn or whose eleven negatives quietly became
 ten would move both numbers without any detector changing.
 
-The floors are asserted as exact literals (decision C, a project rule), not as
-a band: `>= 0.95` and `>= 0.90` are the numbers #21 and the design name.
+The floors are asserted as exact literals, not as
+a band: `>= 0.95` and `>= 0.90` are the published numbers.
 
 Precision and recall are scored on what `redact` EMITS, not on `detect_all`'s
 raw candidates - see `emitted_detections` in `conftest.py` for why, and
@@ -46,14 +46,14 @@ from .conftest import (
 )
 from .heldout import build_heldout_cases
 
-# Decision F, pinned exactly: without the eleven negatives precision is 1.0 by
+# Pinned exactly: without the eleven negatives precision is 1.0 by
 # construction, so the count is part of what makes the number mean anything.
-# Round 2 of this plan's review grew the positives from 40 to 42: the fixture had
+# A later review grew the positives from 40 to 42: the fixture had
 # no space-grouped IBAN and no IPv4-mapped IPv6, the two forms whose patterns
 # matched only a PREFIX of the value and left the rest in the clear. A score
 # cannot see what the fixture omits, so the two rows are the fix, not the
 # pattern change alone.
-# An earlier change decision I adds the tenth kind's ground truth: four positive PERSON
+# The tenth kind's ground truth is: four positive PERSON
 # cases (a single given name, a full name winning over its own first token, a
 # name carrying regex metacharacters, and a name overlapping an email address)
 # and one negative, a directory name sitting inside a longer word. 42/10 becomes
@@ -63,7 +63,7 @@ EXPECTED_CASE_COUNT = 57
 EXPECTED_POSITIVE_CASES = 46
 EXPECTED_NEGATIVE_CASES = 11
 
-# The negative shapes decision F names by hand. Ids, not texts, so a case can be
+# The negative shapes named by hand. Ids, not texts, so a case can be
 # reworded without this list rotting, but cannot be deleted.
 REQUIRED_NEGATIVE_IDS = (
     "neg-bare-number",
@@ -112,7 +112,7 @@ def test_required_negative_shape_is_present_and_has_no_spans(
     cases: tuple[Case, ...], case_id: str
 ) -> None:
     """Catches the removal of a negative that a widened pattern would start
-    matching - the exact rows decision F names as the precision pressure."""
+    matching - the exact rows that put pressure on precision."""
     by_id = {case.id: case for case in cases}
 
     assert case_id in by_id
@@ -213,7 +213,7 @@ def test_recall_meets_the_floor(cases: tuple[Case, ...]) -> None:
 
 def test_precision_meets_the_floor(cases: tuple[Case, ...]) -> None:
     """Catches an over-broad PHONE or IBAN pattern that eats ordinary numbers -
-    the risk decision F's eleven negatives exist to expose."""
+    the risk the eleven negatives exist to expose."""
     score = score_cases(cases, emitted_detections)
 
     assert score.precision >= 0.90
@@ -223,7 +223,7 @@ def test_scoring_counts_a_mislabelled_span_as_both_a_miss_and_a_false_positive()
     """Catches a scorer that matches on offsets only.
 
     A right span with the wrong kind is not a detection: the placeholder would
-    carry the wrong label and an earlier change would store it under the wrong class.
+    carry the wrong label and rehydration would store it under the wrong class.
     Scored against a hand-built case, not the real fixture, so the row measures
     the scorer and cannot pass because the engine happened to find nothing.
     """
@@ -279,7 +279,7 @@ def test_round_metric_rounds_to_three_decimals() -> None:
 
 
 def test_readme_table_matches_the_computed_numbers() -> None:
-    """Catches a hand-edited README number (decision D): the committed block must equal
+    """Catches a hand-edited README number: the committed block must equal
     what `render_table` produces from the HELD-OUT set as it stands today, so
     a README that went back to scoring the tuning fixture would differ."""
     per_kind = score_by_kind(build_heldout_cases(), emitted_detections)
@@ -291,7 +291,7 @@ def test_readme_table_matches_the_computed_numbers() -> None:
 
 
 def test_readme_carries_both_metric_names_in_the_generated_block() -> None:
-    """Catches a table that reports one number or drops a kind: #99 asks for precision,
+    """Catches a table that reports one number or drops a kind: the README asks for precision,
     recall and F2 for each kind, and a block with only recall would still match
     `render_table` if the script were wrong in the same way."""
     block = readme_table_block(README_PATH.read_text(encoding="utf-8"))
@@ -307,7 +307,7 @@ def test_readme_carries_both_metric_names_in_the_generated_block() -> None:
 # the report script itself
 # --------------------------------------------------------------------------
 
-# Decision D's guarantee is "generated plus a drift test", and the drift test
+# The guarantee is "generated plus a drift test", and the drift test
 # above computes the numbers itself rather than through the script. So the half a
 # human actually runs -
 # `uv run --project backend python backend/scripts/redaction_report.py` - had no

@@ -65,11 +65,9 @@ def test_no_shipped_file_names_residency() -> None:
     assert hits == []
 
 
-DOCS = ("README.md", "docs/customizing.md", "dev/ops/threat-model.md")
-ROOTS = ("backend/", "infra/", "docs/", "dev/", "web/", ".github/")
+DOCS = ("README.md", "docs/customizing.md")
+ROOTS = ("backend/", "infra/", "docs/", "web/", ".github/")
 ROOT_FILES = {"Makefile", "README.md", "ARCHITECTURE.md", "docker-compose.yml"}
-# Gitignored or local-only: present on the owner's disk, absent from a fresh clone.
-LOCAL_ONLY = ("dev/notes/", "dev/docs/REQUIREMENTS.md", "dev/disputes/")
 # Written by a run, or living in the companion repo: named in a doc, never in this tree.
 NOT_IN_THIS_TREE = {"docs/tradeoff.md", "backend/evals/conversations/cases.jsonl"}
 
@@ -83,7 +81,7 @@ def _candidate(token: str) -> str | None:
     token = re.sub(r":\d+(-\d+)?$", "", token)
     if not token or any(mark in token for mark in "*{}<>$|=") or "://" in token:
         return None
-    if token.startswith(LOCAL_ONLY) or "/.env" in token or token in NOT_IN_THIS_TREE:
+    if "/.env" in token or token in NOT_IN_THIS_TREE:
         return None
     if token.startswith(ROOTS) or token in ROOT_FILES:
         return token
@@ -113,7 +111,7 @@ def _named_paths(doc: str) -> set[str]:
 
 
 def test_every_path_the_changed_docs_name_exists() -> None:
-    """Catches a doc that still points at a file this plan deleted (`test_residency_property.py`,
+    """Catches a doc that still points at a file that was deleted (`test_residency_property.py`,
     `ops-purge-residency`, the residency dashboard) or at a test the README guarantee should
     link (`backend/tests/api/test_fallback.py`). Moving a file updates every reference in the
     same diff. Each doc must name at least one path, so a parser that

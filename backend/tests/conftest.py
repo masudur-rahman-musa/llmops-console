@@ -1,7 +1,7 @@
 """Shared fixtures for the gateway bootstrap tests.
 
 Fixtures here are cheap (an in-process FastAPI app, no backing services), so they
-are function-scoped; a project rule applies only to expensive backing-service
+are function-scoped; session scope is for expensive backing-service
 fixtures, and the one that exists (the session-scoped Redis client in
 `tests/redaction/test_redis_store.py`) lives beside the cases that need it.
 
@@ -36,9 +36,8 @@ CLEARED_VARIABLES = (
 """Every setting whose value in the developer's shell would change what the suite
 IS, cleared for the whole session below.
 
-These are the ones whose PRESENCE decides what `create_app` builds (plan
-09a decisions B and C). A case that wants a value states it with
-`monkeypatch.setenv` or passes it to `Settings` directly. The Redis suite reads
+These are the ones whose PRESENCE decides what `create_app` builds. A case that wants a value states
+it with `monkeypatch.setenv` or passes it to `Settings` directly. The Redis suite reads
 `OPSCONSOLE_TEST_REDIS_URL` instead, which nothing in `Settings` looks at."""
 
 
@@ -56,8 +55,8 @@ def _no_backing_service_environment() -> Iterator[None]:
         for variable in CLEARED_VARIABLES:
             patched.delenv(variable, raising=False)
         # Bound the OTLP export retry for the whole session. A tracing test builds
-        # an app pointed at an endpoint nothing listens on (an earlier change,
-        # `tests/api/test_tracing.py`), which attaches a `BatchSpanProcessor` to the
+        # an app pointed at an endpoint nothing listens on (`tests/api/test_tracing.py`), which
+        # attaches a `BatchSpanProcessor` to the
         # process-wide provider that can never be detached. Every later app shutdown
         # then calls `flush_tracing()` -> `force_flush()`, and the OTLP/HTTP exporter
         # retries the dead endpoint with exponential backoff - about seven seconds a
@@ -70,7 +69,7 @@ def _no_backing_service_environment() -> Iterator[None]:
 @pytest.fixture
 def app() -> FastAPI:
     """A freshly built app, so probe registrations never leak between tests."""
-    # No provider key is read, whatever the shell exports (#66); see the note in
+    # No provider key is read, whatever the shell exports; see the note in
     # `tests/gateway/conftest.py`.
     built: FastAPI = create_app(environ={})
     return built
@@ -100,7 +99,7 @@ def registry(app: FastAPI) -> ProbeRegistry:
 # a rebuild and never a flush that would delete a neighbour's keys.
 #
 # The skip is an explicit conditional on the `OPSCONSOLE_TEST_*` variable's NAME
-#, never a swallowed connection error: a cache answers absent on
+# , never a swallowed connection error: a cache answers absent on
 # every failure, so a suite that could not reach its store would otherwise report
 # success having checked nothing. Deliberately NOT the `OPSCONSOLE_*` names
 # `Settings` reads, which the session fixture above clears.

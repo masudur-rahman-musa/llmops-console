@@ -9,11 +9,11 @@ table does not carry costs zero and says `estimated` with the version
 `unpriced`, rather than raising on a request a provider already served.
 
 `budget.py` is the other half of that arithmetic: the running total of those
-same rows for the month in progress, and the two thresholds the design puts on it
-(#27). It shares the ledger's quantum exactly - the counter is integer micro-USD
+same rows for the month in progress, and the two thresholds on it.
+It shares the ledger's quantum exactly - the counter is integer micro-USD
 - so a month of rows adds up here to what the ledger holds.
 
-`ratelimit.py` is the per-minute half of the same job (#28): two token buckets
+`ratelimit.py` is the per-minute half of the same job: two token buckets
 per tenant, one for requests and one for tokens, refilling continuously at
 `rpm/60` and `tpm/60`. It shares the budget counter's two shapes deliberately -
 a Redis implementation and an in-process twin on one switch, and `None` for a

@@ -44,7 +44,7 @@ PLAIN_TENANTS = ("nordlicht", "cuan", "evals")
 def test_the_shipped_policy_names_no_region_or_residency() -> None:
     """Catches a shipped `routing.yaml` that still carries a `region:`, a `residency:`, an
     `eu_regions` list or an `allow_regions` rule, or a comment explaining one: the file is
-    what a reader opens first, and a leftover word there says the rule still exists."""
+    what a reader opens first, and a leftover word there says the check still exists."""
     text = SHIPPED_POLICY_PATH.read_text(encoding="utf-8").lower()
 
     for key in REMOVED_KEYS:
@@ -54,7 +54,7 @@ def test_the_shipped_policy_names_no_region_or_residency() -> None:
 def test_every_tenant_alias_and_data_class_resolves() -> None:
     """Catches a policy rewritten plain but left with a candidate list that is empty or all
     disabled for some triple: the old file made demo tenants fail with a 451, and the point
-    of removing the rule is that no triple in the shipped file is refused any more."""
+    of removing the check is that no triple in the shipped file is refused any more."""
     policy = load_policy(SHIPPED_POLICY_PATH, SHIPPED_PROVIDERS_DIR)
     checked = 0
 
@@ -191,8 +191,8 @@ def test_a_rule_holds_only_redact(tenant: str) -> None:
 # --- the per-user monthly cap ---------------------------------------------
 
 USER_CAP_TENANT = "evals"
-"""The shipped tenant these rows edit. `evals` carries `budget_usd_month: "10.00"` and,
-by an earlier change, no per-user cap, so a line added to it is the only thing that changes."""
+"""The shipped tenant these rows edit. `evals` carries `budget_usd_month: "10.00"` and
+no per-user cap, so a line added to it is the only thing that changes."""
 
 
 def _policy_with_user_cap(tmp_path: Path, value: str | None) -> Path:

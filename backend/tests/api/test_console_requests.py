@@ -12,9 +12,10 @@ The contract these cases are written against, before it exists:
   1 to 90 with a default of 30;
 * `app.services.prometheus_reads`: `redactions_query(days)`, `refusals_query(days)`,
   and `guardrail_blocks_query(days)` (`tokens_query` and `errors_per_day_query` are gone: tokens
-  and failed counts come from the ledger, an earlier change);
+  and failed counts come from the ledger);
 * `ConsoleReader.daily_requests(days, now)` (one `(day, answered, failed)` per UTC
-  day) and `ConsoleReader.model_tokens(days, now)`: the per-day request counts and the per-model token sums of the ledger;
+  day) and `ConsoleReader.model_tokens(days, now)`: the per-day request counts and the per-model
+  token sums of the ledger;
 * `ConsoleReader.cache_hit_rate(days, now) -> float | None`: cached ledger rows over all rows
   in the window, None when the window has no rows;
 * `ConsoleReader.recent_requests() -> tuple[RequestRow, ...]`, newest first, with

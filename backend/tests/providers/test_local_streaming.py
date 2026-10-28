@@ -1,16 +1,16 @@
 """The streaming half of the OpenAI-compatible adapter: the SSE reader and the open.
 
-Two halves, kept apart the way an earlier change kept the mapping apart from the HTTP.
+Two halves, kept apart the way the mapping is kept apart from the HTTP.
 `from_openai_events` is pure - a function over the decoded lines
 `httpx.Response.iter_lines()` yields - so every reader case runs against a `.sse`
 file with no transport at all. `stream_chat` adds the request, the 120s read
 timeout and the retried open, and those cases run through `httpx.MockTransport`:
-no socket is opened and no provider key is read (#66).
+no socket is opened and no provider key is read.
 
 Every `.sse` file here is HAND-WRITTEN to the published OpenAI streaming wire
 shape and says so in its own leading comment lines: no llama.cpp server was
-available when these tests were written, which is a deliberate deviation from
-the plan's section 5.
+available when these tests were written, which is a deliberate departure from
+the usual recorded fixtures.
 
 The token counts are asserted as exact literals and are
 distinct per fixture, so a reader that fills usage from the wrong chunk is
@@ -120,7 +120,7 @@ class SseTransport:
     """A `MockTransport` that answers with SSE bodies and records every request.
 
     The last step repeats once the script runs out, so a retry loop that makes
-    more attempts than the plan allows gets a plausible answer rather than an
+    more attempts than allowed gets a plausible answer rather than an
     IndexError; the exact request counts are what catch it.
     """
 
@@ -215,7 +215,7 @@ def test_the_reader_stops_at_the_done_sentinel() -> None:
 def test_a_streamed_tool_call_arrives_as_one_whole_delta() -> None:
     """Catches a reader that forwards each `delta.tool_calls[].function.arguments`
     fragment as its own event: `{"city": "Ber` is not JSON any client can parse, and
-    decision B promises one whole call. Also catches a reader that emits the call on its
+    the stream promises one whole call. Also catches a reader that emits the call on its
     opening fragment, whose arguments would be the empty string the server opens with."""
     events = list(from_openai_events(sse_lines("stream_tool_call")))
 
@@ -237,8 +237,8 @@ def test_a_streamed_tool_call_arrives_as_one_whole_delta() -> None:
 
 
 def test_the_reader_emits_every_buffered_call_before_the_finish_reason() -> None:
-    """Catches a reader that flushes a call when the NEXT index opens (decision C's
-    rejected heuristic): the fixture interleaves the two calls, so call 0's last fragment
+    """Catches a reader that flushes a call when the NEXT index opens (a rejected
+    heuristic): the fixture interleaves the two calls, so call 0's last fragment
     arrives after call 1 has opened and a flush-on-open reader hands the client
     `{"city": "Ber` as a whole call. Also catches a reader that buffers against whichever
     call opened last, which merges the two argument strings into one."""

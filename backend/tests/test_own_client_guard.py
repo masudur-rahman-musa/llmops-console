@@ -10,9 +10,8 @@ code rather than its text is what lets a `cast` of a client type, a
 a reused connection and a docstring that merely names one of these tokens all
 pass - none of them builds a client.
 
-An earlier change left a 24-file allowlist of files the old substring scan matched. Plan
-57 moved the six real builders onto the shared `conftest.py` fixtures, so the
-allowlist is now empty and a NEW file that builds its own client is a failure the
+The six real builders live in the shared `conftest.py` fixtures, so the
+allowlist is empty and a NEW file that builds its own client is a failure the
 moment it lands.
 """
 
@@ -36,8 +35,8 @@ META_TEST_FILES = frozenset({"test_own_client_guard.py", "test_tooling_fast_suit
 BUILDER_CALL_NAMES = frozenset({"build_pool", "create_async_engine", "create_engine"})
 
 # A module-level read of an environment variable whose name starts with this is a
-# file wiring up its own backing service (the switch `Settings` can never read,
-# a project rule). The real clients read it inside the `conftest.py` fixtures.
+# file wiring up its own backing service (the switch `Settings` can never read). The real clients
+# read it inside the `conftest.py` fixtures.
 ENV_READ_PREFIX = "OPSCONSOLE_TEST"
 
 
@@ -154,7 +153,7 @@ def _offenders() -> list[str]:
 
 
 ALLOWLIST: list[str] = []
-"""Empty since an earlier change: every real builder now lives in `conftest.py`. A file that
+"""Empty: every real builder now lives in `conftest.py`. A file that
 builds its own client is a failure, not an entry to add here."""
 
 

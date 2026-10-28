@@ -113,7 +113,7 @@ def store_answer(cache: ResponseCache, tenant: str, key: str | None, answer: Cha
     Guarded for a sharper reason than the lookup is: this runs AFTER a provider
     has answered and been paid, so an escaping failure would lose a request that
     was completely served. `key` is `None` for an ineligible request, which is
-    stored nowhere (decisions G and H).
+    stored nowhere (the rules).
     """
     if key is None:
         return
@@ -131,7 +131,7 @@ def requested_key(
     allow_header: bool,
     data_class: str,
 ) -> str | None:
-    """The cache key for this request, or `None` when it may not be cached (#22).
+    """The cache key for this request, or `None` when it may not be cached.
 
     One function for both the lookup and the write, so the two cannot disagree
     about what the key is or about which requests are eligible - the lookup uses
@@ -173,7 +173,7 @@ def embedded_probe(
     tenant: str,
     data_class: DataClass,
 ) -> tuple[float, ...] | None:
-    """The probe text as a vector, or `None` - for any reason at all (#23).
+    """The probe text as a vector, or `None` - for any reason at all.
 
     The one place this route spends money on the semantic tier, and the one place
     it can fail. Every outcome that is not a vector is `None`, which the two
@@ -317,9 +317,8 @@ def store_probe(
 ) -> None:
     """File this answer under the vector the lookup already paid for, or do nothing.
 
-    The vector is the LOOKUP's, reused rather than embedded a second time (plan
-    13c decision H): two calls double the cost of every miss and can disagree if
-    the model behind the `embed` alias changes between them.
+    The vector is the LOOKUP's, reused rather than embedded a second time: two calls double the cost
+    of every miss and can disagree if the model behind the `embed` alias changes between them.
 
     `provider` and `data_class` are required keyword args: a
     cached answer is only served where it could have been made, so the stored

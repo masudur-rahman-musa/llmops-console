@@ -1,6 +1,6 @@
 # Redis: the redaction map, the exact cache, the budget windows and the rate
 # limit counters. A Deployment over an `emptyDir`, not a StatefulSet with a
-# claim (decision C).
+# claim.
 #
 # The same reason `docker-compose.yml` runs it with `--save "" --appendonly no`:
 # Redis holds a redaction map, and a disk image of that map is personal data at

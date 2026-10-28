@@ -26,7 +26,7 @@ status code. The alternative, a non-retryable `ProviderError`, is a 502 the
 routes' fallback loop treats as final anyway, and it says less about what to fix.
 
 This module logs nothing, and no key is read from the environment here: the
-factory injects it (`providers/factory.py`, #66).
+factory injects it (`providers/factory.py`).
 """
 
 from __future__ import annotations

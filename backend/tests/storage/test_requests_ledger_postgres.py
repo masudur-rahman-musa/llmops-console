@@ -1,6 +1,6 @@
 """The `prompt_version` ledger column and the newest-requests read, against a real server.
 
-The `db` file of an earlier change: the column, the INSERT that fills it and the newest-first paged
+The `db` file for the column, the INSERT that fills it and the newest-first paged
 read are things only PostgreSQL can show. Every case runs the SHIPPED migrations into a
 throwaway schema (the fixtures in tests/storage/conftest.py, unchanged), so a column added
 to the SQL file and not to the writer's INSERT, or the reverse, is a failure here.

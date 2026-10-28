@@ -4,8 +4,8 @@ A case passes when every check on every turn passes (`CaseCheck.passed`):
 
 1. **The right tools, in order.** The case's successful calls, across the whole
    conversation, hold `expected.tool_calls` as an ordered subsequence, each
-   `args_subset` contained in its call's `args`. Extra calls in between are fine
-. A refused call (`ok` false)
+   `args_subset` contained in its call's `args`. Extra calls in between are fine.
+A refused call (`ok` false)
    never counts as the expected call.
 2. **No change before the yes.** A successful call to one of the help desk's 12 change
    tools in a turn before `confirm_turn` fails that turn, and with a null
@@ -17,8 +17,7 @@ A case passes when every check on every turn passes (`CaseCheck.passed`):
    tool ever returned is not caught here; the judge's rubric covers it.
 
 The pattern for a number needs four digits and is anchored on both sides, so
-`REQ-007` is no number and `REQ-00071` is never cut to `REQ-0007`
-.
+`REQ-007` is no number and `REQ-00071` is never cut to `REQ-0007`.
 """
 
 from __future__ import annotations

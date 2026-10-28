@@ -80,7 +80,7 @@ class Transport:
 
 
 def test_the_job_label_is_the_published_constant() -> None:
-    """a project rule. Catches `PUSHGATEWAY_JOB` drifting off the value the CronJob manifest
+    """Catches `PUSHGATEWAY_JOB` drifting off the value the CronJob manifest
     and `NightlyEvalRegression`'s alert both assume a nightly push carries - a renamed
     constant here silently orphans every future rule written against `job="eval_nightly"`."""
     assert PUSHGATEWAY_JOB == "eval_nightly"
@@ -89,7 +89,7 @@ def test_the_job_label_is_the_published_constant() -> None:
 def test_the_push_targets_the_fixed_job_path_and_nothing_from_the_caller() -> None:
     """Catches a URL built from anything other than the fixed constant - a job label derived
     from a tenant or a run-kind argument would be a new externally-shaped identifier this
-    plan's own acceptance criteria forbid (§1's unhappy-path/no-new-identifier row), and the
+    suite's acceptance criteria forbid, and the
     signature carries no such argument at all so the only way to fail this is to read the
     label off `pushgateway_url` or invent a second one. One PUT, to exactly the path built
     from the fixed job constant."""
@@ -156,7 +156,7 @@ def test_the_content_type_is_prometheus_clients_own_exposition_type() -> None:
 
 
 def test_a_transport_failure_answers_a_string_and_does_not_raise() -> None:
-    """The plan's unhappy path, half one: a Pushgateway that is unreachable. Catches
+    """The unhappy path, half one: a Pushgateway that is unreachable. Catches
     `httpx.ConnectError` escaping `push_metrics` and aborting the whole CLI run over a
     metrics side-channel that was never load-bearing for the run's own exit code."""
     transport = Transport(httpx.ConnectError("connection refused"))
@@ -168,7 +168,7 @@ def test_a_transport_failure_answers_a_string_and_does_not_raise() -> None:
 
 
 def test_a_non_2xx_response_answers_a_string_and_does_not_raise() -> None:
-    """The plan's unhappy path, half two: a Pushgateway that answers but refuses the push (a
+    """The unhappy path, half two: a Pushgateway that answers but refuses the push (a
     500, or a 400 on a malformed job label). Catches an implementation that only guards the
     transport call and lets `response.raise_for_status()` propagate on a non-2xx reply."""
     transport = Transport(httpx.Response(500, text="internal error"))

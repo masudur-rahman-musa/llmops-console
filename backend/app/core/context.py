@@ -33,7 +33,7 @@ class RequestContext(BaseModel):
     here. The user id is `u_` and 32 hex characters, checked in `app.api.deps`, and
     only the help desk can map it to a person.
     A test compares the field set exactly, so a field added here goes red rather
-    than quietly reaching a trace; that red is the rule, not a stale expectation
+    than quietly reaching a trace; that red is intended, not a stale expectation
     to update.
     """
 

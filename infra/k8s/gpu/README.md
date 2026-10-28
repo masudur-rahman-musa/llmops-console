@@ -49,7 +49,7 @@ selector can name. `kubectl port-forward` is not an alternative: its traffic is
 sourced from the node too, and k3s drops it against a pod-selector rule.
 
 It is a widening, and a deliberate one. The host lives about four hours and is
-destroyed with the run, the rule names one port, and a design note records it. The
+destroyed with the run, and the rule names one port. The
 long-lived cluster carries neither object: the root build does not include this
 directory.
 

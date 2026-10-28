@@ -1,6 +1,6 @@
 """Pool timeouts: the wait cap and the statement timeout.
 
-An earlier change adds three constants to `app.storage.db`: a pool wait timeout, a
+`app.storage.db` carries three constants: a pool wait timeout, a
 connect timeout and a statement timeout so a slow or stuck database gives up in
 seconds rather than holding a request forever.
 

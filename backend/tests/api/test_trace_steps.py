@@ -11,7 +11,7 @@ The semantic rows lean on a stub embedder whose vector the test sets. The cosine
 two vectors is then a fact of the test, chosen to be a long decimal (0.957826...) so the
 "rounded down" rule is visible: rounding to nearest would read 0.958.
 
-Things the plan does not pin are left unpinned here: the auth Input of a refused request,
+Things not specified are left unpinned here: the auth Input of a refused request,
 and the singular form of a count of one.
 """
 

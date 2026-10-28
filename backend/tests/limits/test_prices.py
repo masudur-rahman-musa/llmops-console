@@ -109,7 +109,7 @@ class PriceWriter(Protocol):
 def price_file(tmp_path: Path) -> PriceWriter:
     """Write a price file verbatim.
 
-    Raw text rather than a dumped mapping, because a project rule's trailing
+    Raw text rather than a dumped mapping, because the project's trailing
     whitespace rows and the `!!python/object/apply` row are properties of the
     BYTES, and a round trip through `yaml.safe_dump` would erase all four.
     """
@@ -153,7 +153,7 @@ def instant(value: str) -> datetime:
     return datetime.fromisoformat(value).replace(tzinfo=UTC)
 
 
-# a project rule: every rejection input below is tried with each of these
+# Every rejection input below is tried with each of these
 # appended, so a loader that strips or normalises the text before validating
 # cannot pass three rows and fail the fourth unnoticed.
 TRAILING: list[tuple[str, str]] = [
@@ -497,7 +497,7 @@ def test_a_key_whose_entries_are_all_future_dated_selects_nothing(
 
 def test_a_key_the_table_does_not_carry_selects_nothing(price_file: PriceWriter) -> None:
     """Catches a `price_for` that indexes `table.prices[key]` and raises `KeyError`, which
-    is the one behaviour decision C forbids: this runs on every served request, so a
+    is the one behaviour that is forbidden: this runs on every served request, so a
     missing price must never be able to change a status code."""
     path = price_file(ASCENDING)
     table = load_prices(path)
@@ -576,12 +576,11 @@ def test_the_shipped_price_file_loads() -> None:
 
 
 def test_the_shipped_prices_cover_every_pair_the_shipped_routing_can_resolve() -> None:
-    """Catches a model added to `routing.yaml` with no price row - the drift risk section 5
-    names - which otherwise surfaces as `unpriced` rows on real traffic rather than at
-    `make verify`. The key set is DERIVED from the loaded policy, aliases and per-tenant
-    overrides both, so no hand-written list in this file can go stale behind a routing
-    change; the non-emptiness assertion is what stops a derivation that silently returns
-    nothing from passing this vacuously."""
+    """Catches a model added to `routing.yaml` with no price row - the drift risk - which otherwise
+    surfaces as `unpriced` rows on real traffic rather than at `make verify`. The key set is DERIVED
+    from the loaded policy, aliases and per-tenant overrides both, so no hand-written list in this
+    file can go stale behind a routing change; the non-emptiness assertion is what stops a
+    derivation that silently returns nothing from passing this vacuously."""
     policy = load_policy(SHIPPED_POLICY_PATH, SHIPPED_PROVIDERS_DIR)
     table = shipped_table()
 
@@ -726,7 +725,7 @@ SELF_HOSTED_PROVIDERS = ["local_embed"]
 
 @pytest.mark.parametrize("provider", SELF_HOSTED_PROVIDERS)
 def test_a_self_hosted_provider_is_priced_at_exactly_zero(provider: str) -> None:
-    """Catches decision D being dropped or softened: the self-hosted embedding server
+    """Catches the behaviour being dropped or softened: the self-hosted embedding server
     left unpriced, so every embedding books `unpriced`, or a
     self-hosted rate written as a per-token guess rather than the 0.0 its marginal API
     spend actually is. Asserted against the SHIPPED file, because that is the one a

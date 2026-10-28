@@ -9,18 +9,18 @@ is dialled, and does every path that books a ledger row debit the token bucket".
 No backing service. The app is built with no Redis URL, so
 `app.state.rate_limit_store` is the in-process twin; every case here wraps it in
 `RecordingRateLimitStore`, which is the only way to tell "debited zero tokens"
-(what a cache hit owes) from "did not debit at all" (a call site the plan missed).
+(what a cache hit owes) from "did not debit at all" (a call site that was missed).
 The store is reached by NAME, `app.state.rate_limit_store`, never by shape: this
 app already holds several collaborators, and selecting one of them by its methods
-is what a project rule exists for.
+is how the wrong one gets picked.
 
 THE TWIN IS ONLY EVIDENCE ABOUT THE SHIPPED STORE BECAUSE OF THE DIFFERENTIAL.
 `RedisRateLimitStore` runs a Lua script no case here can exercise, and
 tests/limits/test_redis_ratelimit.py asserts the two stores answer identically
 over one interleaved sequence. Without that, every refusal below would be a
-statement about code a cluster does not run (section 5's second risk).
+statement about code a cluster does not run.
 
-a project rule: one app for the module, built once. Per-test isolation is a
+One app for the module, built once. Per-test isolation is a
 fresh `rate_limit_store`, `budget_store`, `cost_ledger`, `response_cache` and
 `semantic_cache` on `app.state` and the stubs' recorded calls cleared - never a
 new app.
@@ -38,7 +38,7 @@ Three arrangements are worth reading before the assertions:
   `semantic_cache: true`, so a chat request here really does embed through the
   `embed` alias against `local`; that is what makes the semantic-hit path
   reachable, and it is also what would expose an implementation that took a
-  second request token for the internal embedding (a project rule's fourth
+  second request token for the internal embedding (the project's fourth
   target).
 
 The contract these cases are written against, before it exists:
@@ -57,10 +57,10 @@ The contract these cases are written against, before it exists:
   `debit_budget`, and books `0` for a cached row and `input_tokens +
   output_tokens` for every other one;
 * a `None` from the store is "cannot answer": the request is SERVED and the
-  failure is logged at ERROR with the tenant and the dimension (decision E);
+  failure is logged at ERROR with the tenant and the dimension;
 * `RateLimited` carries `retry_after_seconds` and `gateway/errors.py` emits
   `Retry-After` in whole seconds for a typed error that carries one, and for no
-  other response (decision D).
+  other response.
 """
 
 from __future__ import annotations
@@ -137,15 +137,15 @@ here meaningless."""
 
 REQUEST_RATE = 2.0
 TOKEN_RATE = 2000.0
-"""`RPM / 60` and `TPM / 60`, the two refill rates (criterion 3)."""
+"""`RPM / 60` and `TPM / 60`, the two refill rates."""
 
 CHECK_COST = 1
 """What one request costs each bucket at the check.
 
-One from the request bucket is decision C: a request is countable before it is
+One from the request bucket is intended: a request is countable before it is
 served, so the check and the debit are one atomic take. One from the TOKEN bucket
 is the probe that makes "this tenant has spent its minute's tokens" expressible at
-all - the real usage is not known until the provider has answered (decision B), so
+all - the real usage is not known until the provider has answered, so
 the check asks whether a single token is left and the debit follows from
 `book_cost`. One token in 120,000 is what that probe costs.
 """
@@ -379,7 +379,7 @@ def test_the_shipped_rate_limit_for_this_tenant_is_the_one_these_cases_arrange_a
 
     Catches an edit to `routing.yaml` that changes `evals`'s ceilings, after which the
     drained arrangement would leave tokens in the bucket and every refusal case would
-    pass by serving. It is also section 8's other half: two FIXTURE policies had their
+    pass by serving. It also covers a second concern: two FIXTURE policies had their
     ceilings raised so unrelated modules cannot trip over enforcement, and this case is
     what stops that raise from quietly reaching production - the shipped file is asserted
     here and nowhere else. The derived rates are asserted too, because the arrangements
@@ -393,14 +393,14 @@ def test_the_shipped_rate_limit_for_this_tenant_is_the_one_these_cases_arrange_a
 
 
 # --------------------------------------------------------------------------
-# the refusal (criteria 1 and 2)
+# the refusal
 # --------------------------------------------------------------------------
 
 
 def test_a_tenant_over_its_request_rate_is_429_rate_limited(
     limit_client: TestClient, limit_store: RecordingRateLimitStore
 ) -> None:
-    """Criterion 1, end to end, at the inclusive boundary.
+    """End to end, at the inclusive boundary.
 
     The bucket is drained to EXACTLY zero, which is the row a `>` catches: a check written
     "below zero" serves this request and the tenant gets 121 requests a minute out of a
@@ -431,7 +431,7 @@ def test_a_tenant_with_one_request_token_left_is_served(
 def test_a_tenant_over_its_token_rate_is_429_rate_limited(
     limit_client: TestClient, limit_store: RecordingRateLimitStore
 ) -> None:
-    """Criterion 2. The REQUEST bucket is left full, so the request ceiling cannot be what
+    """The REQUEST bucket is left full, so the request ceiling cannot be what
     refuses: only the token bucket is empty, and removing the token half of the check is
     the single thing that flips this to a 200. Catches a `check_rate_limit` that reads
     `rpm` and ignores `tpm` entirely, which is the likelier half to forget because it is
@@ -476,7 +476,7 @@ def test_a_streamed_request_over_rate_is_refused_before_the_stream_opens(
 def test_a_refused_request_dials_no_provider_and_books_no_row(
     limit_client: TestClient, limit_store: RecordingRateLimitStore, chat_stub: StubAdapter
 ) -> None:
-    """Criterion 1's other three halves in the arrangement that can see them.
+    """The requirement's other three halves in the arrangement that can see them.
 
     The request is exact-cache eligible and identical to one sent afterwards against a
     full bucket, so "no cache entry was stored" is asserted as the LATER request MISSING -
@@ -523,12 +523,12 @@ def test_a_refused_request_takes_nothing_from_the_token_bucket(
 def test_the_bucket_refills_and_the_next_request_is_served(
     limit_client: TestClient, limit_store: RecordingRateLimitStore
 ) -> None:
-    """Criterion 3 through the route, with the clock injected rather than slept for.
+    """The requirement through the route, with the clock injected rather than slept for.
 
     A tenant refused at t is served again once one whole token has refilled: at 2 tokens a
     second that is half a second, and a quarter second is deliberately not enough. Catches
     a fixed-window counter behind the route, which would refuse both of these and only
-    serve on the minute boundary - the 2x burst decision A rejects, seen from the other
+    serve on the minute boundary - the 2x burst that is rejected, seen from the other
     side. The middle request is what stops this passing against a limiter that simply
     forgets its state between requests.
 
@@ -551,14 +551,14 @@ def test_the_bucket_refills_and_the_next_request_is_served(
 
 
 # --------------------------------------------------------------------------
-# the order (criterion 6)
+# the order
 # --------------------------------------------------------------------------
 
 
 def test_the_rate_check_runs_before_the_budget_check(
     limit_client: TestClient, limit_store: RecordingRateLimitStore
 ) -> None:
-    """Criterion 6, stated as the only arrangement that can see an ORDER rather than a
+    """Stated as the only arrangement that can see an ORDER rather than a
     presence: a tenant over BOTH.
 
     Both refusals are 429s, so the status cannot distinguish them and the typed `code` is
@@ -582,18 +582,18 @@ def test_the_rate_check_runs_before_the_budget_check(
 
 
 # --------------------------------------------------------------------------
-# Retry-After (criterion 7, decision D)
+# Retry-After
 # --------------------------------------------------------------------------
 
 
 def test_the_429_carries_retry_after_in_whole_seconds(
     limit_client: TestClient, limit_store: RecordingRateLimitStore
 ) -> None:
-    """Criterion 7. At `rpm: 120` one token lands every half second, and `Retry-After` is
+    """At `rpm: 120` one token lands every half second, and `Retry-After` is
     defined in whole seconds, so the value is 1.
 
     Catches the header being absent, which leaves every client guessing and is the reason
-    decision D exists. Catches a float (`0.5`), which is not a legal `Retry-After` and
+    the header exists. Catches a float (`0.5`), which is not a legal `Retry-After` and
     breaks a client that parses it as an integer. Catches `0`, which tells a client to
     retry immediately and turns one refusal into a storm. The rounding-up boundary itself
     is a pure function and is pinned across nine rows in tests/limits/test_ratelimit.py;
@@ -609,7 +609,7 @@ def test_the_429_carries_retry_after_in_whole_seconds(
 def test_a_served_response_carries_no_retry_after(
     limit_client: TestClient, limit_store: RecordingRateLimitStore
 ) -> None:
-    """Decision D's "on this error only", first half. Catches a header added from the
+    """The "on this error only" claim, first half. Catches a header added from the
     store's answer unconditionally, which would tell a client to back off from a request
     that was served - the one instruction a working gateway must not give."""
     response = post(limit_client, chat_body(model=ALIAS))
@@ -621,7 +621,7 @@ def test_a_served_response_carries_no_retry_after(
 def test_a_budget_refusal_carries_no_retry_after(
     limit_client: TestClient, limit_store: RecordingRateLimitStore
 ) -> None:
-    """Decision D's "on this error only", second half, and the row that makes the claim
+    """The "on this error only" claim, second half, and the row that makes the claim
     non-trivial: `BUDGET_EXCEEDED` is also a 429.
 
     Catches the header added in `error_response` by STATUS - `if http_status == 429` - the
@@ -651,15 +651,15 @@ def test_a_tenant_refusal_carries_no_retry_after(limit_client: TestClient) -> No
 
 
 # --------------------------------------------------------------------------
-# an unreachable limiter (criterion 4, decision E)
+# an unreachable limiter
 # --------------------------------------------------------------------------
 
 
 def test_an_unreachable_limiter_serves_and_refuses_nobody(limit_client: TestClient) -> None:
-    """Criterion 4 end to end. Catches a route that lets the store's failure reach the
+    """The requirement end to end. Catches a route that lets the store's failure reach the
     client as a 500 on a request every provider would have served, and catches the
     fail-CLOSED over-correction: reading `None` as "refused" turns a Redis blip into a
-    total outage, which is precisely the failure decision E weighed and rejected. The
+    total outage, which is precisely the failure that was weighed and rejected. The
     served path is exercised to completion - a row is booked - so a `debit_tokens` that
     raises on a `None` from the same store is caught here too, on the path where the
     request has already been paid for."""
@@ -674,9 +674,9 @@ def test_an_unreachable_limiter_serves_and_refuses_nobody(limit_client: TestClie
 def test_every_swallowed_failure_is_logged_with_the_tenant_and_the_dimension(
     limit_client: TestClient, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """The other half of decision E, and the half that is easy to leave out.
+    """The other half, and the half that is easy to leave out.
 
-    Failing open means a ceiling silently stops being enforced, and decision F adds no
+    Failing open means a ceiling silently stops being enforced, and the limiter adds no
     metric family, so this log is the ONLY place the window is visible at all. Catches a
     bare `except redis.RedisError: return None`, which is the obvious implementation and
     leaves an operator unable to tell a quiet minute from an unenforced one. Both
@@ -701,7 +701,7 @@ def test_every_swallowed_failure_is_logged_with_the_tenant_and_the_dimension(
 
 
 # --------------------------------------------------------------------------
-# a tenant the policy does not carry (criterion 5)
+# a tenant the policy does not carry
 # --------------------------------------------------------------------------
 
 
@@ -725,14 +725,14 @@ def test_a_tenant_the_policy_does_not_carry_is_still_the_resolvers_403(
 
 
 # --------------------------------------------------------------------------
-# the check's own cost (decision C)
+# the check's own cost
 # --------------------------------------------------------------------------
 
 
 def test_the_check_takes_one_from_each_bucket_at_the_tenants_own_ceiling(
     limit_client: TestClient, limit_store: RecordingRateLimitStore
 ) -> None:
-    """Decision C, and the capacities that go with it.
+    """And the capacities that go with it.
 
     Catches a check that takes from the request bucket only, which would leave `tpm`
     unenforceable until a debit happened to empty it; a check that takes MORE than one,
@@ -764,7 +764,7 @@ def test_one_http_request_takes_exactly_one_request_token(
 
 
 # --------------------------------------------------------------------------
-# the token debit (criterion 2, decision B)
+# the token debit
 # --------------------------------------------------------------------------
 
 Send = Callable[[TestClient, RecordingRateLimitStore], Response]
@@ -864,7 +864,7 @@ def test_a_cache_hit_debits_zero_tokens(
     limit_client: TestClient, limit_store: RecordingRateLimitStore
 ) -> None:
     """A replayed answer bought no tokens from anybody, so it moves `tpm` by nothing - and it
-    still moves it, once (criterion 2).
+    still moves it, once.
 
     This is the row where the obvious implementation is wrong. A cached ledger row KEEPS
     the replayed answer's token counts on purpose
@@ -905,21 +905,21 @@ def test_the_debit_is_booked_under_the_requesting_tenant(
 
 
 # --------------------------------------------------------------------------
-# the neighbouring family (decision F)
+# the neighbouring family
 # --------------------------------------------------------------------------
 
 
 def test_a_rate_refusal_is_still_counted_once(
     limit_client: TestClient, limit_store: RecordingRateLimitStore, metrics: MetricDelta
 ) -> None:
-    """Decision F: no new metric family, because `gateway_requests_total{status}` already
+    """No new metric family, because `gateway_requests_total{status}` already
     counts the 429 - which is only true if the refusal is counted.
 
     A check inserted at the very top of both routes is exactly the kind of early return
     that skips or double-counts the request counter. Catches a `check_rate_limit` that
     answers before the metrics record is opened, which would leave every rate refusal
-    uncounted and every error-rate panel blind to a rate-limit incident - and decision F's
-    whole argument for adding no family rests on this counter seeing them."""
+    uncounted and every error-rate panel blind to a rate-limit incident - and the whole
+    argument for adding no family rests on this counter seeing them."""
     drain_requests(limit_store)
 
     refused = post(limit_client, chat_body(model=ALIAS))
@@ -965,7 +965,7 @@ def test_create_app_uses_the_redis_rate_limit_store_when_a_redis_url_is_configur
     """Catches a factory that keeps a tenant's buckets in process memory while Redis is
     configured: two gateway replicas would then each grant the full `rpm`, so a tenant
     would be served twice its published rate and no test with one replica could ever see
-    it except here at the wiring - which is also the race decision A's Lua script exists
+    it except here at the wiring - which is also the race the Lua script exists
     to close."""
     app = create_app(wiring_settings(redis_url=UNCONNECTED_REDIS_URL), NO_PROVIDER_KEYS)
 

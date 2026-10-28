@@ -12,7 +12,7 @@ half alone is satisfiable by a constant:
 * a redact class WITH personal data -> the placeholder reaches the adapter and
   `X-Gateway-Redacted` is `true`;
 * a redact class WITHOUT any -> the text is untouched and the header is `false`
-  (decision C: the header is about the payload, not about the rule);
+  (the header is about the payload, not about the policy);
 * a non-redact class WITH personal data -> the raw text reaches the adapter and
   the header is `false`.
 
@@ -119,7 +119,8 @@ def inline_embeddings_client(
 def inline_batch_stub() -> EmbeddingStubAdapter:
     """A second embedding stub answering THREE vectors, for the multi-input rows.
 
-    The route refuses an answer carrying fewer vectors than the request had inputs, so a three-item batch needs a stub that answers three; widening the
+    The route refuses an answer carrying fewer vectors than the request had inputs, so a
+    three-item batch needs a stub that answers three; widening the
     single-input stub instead would make every one-item row assert against an
     over-long answer.
     """
@@ -184,9 +185,9 @@ def test_gateway_headers_reports_the_redaction_outcome(
 
 def test_the_header_set_is_still_exactly_five(policy: Policy) -> None:
     """Catches a redaction outcome added as a SIXTH header rather than filling the
-    existing one: the five are a published contract (#9).
+    existing one: the five are a published contract.
 
-    Five, still, after an earlier change: `X-Gateway-Cost-USD` is the sixth header a non-streamed
+    Five, still: `X-Gateway-Cost-USD` is the sixth header a non-streamed
     ANSWER carries, and the route sets it on the response once the ledger has priced the
     call. This builder runs before a provider is dialled, so it cannot know the number
     and does not carry it - which is also what keeps the header off a stream."""
@@ -225,7 +226,7 @@ def test_the_chat_adapter_receives_only_what_the_class_allows(
 ) -> None:
     """Catches the three inversions at once: no redaction on a redact class (the raw
     address leaves the box), redaction on a non-redact class (a `public` caller gets
-    placeholders it never asked for), and a header wired to the rule rather than to the
+    placeholders it never asked for), and a header wired to the policy rather than to the
     payload - the clean rows on a redact class are what separate those last two."""
     response = post_chat(
         inline_chat_client,
@@ -357,7 +358,7 @@ def test_a_refused_request_is_still_attributed_to_its_resolved_candidate(
     """Catches the resolution labelling being done only inside the fallback loop, which
     sits after redaction. Redaction can REFUSE a request - the case above is the 422 - and
     such a request would then be counted under an empty alias and provider while
-    the resolver had already decided both: the design's per-alias error panel would
+    the resolver had already decided both: the per-alias error panel would
     show nothing during a redaction-side incident, and a trace search by alias would miss
     every refused request. The resolution happens before redaction either way, so an
     unlabelled row here is a label LOST rather than one that was never known."""
@@ -380,9 +381,9 @@ def test_a_refused_request_is_still_attributed_to_its_resolved_candidate(
 def test_the_redaction_cap_does_not_apply_on_a_non_redact_class(
     inline_chat_client: TestClient, inline_chat_stub: StubAdapter
 ) -> None:
-    """Catches a 16384 cap applied to every chat request rather than to the strings this
-    plan redacts: on `public` nothing is redacted, so an over-cap message must still be
-    served exactly as before this plan."""
+    """Catches a 16384 cap applied to every chat request rather than to the strings
+    that get redacted: on `public` nothing is redacted, so an over-cap message must still be
+    served exactly as before redaction existed."""
     over_cap = "a" * (MAX_REDACTION_INPUT_CHARS + 1)
 
     response = post_chat(
@@ -409,7 +410,7 @@ def test_the_embedding_adapter_receives_only_what_the_class_allows(
     outbound: str,
     header: str,
 ) -> None:
-    """Catches redaction wired into the chat route alone (decision B): `confidential`
+    """Catches redaction wired into the chat route alone: `confidential`
     redacts, so an unredacted embedding input leaves the box on the route
     whose batches are largest, and the same three inversions apply here."""
     response = post_embeddings(
@@ -447,7 +448,7 @@ def test_an_embedding_input_over_the_routes_own_cap_is_422_first(
     inline_embedding_stub: EmbeddingStubAdapter,
     data_class: str,
 ) -> None:
-    """Catches an inline cap that REPLACED the route's 8192-character cap from an earlier change.
+    """Catches an inline cap that REPLACED the route's 8192-character cap.
 
     The 16384/16385 pair is unreachable on this route: `MAX_EMBEDDING_INPUT_CHARS` is
     8192, so no input can reach the redaction cap at all, and the pair is pinned on the
@@ -486,7 +487,7 @@ def test_an_embedding_input_at_the_routes_cap_is_accepted_on_a_redact_class(
 def test_a_full_batch_of_capped_inputs_is_accepted_on_a_redact_class(
     inline_batch_client: TestClient, inline_batch_stub: EmbeddingStubAdapter
 ) -> None:
-    """Catches a cap applied to the JOINED batch (decision F): 64 inputs of 8192
+    """Catches a cap applied to the JOINED batch: 64 inputs of 8192
     characters is the largest legal request this route has, and a joined redaction cap
     would 422 it while every single-input row above stayed green."""
     batch = ["a" * MAX_EMBEDDING_INPUT_CHARS] * 3
@@ -630,7 +631,7 @@ def test_a_person_redaction_is_counted_under_the_person_kind(
     inline_chat_client: TestClient, metrics: MetricDelta
 ) -> None:
     """Catches a counter that files a directory match under an existing kind label, or
-    under none: `gateway_redactions_total` is what the design's redaction panel sums, and a
+    under none: `gateway_redactions_total` is what the redaction panel sums, and a
     tenth kind counted as `EMAIL` would make the panel report a detector that is not the
     one that fired. The message carries an address too, so a single kindless increment
     cannot pass, and `moved_series` is what says no THIRD label appeared."""
@@ -651,7 +652,7 @@ def test_a_person_redaction_is_counted_under_the_person_kind(
 def test_an_unreachable_directory_store_is_502_with_no_outbound_call(
     unavailable_directory_chat_client: TestClient,
 ) -> None:
-    """Catches the failure mode decision H exists to forbid: a route that reads the
+    """Catches the failure mode that must never happen: a route that reads the
     directory in a `try` and carries on with an empty one would serve this request with
     the tenant's names in the clear, and the response would still say
     `X-Gateway-Redacted: true`. Redaction is deny-by-default, so the only

@@ -4,15 +4,14 @@
 # build has to pass `kubeconform -strict` with no `-ignore-missing-schemas`, and
 # a custom resource has no stock schema to validate against.
 #
-# An earlier change adds a sixth scrape target (cert-manager, decision A) and two keys
-# this ConfigMap did not carry before: `rule_files`, naming the second data key
-# below (`alert-rules.yml`, a copy of `../../infra/k8s/monitoring/alerts/rules.yml` -
-# a design note's alternative of a `configMapGenerator` for it was not taken, so
-# there is exactly one ConfigMap in `monitoring` for Prometheus rather than two
+# Beyond the scrape targets, this ConfigMap carries two further keys: `rule_files`,
+# naming the second data key below (`alert-rules.yml`, a copy of
+# `../../infra/k8s/monitoring/alerts/rules.yml` - a `configMapGenerator` for it was not
+# used, so there is exactly one ConfigMap in `monitoring` for Prometheus rather than two
 # - see `infra/tests/infra/test_k8s_alerting.py`'s module docstring), and `alerting`,
-# naming `Service/alertmanager`'s DNS as the one place firing alerts go. An earlier change
-# adds a seventh, `evals-pushgateway`, the Pushgateway the nightly eval
-# workflow pushes `gateway_eval_*` to.
+# naming `Service/alertmanager`'s DNS as the one place firing alerts go. One of the
+# scrape targets is `evals-pushgateway`, the Pushgateway the nightly eval workflow
+# pushes `gateway_eval_*` to.
 #
 # Scraping is now SEVEN static targets by Service DNS, so this pod needs no
 # ServiceAccount and no RBAC at all: nothing here may read the API server.
@@ -113,13 +112,12 @@ data:
   # A literal copy of `../../infra/k8s/monitoring/alerts/rules.yml`. Held as
   # its own key, mounted next to `prometheus.yml` in the same ConfigMap, rather
   # than a `configMapGenerator` of its own - the same object-count reasoning
-  # a design note already gives for keeping the dashboards in one generated
-  # ConfigMap applies here to keep `monitoring`'s inventory at exactly the
-  # three new objects this plan's manifest adds
+  # that keeps the dashboards in one generated ConfigMap applies here to keep
+  # `monitoring`'s inventory small
   # (`infra/tests/infra/test_k8s_alerting.py::test_the_monitoring_namespace_emits_alertmanager_and_nothing_else_new`).
   # A second copy is the tradeoff: nothing here enforces the two staying
-  # byte-identical, the same limitation a design note names for its own duplicated
-  # path.
+  # byte-identical, the same limitation the duplicated
+  # dashboards path has.
   alert-rules.yml: |
     groups:
       - name: gateway
@@ -131,7 +129,6 @@ data:
               severity: critical
             annotations:
               summary: The gateway has been unreachable by its own scrape target for 2 minutes.
-              runbook: dev/ops/runbook.md#gatewaydown
 
           - alert: HighErrorRate
             expr: |
@@ -144,7 +141,6 @@ data:
               severity: warning
             annotations:
               summary: More than 2% of gateway requests have returned a 5xx status over 10 minutes.
-              runbook: dev/ops/runbook.md#higherrorrate
 
           - alert: LatencyOverSLO
             expr: |
@@ -157,7 +153,6 @@ data:
               severity: warning
             annotations:
               summary: The gateway's p95 request latency has stayed above 6 seconds for 15 minutes.
-              runbook: dev/ops/runbook.md#latencyoverslo
 
           - alert: ProviderCircuitOpen
             expr: gateway_circuit_state == 2
@@ -166,7 +161,6 @@ data:
               severity: warning
             annotations:
               summary: A provider's circuit breaker has stayed open for 5 minutes.
-              runbook: dev/ops/runbook.md#providercircuitopen
 
           - alert: BudgetWarning
             expr: gateway_budget_ratio >= 0.8
@@ -174,7 +168,6 @@ data:
               severity: warning
             annotations:
               summary: A tenant has consumed at least 80% of its period budget.
-              runbook: dev/ops/runbook.md#budgetwarning
 
           - alert: BudgetExceeded
             expr: gateway_budget_ratio >= 1.0
@@ -182,7 +175,6 @@ data:
               severity: critical
             annotations:
               summary: A tenant has consumed its entire period budget.
-              runbook: dev/ops/runbook.md#budgetexceeded
 
           - alert: NightlyEvalRegression
             expr: gateway_eval_check_score - quantile_over_time(0.5, gateway_eval_check_score[7d]) < -2
@@ -190,7 +182,6 @@ data:
               severity: warning
             annotations:
               summary: The nightly eval's check score dropped more than 2 points against its 7-day median.
-              runbook: dev/ops/runbook.md#nightlyevalregression
 
           - alert: DiskSpaceLow
             expr: node_filesystem_avail_bytes{fstype!="tmpfs"} / node_filesystem_size_bytes{fstype!="tmpfs"} < 0.2
@@ -198,7 +189,6 @@ data:
               severity: warning
             annotations:
               summary: A node's free disk space has dropped below 20% on a real filesystem.
-              runbook: dev/ops/runbook.md#diskspacelow
 
           - alert: PodCrashLooping
             expr: increase(kube_pod_container_status_restarts_total[15m]) >= 3
@@ -206,7 +196,6 @@ data:
               severity: warning
             annotations:
               summary: A container has restarted 3 or more times in the last 15 minutes.
-              runbook: dev/ops/runbook.md#podcrashlooping
 
           - alert: BackupJobFailed
             expr: kube_job_status_failed{job_name=~".*-backup.*"} > 0
@@ -214,7 +203,6 @@ data:
               severity: critical
             annotations:
               summary: A backup CronJob's Job has failed.
-              runbook: dev/ops/runbook.md#backupjobfailed
 
           - alert: CertificateExpiringSoon
             expr: certmanager_certificate_expiration_timestamp_seconds - time() < 14 * 86400
@@ -222,7 +210,6 @@ data:
               severity: warning
             annotations:
               summary: A cert-manager certificate expires in less than 14 days.
-              runbook: dev/ops/runbook.md#certificateexpiringsoon
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

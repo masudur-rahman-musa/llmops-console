@@ -3,7 +3,6 @@
 .github/
 backend/
 web/
-dev/
 infra/
 docs/
 .*
