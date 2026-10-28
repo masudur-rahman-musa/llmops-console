@@ -2,9 +2,8 @@ name: ci
 on:
   pull_request:
   push:
-    # Not on `dev`: pushes there run nothing, to save Actions minutes. `ci` runs
-    # on the pull request from `dev` into `main` and after the merge, before
-    # anything deploys.
+    # Runs on every pull request and on each push to `main`, before anything
+    # deploys.
     branches: [main]
 
 concurrency:

@@ -80,7 +80,7 @@ jobs:
           file: backend/Dockerfile
           platforms: linux/amd64
           push: true
-          tags: ghcr.io/masudur-rahman-musa/ai-operations-console/gateway:${{ github.sha }}
+          tags: ghcr.io/masudur-rahman-musa/llmops-console/gateway:${{ github.sha }}
           sbom: true
           provenance: mode=max
           # Scoped per image: two jobs writing one unscoped cache overwrite each
@@ -95,7 +95,7 @@ jobs:
         run: |
           set -euo pipefail
           docker buildx imagetools inspect \
-            "ghcr.io/masudur-rahman-musa/ai-operations-console/gateway:${{ github.sha }}" \
+            "ghcr.io/masudur-rahman-musa/llmops-console/gateway:${{ github.sha }}" \
             --format '{{ json .SBOM }}' > "$SBOM_FILE"
 
       # Uploaded BEFORE the scan, and on `always()`: a run whose Trivy step fails is
@@ -119,7 +119,7 @@ jobs:
       - name: Scan the pushed image
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ghcr.io/masudur-rahman-musa/ai-operations-console/gateway:${{ github.sha }}
+          image-ref: ghcr.io/masudur-rahman-musa/llmops-console/gateway:${{ github.sha }}
           severity: CRITICAL
           exit-code: "1"
           ignore-unfixed: true
@@ -157,7 +157,7 @@ jobs:
           file: web/Dockerfile
           platforms: linux/amd64
           push: true
-          tags: ghcr.io/masudur-rahman-musa/ai-operations-console/console:${{ github.sha }}
+          tags: ghcr.io/masudur-rahman-musa/llmops-console/console:${{ github.sha }}
           sbom: true
           provenance: mode=max
           cache-from: type=gha,scope=console
@@ -167,7 +167,7 @@ jobs:
         run: |
           set -euo pipefail
           docker buildx imagetools inspect \
-            "ghcr.io/masudur-rahman-musa/ai-operations-console/console:${{ github.sha }}" \
+            "ghcr.io/masudur-rahman-musa/llmops-console/console:${{ github.sha }}" \
             --format '{{ json .SBOM }}' > "$SBOM_FILE"
 
       # Named apart from the gateway's: `upload-artifact@v4` refuses a second
@@ -183,7 +183,7 @@ jobs:
       - name: Scan the pushed image
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ghcr.io/masudur-rahman-musa/ai-operations-console/console:${{ github.sha }}
+          image-ref: ghcr.io/masudur-rahman-musa/llmops-console/console:${{ github.sha }}
           severity: CRITICAL
           exit-code: "1"
           ignore-unfixed: true

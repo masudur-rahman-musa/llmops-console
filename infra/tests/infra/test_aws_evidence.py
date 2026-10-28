@@ -97,7 +97,7 @@ BACKUPS_ROLE_ARN = "arn:aws:iam::123456789012:role/aioc-evidence-backups"
 REDIS_URL = (
     "OPSCONSOLE_REDIS_URL=rediss://master.aioc-evidence.abc123.euc1.cache.amazonaws.com:6379/0"
 )
-GATEWAY_IMAGE = "ghcr.io/masudur-rahman-musa/ai-operations-console/gateway"
+GATEWAY_IMAGE = "ghcr.io/masudur-rahman-musa/llmops-console/gateway"
 
 #: The literals the Secret on stdin carries (criteria 6 to 8).
 SECRET_LITERALS = (

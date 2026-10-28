@@ -36,12 +36,12 @@ resources:
 # the CAX21 needs.
 images:
   - name: gateway
-    newName: ghcr.io/masudur-rahman-musa/ai-operations-console/gateway
+    newName: ghcr.io/masudur-rahman-musa/llmops-console/gateway
     newTag: 0.0.0-unbuilt
   # The console, built by `build.yml`'s `console` job and set by `deploy.yml`
   # beside the gateway, on the same terms.
   - name: console
-    newName: ghcr.io/masudur-rahman-musa/ai-operations-console/console
+    newName: ghcr.io/masudur-rahman-musa/llmops-console/console
     newTag: 0.0.0-unbuilt
   - name: llama
     newName: ghcr.io/ggml-org/llama.cpp
@@ -56,14 +56,14 @@ images:
   # deploys: `deploy.yml` here rewrites the `gateway` tag only and never touches
   # these four.
   - name: helpdesk-agent-api
-    newName: ghcr.io/masudur-rahman-musa/ai-help-desk-governed-access/helpdesk-agent-api
+    newName: ghcr.io/masudur-rahman-musa/helpdesk-agentic-flow/helpdesk-agent-api
     newTag: 29a61ef774e7ebf4fe8cc173de44c2352555a66e
   - name: helpdesk-mcp-server
-    newName: ghcr.io/masudur-rahman-musa/ai-help-desk-governed-access/helpdesk-mcp-server
+    newName: ghcr.io/masudur-rahman-musa/helpdesk-agentic-flow/helpdesk-mcp-server
     newTag: 29a61ef774e7ebf4fe8cc173de44c2352555a66e
   - name: helpdesk-scheduler
-    newName: ghcr.io/masudur-rahman-musa/ai-help-desk-governed-access/helpdesk-scheduler
+    newName: ghcr.io/masudur-rahman-musa/helpdesk-agentic-flow/helpdesk-scheduler
     newTag: 29a61ef774e7ebf4fe8cc173de44c2352555a66e
   - name: helpdesk-web
-    newName: ghcr.io/masudur-rahman-musa/ai-help-desk-governed-access/helpdesk-web
+    newName: ghcr.io/masudur-rahman-musa/helpdesk-agentic-flow/helpdesk-web
     newTag: 29a61ef774e7ebf4fe8cc173de44c2352555a66e

@@ -244,7 +244,7 @@ CLUSTER_SCOPED_OBJECTS: frozenset[tuple[str, str]] = frozenset(
 #: `deploy.yml` rewrites the tag to the deployed SHA in the runner and commits nothing back,
 #: so this value is permanent here and an apply from a checkout fails on the pull, which is the
 #: intended direction.
-GATEWAY_IMAGE_REPOSITORY = "ghcr.io/masudur-rahman-musa/ai-operations-console/gateway"
+GATEWAY_IMAGE_REPOSITORY = "ghcr.io/masudur-rahman-musa/llmops-console/gateway"
 GATEWAY_IMAGE_TAG = "0.0.0-unbuilt"
 
 #: Decision D's refusal list. A floating tag in git is a cluster whose running code no commit
@@ -739,7 +739,7 @@ HELPDESK_ENV_FROM_SOURCES: dict[str, str] = {
 #: pointing two workloads at one image is visible. That repo tags every image with the full
 #: commit SHA and publishes no `latest`, so the tag is 40 hex characters or there is nothing to
 #: pull; `HELPDESK_IMAGE_TAG` is its `main` head, and a deploy bumps it.
-HELPDESK_IMAGE_REPOSITORY_PREFIX = "ghcr.io/masudur-rahman-musa/ai-help-desk-governed-access"
+HELPDESK_IMAGE_REPOSITORY_PREFIX = "ghcr.io/masudur-rahman-musa/helpdesk-agentic-flow"
 HELPDESK_IMAGE_TAG = "29a61ef774e7ebf4fe8cc173de44c2352555a66e"
 
 #: The shape that tag must keep: a full commit SHA, never an abbreviation and never a name. An
@@ -753,7 +753,7 @@ GHCR_PULL_SECRET = "ghcr-pull"
 #: An earlier change criterion 5: the console's own repository, beside `GATEWAY_IMAGE_REPOSITORY` above.
 #: `test_k8s_console.py` holds the same literal for its own cases; it is repeated here rather
 #: than imported, because that module imports this one.
-CONSOLE_IMAGE_REPOSITORY = "ghcr.io/masudur-rahman-musa/ai-operations-console/console"
+CONSOLE_IMAGE_REPOSITORY = "ghcr.io/masudur-rahman-musa/llmops-console/console"
 
 #: The file whose `images:` block an earlier change criterion 5 reads as written.
 APPS_KUSTOMIZATION = APPS_DIR / "kustomization.yaml"

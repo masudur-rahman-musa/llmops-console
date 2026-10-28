@@ -31,7 +31,7 @@ jobs:
       # beside this one, to read its cases.
       - uses: actions/checkout@v4
         with:
-          repository: masudur-rahman-musa/ai-help-desk-governed-access
+          repository: masudur-rahman-musa/helpdesk-agentic-flow
           token: ${{ secrets.HELPDESK_REPO_TOKEN }}
           path: helpdesk
       - uses: astral-sh/setup-uv@v5

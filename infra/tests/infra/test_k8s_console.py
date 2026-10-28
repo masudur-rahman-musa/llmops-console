@@ -111,7 +111,7 @@ CONSOLE_NAMED: frozenset[tuple[str, str, str]] = frozenset(
 )
 
 #: The image transformer entry, and the bare name the Deployment writes.
-CONSOLE_IMAGE_REPOSITORY = "ghcr.io/masudur-rahman-musa/ai-operations-console/console"
+CONSOLE_IMAGE_REPOSITORY = "ghcr.io/masudur-rahman-musa/llmops-console/console"
 CONSOLE_IMAGE_TAG = "0.0.0-unbuilt"
 
 #: The one port, by number and by name, on the container and on the Service.
