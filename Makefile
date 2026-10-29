@@ -147,7 +147,7 @@ migrate:    ## Apply the ledger migrations (safe to run twice)
 # RUN_ID=<id> continues a stopped run: cases already saved under that id are
 # skipped, and the reports folder is kept. Without it the folder starts empty.
 # The judge is held to the labels only once `calibration.json` exists.
-HELPDESK_DIR ?= ../ai-help-desk-governed-access
+HELPDESK_DIR ?= ../helpdesk-agentic-flow
 EVAL_HELPDESK = $(abspath $(HELPDESK_DIR))
 EVAL_CASES = $(EVAL_HELPDESK)/backend/evals/conversations/cases.jsonl
 EVAL_REPORTS = backend/evals/reports/local

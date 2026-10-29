@@ -102,7 +102,7 @@ from its `.env.example`, and runs `make eval` with `ANTHROPIC_API_KEY` from a Gi
 secret. Until a secret is set the job fails; it never skips.
 
 `make eval` does the whole run, the same on a laptop (`HELPDESK_DIR` names the help
-desk checkout, `../ai-help-desk-governed-access` by default; the key can be in
+desk checkout, `../helpdesk-agentic-flow` by default; the key can be in
 `backend/.env`):
 
 1. It makes two throwaway gateway keys, one per help desk tenant. The digests go to
