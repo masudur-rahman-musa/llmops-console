@@ -11,6 +11,7 @@ there: the other words are swept everywhere.
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -182,17 +183,37 @@ def named_paths(text: str) -> set[str]:
     return found
 
 
+def git_ignored(paths: list[str]) -> set[str]:
+    """The given repo-relative paths that git ignores, whether or not they exist. Each
+    is asked about as a file and as a folder, since a folder rule (`scratch/`) only
+    matches a path git knows is a folder."""
+    if not paths:
+        return set()
+    done = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "check-ignore", "--stdin"],
+        input="\n".join(form for path in paths for form in (path, path.rstrip("/") + "/")),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return {line.rstrip("/") for line in done.stdout.split()}
+
+
 def test_every_path_the_changed_files_name_exists() -> None:
     """Catches a doc or build file that still names `backend/config/prices.yaml`,
     `infra/k8s/apps/llama.yaml` or any other file that was deleted or moved, and a
     new path (the provider folders) that was written with a typo."""
-    missing: list[str] = []
+    absent: list[tuple[str, str]] = []
     for file_name in PATH_FILES:
         path = REPO_ROOT / file_name
         assert path.exists(), file_name
         for named in sorted(named_paths(path.read_text(encoding="utf-8"))):
             if not (REPO_ROOT / named).exists():
-                missing.append(f"{file_name}: {named}")
+                absent.append((file_name, named))
+    # A path git ignores (an env file, a scratch folder) is never committed, so it
+    # is absent from every fresh clone without being a broken reference.
+    ignored = git_ignored([named for _, named in absent])
+    missing = [f"{file_name}: {named}" for file_name, named in absent if named not in ignored]
     assert missing == []
 
     readme = (REPO_ROOT / "docs/customizing.md").read_text(encoding="utf-8")
