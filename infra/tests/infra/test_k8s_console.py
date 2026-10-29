@@ -349,7 +349,7 @@ def test_the_console_image_is_the_ghcr_console_repository_at_the_unbuilt_tag(
     """Catches an `images:` entry whose `name` matches no container (kustomize accepts it and
     leaves the bare `console` in the stream), an entry pointed at the gateway's repository, a
     floating or real tag committed to git, and a Deployment that writes the full GHCR
-    reference itself: that bypasses the transformer, so `deploy.yml`'s `set image console=`
+    reference itself: that bypasses the transformer, so a deploy job's `set image console=`
     changes nothing and every deploy runs the placeholder."""
     image = str(sole_container(console_owner(built)).get("image", ""))
     assert image == f"{CONSOLE_IMAGE_REPOSITORY}:{CONSOLE_IMAGE_TAG}", f"{CONSOLE} runs {image!r}"

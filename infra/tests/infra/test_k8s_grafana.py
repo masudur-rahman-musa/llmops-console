@@ -268,7 +268,7 @@ GRAFANA_MIDDLEWARES: frozenset[tuple[str, str]] = frozenset(
 )
 
 #: The middleware the `grafana.` host is the one public host NOT to carry. A 401 in
-#: front of `/api/annotations` would break the release annotation `deploy.yml` POSTs with a
+#: front of `/api/annotations` would break the release annotation a deploy job POSTs with a
 #: Bearer token for a credential Grafana is already asking for.
 FORBIDDEN_MIDDLEWARE = "basic-auth"
 
@@ -1350,7 +1350,7 @@ def test_the_grafana_ingress_publishes_one_host_behind_two_middlewares_and_no_ba
     NO middleware rather than as an error, so the host is served with no rate limit and no
     security headers and nothing reports it. Catches `basic-auth` added "for consistency" with
     the `apps` hosts, which is a rejected alternative and which puts a Traefik 401 in
-    front of the `/api/annotations` POST `deploy.yml` makes with a Bearer token. Catches a backend
+    front of the `/api/annotations` POST a deploy job makes with a Bearer token. Catches a backend
     port number that drifts from the port the Service targets, which resolves to no endpoint and
     serves a 503 on the whole host. Catches the `tls` block naming `gateway-tls`, which would have
     cert-manager reissue another host's certificate into this namespace. Catches a second path or
@@ -1431,7 +1431,7 @@ def test_the_only_way_into_grafana_is_the_secret_this_repo_does_not_supply(
     a dashboard onto a screen without logging in, which publishes every panel - including the
     cost views - to anyone who resolves the public host. Catches
     `GF_AUTH_DISABLE_LOGIN_FORM`, which is a rejected alternative and which leaves no
-    way to mint the service-account token `deploy.yml`'s annotation step needs. Catches a real
+    way to mint the service-account token a deploy job's annotation step needs. Catches a real
     password committed into the template instead of the placeholder, which is the one thing that
     would put a working credential for a public host into a public repo. Catches the contract
     drifting from the README row a human reads before the apply - the keys are compared against

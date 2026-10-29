@@ -165,8 +165,7 @@ services:
     # trained at 512 tokens and llama.cpp needs `n_ubatch >= n_ctx` for a
     # non-causal model, and `--pooling cls` is written out because a mean-pooled
     # vector is a different vector space that still returns plausible numbers.
-    # On by default, so the semantic cache works locally; the node keeps
-    # it off. `make embed-model` (which `make up` runs first) fetches the file.
+    # On by default, so the semantic cache works locally. `make embed-model` (which `make up` runs first) fetches the file.
     # The gateway does not wait on it: while it is down, the semantic tier is a
     # miss. Pinned by infra/tests/infra/test_compose_local_model.py.
     image: ghcr.io/ggml-org/llama.cpp:server-b10902

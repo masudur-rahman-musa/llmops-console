@@ -1,4 +1,4 @@
-.PHONY: help setup run up embed-model down rebuild all gateway console test test-infra fast test-slowest lint typecheck format verify security eval infra-check k8s-check k8s-aws-check k8s-server-check server-secrets server-helpdesk-data k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate secrets-encrypt secrets-decrypt secrets-check load numbers grafana-check console-check
+.PHONY: help setup run up embed-model down rebuild all gateway console test test-infra fast test-slowest lint typecheck format verify security eval infra-check k8s-check k8s-aws-check k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate secrets-encrypt secrets-decrypt secrets-check load numbers grafana-check console-check
 
 # The console's checks run through pnpm, and are skipped only in a checkout that
 # has no web, so the intended gate stays visible in this file. The
@@ -308,16 +308,6 @@ k8s-check:  ## Build the kustomization and validate it against the schemas (no a
 # own directory.
 k8s-aws-check: ## Build the AWS evidence overlay and validate it (no apply)
 	kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/aws | kubeconform -strict -summary -schema-location default -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
-# the node's build, with the same kubeconform flags as
-# `k8s-aws-check`. Applied only from the owner's shell, so CI is its one check.
-k8s-server-check: ## Build the node overlay and validate it (no apply)
-	kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/server | kubeconform -strict -summary -schema-location default -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
-# Builds both images on this machine, loads them into the node's k3s and
-# applies the overlay. The owner runs it; CI never does.
-server-secrets: ## Write the node's six infra/secrets/*.dec.yaml to encrypt, generating the node-only values once
-	bash infra/scripts/server_secrets.sh
-server-helpdesk-data: ## Load the Helpdesk's corpus, demo tenants and vectors onto the node (once)
-	bash infra/scripts/server_helpdesk_data.sh
 # The GPU measurement build, with the same kubeconform flags as `k8s-check`. It
 # is standalone (the root build does not include it), so nothing else checks it.
 k8s-gpu-check: ## Build the GPU measurement kustomization and validate it (no apply)

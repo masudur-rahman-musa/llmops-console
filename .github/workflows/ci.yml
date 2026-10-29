@@ -297,8 +297,6 @@ jobs:
       # The AWS evidence overlay, built and validated the same way. It is only ever
       # applied from the owner's shell, so this is its one automated check.
       - run: make k8s-aws-check
-      # the node's build, applied only from the owner's shell.
-      - run: make k8s-server-check
       # The GPU measurement build. Standalone, applied only from the owner's shell
       # to a short-lived GPU host, so this is its one automated check too.
       - run: make k8s-gpu-check

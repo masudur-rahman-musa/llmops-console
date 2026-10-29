@@ -18,8 +18,8 @@ Secret's name, namespace and kind stay readable and only its values become
 ciphertext. That rule deliberately does not match `*.example.yaml`.
 
 Nothing in this directory is a kustomize input. `infra/k8s` lists no path under
-it and the build emits no `Secret` at all; these files are applied by hand (and
-by CD, in `.github/workflows/deploy.yml`) before the manifests that name them. Until they exist an
+it and the build emits no `Secret` at all; these files are applied by hand (or
+by your own deploy pipeline) before the manifests that name them. Until they exist an
 apply fails on the missing Secret, which is the intended direction - a
 placeholder with a working password in git would come up running and never
 mention itself again.
@@ -69,11 +69,11 @@ and nowhere else.
 asserts `git ls-files` matches none of them. That is a backstop, not the safeguard:
 the private key should not be in the working tree at all.
 
-For CD, the same private key is stored as the `SOPS_AGE_KEY` GitHub secret. The
-deploy workflow (`.github/workflows/deploy.yml`) exports it and runs
-`sops --decrypt` on each `*.enc.yaml` immediately before `kubectl apply`, so the
-decrypted form exists only in the runner's memory for the length of one job. An
-empty glob fails the step rather than applying the manifests without them.
+For a deploy pipeline, store the same private key as a CI secret (for example
+`SOPS_AGE_KEY`), export it, and run `sops --decrypt` on each `*.enc.yaml`
+immediately before `kubectl apply`, so the decrypted form exists only in the
+runner's memory for the length of one job. Fail the step on an empty glob rather
+than applying the manifests without them.
 
 ## Encrypting
 
@@ -92,17 +92,6 @@ no-op. `make secrets-decrypt` is the reverse, for editing an existing secret.
 Deleting the `.dec.yaml` afterwards is the habit worth keeping. It is gitignored,
 so leaving it is not a leak into history, but it is a plaintext credential on
 disk with no expiry.
-
-## the node
-
-The live node does not fill templates by hand. `make server-secrets` writes six
-`*.dec.yaml` straight from the owner's state file outside the repo, so the live
-passwords and keys never change: `postgres-credentials`, `gateway-secrets`,
-`console-secrets`, `helpdesk-secrets`, and `traefik-basic-auth` as two files
-(`traefik-basic-auth-platform` and `traefik-basic-auth-apps`), because each
-`*.enc.yaml` is read as one document. Then `make secrets-encrypt`, delete the
-`*.dec.yaml`, and merge the six `*.enc.yaml` through a pull request. The deploy
-workflow applies them. `infra/tests/infra/test_server_secrets.py` pins the script.
 
 ## Rotating one value
 

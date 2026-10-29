@@ -243,7 +243,7 @@ CLUSTER_SCOPED_OBJECTS: frozenset[tuple[str, str]] = frozenset(
 )
 
 #: The repository the `images:` transformer sets, and the honest placeholder tag.
-#: `deploy.yml` rewrites the tag to the deployed SHA in the runner and commits nothing back,
+#: A deploy job rewrites the tag to the deployed SHA in the runner and commits nothing back,
 #: so this value is permanent here and an apply from a checkout fails on the pull, which is the
 #: intended direction.
 GATEWAY_IMAGE_REPOSITORY = "ghcr.io/masudur-rahman-musa/llmops-console/gateway"
@@ -780,7 +780,7 @@ CONSOLE_REPO_IMAGES: dict[str, dict[str, str]] = {
 #: so a literal of any of them would make the scan red against the case that defines it.
 #:
 #: The prefix once used for the Helpdesk's variables, banned outright under `infra/k8s/`.
-#: Only there: now `infra/` also holds these tests, and the server and eval scripts
+#: Only there: now `infra/` also holds these tests, and the eval scripts
 #: name the help desk's own copies of a value (`HELPDESK_GATEWAY_API_KEYS`) on purpose, so the
 #: rest of `infra/` bans only the ten old names below.
 OLD_ENV_PREFIX = "HELPDESK" + "_"
@@ -1598,7 +1598,7 @@ def test_the_gateway_image_is_pinned_and_not_a_floating_tag(
     catches the repository pointed at another owner or another image name, which is an apply
     that pulls somebody else's code. The tag is asserted as an exact string as well as against
     the refusal list, because `0.0.0-unbuilt` is the placeholder the tree keeps: `build.yml`
-    publishes the image this tag does not name, and `deploy.yml` chooses one only
+    publishes the image this tag does not name, and a deploy job chooses one only
     inside the runner, committing nothing back"""
     image = str(sole_container(gateway_pod_owner(built)).get("image", ""))
     assert image, f"{GATEWAY} declares no image"
@@ -2740,7 +2740,7 @@ def test_the_console_repo_images_keep_their_own_paths() -> None:
     entry compared whole. Catches the Helpdesk path change done as a find-and-replace of the
     owner segment, which moves `gateway` and `console` to an owner that publishes neither of
     them - an apply that fails on the pull for the two workloads this repo actually builds.
-    Catches either tag moved off the placeholder in the same sweep, which `deploy.yml` then no
+    Catches either tag moved off the placeholder in the same sweep, which a deploy job then no
     longer overwrites cleanly."""
     document = yaml.safe_load(read(APPS_KUSTOMIZATION))
     assert isinstance(document, dict), f"{APPS_KUSTOMIZATION} is not a YAML mapping"

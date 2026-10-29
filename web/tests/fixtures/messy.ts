@@ -218,4 +218,3 @@ export const MESSY: { home: HomeBody; requests: RequestsBody; cost: CostBody; qu
   cost,
   quality,
 };
-

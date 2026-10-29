@@ -46,8 +46,7 @@ generatorOptions:
 # There is no local chat model at all.
 #
 # These patches fit the build onto one kind node on a 2-CPU runner, where
-# qdrant-0 sat Pending on "Insufficient cpu": one gateway and no HPA (the server
-# build's own shape), and the CPU REQUESTS of Postgres and Qdrant cut to 50m. A
+# qdrant-0 sat Pending on "Insufficient cpu": one gateway and no HPA, and the CPU REQUESTS of Postgres and Qdrant cut to 50m. A
 # request only reserves scheduling room; the limits, and production, are untouched.
 patches:
   - patch: |-

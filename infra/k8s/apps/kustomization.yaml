@@ -21,7 +21,7 @@ resources:
 # applied without this transformer fails on the pull rather than running
 # something nobody chose. `0.0.0-unbuilt` is the honest placeholder: `build.yml`
 # pushes an image tagged with the commit SHA on every push to `main`,
-# and this overlay is never told which of them to run: `deploy.yml` rewrites the
+# and this overlay is never told which of them to run: a deploy job rewrites the
 # tag to the deployed SHA with `kustomize edit set image` in the runner and
 # commits nothing back, so this value stays `0.0.0-unbuilt` in git for good.
 # A `latest` or a `main` here would be a cluster whose running code no commit
@@ -38,7 +38,7 @@ images:
   - name: gateway
     newName: ghcr.io/masudur-rahman-musa/llmops-console/gateway
     newTag: 0.0.0-unbuilt
-  # The console, built by `build.yml`'s `console` job and set by `deploy.yml`
+  # The console, built by `build.yml`'s `console` job and set by a deploy job
   # beside the gateway, on the same terms.
   - name: console
     newName: ghcr.io/masudur-rahman-musa/llmops-console/console
@@ -53,7 +53,7 @@ images:
   # this tag is a SHA or the apply fails on the pull.
   #
   # The SHA below is that repo's `main` head. Bumping it is how the Helpdesk
-  # deploys: `deploy.yml` here rewrites the `gateway` tag only and never touches
+  # deploys: a deploy job rewrites the `gateway` tag only and never touches
   # these four.
   - name: helpdesk-agent-api
     newName: ghcr.io/masudur-rahman-musa/helpdesk-agentic-flow/helpdesk-agent-api

@@ -60,7 +60,7 @@
 # `read:packages` token. It sits on these pod specs rather than on the `apps`
 # default ServiceAccount, so the gateway and console pods never carry it.
 # The tag is the full commit SHA that repo's `build.yml` published, and it
-# publishes no `latest`: `deploy.yml` here rewrites the `gateway` tag only, so
+# publishes no `latest`: a deploy job rewrites the `gateway` tag only, so
 # the Helpdesk's own deploy is a bump of that SHA in `kustomization.yaml`.
 #
 # `app.kubernetes.io/name` is written three times per serving workload - on the

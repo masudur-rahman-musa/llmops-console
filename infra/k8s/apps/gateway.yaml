@@ -16,7 +16,7 @@
 # The image is set by `kustomization.yaml`'s `images:` transformer, not here.
 # `0.0.0-unbuilt` is honest: `build.yml` publishes an image per commit on `main`
 #, and nothing in the repository tells this overlay WHICH of them to
-# run. `deploy.yml` sets the deployed commit's SHA with `kustomize edit set
+# run. A deploy job sets the deployed commit's SHA with `kustomize edit set
 # image` inside the runner and commits nothing back, so this placeholder is what
 # the tree carries permanently and an apply from a checkout still fails at the
 # pull. A floating `latest` or `main` here would be a cluster whose running code

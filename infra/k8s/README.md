@@ -515,56 +515,6 @@ container that keeps RESTARTING; a scheduler that hangs without crashing trips
 no alert at all, since nothing here reads a liveness signal it does not have -
 still a gap, not one this row closes.
 
-## the node
-
-`server/` is a second build for the live node: one x86_64 k3s box with 4 GB
-that already runs Traefik, a shared cert-manager in its own namespace, and a
-live `letsencrypt-prod` issuer owned by another project. The root build above
-stays the Hetzner one. Build and validate it:
-
-```
-make k8s-server-check
-```
-
-It carries `base`, the platform data stores, the staging issuer, the
-middlewares, the backups (suspended until the node has a bucket), the gateway
-and the console, and `monitoring` (Prometheus, Grafana, the two exporters and
-Alertmanager). Left out: llama-embed and `evals`, which do not fit; our own `letsencrypt-prod`, so the live one is never overwritten;
-and the Helpdesk's workloads, config and images, which its own repo deploys. The gateway runs one replica with no HPA. Its two Ingresses answer on
-`gateway.example.com`, the console's three on `llmops.example.com`,
-the Helpdesk's two on `helpdesk.example.com`. The Helpdesk's Ingresses and
-NetworkPolicies stay in this build, so one repo owns the hosts and policies on
-the node. Applying it never touches the running Helpdesk: without `--prune`,
-`kubectl apply` leaves objects outside the build alone.
-
-The gateway and console images come from GHCR, where both packages are public,
-so the pods carry no pull secret. `.github/workflows/deploy.yml` sets
-their tag to the deployed commit SHA, then applies the overlay with
-`kustomize build --load-restrictor=LoadRestrictionsNone infra/k8s/server | kubectl apply -f -`
-and runs the gateway's migrations.
-
-Limits are oversubscribed by about 700Mi once k3s's own memory is counted;
-requests still fit. `test_k8s_server.py` sums them from the built objects, adds the Helpdesk's share (704Mi, 300m,
-1408Mi limits) and compares them with these quotas.
-
-| namespace | requests.memory | requests.cpu | limits.memory | holds |
-|---|---|---|---|---|
-| `platform` | 640Mi | 800m | 1Gi | Postgres 384Mi, Qdrant 320Mi, Redis 128Mi, one backup job at 192Mi |
-| `apps` | 1088Mi | 550m | 2048Mi | the gateway 384Mi, the console 256Mi, a share for the Helpdesk's four, 1408Mi |
-| `evals` | 0 | 0 | 0 | nothing on this node |
-| `monitoring` | 376Mi | 250m | 688Mi | Prometheus 320Mi, Grafana 192Mi, kube-state-metrics 64Mi, node-exporter 48Mi, Alertmanager 64Mi |
-| **total** | **2104Mi** | **1600m** | **3760Mi** | |
-
-The two backup jobs run at 03:00 and 04:00, each at its own hour, so the
-platform quota pays for one job at a time. Redis is capped at 96mb and
-evicts only keys with a TTL, so the budget and rate-limit counters stay.
-
-The Helpdesk runs beside this build and depends on what it ships: Postgres, Redis
-and Qdrant in `platform`, the gateway, `traefik-basic-auth`, and the `server`
-overlay itself. Its own database is `helpdesk` on the shared Postgres. Renaming
-any of those means checking that repo first.
-
-
 ## Still to land
 
 - `monitoring/` carries Grafana with all six dashboards and

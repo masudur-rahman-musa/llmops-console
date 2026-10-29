@@ -4,9 +4,8 @@ Daily cost is summed from the ledger on each request, so the materialised view
 `cost_ledger_daily`, its refresh command, its make target and its CronJob are removed. These
 cases are the check that no file still names them and that no build still ships the job.
 
-The two builds come from the session fixtures in `conftest.py` (`built` is the root build,
-which holds the `platform` directory; `server_built` is the node overlay), so no build runs
-twice.
+The build comes from the session fixture in `conftest.py` (`built` is the root build,
+which holds the `platform` directory), so no build runs twice.
 """
 
 from __future__ import annotations
@@ -79,13 +78,12 @@ def cronjob_names(documents: list[dict[str, Any]]) -> list[str]:
 
 
 def test_the_platform_build_has_no_rollup_job(
-    built: list[dict[str, Any]], server_built: list[dict[str, Any]]
+    built: list[dict[str, Any]],
 ) -> None:
-    """Catches a `platform` or the server build that still ships the `rollup-refresh` CronJob (the
-    file deleted from disk but still listed, or listed in only one of the two kustomizations).
-    Each stream is checked to hold the other platform CronJobs, so an empty or failed parse
-    cannot pass: the Postgres backup job must still be there."""
-    for label, documents in (("platform", built), ("server", server_built)):
-        names = cronjob_names(documents)
-        assert "postgres-backup" in names, label
-        assert REMOVED_CRONJOB not in names, label
+    """Catches a `platform` build that still ships the `rollup-refresh` CronJob (the
+    file deleted from disk but still listed). The stream is checked to hold the other
+    platform CronJobs, so an empty or failed parse cannot pass: the Postgres backup job
+    must still be there."""
+    names = cronjob_names(built)
+    assert "postgres-backup" in names
+    assert REMOVED_CRONJOB not in names

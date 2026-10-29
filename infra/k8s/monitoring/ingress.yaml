@@ -13,7 +13,7 @@
 #
 # Authentication is Grafana's own, so the annotation below
 # carries rate-limit and security-headers and NOT basic-auth. The reason is
-# concrete rather than aesthetic: `.github/workflows/deploy.yml` POSTs a release
+# concrete rather than aesthetic: a deploy pipeline POSTs a release
 # annotation to `$GRAFANA_URL/api/annotations` with a Bearer token, and a Traefik
 # 401 in front of that call would break it for a credential Grafana is already
 # asking for. The cost is that `grafana.` is the one public host whose access

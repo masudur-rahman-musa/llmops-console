@@ -18,4 +18,3 @@ resources:
   - cert-manager-issuers.yaml
   - traefik-middlewares.yaml
   - backup.yaml
-

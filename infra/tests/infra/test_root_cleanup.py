@@ -34,7 +34,6 @@ LOAD_OVERLAY = REPO_ROOT / "infra" / "load" / "compose.yml"
 OLD_LOAD_OVERLAY = REPO_ROOT / "docker-compose.load.yml"
 TRADEOFF_OVERLAY = REPO_ROOT / "infra" / "tradeoff" / "compose.yml"
 OLD_TRADEOFF_OVERLAY = REPO_ROOT / "docker-compose.tradeoff.yml"
-SERVER_SECRETS = REPO_ROOT / "infra" / "scripts" / "server_secrets.sh"
 CHECK_ROOT = REPO_ROOT / ".github" / "scripts" / "check_root.py"
 ROOT_ALLOWLIST = REPO_ROOT / ".github" / "root-allowlist"
 EDITORCONFIG = REPO_ROOT / ".editorconfig"
@@ -44,9 +43,6 @@ GATEWAY_ENV_FILE: list[dict[str, Any]] = [
     {"path": "backend/.env.demo", "required": False},
     {"path": "backend/.env", "required": False},
 ]
-
-#: The one assignment of the deploy script's env file, with its new default.
-SERVER_ENV_FILE_LINE = 'env_file="${SERVER_ENV_FILE:-backend/.env}"'
 
 #: The compose `${...}` values that used to come from a root `.env`; scrubbed for the config run.
 COMPOSE_VARS = (
@@ -173,17 +169,6 @@ def test_compose_config_without_any_env(tmp_path: Path) -> None:
     assert completed.returncode == 0, (
         f"`{' '.join(LOAD_CONFIG_ARGS)}` exited {completed.returncode}:\n{completed.stderr}"
     )
-
-
-def test_server_secrets_default_env_file() -> None:
-    """Catches a deploy script still defaulting to the root `.env`, or a second `env_file=`
-    overriding the new default."""
-    lines = [
-        line.strip()
-        for line in SERVER_SECRETS.read_text(encoding="utf-8").splitlines()
-        if line.strip().startswith("env_file=")
-    ]
-    assert lines == [SERVER_ENV_FILE_LINE]
 
 
 def _check_root(repo: Path) -> subprocess.CompletedProcess[str]:

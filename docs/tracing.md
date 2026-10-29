@@ -40,7 +40,7 @@ Langfuse shows a trace only to members of the project, unless the trace is publi
 - **Refused requests.** A request refused at auth is never public.
 - **What a visitor sees.** With `trace_content` on, a public trace shows the redacted conversation and the answer to anyone with its link. What redaction misses (above) reaches them too.
 - **Undoing it.** Turning the switch off stops new traces being public. A trace already public stays public until you switch it off in Langfuse, on the trace's own page.
-- **Where it is on.** In `backend/.env.demo` and on the server. The full Kubernetes build leaves it off.
+- **Where it is on.** In `backend/.env.demo`. The full Kubernetes build leaves it off.
 
 ## What stays empty on purpose
 

@@ -4,7 +4,6 @@ The llama.cpp servers used to sit behind a `local-model` profile. The local chat
 the profile is off the one that is left, `llama-embed`:
 the semantic cache needs it, so a plain `docker compose up -d` starts it. Its model file
 (`bge-small-en-v1.5-q8_0.gguf`) comes from `make embed-model`, which `make up` runs first.
-the server keeps the server off, so its manifests are not touched here.
 
 Most cases read files as TEXT or as parsed YAML (`yaml.safe_load`), through `read` and
 `load_yaml` from `test_hetzner_module.py`, spelled as the package `__init__` files make it. A file

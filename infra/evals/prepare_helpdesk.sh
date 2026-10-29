@@ -5,7 +5,7 @@
 # Runs the help desk's own reset (drop, migrate, checkpointer, seed, reviews),
 # minus its ingest step, which still names a script the help desk has
 # since removed. The ingest runs here instead, one tenant and corpus version at
-# a time, the way `infra/scripts/server_helpdesk_data.sh` does. It redacts each
+# a time. It redacts each
 # chunk through this gateway's `/v1/redact`, so it needs the gateway up and the
 # run's keys in HELPDESK_GATEWAY_API_KEYS.
 set -euo pipefail

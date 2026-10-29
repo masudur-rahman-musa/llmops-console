@@ -1,11 +1,11 @@
 name: build
 # The image pipeline: the gateway and console images built for linux/amd64,
 # pushed to GHCR, scanned by Trivy, and published with their SBOMs. Nothing here
-# touches a cluster - the deploy is `deploy.yml`, and it is gated on this workflow
-# being green.
+# touches a cluster. A deploy workflow added on top should wait for this one to
+# be green.
 #
-# Two jobs in one workflow rather than a workflow per image: `deploy.yml` waits on
-# this workflow's conclusion, and a second workflow would race it, deploying a
+# Two jobs in one workflow rather than a workflow per image: a deploy that waits
+# on this workflow's conclusion would race a second workflow, deploying a
 # gateway SHA whose console image was still building.
 #
 # The gateway and the console only. The four `helpdesk-*`

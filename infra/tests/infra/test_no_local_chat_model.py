@@ -18,7 +18,6 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SHIPPED_PROVIDERS = REPO_ROOT / "backend" / "config" / "providers"
-SERVER_PROVIDERS = REPO_ROOT / "infra" / "k8s" / "server" / "providers"
 LOAD_PROVIDERS = REPO_ROOT / "infra" / "load" / "providers"
 
 #: Where the local chat model must not appear (files and folders, from the repo root).
@@ -117,20 +116,13 @@ def without_stated(document: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in document.items() if k not in {"enabled", "base_url"}}
 
 
-def test_the_server_and_load_provider_files_match_the_shipped_ones() -> None:
-    """Catches a copy that drifts: a the server price or model that differs from the
-    shipped file, a missing file, or a the server `local_embed` that is switched on. A copy
-    may differ in `enabled` and `base_url` only. The load test's `local_embed` is
-    held to the same rule, and its `mock_chat` must be a provider file of the same
-    shape (no shipped twin)."""
+def test_the_load_provider_files_match_the_shipped_ones() -> None:
+    """Catches a copy that drifts: a price or model that differs from the shipped file,
+    or a missing file. A copy may differ in `enabled` and `base_url` only. The load
+    test's `local_embed` is held to that rule, and its `mock_chat` must be a provider
+    file of the same shape (no shipped twin)."""
     shipped = {p.stem: load_provider_yaml(p) for p in sorted(SHIPPED_PROVIDERS.glob("*.yaml"))}
     assert set(shipped) == {"anthropic", "openai", "local_embed"}
-
-    server = {p.stem: load_provider_yaml(p) for p in sorted(SERVER_PROVIDERS.glob("*.yaml"))}
-    assert set(server) == set(shipped)
-    for name, document in server.items():
-        assert without_stated(document) == without_stated(shipped[name]), name
-    assert server["local_embed"]["enabled"] is False
 
     load = {p.stem: load_provider_yaml(p) for p in sorted(LOAD_PROVIDERS.glob("*.yaml"))}
     assert set(load) == {"mock_chat", "local_embed"}
@@ -148,7 +140,6 @@ PATH_FILES = (
     "infra/k8s/apps/kustomization.yaml",
     "infra/k8s/aws/kustomization.yaml",
     "infra/k8s/kind/kustomization.yaml",
-    "infra/k8s/server/kustomization.yaml",
     "infra/k8s/README.md",
     "README.md",
     "ARCHITECTURE.md",

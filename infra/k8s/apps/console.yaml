@@ -11,7 +11,7 @@
 #
 # The image is set by `kustomization.yaml`'s `images:` transformer, for the same
 # reasons `gateway.yaml` gives: the bare `console` below fails at the pull if
-# that transformer is ever skipped, and `deploy.yml` sets the deployed SHA in
+# that transformer is ever skipped, and a deploy job sets the deployed SHA in
 # the runner and commits nothing back.
 #
 # `app.kubernetes.io/name` is written on the selector, pod template and Service

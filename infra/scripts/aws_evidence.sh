@@ -40,7 +40,7 @@ GATEWAY_IMAGE="ghcr.io/masudur-rahman-musa/llmops-console/gateway"
 # trailing newline, so `sha\n` is refused.
 SHA_PATTERN='^[0-9a-f]{40}$'
 DATE_PATTERN='^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
-# The port-forward's local end, the same one deploy.yml's smoke uses.
+# The port-forward's local end, the same one a deploy job's smoke uses.
 LOCAL_PORT=18080
 # Cost Explorer is a global API served from us-east-1 only.
 COST_EXPLORER_REGION="us-east-1"

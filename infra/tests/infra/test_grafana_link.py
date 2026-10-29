@@ -2,7 +2,6 @@
 
 On the server the link is the gateway's own Grafana dashboard, built from the Grafana Ingress host
 and the dashboard `uid`; locally it is the compose Grafana's gateway overview on port 3002.
-the build runs Grafana, so its link is the `.dev` host's gateway overview.
 The local stack runs Grafana, so `backend/.env.demo` holds the 3002 link.
 """
 
@@ -24,7 +23,6 @@ COMPOSE = REPO_ROOT / "docker-compose.yml"
 ENV_DEMO = REPO_ROOT / "backend" / ".env.demo"
 KEY = "OPSCONSOLE_GRAFANA_URL"
 EXPECTED = "https://grafana.example.com/d/gateway-overview"
-SERVER_EXPECTED = "https://grafana.example.com/d/gateway-overview"
 
 
 def grafana_host() -> str:
@@ -47,33 +45,6 @@ def test_the_server_links_the_gateway_overview_dashboard(
 
     assert f"https://{grafana_host()}/d/{uid}" == EXPECTED, "the Ingress host or the uid moved"
     assert built_value == EXPECTED, f"{GATEWAY_CONFIG_MAP} sets {KEY} to {built_value!r}"
-
-
-def server_grafana_host(server_built: list[dict[str, Any]]) -> str:
-    hosts = [
-        str(rule["host"])
-        for d in server_built
-        if d.get("kind") == "Ingress"
-        and d.get("metadata", {}).get("name") == "grafana"
-        and d.get("metadata", {}).get("namespace") == "monitoring"
-        for rule in d["spec"]["rules"]
-    ]
-    assert len(hosts) == 1, f"the build has {len(hosts)} Grafana Ingress hosts, not 1"
-    return hosts[0]
-
-
-def test_the_server_server_links_its_own_grafana(
-    server_built: list[dict[str, Any]],
-) -> None:
-    """Catches the build still carrying the empty string (the console says "not set"
-    next to a Grafana that runs), the Hetzner `.net` link (a dead host on the live console), a
-    host that drifts from the Grafana Ingress, and a uid that drifts from the dashboard."""
-    uid = json.loads(DASHBOARD.read_text(encoding="utf-8"))["uid"]
-    data = gateway_config(server_built)
-
-    assert KEY in data, f"{GATEWAY_CONFIG_MAP} on the server carries {sorted(data)}"
-    assert data[KEY] == SERVER_EXPECTED, f"{KEY} on the server is {data[KEY]!r}"
-    assert f"https://{server_grafana_host(server_built)}/d/{uid}" == SERVER_EXPECTED
 
 
 def test_the_local_grafana_link_points_at_the_gateway_overview() -> None:
