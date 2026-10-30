@@ -53,6 +53,9 @@ one tenant key and one admin key:
     echo "OPSCONSOLE_API_KEYS=nordlicht:$(printf %s "$tenant_key" | shasum -a 256 | cut -d' ' -f1)"
     echo "OPSCONSOLE_ADMIN_KEY_SHA256=$(printf %s "$admin_key" | shasum -a 256 | cut -d' ' -f1)"
 
+`make tenant-key TENANT=nordlicht` does the tenant half for you. It prints the
+key and the `OPSCONSOLE_API_KEYS=` line.
+
 Keep the two keys in your shell. You use the tenant key to call the gateway, and the
 console uses the admin key.
 
@@ -66,9 +69,8 @@ is refused.
 
 Then edit `backend/.env`:
 
-- Put your Anthropic key in `ANTHROPIC_API_KEY`, or make the line empty. Do not
-  leave `replace-me` there. A non-empty key builds the Anthropic adapter, and a fake
-  one fails on every call.
+- Put your Anthropic key in `ANTHROPIC_API_KEY` if you have one. The line ships
+  empty, and an empty key leaves that provider off.
 - Paste the two lines the commands above printed over the empty
   `OPSCONSOLE_API_KEYS=` and `OPSCONSOLE_ADMIN_KEY_SHA256=` lines.
 - Optional. Set `OPSCONSOLE_GRAFANA_URL=http://localhost:3002/d/gateway-overview`
@@ -104,6 +106,8 @@ anyway (safe to run twice):
     docker compose exec gateway ops-migrate
 
 `docker compose up -d` on its own starts everything except the console.
+`make run` is for working on the gateway code. It starts the backing services in
+Docker and runs the gateway on this machine on port 8080, reloading on every save.
 `make down` stops the stack and keeps its data. `make rebuild gateway` rebuilds one
 service after a code change.
 
