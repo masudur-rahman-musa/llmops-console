@@ -248,3 +248,33 @@ def test_the_docs_no_longer_name_the_local_model_profile(path: Path) -> None:
     the command would start nothing extra and say nothing.
     """
     assert "--profile local-model" not in read(path)
+
+
+def test_make_run_starts_the_backing_services_without_the_compose_gateway() -> None:
+    """`run` brings compose up with the gateway scaled to zero, then serves the gateway on
+    this machine with reload.
+
+    Catches a `run` that starts the compose gateway as well, which takes port 8080 before
+    the host gateway can, and one that stops serving on the host or drops reload.
+    """
+    makefile = read(MAKEFILE)
+    recipe = target_recipe(makefile, "run")
+    compose_lines = [line for line in recipe.splitlines() if "docker compose" in line]
+    assert len(compose_lines) == 1, compose_lines
+    assert "--scale gateway=0" in compose_lines[0]
+    assert "--profile" not in compose_lines[0]
+    assert "serve(reload=True)" in recipe
+    assert "embed-model" in target_line(makefile, "run").split()
+
+
+def test_make_run_reads_the_demo_env_before_the_real_one() -> None:
+    """The host gateway loads `backend/.env.demo` and then `backend/.env`, as compose does.
+
+    Catches a `run` whose gateway starts with none of the local values, and one that loads
+    the two in the wrong order so the stand-in values hide the real keys.
+    """
+    recipe = target_recipe(read(MAKEFILE), "run")
+    demo = recipe.find("backend/.env.demo")
+    real = recipe.find("backend/.env;")
+    assert demo != -1 and real != -1, recipe
+    assert demo < real

@@ -48,8 +48,17 @@ rebuild:    ## Rebuild gateway and console, never the databases: make rebuild [a
 	docker compose --profile app up -d --build --no-deps $(if $(filter-out all,$(REBUILD_WHAT)),$(filter-out all,$(REBUILD_WHAT)),gateway console)
 all gateway console:
 	@:
-run:        ## Run the project locally
-	docker compose up -d && $(UV_ROOT) python -c 'from app.main import serve; serve(reload=True)'
+# The backing services in Docker, and the gateway on this machine on 8080 with
+# reload. The compose gateway would take the same port, so it is scaled to zero
+# here rather than started. The host gateway reads `backend/.env.demo` and then
+# `backend/.env` over it, the same order compose uses; both are optional.
+run: embed-model ## Backing services in Docker, the gateway on this machine on 8080 with reload
+	docker compose up -d --wait --scale gateway=0
+	@set -a; \
+	if [ -f backend/.env.demo ]; then . backend/.env.demo; fi; \
+	if [ -f backend/.env ]; then . backend/.env; fi; \
+	set +a; \
+	$(UV_ROOT) python -c 'from app.main import serve; serve(reload=True)'
 # The packages that carry a guarantee rather than a feature. They are gated at
 # 100% on top of the 80% the whole tree has to clear. This reads the coverage
 # data pytest just wrote instead of re-running with `--cov=<path>`, because that
