@@ -25,7 +25,7 @@ def run_target(*args: str) -> tuple[str, str]:
     if shutil.which("make") is None or shutil.which("openssl") is None:
         pytest.skip("make or openssl is not on PATH")
     completed = subprocess.run(
-        ["make", "-s", "tenant-key", *args],
+        ["make", "--no-print-directory", "-s", "tenant-key", *args],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
