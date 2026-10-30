@@ -1,5 +1,7 @@
 # LLMOps Console
 
+*Designed and built end to end by one engineer. Architecture, gateway, backend, web app, tests, CI and infra.*
+
 A model gateway and an operations console for LLM apps, with an eval gate in CI.
 
 Apps send OpenAI-shaped requests to one gateway and name an alias such as
