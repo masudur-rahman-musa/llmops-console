@@ -226,22 +226,52 @@ Seven claims, each with the test that fails if it stops being true.
 
 ## What broke
 
-Things that went wrong while building this, and what each one changed.
+Failures in the AI and gateway behaviour, how each was found, and the test that
+now holds the fix.
 
-- **Failing tests went unseen for eight days.** Checks before each commit ran only
-  the new tests, and the whole suite did not run. The blameless write-up, with its
-  timeline from git history, is
-  [docs/postmortems/2026-09-17-red-tests-went-unseen.md](docs/postmortems/2026-09-17-red-tests-went-unseen.md).
-- **A `$` let a trailing newline through.** In Python, `$` also matches before a
-  final newline, so a key pattern accepted one. Every key and identifier pattern
-  now uses `re.fullmatch`, and the rejection tests include a trailing newline, a
-  CRLF and a space.
-- **A shell check passed while its middle step failed.** `A && B || C` exits zero
-  when `B` fails. The Makefile now writes each step on its own line or as an
-  explicit `if`, so a failure fails the target.
-- **Two stacks fought over the same ports.** The companion help desk already used
-  the standard Postgres, Redis and Qdrant ports. This stack now publishes shifted
-  ports (15432, 16379, 16333), so both run side by side.
+- **A refused request could be passed on until some provider said yes.** A
+  content-policy refusal looked like an ordinary error, so fallback sent the same
+  request to the next provider, which undoes the refusal. Found in a safety review
+  of the gateway. A refusal is now recognised from each provider's own codes and is
+  never retried, never sent on and never counted against the provider's health.
+  Fallback covers only rate limits, server errors and timeouts. Held by
+  [backend/tests/api/test_fallback.py](backend/tests/api/test_fallback.py) and
+  [backend/tests/providers/test_refusals.py](backend/tests/providers/test_refusals.py).
+- **The semantic cache could give one chat another chat's answer.** Only the last
+  user message was embedded, so short replies like "yes" in two different chats
+  matched perfectly, and the help desk's shared system prompt did not tell them
+  apart. Found by working through real multi-turn traffic before it reached users.
+  Messages under 16 characters are now never cached, and the lookup embeds the end
+  of the previous turn with the final message. Held by
+  [backend/tests/cache/test_probe.py](backend/tests/cache/test_probe.py).
+- **Redaction scored a perfect 1.000 and still missed real formats.** An
+  IPv4-mapped IPv6 address and a spaced IBAN slipped through, because the test set
+  held only compact forms. Found in review, before release. Both patterns were
+  fixed, scoring now measures what the redactor actually outputs, and a held-out set
+  of 600 generated cases replaced the small one. The honest pooled recall is 0.888,
+  and every miss is published in
+  [docs/redaction-misses.md](docs/redaction-misses.md).
+- **A budget could be passed after Redis lost its counters.** Spend was counted in
+  a monthly Redis counter that started from zero whenever it was missing, so a
+  restart or a new replica forgot what a tenant had spent. Found when the console's
+  ledger and the gateway disagreed. A missing counter is now loaded once from the
+  ledger, a script stops two replicas loading it twice, and if the ledger cannot be
+  read the request is refused rather than counted as free. Held by
+  [backend/tests/limits/test_budget_seed.py](backend/tests/limits/test_budget_seed.py).
+- **The circuit breaker would not open on a partly failing provider.** Every
+  success cleared the failure count, so a provider failing on part of its traffic,
+  the most common kind of outage, never tripped it. Recovery also let every waiting
+  caller through at once instead of one test request. A success now settles only
+  the recovery test, and only the first caller gets it. Held by
+  [backend/tests/providers/test_breaker.py](backend/tests/providers/test_breaker.py).
+- **Cached OpenAI tokens were billed at the full price.** The gateway ignored the
+  cached part of OpenAI's token count, so a fallback to OpenAI cost more on paper
+  than it did. Cached tokens are now counted and priced on their own, with no token
+  billed twice. Held by
+  [backend/tests/providers/test_openai_cache_tokens.py](backend/tests/providers/test_openai_cache_tokens.py).
+
+Process failures get a blameless write-up too, like
+[docs/postmortems/2026-09-17-red-tests-went-unseen.md](docs/postmortems/2026-09-17-red-tests-went-unseen.md).
 
 ## How the evals work
 
