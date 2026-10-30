@@ -1,60 +1,62 @@
 # How this was built
 
-This project was built with a coding agent (Claude Code), working in a fixed
-loop. The loop is what kept it reliable: nothing was written before it was
-planned, and nothing was called done before the tests and the full check
-proved it. If you want to build something the same way, you can follow it.
+This project was built with AI coding agents doing much of the typing, under strict
+tests and review. The agents wrote code. The checks decided whether it stayed.
 
-## The flow
+## The loop
 
-1. **Plan it.** Write down what changes and why, which files it touches, and
-   the acceptance criteria: the checks that prove it works, including what must
-   be refused or must fail safely.
-2. **Write the tests first.** One test per acceptance criterion. They fail at
-   this point, because the code does not exist yet. A coding agent can write
-   them straight from the criteria.
-3. **Make the smallest change that turns them green.** Touch nothing the plan
-   does not name.
-4. **Run `make verify`.** It runs the same checks CI runs, so a green run here
-   means a green run there.
-5. **Commit** with a plain message that says what the change does.
+Every change, a feature or a fix, went through the same steps.
 
-Two things make the loop work. The acceptance criteria are written before any
-code, so "done" means the same thing to the person and to the agent. And the
-tests come from those criteria, not from the code, so they check what was asked
-for rather than what happened to be built.
+1. **Say what done means.** Before any code, write down what the change must do,
+   which files it touches, and what it must refuse or how it must fail safely.
+2. **Write the tests first.** One test for each of those points. They fail at
+   first, because the code does not exist yet.
+3. **Make the smallest change that turns them green.** Touch nothing else.
+4. **Run the checks.** `make verify` runs the same checks CI runs, so a green run on
+   the laptop means a green run in CI.
+5. **Review.** A fresh read of the diff, by a reviewer that did not write it,
+   before the change is called done.
+6. **Commit** with a plain message that says what the change does.
 
-## A plan, in practice
-
-Each plan was one short file, small enough to build and check in one sitting:
-
-```
-# <short name of the change>
-
-## What and why
-<one paragraph: what changes, and the reason>
-
-## Files
-<the files this change touches>
-
-## Acceptance criteria
-- <a check that proves it works>
-- <a check that proves it refuses or fails safely>
-
-## Tests
-<the test files that hold one test per criterion>
-```
+Two things make this work with an agent. The meaning of "done" is written before
+the code, so the person and the agent agree on it. And the tests come from that
+written meaning, not from the code, so they check what was asked for rather than
+what happened to get built.
 
 ## What `make verify` runs
 
-- `format`, `lint` and `typecheck`: code style and static types (ruff, mypy).
-- `test`: the backend tests, with a coverage floor.
-- `security`: a secret scan over the whole history and dependency audits.
+- `format`, `lint` and `typecheck`, which are ruff, mypy in strict mode, eslint and
+  `tsc`.
+- `test`, which is every backend, infra and console test, with Postgres, Redis and
+  Qdrant running, an 80% coverage floor, and 100% on routing, limits and input
+  validation.
+- `security`, which is gitleaks over the whole git history, `pip-audit` and
+  `pnpm audit`.
 
-CI calls the same targets, so the laptop and CI cannot disagree.
+CI calls the same `make` targets, so the laptop and CI cannot disagree about what
+passing means.
+
+## Guard tests on the repo itself
+
+Some tests check the repo rather than the app. They catch the mistakes an agent
+makes most often.
+
+- Every path a doc names must exist.
+- The README's redaction table must match what the redaction report script
+  produces.
+- Comments and docs must not point at private notes or task numbers.
+- The root folder holds only an allowed list of files.
+- Every route must sit behind an auth check or be on a short open list.
+
+## When it went wrong
+
+It did go wrong. For eight days only each change's own tests were run, and five
+tests on `main` went red without anyone seeing. The blameless write-up is in
+[postmortems/2026-09-17-red-tests-went-unseen.md](postmortems/2026-09-17-red-tests-went-unseen.md).
+The fix was to run the whole suite again, cap how many changes may land between
+whole-suite runs, and read CI after every push.
 
 ## What is not in this repository
 
-The plan files, the decision notes and the working notes were kept out of this
-public copy. What is here is the result of that process: the code, the tests,
-and a commit for each change.
+The working notes and task lists are not part of the current tree. What is here is
+the result. That means the code, the tests, the docs and the commits.

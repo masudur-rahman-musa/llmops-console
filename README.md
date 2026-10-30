@@ -1,168 +1,287 @@
-# AI Operations Console
+# LLMOps Console
 
-The dashboard that tells you whether your AI is working, what it costs, and where your data went.
+A model gateway and an operations console for LLM apps, with an eval gate in CI.
 
-Underneath: an OpenAI-compatible LLM gateway with per-tenant routing, PII redaction, semantic caching, budgets and cost attribution, and an evaluation harness whose CI gate blocks any release that makes the agent worse. Deployed with Terraform and Kubernetes, operated with SLOs, alerts and a runbook.
+Apps send OpenAI-shaped requests to one gateway and name an alias such as
+`agent-default`, never a provider model. The gateway picks the provider, strips
+personal data before it leaves, checks the tenant's budget and rate limit, serves
+safe repeats from a cache, and records the tokens, cost and latency of every call.
+A web console and Grafana show the result. An eval gate plays real agent
+conversations on every pull request and fails it when quality drops below a
+committed baseline.
 
-**Status: under active development.** Measured self-hosted-vs-API numbers and the
-walkthrough recording land as the remaining measurement runs complete.
+Its main client is the companion project
+[helpdesk-agentic-flow](https://github.com/masudur-rahman-musa/helpdesk-agentic-flow),
+an AI help desk agent. Every model call the help desk makes goes through this
+gateway, its RAG documents are redacted here when they are ingested, and its
+conversations are what the eval gate scores.
 
-Companion project: [helpdesk-agentic-flow](https://github.com/masudur-rahman-musa/helpdesk-agentic-flow), the agent workload this platform routes, measures and evaluates.
+License is Apache-2.0. [Run it on your laptop](docs/local-setup.md) in a few
+commands.
 
-License: Apache-2.0
+### What it does
+
+- **One gateway, model aliases.** Apps ask for `agent-default`, `agent-strong`,
+  `judge` or `embed`. Only `backend/config/routing.yaml` and the files in
+  `backend/config/providers/` name a real model. Chat runs on Anthropic, with
+  OpenAI as the fallback. Embeddings run on a local llama.cpp server.
+- **Cost and latency on every call.** Each request writes a row to a PostgreSQL
+  ledger with tokens, cached tokens, the price entry used, cost in USD, status and
+  latency. The response carries `X-Gateway-Cost-USD`. Prometheus counts requests,
+  latency, tokens, fallbacks, open circuits and redactions.
+- **Traces.** Every request is one OpenTelemetry trace sent to Langfuse over OTLP,
+  with a step for auth, routing, each cache, redaction and the provider call. A
+  trace carries the tenant and the session, never a name or an email.
+- **PII redaction.** Ten kinds of personal data are replaced with placeholders
+  before a provider sees them, and can be put back in the answer. Accuracy is
+  measured on a held-out set and published below.
+- **Budgets and rate limits per tenant.** A tenant or user over its monthly cap is
+  refused before the provider is called. Requests and tokens per minute are
+  limited in Redis.
+- **Two caches.** An exact cache in Redis, and a semantic cache in Qdrant that
+  needs 0.97 similarity and is on only for `agent-default`.
+- **Failure handling.** A circuit breaker per provider opens after 5 failures in
+  60 seconds and tries again after 30. Calls retry twice with backoff. Fallback
+  only goes to providers the alias lists. Every refusal is a typed error code.
+- **Eval gate.** The help desk's 45 conversation cases are played three times each.
+  Every turn gets three rule checks, and an LLM judge grades marked replies. The
+  pull request fails below `backend/evals/conversation-baseline.json`.
+- **Ops console.** A Next.js 15 and React 19 app with four tabs (Overview,
+  Requests, Cost, Quality) behind a password login. Grafana ships five dashboards
+  and Prometheus ships twelve alert rules.
+
+### In numbers
+
+- `make fast` ran 3,683 passing backend tests in about 32 seconds on a laptop, with
+  132 skipped because they need Postgres, Redis or Qdrant. `make test` runs those
+  too.
+- 778 more tests in `infra/tests/` check the CI workflows, compose files,
+  Kubernetes manifests, Terraform modules and these docs.
+- Coverage must stay at 80% for the whole backend and at 100% for routing, limits
+  and input validation, or `make test` fails.
+- The committed eval baseline is a check score of 48.48 and a judge score of 27.42,
+  both in percent. The judge does not block a merge yet, because no calibration
+  file shows it agrees with the reference labels.
+
+### Skills and tech shown
+
+- **Python.** The gateway in `backend/app/`, typed and checked with `mypy`.
+- **FastAPI.** The gateway API, with auth on parent routers in `backend/app/api/router.py`.
+- **Async Python.** Async routes, pure ASGI middleware for tracing, and an
+  `asyncio.Semaphore` that caps provider calls in `backend/app/core/concurrency.py`.
+- **PostgreSQL.** The cost ledger, eval runs and releases, with SQL migrations in
+  `backend/migrations/`.
+- **Redis.** Exact cache, budgets, rate limit windows and redaction maps.
+- **Vector DBs.** Qdrant holds the semantic cache in `backend/app/cache/vectors.py`.
+- **pytest.** Over 3,600 backend tests, with markers for slow and service tests.
+- **TypeScript and React.** The console in `web/`, Next.js 15 with server
+  components, tested with vitest.
+- **Docker.** One `docker-compose.yml` runs the whole local stack. Images use
+  pinned base digests and non-root users.
+- **CI/CD, GitHub Actions.** Six workflows in `.github/workflows/`. CI calls the
+  same `make` targets as a laptop. Images are pushed to GHCR, scanned with Trivy
+  and shipped with an SBOM.
+- **Kubernetes.** Kustomize manifests in `infra/k8s/`, checked with kubeconform,
+  and a kind cluster in CI that deploys the gateway and runs a smoke test.
+- **Terraform / IaC.** Modules for a Hetzner node, an AWS EKS stack and an AWS GPU
+  box in `infra/terraform/`. CI runs `terraform validate` on all three, and the two
+  AWS modules carry a monthly cost budget.
+- **AWS.** The `infra/terraform/aws` module (EKS, RDS, ElastiCache, S3 with IAM
+  roles for service accounts) and its apply, smoke test and destroy script.
+- **Evals / LLM evaluation.** Multi-turn conversation evals, an LLM judge with
+  Cohen's kappa calibration, pass rates with Wilson ranges, and a CI gate in
+  `backend/app/evals/`.
+- **Agentic systems.** The evals check an agent's tool calls in order, that it
+  changes nothing before the user says yes, and that it invents no ticket numbers.
+- **Prompt engineering.** The judge prompt is a file, `backend/app/evals/prompts/judge-v2.md`,
+  and its sha256 is recorded on every run. Rubric and reply reach the judge as
+  delimited data, not instructions.
+- **Guardrails / AI safety.** PII redaction before any provider call, provider
+  refusals mapped to typed errors, and hard budget caps.
+- **Cost / latency awareness.** Per-call pricing from versioned price files,
+  per-tenant and per-user budgets, prompt cache pricing, and a k6 load test.
+- **Multi-tenant isolation.** Keys are bound to one tenant, and the tenant is part
+  of every cache key, redaction map and budget.
+- **Observability for AI.** OpenTelemetry traces to Langfuse, Prometheus metrics,
+  Grafana dashboards and alert rules.
+- **System design / distributed systems.** Fallback chains, circuit breakers,
+  shared state in Redis and Postgres, so gateway workers scale out.
+- **LLMOps / MLOps.** The whole repo is one. Model routing, cost tracking, eval
+  gates, a guarded baseline, and a measured self-hosted versus API comparison kit.
 
 ## The problem
 
-An LLM feature reaches production and three questions have no owner. Is it
-working, or has quality quietly drifted since the prompt changed last week? What
-does it cost, per tenant, per feature, this month against its budget? And what
-personal data reached the provider, given a customer whose contract says names
-and emails never leave the company?
+An LLM feature reaches production and three questions have no owner. Is it still
+working, or has quality drifted since the prompt changed? What does it cost, per
+tenant, this month, against a budget? And what personal data reached the provider?
 
-Most teams answer the first question with a vibe, the second with a provider
-invoice that arrives a month late and attributes nothing, and the third with a
-policy document nobody can test. The gap is not the model. It is that the calls
-leave the application directly, so there is no place to enforce a rule, price a
-token, or notice a regression.
-
-This project puts a gateway in that place. Every call goes through one
-OpenAI-compatible endpoint that resolves a tenant's alias to a provider,
-redacts personal data on the way out, caches what repeats,
-prices what it spends, refuses what exceeds the budget, and records the whole
-thing. The console reads that record back.
-
-The gateway is one half. The other is an evaluation harness: conversation cases, a
-scored run, and a CI gate that fails the pull request when the numbers fall
-below the committed baseline. A guarantee nobody measures is a preference.
+When each app calls the provider directly, there is no single place to enforce a
+rule, price a token or notice a drop in quality. This project puts a gateway in
+that place. Every call goes through one OpenAI-compatible endpoint. The console
+reads back what the gateway recorded, and the eval gate measures quality before a
+change merges.
 
 ## Video and screenshots
 
-The walkthrough recording is linked here when it is made.
-
-Screenshots of the console and the Grafana dashboards live in
-[docs/media/](docs/media/), and the file names each one takes are listed in
-[docs/media/README.md](docs/media/README.md). They are captured against the
-local stack with seeded traffic, so no real tenant, key or personal value
-appears in one.
+No recording or screenshots are committed yet.
+[docs/media/README.md](docs/media/README.md) lists the file names they will use.
 
 ## How it fits together
 
-A client speaks the OpenAI API and names an alias rather than a model. The
-gateway resolves that alias for the calling tenant and the request's data class,
-producing an ordered list of candidate providers. Fallback stays inside that
-list: a failing provider hands over only to another one the alias names.
+```mermaid
+flowchart LR
+    app["Client app<br/>(help desk agent)"] -->|"OpenAI API + alias"| gw
+    subgraph gw["Gateway (FastAPI)"]
+        direction TB
+        auth["Key and tenant check"] --> route["Alias to providers"]
+        route --> red["PII redaction"]
+        red --> lim["Budget and rate limit"]
+        lim --> cache["Exact and semantic cache"]
+        cache --> call["Provider call<br/>breaker, retry, fallback"]
+    end
+    call --> anth["Anthropic"]
+    call --> oai["OpenAI (fallback)"]
+    call --> emb["llama.cpp embeddings"]
+    lim --- redis[("Redis")]
+    cache --- qdrant[("Qdrant")]
+    gw --> ledger[("Postgres ledger")]
+    gw --> prom["Prometheus"]
+    gw --> lf["Langfuse traces"]
+    ledger --> capi["Console API"]
+    prom --> capi
+    capi --> web["Console (Next.js)"]
+    prom --> graf["Grafana"]
+```
 
-Before a request leaves, personal data is replaced with stable placeholders when
-the tenant's rule says so, and the semantic cache is asked whether this prompt
-has been answered already for this tenant. After it returns, tokens are priced
-against the committed table, the spend is booked to the tenant, and the budget
-and rate limits are updated. A trace carrying the session and the tenant, never
-a user identity, goes to Langfuse; the counters go to Prometheus.
-Langfuse is used for tracing only. For tenants with `trace_content` on, it shows the redacted conversation and the answer, kept 30 days; others get a one-line note. Prompts and evals live in git with a CI check, on purpose ([what Langfuse shows](docs/tracing.md)).
+A request goes through these steps:
 
-    client -> gateway -> [ auth | routing | redaction | cache |
-                           limits ] -> provider adapter -> provider
-                                    -> ledger, traces, metrics -> console
+1. **Auth.** The bearer key is hashed and must match the tenant named in
+   `X-Tenant`. Admin and console routes use a separate admin key.
+2. **Routing.** The alias resolves, for that tenant, to an ordered list of
+   providers and models. The first is the default and the rest are fallbacks.
+3. **Redaction.** If the tenant's rule for the request's data class says redact,
+   every message is redacted first. With no `X-Data-Class` header the class is
+   `confidential`.
+4. **Limits.** The monthly budget and the per-minute limits are checked before any
+   provider is called.
+5. **Cache.** An exact match in Redis is answered at once. For `agent-default`, a
+   close enough question in Qdrant is answered too.
+6. **Provider call.** The adapter calls the provider, with a circuit breaker, two
+   retries and fallback inside the alias. Streaming is supported.
+7. **Record.** Tokens are priced, a ledger row is written, metrics are counted and
+   the trace is closed after the last byte is sent.
 
-The full component breakdown, written up once the system is complete, is in
-[ARCHITECTURE.md](ARCHITECTURE.md). The deployment is Terraform for
-the hosts ([infra/terraform/](infra/terraform/)) and kustomize over k3s for the
-workloads ([infra/k8s/](infra/k8s/)); the dashboard is a Next.js app
-([web/](web/)) that reads through the gateway's
-console API and never touches a database or Prometheus from the browser.
+The console never touches a database or Prometheus from the browser. Its pages
+render on the server and read through the gateway's `/console/*` routes. More
+detail is in [ARCHITECTURE.md](ARCHITECTURE.md) and
+[what a trace shows](docs/tracing.md).
+
+### Providers, one file each
+
+Each provider is one YAML file in `backend/config/providers/`, with its kind,
+address, key name, and models with their prices. Prices are a list with dates, so
+a price change appends a row and old ledger rows keep the price they were charged.
+Adding a model is one file and one alias line in `backend/config/routing.yaml`,
+reviewed in a pull request and checked by the eval gate. No code changes. See
+[docs/customizing.md](docs/customizing.md).
+
+### Embeddings
+
+`POST /v1/embeddings` speaks the OpenAI shape and goes through the same routing,
+limits and pricing as chat. The `embed` alias has one candidate, the local
+llama.cpp server, so embedded text never leaves the machine. It has no fallback on
+purpose, because a second embedding model writes vectors in a different space and
+would quietly break search. It takes up to 64 inputs of 8,192 characters each, and
+can return base64 vectors as the OpenAI SDK asks by default.
 
 ## The seven guarantees
 
-Seven claims this system makes, each with the test that would fail if it stopped
-being true.
+Seven claims, each with the test that fails if it stops being true.
 
-1. **Fallback stays inside the alias.** When a provider fails, the gateway
-   tries only the next provider the alias lists for that tenant, and never one
-   the policy did not name for it:
+1. **Fallback stays inside the alias.** When a provider fails, the gateway tries
+   only the next provider the alias lists for that tenant:
    [backend/tests/api/test_fallback.py](backend/tests/api/test_fallback.py).
-2. **Personal data is replaced before it leaves.** Ten kinds are detected,
-   checksum-validated where a shape alone is not enough, and replaced with
-   stable placeholders:
+2. **Personal data is replaced before it leaves.** Ten kinds are detected, checked
+   with a checksum where the shape alone is not enough, and replaced with stable
+   placeholders:
    [backend/tests/redaction/test_redactor.py](backend/tests/redaction/test_redactor.py).
-3. **A budget refuses rather than warns.** A tenant over its cap is refused
-   before a provider is called, and an override has to be signed:
+3. **A budget refuses rather than warns.** A tenant over its cap is refused before
+   a provider is called, and an override has to be signed:
    [backend/tests/limits/test_budget.py](backend/tests/limits/test_budget.py).
-4. **A rate limit is enforced per tenant.** The window's other traffic is part
-   of the test, and so is the reset landing mid-sequence:
+4. **A rate limit is enforced per tenant.** A tenant over its requests or tokens
+   per minute gets a 429 that says when to come back:
    [backend/tests/limits/test_ratelimit.py](backend/tests/limits/test_ratelimit.py).
-5. **A cache hit is the same answer, for the same tenant.** The tenant, the
-   alias, the model and the normalised body are all part of the key, so two
-   tenants cannot collide: [backend/tests/cache/test_key.py](backend/tests/cache/test_key.py).
-6. **A release that makes the agent worse does not merge.** The gate scores the
-   conversation cases and compares it to the committed baseline:
+5. **A cache hit is the same answer, for the same tenant.** The tenant, alias,
+   provider, data class, model and the request body are all in the key, so two
+   tenants cannot share an entry:
+   [backend/tests/cache/test_key.py](backend/tests/cache/test_key.py).
+6. **A change that makes the agent worse does not merge.** The gate compares the
+   run's scores with the committed baseline:
    [backend/tests/evals/test_gate.py](backend/tests/evals/test_gate.py).
-7. **Every token is attributed and priced at the rate in force.** Ledger rows
-   name the price entry that priced them, and history is never rewritten:
+7. **Every token is priced at the rate in force.** Ledger rows name the price
+   entry that priced them, and old rows are never rewritten:
    [backend/tests/storage/test_cost_ledger.py](backend/tests/storage/test_cost_ledger.py).
 
 ## What broke
 
-Five things that went wrong while building this, and what each one changed.
-Every rule below is one the build paid for.
+Things that went wrong while building this, and what each one changed.
 
-- Failing tests went unseen for days because no run of the whole suite happened
-  in that window. The fix was a blameless incident record, a visible
-  list of unchecked work, and a gate that has to be cleared before new work opens:
+- **Failing tests went unseen for eight days.** Checks before each commit ran only
+  the new tests, and the whole suite did not run. The blameless write-up, with its
+  timeline from git history, is
   [docs/postmortems/2026-09-17-red-tests-went-unseen.md](docs/postmortems/2026-09-17-red-tests-went-unseen.md).
-- An identifier pattern anchored with `$` accepted a value with a trailing
-  newline, because in Python `$` also matches before one. Every key and
-  identifier pattern now uses `re.fullmatch`, and every rejection table carries
-  a trailing newline, a CRLF and a space.
-- A shell gate reported success while its middle step failed, because
-  `A && B || C` exits zero when `B` does not. A gate is now reported as passing
-  only from the exact command its definition names, never from a variation.
-- The formatter removed an import between two edits and the next edit failed on
-  the name it had just deleted. An import now lands in the same edit as its
-  first use, and removing the last use removes the import in that edit.
-- A local load run failed at startup because the companion project's stack was
-  already publishing the same Redis, Postgres and Qdrant ports. Host ports are
-  now listed and checked free before a stack is started.
+- **A `$` let a trailing newline through.** In Python, `$` also matches before a
+  final newline, so a key pattern accepted one. Every key and identifier pattern
+  now uses `re.fullmatch`, and the rejection tests include a trailing newline, a
+  CRLF and a space.
+- **A shell check passed while its middle step failed.** `A && B || C` exits zero
+  when `B` fails. The Makefile now writes each step on its own line or as an
+  explicit `if`, so a failure fails the target.
+- **Two stacks fought over the same ports.** The companion help desk already used
+  the standard Postgres, Redis and Qdrant ports. This stack now publishes shifted
+  ports (15432, 16379, 16333), so both run side by side.
 
 ## How the evals work
 
-The engine plays multi-turn conversations. The companion help desk keeps 33 cases;
-each one holds what the person types, which tools should be called, and when the
-person says yes. The format is described in
-[docs/eval-format.md](docs/eval-format.md).
+The eval engine plays multi-turn conversations. The help desk keeps 45 cases. Each
+holds what the person types, which tools the agent should call, and in which turn
+the person says yes. The format is in [docs/eval-format.md](docs/eval-format.md).
 
-A run plays each case through the help desk's conversation route and checks every
-turn three ways: the right tools were called in order, nothing was changed before the
-yes, and no request number, ticket number or role name appears that a tool did not
-return. A judge grades the marked replies pass or fail, and its own agreement with
-reference labels is measured rather than assumed. The report shape is in
-[docs/eval-report.md](docs/eval-report.md) and the target it runs against in
-[docs/eval-target.md](docs/eval-target.md). Each finished case is saved at once, so a
-stopped run continues without paying for the cases it already played.
+A run plays each case through the agent's conversation route and checks every
+turn three ways:
 
-`backend/evals/conversation-baseline.json` holds the committed numbers. The CI gate
-compares a run against them and fails the pull request when the percent of cases
-passed falls below the baseline, described in [docs/eval-gate.md](docs/eval-gate.md).
-On every pull request it plays the help desk's 33 cases three times each against the
-real help desk agent on the real cheap model, so it needs a model key and costs roughly
-$3 to $6 a run. Each case reports its pass rate with a 95% range. A case that both
-passes and fails is unstable: it is listed in its own group and left out of the score,
-so chance alone cannot turn the gate red. The baseline changes only through a commit that carries its own decision record,
-and never to make a failing run pass.
+- the right tools were called, in order,
+- nothing was changed before the person said yes,
+- no request number, ticket number or role name appears that a tool did not return.
+
+An LLM judge then grades the marked replies pass or fail against a rubric. The
+judge only counts toward the gate once a calibration run shows a Cohen's kappa of
+0.7 or better against 40 reference labels. The report is described in
+[docs/eval-report.md](docs/eval-report.md) and the target contract in
+[docs/eval-target.md](docs/eval-target.md). Each finished case is saved at once,
+so a stopped run continues without paying again for what it already played.
+
+Real models do not answer the same way twice, so each case is played three times.
+A case that both passes and fails is marked unstable, listed on its own and left
+out of the score, so chance alone cannot turn the gate red. Each case also reports
+its pass rate with a 95% Wilson range.
+
+The gate fails the pull request when the check score falls below the baseline.
+There is no drop allowance. The baseline can only change in a commit whose subject
+starts with `baseline:` and that adds a written decision record, and CI checks
+that rule. The gate is in [docs/eval-gate.md](docs/eval-gate.md).
 
 ### Redaction accuracy
 
-Accuracy is measured, not claimed. The numbers below come from a held-out set
-of 600 generated cases: 50 values of each kind written the ways people really
-write them, plus 100 look-alikes that must not be found, such as version numbers,
-MAC addresses and file references. The sentence templates in
-`backend/evals/redaction/heldout-templates.json` were never used to tune a
-detector, and the set is built from them with a fixed seed (82). F2 weighs recall
-four times as much as precision, because a missed value reaches a model while a
-false find only hides a harmless string. Every miss and false find is listed in
-[docs/redaction-misses.md](docs/redaction-misses.md). Both files are regenerated
-by `backend/scripts/redaction_report.py`, and a test fails if either one drifts.
-The 57 hand-written cases the detectors were tuned on are a test with floors, not
-a measure.
+These numbers come from a held-out set of 600 generated cases. That is 50 values
+of each kind, written the ways people really write them, plus 100 look-alikes that
+must not be found, such as version numbers, MAC addresses and file references. The
+templates in `backend/evals/redaction/heldout-templates.json` were never used to
+tune a detector, and the set is built from them with a fixed seed. F2 weighs recall
+higher than precision, because a missed value reaches a model while a false find
+only hides a harmless string. Every miss is listed in
+[docs/redaction-misses.md](docs/redaction-misses.md). Both files are written by
+`backend/scripts/redaction_report.py`, and a test fails if either drifts.
 
 <!-- redaction-table:start -->
 | Kind | Precision | Recall | F2 | Misses |
@@ -180,189 +299,155 @@ a measure.
 | all | 0.967 | 0.888 | 0.903 | 56 |
 <!-- redaction-table:end -->
 
-Ten kinds are detected: email addresses, phone numbers, IBANs, card numbers,
-German tax identification numbers, Irish PPS numbers, IPv4 and IPv6 addresses,
-dates of birth, and the display names a tenant's operator has pushed to its own
-directory. Where a shape alone is not enough the value has to pass its own
-check, Luhn for cards, mod-97 for IBANs, ISO 7064 MOD 11,10 for tax ids, mod-23
-for PPS numbers, so a sixteen-digit order reference is not reported as a card. A
-date counts as a date of birth only when a cue such as "born" or "DOB" sits
-close enough in front of it.
+The ten kinds are email addresses, phone numbers, IBANs, card numbers, German tax
+IDs, Irish PPS numbers, IPv4 and IPv6 addresses, dates of birth, and the names a
+tenant's operator has pushed to its own directory. Where shape is not enough, the
+value must pass its own check. That is Luhn for cards, mod-97 for IBANs, ISO 7064
+MOD 11,10 for tax IDs and mod-23 for PPS numbers, so a sixteen-digit order number
+is not taken for a card. A date counts as a date of birth only with a cue such as
+"born" or "DOB" close in front of it. The weak spots show in the table. Most
+misses are phone numbers written with a `(0)`, German tax IDs, PPS numbers and
+dates of birth.
 
-Redaction runs in two places. `POST /v1/redact` takes a string or a list of
-messages and answers the redacted version plus a `redaction_map_id`, which is
-the ingestion path: redact once on the way in and keep the id. The map behind it
-is held for an hour and scoped to the tenant that made the call. To spend the
-id, send it back as `X-Gateway-Rehydrate` on a chat completion and the answer's
-text and tool call arguments come back with the original values in place. It is
-off unless that header is present, an unknown or expired id is refused before a
-provider is called rather than served with placeholders left in, and a streamed
-answer is rehydrated too: a placeholder split across two frames is put back
-together before it is sent. It also runs inline, so when a tenant's rule for the
-request's data class says redact, every chat message and every embedding input
-is redacted before the request leaves and the provider is only ever handed
-placeholders. Either way, `X-Gateway-Redacted` on the response says whether a
-value was actually replaced; it reports the payload, not the setting.
+Redaction runs in two places:
 
-Placeholders are stable within a request: the same value appearing twice gets
-the same placeholder and two different values never share one, so `<EMAIL_1>`
-names the same person in the first message and the fourth. Text that already
-contains a placeholder-shaped token is handled rather than ignored, because the
-engine skips any number the input has already used.
+- **Inline.** When a tenant's rule says redact, every chat message and embedding
+  input is redacted before the request leaves. `X-Gateway-Redacted` on the answer
+  says whether a value was replaced.
+- **On ingestion.** `POST /v1/redact` returns the redacted text and a
+  `redaction_map_id`. The map is kept for one hour, for that tenant only. Sending
+  the id back as `X-Gateway-Rehydrate` on a chat call puts the real values back in
+  the answer, streamed answers included. An unknown or expired id is refused
+  before any provider is called.
+
+The same value always gets the same placeholder within a request, so `<EMAIL_1>`
+means the same person in every message.
 
 ## Self-hosted vs API tradeoff
 
-One alias, `agent-default`, resolved three ways over the same small conversation file: a cheap
-API tier, a strong API tier, and vLLM on a GPU instance applied for the run and
-destroyed after it. Each
-option reports its check score and USD per 1,000 turns. API cost comes from the ledger;
-self-hosted cost comes from the instance's hourly price divided by the
-throughput it actually delivered.
+The repo carries a kit to compare one alias, `agent-default`, served three ways
+over the same small conversation file. The options are a cheap API model, a strong
+API model, and vLLM on an AWS GPU box that is applied for the run and destroyed
+after. Each option reports its check score and its USD per 1,000 turns. API cost
+comes from the ledger. Self-hosted cost is the hourly price divided by the
+throughput the box delivered.
 
 How the runs are made, and what three cases on one sequential stream can and
-cannot tell you: [docs/tradeoff-run/README.md](docs/tradeoff-run/README.md). The
-computed table and the winner it picks are written to `docs/tradeoff.md` by the
-same harness once all three runs have landed.
+cannot tell you, is in [docs/tradeoff-run/README.md](docs/tradeoff-run/README.md).
+The table and its winner are written to `docs/tradeoff.md` by `make tradeoff` once
+the runs exist.
 
-**Conclusion and the cost of the measurement run: pending**, written once the
-three runs have been made and the GPU instance's bill has arrived.
-
-### Providers, one file each
-
-Chat runs on Anthropic, with OpenAI as the fallback: if one does not answer, the
-other does. Each provider is one YAML file in `backend/config/providers/` with its
-kind, address, key name and models with their prices. Adding a model is one new
-file and one alias line in `backend/config/routing.yaml`, reviewed in a pull
-request and checked by the eval gate. No code changes, and no live settings page.
-How to write one: [docs/customizing.md](docs/customizing.md).
-
-### Embeddings
-
-`POST /v1/embeddings` speaks the OpenAI shape and answers from the same routing
-policy every other request goes through, so an embedding is resolved, limited and
-priced the same way as a completion. In the shipped policy the `embed` alias has
-one candidate and it is the local embedding server, so the text being embedded
-never leaves the box we run. It has no fallback on purpose: a second embedding
-model writes vectors in a different space and would quietly break search.
-
-A bare string or a list of strings is accepted, up to 64 inputs of 8192
-characters each. The answer returns one vector per input, in the order given:
-the index is how a caller matches vectors back to its own rows, so it is part of
-the contract rather than a convenience. `encoding_format: "base64"` returns each
-vector as little-endian float32, which is what the OpenAI SDK asks for by
-default; the gateway renders it and always asks the provider for plain floats.
-
-The endpoint needs a running local embedding server started with embeddings enabled,
-because the server exposes its embeddings endpoint only when launched with
-`--embedding`. That flag comes with the local stack deployment, so until that
-lands this endpoint answers 502: the provider is configured and unreachable.
+**Result is pending.** No measured run is committed yet, so there is no table.
 
 ## The decisions
 
-These are the choices that shape the system most.
+The choices that shape the system most, and why.
 
-- Digests, not keys, are what the gateway stores
-- Embeddings go through the routed local provider rather than a second path
-- Circuit breaker state is in-process, not shared
-- Budget overrides are signed with their own scoped secret
-- Eval metrics are percentages with a null for no evidence
-- The eval gate runs the help desk on the mock, which replaces the gate shipping inert
-- Terraform Cloud holds the state, not a bucket we operate
-- Images are named by commit and scanned after push
-- The metrics stack is hand-written rather than the upstream chart
-- Console sources are flags, never errors
-- Console pages render server-side and degrade to a notice
+- **Keys are stored as digests.** The gateway holds only the sha256 of each tenant
+  key and of the admin key, so a leaked config or process dump gives no working
+  key.
+- **The admin key is its own key space.** A valid tenant key is a 401 on
+  `/admin/*` and `/console/*`.
+- **Budget overrides are signed with their own secret.** A token is an HMAC bound
+  to one tenant and one month, so it cannot be reused by another tenant or next
+  month. No secret set means no override is honoured.
+- **Embeddings use the routed local provider.** They go through the same policy,
+  limits and ledger as chat, with no second path to keep in sync.
+- **Circuit breaker state is per process.** It needs no shared store, and a
+  breaker that opens a little later on another worker costs little.
+- **Eval scores are percentages, with null for no evidence.** A run over zero
+  cases has no score and fails the gate, rather than reading as perfect.
+- **The eval gate runs on a real model.** A conversation has no fixed answer for
+  each model call, and recordings drift with every prompt change, so a mock cannot
+  play one.
+- **Images are named by commit and scanned after push.** Every image tag points at
+  one commit, and Trivy scans what was actually pushed.
+- **Console sources report as flags, never errors.** A missing Prometheus or
+  database shows as "unconfigured" on the page while the rest still renders.
+- **Migrations take a lock.** `ops-migrate` is its own step, and the optional
+  migrate-on-start takes a Postgres advisory lock first, so two workers starting at
+  once never race on the same change. A failed migration stops the start.
 
 ## SLOs
 
-Seven objectives, each with its indicator, target, window, error budget formula
-and alert. Two are measured from the
-gateway's own metrics (availability and latency) and show their
-remaining error budget on the Grafana overview dashboard and on the console's
-Reliability page. An error budget is never clamped at zero: how far past the
-allowance a month went is the information.
+Two objectives are computed from the gateway's own metrics over a fixed 30 days.
 
-Incidents are recorded on the console's timeline, each linking its postmortem.
+- **Availability.** 99.5% of requests do not end in a 5xx.
+- **Latency.** 95% of API-tier requests finish in under 6 seconds.
+
+The "SLO error budgets" row of the Grafana gateway overview dashboard shows how
+much of each allowance is left. The Prometheus alert rules in
+`infra/k8s/monitoring/alerts/rules.yml` cover the gateway being down, error rate,
+latency over the objective, an open circuit, dropped ledger writes, budgets, the
+nightly eval score and the platform.
 
 ## Scaling
 
-One run of `make load`, which drives k6 against the real gateway at a constant
-50 requests a second for ten minutes. The providers behind it are a mock that
-answers in a fixed time, so every millisecond above that is the gateway's own
-work: auth, routing, redaction, both caches, rate limits, budgets and
-the ledger write. The traffic is 80% chat, 10% streamed chat and 10%
-embeddings, and one chat request in five repeats a prompt so the caches take
-part.
+`make load` drives k6 at a constant 50 requests a second for ten minutes against
+the real gateway. The provider behind it is a mock that answers chat in a fixed
+400 ms, so any time above that is the gateway's own work. That covers auth,
+routing, redaction, both caches, limits, budgets and the ledger write. The traffic
+mixes plain chat, streamed chat and embeddings, and some prompts repeat so the
+caches take part. The run fails if chat p95 reaches 6 s, if more than 0.5% of
+requests fail, or if k6 drops a single iteration because the gateway could not
+keep up. No result file is committed. A run writes its summary to
+infra/load/results, which git ignores.
 
-On an Apple M1 (8 cores, Docker Desktop with 10 GB), one gateway worker:
-
-| Metric | Value |
-| --- | --- |
-| Requests | 30,001 in 10 min |
-| Achieved rate | 49.98 req/s |
-| Dropped iterations | 0 |
-| Error rate | 0.00% |
-| Chat p50 / p95 / p99 | 438 / 497 / 583 ms |
-| Mock delay, chat | 400 ms (streamed: 10 chunks, 40 ms apart) |
-| Mock delay, embeddings | 20 ms |
-
-With 400 ms of mock delay the gateway adds about 38 ms at the median and 97 ms
-at p95. Requests answered from the cache come back in about 25 ms. The run fails
-if chat p95 reaches 6 s, if more than 0.5% of requests fail, or if k6 drops a
-single iteration because the gateway could not keep up.
-
-Horizontally, the gateway is stateless except for the circuit breaker, whose
-state is deliberately per-process; Redis holds the caches, the rate limit
-windows and the redaction maps, and Postgres holds the ledger. Adding a worker
-adds throughput without changing any of those.
+The gateway keeps no state of its own except the circuit breaker. Redis holds the
+caches, rate limit windows and redaction maps, and Postgres holds the ledger, so
+adding a worker adds throughput without changing either.
 
 ## Quickstart
 
-Requires Docker, [uv](https://docs.astral.sh/uv/) and pnpm.
+Needs Docker, [uv](https://docs.astral.sh/uv/), `make` and `openssl`. The full
+walk-through, with the key setup and what to check, is
+[docs/local-setup.md](docs/local-setup.md).
 
     git clone https://github.com/masudur-rahman-musa/llmops-console
     cd llmops-console
-    cp backend/.env.example backend/.env   # fill in the provider keys you have
-    docker compose up -d                   # gateway, Redis, Postgres, Qdrant, Prometheus, Grafana on 3002
-    uv sync --project backend
+    make embed-model                    # the local embedding model, fetched once and checked
+    cp backend/.env.example backend/.env
+    # add your keys to backend/.env and web/.env.local (see docs/local-setup.md)
+    make up                             # gateway, console, Postgres, Redis, Qdrant, Prometheus, Grafana
+    # or: docker compose up -d          # the same without the console
+    make fast                           # the everyday tests, no services needed
 
-To fill every console tab with real numbers, run `make numbers`. It runs the
-real eval, sends six real chat requests, records a release, then checks every
-tab. It needs `ANTHROPIC_API_KEY` and costs a real eval run plus a few cents.
+Then open the console at http://localhost:3001 and Grafana at
+http://localhost:3002. The gateway is at http://localhost:8080, with `/healthz`
+and `/readyz`.
 
-The local llama.cpp embedding server starts with the rest, so the semantic
-cache works locally. Fetch its model file once before the first `up`
-(`make up` does this for you):
+With no model key, the stack still starts. Health checks, redaction, embeddings,
+the console, Grafana, the tests and `make load` all work. Only chat needs a key.
 
-    make embed-model
+To fill every console tab with real numbers, run `make numbers`. It runs the real
+eval, sends six chat requests, records a release and checks every tab. It needs the
+companion help desk checked out beside this repo and `ANTHROPIC_API_KEY`, and it
+spends real tokens.
 
-Then send it an OpenAI-shaped request, naming an alias rather than a model:
-
-    curl http://localhost:8080/v1/chat/completions \
-      -H "Authorization: Bearer $GATEWAY_KEY" \
-      -H "X-Tenant: acme" \
-      -H "Content-Type: application/json" \
-      -d '{"model":"agent-default","messages":[{"role":"user","content":"hello"}]}'
-
-`/healthz` says the process is up and `/readyz` says its dependencies are
-reachable. The console is at `http://localhost:3000`. The variables every
-service reads are listed with placeholders in [backend/.env.example](backend/.env.example).
-
-To run this as your own platform, see [docs/customizing.md](docs/customizing.md): the only
-two files you have to edit are the routing policy and the price table.
-
-How this project was built, and the flow you can follow on your own work:
-[docs/how-it-was-built.md](docs/how-it-was-built.md).
+To run this as your own platform, see [docs/customizing.md](docs/customizing.md).
+How the project was built is in [docs/how-it-was-built.md](docs/how-it-was-built.md).
 
 ## Azure
 
-The Azure OpenAI path is an adapter plus recorded fixtures. It ships disabled,
-and enabling it is a configuration change rather than a code change:
+The Azure OpenAI path is an adapter plus recorded test fixtures. It ships
+disabled, and turning it on is a configuration change, not a code change. See
 [docs/azure.md](docs/azure.md).
 
 ## AWS
 
-The Hetzner deployment is the one that runs. An equivalent EKS deployment was
-applied once as evidence that the manifests are portable, then destroyed, and
-the plan output and its cost are recorded in
-[docs/aws-evidence/](docs/aws-evidence/).
+The main path is local. The cloud code ships too, for reading, not as a required
+step:
+
+- `infra/terraform/aws` is an EKS stack with RDS PostgreSQL, ElastiCache Redis and
+  an S3 bucket reached through IAM roles for service accounts.
+  `infra/scripts/aws_evidence.sh` applies it, deploys the gateway, runs a smoke
+  test, captures the result and always destroys it. No captured run is committed
+  yet. See [docs/aws-evidence/](docs/aws-evidence/).
+- `infra/terraform/aws-gpu` is the single GPU box for the vLLM comparison above.
+- `infra/terraform/hetzner` is one small ARM server running k3s, with its DNS.
+- `infra/k8s/` holds the kustomize manifests for the gateway, console, embedding
+  server, data stores and monitoring. CI builds and validates them, and deploys the
+  gateway to a kind cluster for a smoke test. Nothing in this repo runs
+  `terraform apply` or `kubectl apply` for you.
+
+See [infra/README.md](infra/README.md) for the map.

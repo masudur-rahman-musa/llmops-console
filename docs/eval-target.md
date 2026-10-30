@@ -1,8 +1,8 @@
 # The eval target contract
 
 `ops-eval conversations` evaluates any workload that speaks two endpoints. Nothing
-else about the workload matters: it may be a FastAPI service, a queue worker behind
-a shim, or the gateway itself with a demo app in front of it.
+else about the workload matters. It may be a FastAPI service, a queue worker behind
+a small adapter, or the stub target in `backend/evals/target-stub/`.
 
     POST {target}/admin/test/reset          once, before the first case
     POST {target}/v1/eval/conversation      once per case, one attempt
@@ -19,7 +19,7 @@ and a run over an unreset seed cannot be compared to the baseline, which is the 
 thing the number is for.
 
 A run that is continued with the same `--run-id` and already has a saved case is not
-reset again: the workload is already part way through its seed.
+reset again, because the workload is already part way through its seed.
 
 Enable the endpoint in test and staging environments and nowhere else. It exists to
 change data.
@@ -41,8 +41,8 @@ One case is one request. The body is exactly these four fields, taken from the c
 ```
 
 The workload plays the person's messages in one new chat, in order, as
-`principal_user` of `tenant`: as that person, with that person's permissions, not as
-an administrator. A workload that ignores the principal will pass its access cases
+`principal_user` of `tenant`. That means as that person, with that person's
+permissions, not as an administrator. A workload that ignores the principal will pass its access cases
 and fail every one that matters.
 
 One attempt per case, under a 5 minute timeout. A request that times out, refuses
@@ -101,11 +101,11 @@ reply may name. A number that appears in a reply and in no result fails the turn
 | Code | Meaning |
 |---|---|
 | `0` | The run finished. Failed cases are the gate's business, not the run's. |
-| `2` | The run stopped: a bad argument, an unreadable cases file, or a target that could not be reset. |
+| `2` | The run stopped, because of a bad argument, an unreadable cases file, or a target that could not be reset. |
 
 ## What the run writes
 
-- `<run-id>.jsonl` in the output folder: one line per case, written the moment the
+- `<run-id>.jsonl` in the output folder, one line per case, written the moment the
   case finishes. A restart with the same `--run-id` skips the cases already there,
   so no paid result is lost.
 - `report.json` and `report.md` when the run finishes. See [eval-report.md](eval-report.md).

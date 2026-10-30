@@ -1,8 +1,8 @@
 # The conversation case format
 
 The eval engine plays conversations. A case is one chat between a person and your
-workload: what the person types, which tools the workload should call, and when the
-person says yes. Cases live in a JSONL file, one JSON object per line.
+workload. It holds what the person types, which tools the workload should call, and
+when the person says yes. Cases live in a JSONL file, one JSON object per line.
 
 Blank lines are ignored, and so is any line whose first non-space character is `#`,
 so a file can carry comments.
@@ -21,8 +21,8 @@ included. These are all refusals, not warnings:
 - a `confirm_turn` or a `graded` turn that is not one of the case's turns
 - a file that does not exist, or one with no cases in it
 
-The last one matters: a run over zero cases fails nothing and would pass the gate,
-so an empty file is an error rather than a perfect score.
+The last one matters. A run over zero cases fails nothing and would pass the
+gate, so an empty file is an error rather than a perfect score.
 
 ## The line, field by field
 
@@ -49,9 +49,9 @@ are fine. A call that was refused never counts as the expected call.
 
 ## `graded`
 
-Each entry is `{"turn": 2, "rubric": "..."}`: the turn whose reply the judge reads,
-and a question about it that a good reply answers yes to. The turn must be one of the
-case's turns.
+Each entry is `{"turn": 2, "rubric": "..."}`. That is the turn whose reply the
+judge reads, and a question about it that a good reply answers yes to. The turn
+must be one of the case's turns.
 
 ## What is checked
 
@@ -79,10 +79,12 @@ One line, wrapped here for reading. In the file it is a single line.
 {"id": "conv-001", "category": "paraphrases", "tenant": "nordlicht", "principal_user": "seed:production.employee.5", "turns": ["Could you set me up so I can read the internal wiki? I need the line changeover notes.", "yes"], "expected": {"tool_calls": [{"name": "create_access_request", "args_subset": {"role": "wiki.viewer"}}], "confirm_turn": 2}, "graded": [{"turn": 1, "rubric": "Does the reply name the Internal Wiki viewer role in plain words and ask for a yes before filing anything?"}, {"turn": 2, "rubric": "Does the reply say what happened to the request and give its request number, taken from a tool result?"}]}
 ```
 
-It says: the person asks for wiki access in turn 1 and says yes in turn 2. The
+It says the person asks for wiki access in turn 1 and says yes in turn 2. The
 workload must call `create_access_request` for the role `wiki.viewer`, and only in
 turn 2. Its replies must not name a request number that no tool returned. The judge
 reads the reply of turn 1 and the reply of turn 2.
 
-A small file in this shape ships in this repository for the end-to-end run:
-`backend/evals/kind-cases.jsonl`.
+A small file in this shape, `backend/evals/kind-cases.jsonl`, ships in this
+repository. It holds three cases for the kind cluster run in CI and for the
+self-hosted versus API comparison. The help desk's own 45 cases live in the
+companion repo.
