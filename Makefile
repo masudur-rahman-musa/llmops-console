@@ -209,7 +209,7 @@ eval:       ## The eval gate: the help desk's 45 conversations on the real cheap
 # throwaway keys made for this run, a `nordlicht` tenant key and an admin key:
 # the digests go to the gateway, the keys stay in this shell, nothing is stored.
 # Then six real chat requests on the cheap model, one release for HEAD naming
-# the eval run, and a check of all eight console pages that
+# the eval run, and a check of all four console pages that
 # fails on a source in error or unconfigured, or a tab with nothing to show.
 # A gate that fails by chance does not stop the run: the eval still stored its
 # run, and `make eval` removes old reports first, so only a run that wrote no

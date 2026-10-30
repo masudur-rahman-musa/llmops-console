@@ -4,7 +4,7 @@ Only files are read; nothing runs. The workflow is read with `yaml.safe_load`, w
 the bare key `on` as `True`, so nothing here reads the trigger. The repository root comes
 from this file's own location, never the working directory.
 
-What each case pins is wiring, not behaviour: the gate now plays the help desk's 33 cases on
+What each case pins is wiring, not behaviour: the gate now plays the help desk's 45 cases on
 the real cheap model, so a condition that skips it, a missing checkout token, a missing model
 key, the old baseline still sitting there, or a mock still answering from a golden set would
 each leave the gate green while it checks nothing real.

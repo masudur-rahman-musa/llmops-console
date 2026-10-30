@@ -1003,3 +1003,21 @@ def test_readme_tradeoff_section_links_the_table_and_marks_the_conclusion_pendin
 
     assert any("docs/tradeoff.md" in line for line in body), body
     assert len(pending) == 1, f"{len(pending)} pending lines in the tradeoff section: {pending}"
+
+
+def test_each_api_label_names_the_model_its_overlay_routes_to() -> None:
+    """The label of every `api` option in `tradeoff.json` names the model its overlay picks.
+
+    Catches a label left on an old model after the overlay moved on, so the published table
+    credits one model with another's numbers.
+    """
+    tradeoff_dir = Path(__file__).resolve().parents[3] / "infra" / "tradeoff"
+    options = json.loads((tradeoff_dir / "tradeoff.json").read_text(encoding="utf-8"))["options"]
+    api_options = [option for option in options if option["kind"] == "api"]
+    assert api_options
+    for option in api_options:
+        overlay = (tradeoff_dir / f"{option['id']}.yaml").read_text(encoding="utf-8")
+        found = re.search(r"model:\s*claude-([a-z]+)-(\d+)-(\d+)", overlay)
+        assert found is not None, option["id"]
+        family, major, minor = found.groups()
+        assert f"{family.capitalize()} {major}.{minor}" in option["label"], option

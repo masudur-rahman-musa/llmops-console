@@ -54,7 +54,7 @@ EVIDENCE_ROOT="${TRADEOFF_TEST_ROOT:-$REPO_ROOT}/docs/tradeoff-run"
 COMPOSE=(docker compose -f "$REPO_ROOT/docker-compose.yml" -f "$REPO_ROOT/infra/tradeoff/compose.yml" --profile tradeoff)
 
 # The small conversation file this repo ships, played against the stub target. The help
-# desk's own 33 cases live in the companion repository, so waiting for it means no table.
+# desk's own 45 cases live in the companion repository, so waiting for it means no table.
 CASE_SET="backend/evals/kind-cases.jsonl"
 TENANT="evals"
 

@@ -123,7 +123,7 @@ def test_the_job_invokes_ops_eval_conversations_with_the_nightly_run_kind(
 
 
 def test_the_job_checks_out_the_help_desk_for_its_cases(jobs: dict[str, Any]) -> None:
-    """`nightly-eval.yml` is the one nightly path and reads the help desk's 33 cases
+    """`nightly-eval.yml` is the one nightly path and reads the help desk's 45 cases
     from a checkout of its repository (never a copy here). Catches a job with no second
     checkout (the cases file is then missing at run time), one using the default token (which
     cannot read a private repo), and one that puts the checkout somewhere other than the

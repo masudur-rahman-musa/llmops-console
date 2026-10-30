@@ -77,7 +77,7 @@ jobs:
       # containers itself.
       - name: Write the help desk's .env.demo
         run: grep -v '=$' helpdesk/backend/.env.example > helpdesk/backend/.env.demo
-      # `make eval` plays the 33 cases and gates the report against
+      # `make eval` plays the 45 cases and gates the report against
       # `backend/evals/conversation-baseline.json` (with `calibration.json` when it
       # exists). It writes `backend/evals/reports/local/` either way.
       - name: Run the eval and gate it

@@ -10,7 +10,7 @@
     },
     {
       "id": "strong-api",
-      "label": "API strong (Claude Opus 5)",
+      "label": "API strong (Claude Sonnet 5.5)",
       "kind": "api",
       "report": "../docs/tradeoff-run/reports/strong-api/report.json",
       "notes": "Cost comes from the ledger's own per-turn number, so this option carries no hourly price."

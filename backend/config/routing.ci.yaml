@@ -11,9 +11,9 @@
 # The budget is a STRING. The policy loader reads these as decimal strings, and a
 # bare `2.00` is a YAML float - a number that looks right and does not merge.
 #
-# Not used by the pull request gate: that runs the help desk on the mock with its
-# own whole policy, `infra/evals/routing.evals.yaml`, which spends nothing. This cap is
-# for a gate run against a real model.
+# Not merged by the pull request gate: `make eval` runs the gateway on the shipped
+# `routing.yaml` (see `infra/evals/compose.yml`). This cap is for a run that
+# points the gateway and `ops-eval conversations` at the merged policy itself.
 tenants:
   evals:
     budget_usd_month: "2.00"
