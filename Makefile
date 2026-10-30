@@ -1,4 +1,4 @@
-.PHONY: help setup run up embed-model down rebuild all gateway console test test-infra fast test-slowest lint typecheck format verify security eval infra-check k8s-check k8s-aws-check k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate secrets-encrypt secrets-decrypt secrets-check load numbers grafana-check console-check
+.PHONY: help setup run up embed-model down rebuild all gateway console test test-infra fast test-slowest lint typecheck format verify security eval infra-check k8s-check k8s-aws-check k8s-gpu-check aws-evidence aws-evidence-cost tradeoff tradeoff-option tradeoff-gpu tradeoff-gpu-cost migrate tenant-key secrets-encrypt secrets-decrypt secrets-check load numbers grafana-check console-check
 
 # The console's checks run through pnpm, and are skipped only in a checkout that
 # has no web, so the intended gate stays visible in this file. The
@@ -140,6 +140,16 @@ verify: format lint typecheck test security   ## The full gate, in order
 # mistake "nothing was configured" for "nothing needed doing".
 migrate:    ## Apply the ledger migrations (safe to run twice)
 	$(UV_ROOT) ops-migrate
+# A fresh local tenant key. Prints the key a client sends as its Bearer token,
+# and the `OPSCONSOLE_API_KEYS` line to put in `backend/.env.demo`, which holds
+# only its sha256 digest. Nothing is written to a file. The tenant must be one
+# `backend/config/routing.yaml` names; `nordlicht` is the default.
+TENANT ?= nordlicht
+tenant-key: ## Make a local tenant key and print its env line: make tenant-key [TENANT=nordlicht]
+	@key=$$(openssl rand -hex 32); \
+	digest=$$(printf '%s' "$$key" | openssl dgst -sha256 -r | cut -d' ' -f1); \
+	echo "key: $$key"; \
+	echo "OPSCONSOLE_API_KEYS=$(TENANT):$$digest"
 # The eval gate: the help desk's 45 conversation cases, each played
 # EVAL_REPEATS times, against the real help desk agent, with this gateway beside
 # it and the real cheap model (`agent-default`) answering, so `ANTHROPIC_API_KEY` must be set (in the shell,
