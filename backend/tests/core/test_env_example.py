@@ -1,4 +1,5 @@
-"""`backend/.env.example`: the tracing names are listed, and listed as comments."""
+"""`backend/.env.example`: every name it lists is read by something, provider keys ship
+empty, and the tracing names are listed as comments."""
 
 from __future__ import annotations
 
@@ -61,3 +62,49 @@ def test_env_demo_turns_public_traces_on() -> None:
     lines = ENV_DEMO.read_text(encoding="utf-8").splitlines()
 
     assert f"{PUBLIC_SWITCH}=true" in lines
+
+
+REPO_ROOT = ENV_EXAMPLE.parents[1]
+BACKEND = ENV_EXAMPLE.parent
+
+#: Where a name the gateway or compose reads is spelled out, apart from the settings class.
+#: Azure ships no provider file; its two names are the ones its documented file reads.
+READERS = (
+    *sorted((BACKEND / "config" / "providers").glob("*.yaml")),
+    *sorted((BACKEND / "app").rglob("*.py")),
+    REPO_ROOT / "docker-compose.yml",
+    REPO_ROOT / "docs" / "azure.md",
+)
+
+
+def listed_names() -> list[str]:
+    """Every `NAME=` in the file, live or commented out."""
+    lines = ENV_EXAMPLE.read_text(encoding="utf-8").splitlines()
+    return [m.group(1) for line in lines if (m := re.match(r"^#?\s*([A-Z][A-Z0-9_]*)=", line))]
+
+
+def settings_names() -> set[str]:
+    from app.core.config import Settings
+
+    prefix = Settings.model_config.get("env_prefix", "")
+    return {f"{prefix}{field}".upper() for field in Settings.model_fields}
+
+
+@pytest.mark.parametrize("name", listed_names())
+def test_every_listed_name_is_read_by_something(name: str) -> None:
+    """Catches a name nothing reads, such as a bare `DATABASE_URL` beside the prefixed one the
+    gateway really reads: a reader fills it in and nothing changes."""
+    if name in settings_names():
+        return
+    pattern = re.compile(rf"(?<![A-Za-z0-9_]){name}(?![A-Za-z0-9_])")
+    readers = [path for path in READERS if path.exists()]
+    assert any(pattern.search(path.read_text(encoding="utf-8")) for path in readers), name
+
+
+@pytest.mark.parametrize("name", ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"])
+def test_provider_keys_ship_empty(name: str) -> None:
+    """Catches a stand-in such as `replace-me` as a provider key: copied as it is, the gateway
+    builds an adapter that every request fails on, where an empty key leaves the provider off."""
+    lines = ENV_EXAMPLE.read_text(encoding="utf-8").splitlines()
+
+    assert [line for line in lines if line.startswith(f"{name}=")] == [f"{name}="]
