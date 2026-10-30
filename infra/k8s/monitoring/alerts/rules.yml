@@ -1,4 +1,4 @@
-# Alert rules for the AI Operations Console gateway and its cluster. Mounted into
+# Alert rules for the LLMOps Console gateway and its cluster. Mounted into
 # Prometheus as a second key on `ConfigMap/prometheus-config`
 # (`infra/k8s/monitoring/prometheus.yaml`), named by its `rule_files` entry.
 # Firing alerts are routed to Alertmanager

@@ -413,7 +413,7 @@ def create_app(
             raise ValueError(
                 f"a non-local process (env={resolved.env!r}) needs {' and '.join(missing)}"
             )
-    app = FastAPI(title="AI Operations Console gateway", lifespan=lifespan)
+    app = FastAPI(title="LLMOps Console gateway", lifespan=lifespan)
     app.state.settings = resolved
     app.state.probes = ProbeRegistry()
     app.state.key_store = SettingsKeyStore(resolved.api_keys)

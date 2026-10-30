@@ -1,6 +1,6 @@
 # Console
 
-The web console for the AI Operations Console. It shows whether the AI is
+The web console for the LLMOps Console. It shows whether the AI is
 working and what it costs: four read-only tabs (Overview, Requests, Cost,
 Quality) behind a shared password login. Each page opens with one line saying
 what question it answers.

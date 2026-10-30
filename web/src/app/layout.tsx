@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 
 import "./globals.css";
 
-export const metadata: Metadata = { title: "AI Operations Console" };
+export const metadata: Metadata = { title: "LLMOps Console" };
 
 /**
  * The only layout rendering `<html>`, so every page loads `globals.css`
