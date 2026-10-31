@@ -291,7 +291,9 @@ turn three ways:
 
 An LLM judge then grades the marked replies pass or fail against a rubric. The
 judge only counts toward the gate once a calibration run shows a Cohen's kappa of
-0.7 or better against 40 reference labels. The report is described in
+0.7 or better against 40 reference labels. Those labels are made by a model of the
+same family as the judge, so the check shows agreement, not correctness, until a
+person makes them. The report is described in
 [docs/eval-report.md](docs/eval-report.md) and the target contract in
 [docs/eval-target.md](docs/eval-target.md). Each finished case is saved at once,
 so a stopped run continues without paying again for what it already played.

@@ -122,6 +122,11 @@ the whole conversation, every tool call and result, and the rubric. It grades ea
 reply three times, and a reply is kept only when all three agree. A person's labels
 replace them later.
 
+While the labels come from a model, the calibration is partly circular. The
+judge and the labeller come from the same model family (today the same model),
+so a high kappa shows they agree, not that either is right; only human labels
+make it a real check.
+
 `ops-eval label` makes the file, and refuses to overwrite one that exists.
 `ops-eval calibrate --labels PATH --judge-url URL --out DIR` plays the judge over the
 labelled replies and writes `calibration.json` with the agreement. It refuses with

@@ -36,7 +36,9 @@ anything, so the reason line says `no evidence` instead of a number.
 the gate only when a calibration file is given and its Cohen's kappa is 0.7 or
 better. Below that, or with no calibration at all, the score is reported and the
 comment says the judge decided nothing. No calibration file is committed today,
-so today only `check_score` can block a merge.
+so today only `check_score` can block a merge. The 40 reference labels are made
+by a model of the same family as the judge, so that kappa shows the two agree,
+not that either is right, until a person makes the labels.
 
 ## The numbers are percentages
 
