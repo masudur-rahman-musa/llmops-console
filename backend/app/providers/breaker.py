@@ -29,8 +29,7 @@ open (no breaker at all) or fail closed (no traffic at all), both of which are
 worse than each replica learning within five requests of its own that a provider
 is down. The base Kubernetes deploy runs two gateway replicas with an HPA up to
 three, so each replica keeps its own breaker: one can be open while another is
-still closed, and each learns about a failing provider on its own. The single
-server overlay runs one replica, so there it is one breaker.
+still closed, and each learns about a failing provider on its own.
 
 **Half-open hands the trial to the first caller only.** `allows()` claims the
 trial inside the lock so only the first HALF_OPEN caller gets True; every later
