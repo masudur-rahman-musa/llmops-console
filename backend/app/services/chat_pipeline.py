@@ -687,6 +687,8 @@ def _serve(
         generation.note_output(tokens_out=answer.usage.completion_tokens)
         generation.note_answer(answer.content)
         generation.end()
+        # Filed under the provider that answered, not candidates[0], on purpose: a
+        # fallback answer is hit only while the resolver puts that provider first.
         store_answer(
             clients.response_cache,
             context.tenant,
