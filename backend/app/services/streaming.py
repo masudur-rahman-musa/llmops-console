@@ -117,9 +117,10 @@ def sse_frames(
     able to `close()` it: that is what releases the provider stream when the
     client goes away, and an `Iterator` does not promise the method.
 
-    A sync generator, deliberately: the chat route runs it inside
-    `asyncio.to_thread`, so a provider that pauses between events
-    holds a worker thread rather than the event loop.
+    A sync generator, deliberately: Starlette reads a sync body on its anyio
+    worker threads, so a provider that pauses between events holds a worker
+    thread rather than the event loop. The provider semaphore is already
+    released by then, so these threads are not counted against it.
 
     `on_unreported_usage` is called with the characters this generator actually
     SENT, and only when the stream ended without a `UsageTotal` event - a typed

@@ -6,10 +6,17 @@ waiting for it - the event loop cannot move to the next request while it is
 inside a synchronous provider call.
 
 The routes hand each blocking provider call to `asyncio.to_thread`, which runs
-it on `concurrent.futures.ThreadPoolExecutor` threads, and cap concurrency with
-a semaphore so a slow or overloaded provider fills only this pool and never the
-shared one. One slow provider may hold 32 threads here; it cannot hold the event
-loop or the threads that serve `/readyz`, `/metrics` and everything else.
+it on the event loop's default executor. In CPython that pool has
+`min(32, os.cpu_count() + 4)` threads unless the app sets its own, so on a small
+machine it is well under 32. The semaphore caps how many provider calls queue
+for that pool at once. The sync routes (`/healthz`, `/readyz`, `/metrics`) do not
+use it: FastAPI runs them on anyio's worker threads, a separate pool of 40.
+
+What the semaphore does NOT cover: a streamed answer. The route holds it only
+while the pipeline runs up to the first event. It is released before the body
+is sent, and Starlette then reads the rest of the stream on anyio's pool, the
+same 40 threads the sync routes use. So enough slow streams at once can still
+fill that pool and delay `/readyz` and `/metrics`.
 
 The semaphore is an `asyncio.Semaphore`, not a `threading.Semaphore`: the route
 holds it while the blocking call runs in a thread, and only an async semaphore
@@ -24,10 +31,10 @@ from typing import Final
 PROVIDER_POOL_SIZE: Final[int] = 32
 """How many provider calls may run at once.
 
-Decided without asking: 32 leaves headroom under the shared pool's
-default of 40 thread-pool workers, absorbs a healthy burst of concurrent chat
-requests, and is small enough that a single stalled provider cannot exhaust the
-machine's memory.
+Decided without asking: enough for a healthy burst of concurrent chat
+requests, and small enough that a single stalled provider cannot exhaust the
+machine's memory. It is not sized against a thread pool: the default executor
+may have fewer threads than this, and then the extra calls wait there instead.
 """
 
 
