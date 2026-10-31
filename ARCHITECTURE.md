@@ -189,7 +189,7 @@ The repo also ships deployment code that CI checks but never applies:
   the gateway to a kind cluster for a smoke test.
 - `infra/terraform/hetzner` provisions that one node and its DNS.
 - `infra/terraform/aws` is the same platform on EKS with RDS, ElastiCache and S3,
-  meant to be applied once and destroyed.
+  meant to be applied once and destroyed. It has not been deployed to AWS yet.
 - `infra/terraform/aws-gpu` is one GPU instance for the self-hosted comparison.
 - `infra/secrets/` holds example secrets. Real ones are encrypted with SOPS and age.
 

@@ -89,7 +89,8 @@ commands.
   box in `infra/terraform/`. CI runs `terraform validate` on all three, and the two
   AWS modules carry a monthly cost budget.
 - **AWS.** The `infra/terraform/aws` module (EKS, RDS, ElastiCache, S3 with IAM
-  roles for service accounts) and its apply, smoke test and destroy script.
+  roles for service accounts) and its apply, smoke test and destroy script. It
+  has not been deployed to AWS yet.
 - **Evals / LLM evaluation.** Multi-turn conversation evals, an LLM judge with
   Cohen's kappa calibration, pass rates with Wilson ranges, and a CI gate in
   `backend/app/evals/`.
@@ -478,8 +479,8 @@ step:
 - `infra/terraform/aws` is an EKS stack with RDS PostgreSQL, ElastiCache Redis and
   an S3 bucket reached through IAM roles for service accounts.
   `infra/scripts/aws_evidence.sh` applies it, deploys the gateway, runs a smoke
-  test, captures the result and always destroys it. No captured run is committed
-  yet. See [docs/aws-evidence/](docs/aws-evidence/).
+  test, captures the result and always destroys it. It has not been deployed to
+  AWS yet, so no run is captured. See [docs/aws-evidence/](docs/aws-evidence/).
 - `infra/terraform/aws-gpu` is the single GPU box for the vLLM comparison above.
 - `infra/terraform/hetzner` is one small ARM server running k3s, with its DNS.
 - `infra/k8s/` holds the kustomize manifests for the gateway, console, embedding
