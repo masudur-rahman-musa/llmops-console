@@ -159,15 +159,18 @@ A request goes through these steps:
 
 1. **Auth.** The bearer key is hashed and must match the tenant named in
    `X-Tenant`. Admin and console routes use a separate admin key.
-2. **Routing.** The alias resolves, for that tenant, to an ordered list of
-   providers and models. The first is the default and the rest are fallbacks.
-3. **Redaction.** If the tenant's rule for the request's data class says redact,
-   every message is redacted first. With no `X-Data-Class` header the class is
-   `confidential`.
-4. **Limits.** The monthly budget and the per-minute limits are checked before any
+2. **Limits.** The monthly budget and the per-minute limits are checked before any
    provider is called.
-5. **Cache.** An exact match in Redis is answered at once. For `agent-default`, a
-   close enough question in Qdrant is answered too.
+3. **Routing.** The alias resolves, for that tenant, to an ordered list of
+   providers and models. The first is the default and the rest are fallbacks.
+4. **Exact cache.** A repeat of the same request is answered from Redis at once.
+   The key is a hash scoped by tenant and data class, and the stored answer still
+   holds placeholders.
+5. **Redaction, then the semantic cache.** If the tenant's rule for the request's
+   data class says redact, every message is redacted before the semantic cache or
+   any provider sees it. With no `X-Data-Class` header the class is
+   `confidential`. For `agent-default`, a close enough question in Qdrant is then
+   answered too.
 6. **Provider call.** The adapter calls the provider, with a circuit breaker, two
    retries and fallback inside the alias. Streaming is supported.
 7. **Record.** Tokens are priced, a ledger row is written, metrics are counted and

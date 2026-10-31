@@ -89,14 +89,18 @@ coverage.
 2. **Context.** `X-Data-Class` sets the data class, and a missing one counts as
    `confidential`. `X-Session`, `X-User` and `X-Prompt-Version` are optional and
    checked for shape. `X-User` must be a random id, never a name or an email.
-3. **Routing.** The alias resolves through `backend/config/routing.yaml` to an
-   ordered list of provider and model pairs for this tenant.
-4. **Redaction.** If the tenant's rule for this data class says redact, every
-   message is redacted before anything else sees it.
-5. **Limits.** The tenant and user monthly budgets and the per-minute request and
+3. **Limits.** The tenant and user monthly budgets and the per-minute request and
    token limits are checked. A refusal happens before any provider is called.
-6. **Cache.** The exact cache is checked first. For an alias with the semantic
-   cache on, Qdrant is asked for a stored answer at 0.97 similarity or better.
+4. **Routing.** The alias resolves through `backend/config/routing.yaml` to an
+   ordered list of provider and model pairs for this tenant.
+5. **Exact cache.** A repeat of the same request is answered from Redis. The key
+   is a sha256 hash scoped by tenant, data class and provider, so no raw text is
+   stored in the key, and the stored answer is the provider's answer, which still
+   holds placeholders. A hit records no raw text in the trace.
+6. **Redaction, then the semantic cache.** If the tenant's rule for this data
+   class says redact, every message is redacted before the semantic cache or any
+   provider sees it. For an alias with the semantic cache on, Qdrant is then asked
+   for a stored answer at 0.97 similarity or better.
 7. **Provider call.** The first candidate whose circuit is closed is called. A
    failure worth retrying is retried twice with backoff, then the next candidate is
    tried. A circuit opens after 5 failures in 60 seconds and lets a call through
