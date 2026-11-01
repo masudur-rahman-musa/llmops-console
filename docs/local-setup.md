@@ -43,8 +43,10 @@ too.
 
 ## 2. Make the gateway keys
 
-The gateway stores only the sha256 digest of each key, never the key itself. Make
-one tenant key and one admin key:
+The gateway stores only the sha256 digest of each key, never the key itself. Every
+value you make yourself is explained in
+[How to make each value](#how-to-make-each-value) below. Make one tenant key and
+one admin key:
 
     tenant_key=$(openssl rand -hex 32)
     admin_key=$(openssl rand -hex 32)
@@ -155,6 +157,149 @@ requests first. `make numbers` fills every tab in one go. It runs the real eval,
 sends six chat requests, records a release and then checks every tab. It needs the
 help desk checkout (next section) and `ANTHROPIC_API_KEY`, and it spends real
 tokens.
+
+## How to make each value
+
+Every value below is either a random string you make with `openssl`, or a key you
+get from an account. The backend ones go in `backend/.env`. The console's go in
+`web/.env.local`.
+
+### Keys and fingerprints, the idea behind most of them
+
+Many values here come in pairs, a key and its SHA-256 digest. A digest is a
+one-way scramble of the key. The side that sends the key keeps the key. The side
+that checks it keeps only the digest. To check a key, the gateway scrambles it
+again and compares. Someone who reads the gateway's settings sees only digests
+and still cannot call it.
+
+So the usual steps are these. Make one random key, keep it where it is sent from,
+and put its digest where it is checked.
+
+```bash
+key=$(openssl rand -hex 32)
+echo "the key:    $key"
+echo "its digest: $(printf %s "$key" | shasum -a 256 | cut -d' ' -f1)"
+```
+
+`printf %s` is used instead of `echo` on purpose. `echo` adds a line break at the
+end, and a key with a line break has a different digest.
+
+### `OPSCONSOLE_API_KEYS`
+
+What it is for. The tenant keys the gateway accepts. A tenant is one customer,
+with its own budget, rate limits and redaction rules in
+`backend/config/routing.yaml`.
+
+The shape is `tenant:digest,tenant:digest`. The tenant must be one that
+`routing.yaml` defines, which ships with `nordlicht`, `cuan` and `evals`.
+
+How to make it. `make tenant-key TENANT=nordlicht` prints a new key and its line.
+The key goes to whoever calls the gateway. For the companion help desk, that is
+its `GATEWAY_API_KEYS` setting, in the shape `nordlicht:key`. The digest line goes
+here. Join several tenants with commas.
+
+### `OPSCONSOLE_ADMIN_KEY_SHA256` and `CONSOLE_ADMIN_KEY`
+
+What they are for. The console reads its numbers from the gateway's admin routes.
+Those routes take one admin key.
+
+How to make them. One key, made with the command above. The digest goes in
+`OPSCONSOLE_ADMIN_KEY_SHA256` in `backend/.env`. The key itself goes in
+`CONSOLE_ADMIN_KEY` in `web/.env.local`, because the console is the side that
+sends it. If they do not match, every console page says the data is unavailable.
+
+### `CONSOLE_PASSWORD_SHA256`
+
+What it is for. The console has one shared login password. This is its digest, so
+the password itself is never stored.
+
+How to make it. Pick a password, then print its digest.
+
+```bash
+printf %s 'pick-a-local-password' | shasum -a 256 | cut -d' ' -f1
+```
+
+You type the password at the login page. Only the digest goes in
+`web/.env.local`.
+
+### `CONSOLE_SESSION_SECRET`
+
+What it is for. It signs the console's login cookie, so nobody can make a cookie
+that looks signed in. It needs 32 characters or more.
+
+How to make it.
+
+```bash
+openssl rand -hex 32
+```
+
+Changing it later only signs everyone out.
+
+### `OPSCONSOLE_BUDGET_OVERRIDE_SECRET`
+
+What it is for. Optional. When a tenant has spent its monthly budget, the gateway
+refuses its calls. An override token lets one tenant through for one month on
+purpose. This secret signs those tokens. Empty means no override is ever accepted.
+
+How to make it.
+
+```bash
+python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
+```
+
+This one is the secret itself, not a digest, because checking a signed token
+needs the same secret. `backend/.env.example` shows the command that makes a
+token for one tenant and one month.
+
+### `OPSCONSOLE_EVAL_JUDGE_KEY`
+
+What it is for. Optional. When an eval run grades the replies with a model, the
+grading tool calls this gateway like any other client, as the `evals` tenant.
+This is that tenant's key.
+
+How to make it. Make a key with the command above. The key goes here. Its digest
+goes in `OPSCONSOLE_API_KEYS` as `evals:digest`. You only need it for runs by
+hand, since `make eval` makes its own throwaway keys and puts the old ones back
+when it ends.
+
+### `OPSCONSOLE_OTLP_ENDPOINT` and `OPSCONSOLE_OTLP_HEADERS`
+
+What they are for. Optional. They send the gateway's traces to Langfuse. Without
+them, spans are built and dropped.
+
+How to make them. Make a free Langfuse project and create an API key pair in its
+settings. Langfuse shows a public key that starts `pk-lf-` and a secret key that
+starts `sk-lf-`. The endpoint is your region's address plus
+`/api/public/otel/v1/traces`. The header is the two keys joined by a colon and
+base64 encoded.
+
+```bash
+pk='pk-lf-...'
+sk='sk-lf-...'
+echo "OPSCONSOLE_OTLP_ENDPOINT=https://cloud.langfuse.com/api/public/otel/v1/traces"
+echo "OPSCONSOLE_OTLP_HEADERS=Authorization=Basic $(printf %s "$pk:$sk" | base64 | tr -d '\n')"
+```
+
+Use your own region's address if your project is not on `cloud.langfuse.com`.
+
+### `POSTGRES_PASSWORD`
+
+What it is for. The password of the local database, used by the database
+container and by `OPSCONSOLE_DATABASE_URL`. The shipped `opsconsole` is fine on a
+laptop. If you change it, change it in both places. Postgres reads it only when it
+first creates its data, so an old volume keeps the old password until
+`docker compose down -v`, which also deletes all local data.
+
+### The paid keys
+
+These are not made by a command. Each comes from an account.
+
+- `ANTHROPIC_API_KEY` from the Anthropic Console, under API keys.
+- `OPENAI_API_KEY` from the OpenAI platform, under API keys. Optional, it is only
+  the fallback.
+- `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_KEY` from your Azure OpenAI resource
+  in the Azure portal, under Keys and Endpoint. Optional, see
+  [azure.md](azure.md).
 
 ## Run the tests
 
