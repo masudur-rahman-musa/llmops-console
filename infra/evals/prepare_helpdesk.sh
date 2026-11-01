@@ -3,8 +3,9 @@
 # run: `make eval` calls this, never by hand. Usage: prepare_helpdesk.sh <help desk dir>
 #
 # Runs the help desk's own reset (drop, migrate, checkpointer, seed, reviews),
-# minus its ingest step, which still names a script the help desk has
-# since removed. The ingest runs here instead, one tenant and corpus version at
+# minus its ingest step: on macOS that ingest can abort (134) as it exits, after
+# every document is written, and the reset counts the abort as a failure. The
+# ingest runs here instead, one tenant and corpus version at
 # a time. It redacts each
 # chunk through this gateway's `/v1/redact`, so it needs the gateway up and the
 # run's keys in HELPDESK_GATEWAY_API_KEYS.
@@ -19,10 +20,7 @@ import sys
 sys.path.insert(0, "scripts")
 import e2e_reset
 
-run_step = e2e_reset._step
-e2e_reset._step = lambda name, *args, **kwargs: (
-    None if name == "ingest.py" else run_step(name, *args, **kwargs)
-)
+e2e_reset._ingest = lambda *args, **kwargs: None
 e2e_reset.main()
 PY
 
