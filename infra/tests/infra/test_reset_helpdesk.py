@@ -137,3 +137,16 @@ def test_only_the_reset_before_the_ingest_skips_the_check() -> None:
 
     assert 'reset_helpdesk.sh" --no-check "$1"' in prepare
     assert "--reset-command infra/evals/reset_helpdesk.sh --out" in makefile
+
+
+def test_a_tenant_the_eval_never_ingests_is_not_checked() -> None:
+    """Catches a check that stops a run over a tenant no case plays: `demo` has old vectors
+    and no rows, but only the tenants with a policy folder are ingested and played, so only
+    their gaps count. A gap in a played tenant still stops the run."""
+    vectors = {"nordlicht": {"n1"}, "cuan": {"c1"}, "demo": {"d1"}}
+    rows: dict[str, set[str]] = {"nordlicht": {"n1"}, "cuan": {"c1"}, "demo": set()}
+    played = {"nordlicht", "cuan"}
+
+    assert reset.policy_problems(vectors, rows, played) == []
+    broken = reset.policy_problems(vectors, {**rows, "cuan": set()}, played)
+    assert [line.split(":")[0] for line in broken] == ["cuan"]

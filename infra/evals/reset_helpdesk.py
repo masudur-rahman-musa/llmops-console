@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 
 KEEP_SCHEMA = "eval_kept_policies"
 """Where the policy rows wait while `public` is dropped and rebuilt."""
@@ -55,17 +56,23 @@ def restore_statement(
 
 
 def policy_problems(
-    vector_documents: Mapping[str, set[str]], row_documents: Mapping[str, set[str]]
+    vector_documents: Mapping[str, set[str]],
+    row_documents: Mapping[str, set[str]],
+    played: set[str] | None = None,
 ) -> list[str]:
     """What would make a policy search fail, one line each; empty when search can work.
 
     `vector_documents` holds, per tenant slug, the document ids its current vectors name.
     `row_documents` holds, per tenant slug, the ids of its `policy_documents` rows.
+    `played` names the tenants the eval ingests and plays; only their gaps count, so old
+    vectors in a tenant no case uses never stop a run. `None` checks every tenant.
     """
     problems = []
     if not any(row_documents.values()):
         problems.append("the help desk has no policy_documents rows, so every policy search fails")
     for slug in sorted(vector_documents):
+        if played is not None and slug not in played:
+            continue
         missing = vector_documents[slug] - row_documents.get(slug, set())
         if missing:
             problems.append(
@@ -177,7 +184,9 @@ async def _check(database_url: str) -> list[str]:
             vector_documents[slug] = named
     finally:
         await client.close()
-    return policy_problems(vector_documents, row_documents)
+    # The eval ingests one policy folder per tenant, so those are the tenants it plays.
+    played = {slug for slug in slugs if (Path("data/policies") / slug).is_dir()}
+    return policy_problems(vector_documents, row_documents, played)
 
 
 def main(argv: list[str] | None = None) -> int:
