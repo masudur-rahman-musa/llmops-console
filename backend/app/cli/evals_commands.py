@@ -118,11 +118,20 @@ class _AnsweringJudge:
     def __init__(self, judge: JudgeClient) -> None:
         self._judge = judge
 
-    def check(self, check: ReplyCheck, turns: Sequence[PlayedTurn]) -> CheckAnswer:
-        return _answered(self._judge.check(check, turns), f"check {check.check}")
+    def check(
+        self,
+        check: ReplyCheck,
+        turns: Sequence[PlayedTurn],
+        *,
+        people: frozenset[str] | None = None,
+    ) -> CheckAnswer:
+        answer = self._judge.check(check, turns, people=people)
+        return _answered(answer, f"check {check.check}")
 
-    def never(self, text: str, turns: Sequence[PlayedTurn]) -> CheckAnswer:
-        return _answered(self._judge.never(text, turns), f"never rule {text!r}")
+    def never(
+        self, text: str, turns: Sequence[PlayedTurn], *, people: frozenset[str] | None = None
+    ) -> CheckAnswer:
+        return _answered(self._judge.never(text, turns, people=people), f"never rule {text!r}")
 
 
 def _answered(answer: CheckAnswer | None, asked: str) -> CheckAnswer:

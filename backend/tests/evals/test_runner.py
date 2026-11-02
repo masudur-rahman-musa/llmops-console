@@ -487,3 +487,20 @@ def test_the_run_time_reaches_the_world_checks() -> None:
     [record] = play(stub, [case])
 
     assert record.result == "setup_wrong"
+
+
+def test_the_judge_is_told_only_the_people_the_case_names() -> None:
+    """Catches a judge that gets the whole company again, or loses someone a case is about:
+    every check and never text is asked with the own person plus the person an end state
+    names, and nobody else."""
+    case = make_case(
+        right_end_states=[[{"open_request": ROLE}], [{"holds": ROLE, "person": "sales.3"}]]
+    )
+    stub = StubHelpdesk({"case-001": filing_script()})
+    person = ScriptedPerson(PersonTurn(message="yes", yes=True))
+    judge = FakeJudge()
+
+    play(stub, [case], person=person, judge=judge)
+
+    assert judge.people
+    assert set(judge.people) == {frozenset({OWN, "sales.3"})}

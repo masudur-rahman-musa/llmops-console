@@ -16,10 +16,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.evals.judge import render_conversation, render_label_conversation
+from app.evals.judge import prompt_text, render_conversation, render_label_conversation
 from app.evals.labels import LabelToolCall, LabelTurn
 
-from .builders import call, played
+from .builders import OWN, call, grant, human, played, req, ticket, world
 
 LIST_TOOL = "list_requestable_roles"
 
@@ -165,3 +165,54 @@ def test_a_label_conversation_is_cut_the_same_way() -> None:
     assert rendered == expected
     assert marker(2, 200) in rendered
     assert '"r001"' not in rendered
+
+
+def company(*, people: int = 200, grants_each: int = 5) -> dict[str, list[dict[str, Any]]]:
+    """A company the size of a seeded tenant: every person with a few roles, some requests
+    and tickets. The case's own person is one of them."""
+    names = [OWN, *(f"ops.{n}" for n in range(1, people))]
+    return {
+        "people": [human(name) for name in names],
+        "grants": [grant(name, f"sys{g}.viewer") for name in names for g in range(grants_each)],
+        "requests": [req(n, target=names[n]) for n in range(1, 60)],
+        "tickets": [ticket(n, person=names[n]) for n in range(1, 30)],
+    }
+
+
+def test_the_judge_sees_only_the_named_people_and_what_changed() -> None:
+    """Catches a judge input that carries the whole company: the own person's grant and the
+    new request (made for someone else) are shown, a grant of an unnamed person who did not
+    change is not."""
+    rows = company()
+    before = world(**rows)
+    new_request = req(999, target="ops.77", requester=OWN, role="ledger.viewer")
+    after = world(**{**rows, "requests": [*rows["requests"], new_request]})
+    turn = played("Ask ledger for ops.77", "Filed.", before=before, after=after)
+
+    text = render_conversation([turn], people=frozenset({OWN}))
+
+    assert '"person":"' + OWN + '","role":"sys0.viewer"' in text
+    assert '"number":999' in text
+    assert '"person":"ops.150"' not in text
+
+
+def test_a_full_size_company_keeps_the_judge_input_small() -> None:
+    """Catches the judge being sent the whole company again: with 200 people, 1000 grants,
+    and a three-turn play, the prompt plus the question plus the conversation stays under
+    about 8,000 tokens (counted as 4 characters a token)."""
+    rows = company()
+    before = world(**rows)
+    after = world(**{**rows, "requests": [*rows["requests"], req(999, role="wiki.viewer")]})
+    turns = [
+        played("I need wiki access", "Which wiki role?", before=before, after=before),
+        played("viewer", "I'll file wiki viewer. OK?", before=before, after=before),
+        played("yes", "Filed request 999.", yes=True, before=before, after=after),
+    ]
+
+    sent = (
+        prompt_text()
+        + "Check: reports_from_tool\n\n"
+        + render_conversation(turns, people=frozenset({OWN}))
+    )
+
+    assert len(sent) / 4 < 8000

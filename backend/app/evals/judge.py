@@ -1,8 +1,9 @@
 """The reply judge: one fixed prompt, one check per request, one answer each.
 
 The judge answers each reply check on its own with `yes`, `no` or `does_not_apply`, a quote
-from the reply and a one-sentence reason. It sees the whole conversation, the tool results
-and the world facts; a long role list is cut to the roles the reply names. It reaches a
+from the reply and a one-sentence reason. It sees the whole conversation, the tool results,
+the world facts about the people the case names and every row that changed during the play;
+a long role list is cut to the roles the reply names. It reaches a
 model the way every other client does, through the gateway's `/v1/chat/completions`
 naming the alias `judge`: the gateway puts the spend on the `evals` tenant's budget and in
 the ledger without this module knowing.
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
     from app.evals.cases import ReplyCheck
     from app.evals.labels import LabelTurn
     from app.evals.person import PlayedTurn
+    from app.evals.target import EvalWorld
 
 JUDGE_ALIAS: Final[str] = "judge"
 """The alias the judge names. `routing.yaml` decides which provider serves it."""
@@ -150,11 +152,15 @@ def ask_retried[Parsed: BaseModel](
     return None
 
 
-def render_conversation(turns: Sequence[PlayedTurn]) -> str:
+def render_conversation(turns: Sequence[PlayedTurn], people: frozenset[str] | None = None) -> str:
     """The whole conversation for the judge, between the fixed tags.
 
-    Every turn: what the person typed, every tool call with its result, the reply, and the
-    world facts the help desk reported before the first turn and after the last.
+    Every turn: what the person typed, every tool call with its result, the reply. Then the
+    world facts about `people` (the case's own person and anyone its facts name) before the
+    first turn, and every row that changed by the last. The rest of the company is left
+    out: a seeded tenant has about 200 people, and sending them all made each check cost
+    about 100,000 tokens while no check needs them. `None` shows everyone, for a caller
+    with a small world and no case at hand; a run always names its people.
     """
     lines = [CONVERSATION_OPEN]
     for number, turn in enumerate(turns, start=1):
@@ -168,9 +174,45 @@ def render_conversation(turns: Sequence[PlayedTurn]) -> str:
     lines.append(CONVERSATION_CLOSE)
     if turns:
         first, last = turns[0].answer.world_before, turns[-1].answer.world_after
-        lines.append(f"World facts before the first turn: {first.model_dump_json()}")
-        lines.append(f"World facts after the last turn: {last.model_dump_json()}")
+        named = "everyone" if people is None else ", ".join(sorted(people)) or "nobody"
+        lines.append(f"World facts before the first turn, about {named}: {_about(first, people)}")
+        lines.append(f"Rows that changed by the last turn: {_changes(first, last)}")
     return "\n".join(lines)
+
+
+def _about(world: EvalWorld, people: frozenset[str] | None) -> str:
+    """The rows of `world` that name one of `people` (every row for `None`), as JSON."""
+    if people is None:
+        return world.model_dump_json(exclude={"reviews"})
+    return json.dumps(
+        {
+            "requests": [
+                r.model_dump(mode="json")
+                for r in world.requests
+                if r.requester in people or r.target in people
+            ],
+            "grants": [g.model_dump(mode="json") for g in world.grants if g.person in people],
+            "tickets": [t.model_dump(mode="json") for t in world.tickets if t.person in people],
+            "people": [p.model_dump(mode="json") for p in world.people if p.person in people],
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def _changes(before: EvalWorld, after: EvalWorld) -> str:
+    """Per kind of row, the rows only in `after` (new or changed) and only in `before`
+    (gone or changed), as JSON. A kind with no change is left out."""
+    shown: dict[str, dict[str, list[Any]]] = {}
+    for kind in ("requests", "grants", "tickets", "people", "reviews"):
+        old = [row.model_dump_json() for row in getattr(before, kind)]
+        new = [row.model_dump_json() for row in getattr(after, kind)]
+        old_set, new_set = set(old), set(new)
+        added = [json.loads(row) for row in new if row not in old_set]
+        gone = [json.loads(row) for row in old if row not in new_set]
+        if added or gone:
+            shown[kind] = {"now": added, "before": gone}
+    return json.dumps(shown, ensure_ascii=False, separators=(",", ":")) if shown else "none"
 
 
 def render_label_conversation(turns: Sequence[LabelTurn]) -> str:
@@ -258,8 +300,10 @@ class JudgeClient:
         self._api_key = api_key
         self._timeout = timeout
 
-    def _ask(self, question: str, turns: Sequence[PlayedTurn]) -> CheckAnswer | None:
-        return self._ask_rendered(question, render_conversation(turns))
+    def _ask(
+        self, question: str, turns: Sequence[PlayedTurn], people: frozenset[str] | None
+    ) -> CheckAnswer | None:
+        return self._ask_rendered(question, render_conversation(turns, people))
 
     def _ask_rendered(self, question: str, conversation: str) -> CheckAnswer | None:
         user = f"{question}\n\n{conversation}"
@@ -280,13 +324,22 @@ class JudgeClient:
             reason=answer.reason[:MAX_REASON_LENGTH],
         )
 
-    def check(self, check: ReplyCheck, turns: Sequence[PlayedTurn]) -> CheckAnswer | None:
+    def check(
+        self,
+        check: ReplyCheck,
+        turns: Sequence[PlayedTurn],
+        *,
+        people: frozenset[str] | None = None,
+    ) -> CheckAnswer | None:
         """Answer one reply check, or `None` when the judge could not be used."""
-        return self._ask(f"Check: {check.check}\nApplies when: {check.applies_when}", turns)
+        question = f"Check: {check.check}\nApplies when: {check.applies_when}"
+        return self._ask(question, turns, people)
 
-    def never(self, text: str, turns: Sequence[PlayedTurn]) -> CheckAnswer | None:
+    def never(
+        self, text: str, turns: Sequence[PlayedTurn], *, people: frozenset[str] | None = None
+    ) -> CheckAnswer | None:
         """Answer one never rule: `yes` means the agent did the thing it must never do."""
-        return self._ask(f"Never rule: the agent {text}", turns)
+        return self._ask(f"Never rule: the agent {text}", turns, people)
 
     def label(self, question: str, conversation: Sequence[LabelTurn]) -> CheckAnswer | None:
         """Answer a label row's question about its conversation, or `None` when unusable."""

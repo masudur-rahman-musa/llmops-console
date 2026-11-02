@@ -43,9 +43,22 @@ DEFAULT_PLAYS: Final[int] = 3
 class ReplyJudge(Protocol):
     """Anything that answers a reply check and a never text. `JudgeClient` is one."""
 
-    def check(self, check: ReplyCheck, turns: Sequence[PlayedTurn]) -> CheckAnswer | None: ...
+    def check(
+        self, check: ReplyCheck, turns: Sequence[PlayedTurn], *, people: frozenset[str] = ...
+    ) -> CheckAnswer | None: ...
 
-    def never(self, text: str, turns: Sequence[PlayedTurn]) -> CheckAnswer | None: ...
+    def never(
+        self, text: str, turns: Sequence[PlayedTurn], *, people: frozenset[str] = ...
+    ) -> CheckAnswer | None: ...
+
+
+def named_people(case: EvalCase) -> frozenset[str]:
+    """The case's own person and everyone its world facts and end states name: the only
+    people whose rows the judge is shown."""
+    facts = [*case.world, *(fact for state in case.right_end_states for fact in state)]
+    return frozenset(
+        {person_name(case.person.seat), *(f.person for f in facts if f.person is not None)}
+    )
 
 
 def run_eval(
@@ -149,11 +162,12 @@ def _play_once(
     checks: list[CheckRecord] = []
     flagged: list[str] = []
     if judge is not None and turns:
+        people = named_people(case)
         for check in case.reply_checks:
-            answer = judge.check(check, turns)
+            answer = judge.check(check, turns, people=people)
             checks.append(_check_record(check.check, answer))
         for text in judge_never_texts(case):
-            verdict = judge.never(text, turns)
+            verdict = judge.never(text, turns, people=people)
             if verdict is not None and verdict.answer == "yes":
                 flagged.append(text)
     result = play_result(

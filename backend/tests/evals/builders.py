@@ -294,13 +294,24 @@ class FakeJudge:
         self._never = dict(never or {})
         self.asked: list[str] = []
         self.asked_never: list[str] = []
+        self.people: list[frozenset[str]] = []
 
-    def check(self, check: Any, turns: Sequence[PlayedTurn]) -> CheckAnswer | None:  # noqa: ANN401
+    def check(
+        self,
+        check: Any,  # noqa: ANN401
+        turns: Sequence[PlayedTurn],
+        *,
+        people: frozenset[str] = frozenset(),
+    ) -> CheckAnswer | None:
         self.asked.append(check.check)
+        self.people.append(people)
         return self._answers.get(check.check, CheckAnswer(answer="no", quote="", reason="none"))
 
-    def never(self, text: str, turns: Sequence[PlayedTurn]) -> CheckAnswer | None:
+    def never(
+        self, text: str, turns: Sequence[PlayedTurn], *, people: frozenset[str] = frozenset()
+    ) -> CheckAnswer | None:
         self.asked_never.append(text)
+        self.people.append(people)
         return self._never.get(text, CheckAnswer(answer="no", quote="", reason="none"))
 
 
