@@ -47,7 +47,7 @@ def test_the_happy_path_exits_zero_with_exactly_the_two_files(tmp_path: Path) ->
 
     assert code == EXIT_OK
     assert sorted(p.name for p in out.iterdir()) == sorted([TRADEOFF_JSON_NAME, TRADEOFF_MD_NAME])
-    assert "check_score" in (out / TRADEOFF_MD_NAME).read_text(encoding="utf-8")
+    assert "outcome_every_play" in (out / TRADEOFF_MD_NAME).read_text(encoding="utf-8")
     assert json.loads((out / TRADEOFF_JSON_NAME).read_text(encoding="utf-8"))["winner"]
 
 

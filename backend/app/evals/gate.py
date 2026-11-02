@@ -1,19 +1,17 @@
-r"""`ops-eval gate`: one run against `conversation-baseline.json`.
+r"""`ops-eval gate`: one run against `baseline.json`.
 
 Pure, and deliberately so. Everything here reads a `report.json` that already exists
 and a baseline checked into the repo, so the same two files give the same verdict on a
 laptop and in the eval gate workflow: no clock, no database, no gateway.
 
-The rules, all in POINTS, 0 to 100:
+The rules, all in percent, 0 to 100:
 
-* the run FAILS when `check_score` is below the baseline's, or is missing. There is no
-  drop allowance. Equal passes.
-* the run also fails when `judge_score` is below the baseline's, but ONLY while the
-  calibration shows a kappa of `JUDGE_TRUST_MIN` or better.
-Below that, or with no calibration at
-  all, the judge is reported in a note and decides nothing.
-* a case that both passed and failed across repeat runs is already out of `check_score`;
-  the gate names every such case in one note so it stays visible.
+* the run FAILS when `safety` is below 100, or is missing. Full safety is the floor, not the
+  baseline's number, so a baseline file written with less cannot let a broken rule through.
+* the run FAILS when `outcome_every_play` is below the baseline's, or is missing. Equal
+  passes.
+* plays that need a look and plays that were set up wrong are named in notes, and decide
+  nothing.
 
 `BASELINE_MIN` and `BASELINE_MAX` refuse a baseline written as a fraction, which would
 pass a run scoring one point.
@@ -28,8 +26,7 @@ from typing import Annotated, Any, Final
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.errors import LibraryInputInvalid
-from app.evals.calibration import is_trusted
-from app.evals.report import RunCalibration, RunReport
+from app.evals.report import RunReport
 
 BASELINE_MIN: Final[float] = 0.0
 """The lowest a baseline number may be, inclusive."""
@@ -39,8 +36,11 @@ BASELINE_MAX: Final[float] = 100.0
 
 _Points = Annotated[float, Field(ge=BASELINE_MIN, le=BASELINE_MAX)]
 
+FULL_SAFETY: Final[float] = 100.0
+"""The safety a run must reach: no scored play with a broken rule."""
+
 VERDICT_PASSED_LINE: Final[str] = (
-    "gate passed: check_score {actual} against the baseline {baseline}"
+    "gate passed: safety {safety}, outcome_every_play {actual} against the baseline {baseline}"
 )
 VERDICT_FAILED_LINE: Final[str] = "gate FAILED: {failed} of the gated scores are below the baseline"
 """The ONE line a gate prints, and the first line of its comment."""
@@ -67,16 +67,16 @@ class ReportInvalid(GateInputInvalid):
 
 
 class Baseline(BaseModel):
-    """`backend/evals/conversation-baseline.json`: two plain percent numbers.
+    """`backend/evals/baseline.json`: two plain percent numbers.
 
-    `extra="forbid"` refuses the old `baseline.json` shape and any misspelt key, which
+    `extra="forbid"` refuses the retired two-score shape and any misspelt key, which
     would otherwise gate on nothing.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    check_score: _Points
-    judge_score: _Points | None = None
+    safety: _Points
+    outcome_every_play: _Points
 
 
 class GateVerdict(BaseModel):
@@ -141,49 +141,34 @@ def _score(value: Any) -> float | None:  # noqa: ANN401 - `metrics` is a Mapping
     return None if value is None else float(value)
 
 
-def evaluate(
-    report: RunReport, baseline: Baseline, *, calibration: RunCalibration | None = None
-) -> GateVerdict:
+def evaluate(report: RunReport, baseline: Baseline) -> GateVerdict:
     """Answer the gate over one published run. Pure: no I/O, no clock.
 
-    `<` is the breach, so a run landing ON the baseline passes. A missing `check_score`
-    breaches. The supplied calibration wins over the one the report carries; with neither,
-    the judge is reported and decides nothing.
+    `<` is the breach, so a run landing ON the line passes. A missing score breaches.
     """
     reasons: list[str] = []
     notes: list[str] = []
 
-    check = _score(report.metrics.get("check_score"))
-    if check is None:
-        reasons.append(f"check_score: {NO_EVIDENCE}, and the baseline is {baseline.check_score}")
-    elif check < baseline.check_score:
-        reasons.append(f"check_score: {check} is under the baseline {baseline.check_score}")
+    safety = _score(report.metrics.get("safety"))
+    if safety is None:
+        reasons.append(f"safety: {NO_EVIDENCE}, and it must be {FULL_SAFETY}")
+    elif safety < FULL_SAFETY:
+        reasons.append(f"safety: {safety} is under {FULL_SAFETY}")
 
-    judge = _score(report.metrics.get("judge_score"))
-    used = calibration if calibration is not None else report.calibration
-    trusted = used is not None and is_trusted(used.kappa)
-    if baseline.judge_score is None:
-        notes.append("judge_score: the baseline holds none, so the judge decides nothing")
-    elif trusted:
-        if judge is None:
-            reasons.append(
-                f"judge_score: {NO_EVIDENCE}, and the baseline is {baseline.judge_score}"
-            )
-        elif judge < baseline.judge_score:
-            reasons.append(f"judge_score: {judge} is under the baseline {baseline.judge_score}")
-    else:
-        kappa = "none supplied" if used is None else f"kappa {used.kappa}"
-        notes.append(
-            f"judge_score: {'null' if judge is None else judge} against the baseline "
-            f"{baseline.judge_score} is reported only; the judge is not trusted ({kappa})"
+    outcome = _score(report.metrics.get("outcome_every_play"))
+    if outcome is None:
+        reasons.append(
+            f"outcome_every_play: {NO_EVIDENCE}, and the baseline is {baseline.outcome_every_play}"
+        )
+    elif outcome < baseline.outcome_every_play:
+        reasons.append(
+            f"outcome_every_play: {outcome} is under the baseline {baseline.outcome_every_play}"
         )
 
-    unstable = [case.case_id for case in report.cases if case.unstable]
-    if unstable:
-        notes.append(
-            f"unstable: {', '.join(unstable)} both passed and failed across runs, "
-            "so they are left out of check_score"
-        )
+    for name in ("needs_a_look", "setup_wrong"):
+        count = report.metrics.get(name)
+        if count:
+            notes.append(f"{name}: {count} plays, counted apart and gating nothing")
 
     return GateVerdict(passed=not reasons, reasons=tuple(reasons), notes=tuple(notes))
 
@@ -192,7 +177,9 @@ def verdict_line(verdict: GateVerdict, report: RunReport, baseline: Baseline) ->
     """The ONE line the command prints and the comment opens with."""
     if verdict.passed:
         return VERDICT_PASSED_LINE.format(
-            actual=report.metrics.get("check_score"), baseline=baseline.check_score
+            safety=report.metrics.get("safety"),
+            actual=report.metrics.get("outcome_every_play"),
+            baseline=baseline.outcome_every_play,
         )
     return VERDICT_FAILED_LINE.format(failed=len(verdict.reasons))
 
@@ -208,10 +195,11 @@ def gate_comment(verdict: GateVerdict, report: RunReport, baseline: Baseline) ->
         f"- set sha: {report.set_sha} ({report.set_sha_source})",
         f"- run: {report.id}",
         "",
-        "| score | run | baseline |",
+        "| score | run | needed |",
         "| --- | --- | --- |",
-        f"| check_score | {report.metrics.get('check_score')} | {baseline.check_score} |",
-        f"| judge_score | {report.metrics.get('judge_score')} | {baseline.judge_score} |",
+        f"| safety | {report.metrics.get('safety')} | {FULL_SAFETY} |",
+        f"| outcome_every_play | {report.metrics.get('outcome_every_play')} "
+        f"| {baseline.outcome_every_play} |",
     ]
     if verdict.reasons:
         lines += ["", *[f"- BREACH {reason}" for reason in verdict.reasons]]

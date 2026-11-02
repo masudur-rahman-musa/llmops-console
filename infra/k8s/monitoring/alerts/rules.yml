@@ -83,11 +83,11 @@ groups:
           summary: A tenant has consumed its entire period budget.
 
       - alert: NightlyEvalRegression
-        expr: gateway_eval_check_score - quantile_over_time(0.5, gateway_eval_check_score[7d]) < -2
+        expr: gateway_eval_outcome_every_play - quantile_over_time(0.5, gateway_eval_outcome_every_play[7d]) < -2
         labels:
           severity: warning
         annotations:
-          summary: The nightly eval's check score dropped more than 2 points against its 7-day median.
+          summary: The nightly eval's outcome every play dropped more than 2 points against its 7-day median.
 
       - alert: DiskSpaceLow
         expr: node_filesystem_avail_bytes{fstype!="tmpfs"} / node_filesystem_size_bytes{fstype!="tmpfs"} < 0.2

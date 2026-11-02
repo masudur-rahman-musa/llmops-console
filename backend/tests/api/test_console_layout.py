@@ -14,12 +14,10 @@ The contract these cases are written against, before it exists:
   asked for tokens any more;
 * `CostPage.month_spend_usd`: the sum of the values `ConsoleReader.month_spend` answers,
   `None` when Postgres is down or unconfigured;
-* `app.services.dashboard.JUDGE_NOTE` keeps "kappa 0.7" and says what 1 and 0 mean.
 """
 
 from __future__ import annotations
 
-import re
 from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -32,7 +30,6 @@ from app.core.config import Settings
 from app.limits.prices import PriceTable
 from app.main import create_app
 from app.schemas.dashboard import ModelTokens
-from app.services.dashboard import JUDGE_NOTE
 from app.storage.dashboard_reads import CostRead, UnconfiguredConsoleReader
 
 from .conftest import ADMIN_KEY, NO_PROVIDER_KEYS
@@ -227,12 +224,3 @@ def test_month_spend_is_null_when_postgres_is_unconfigured(admin_settings: Setti
     assert body["sources"]["postgres"] == "unconfigured"
     assert "month_spend_usd" in body
     assert body["month_spend_usd"] is None
-
-
-def test_judge_note_explains_kappa_in_plain_words() -> None:
-    """Catches the old one-line note that keeps "kappa 0.7" but never says what the number
-    means, and a rewrite that drops the threshold: the note keeps "kappa 0.7" and holds a
-    standalone 1 and a standalone 0 (what each end of the scale means)."""
-    assert "kappa 0.7" in JUDGE_NOTE
-    assert re.search(r"(?<![\d.])1(?![\d.])", JUDGE_NOTE)
-    assert re.search(r"(?<![\d.])0(?![\d.])", JUDGE_NOTE)

@@ -65,6 +65,17 @@ def test_each_chat_alias_names_its_models(policy: Policy) -> None:
     )
 
 
+def test_the_simulated_person_runs_on_gpt_5_mini_then_haiku(policy: Policy) -> None:
+    """Catches a simulated person on the wrong model or in the wrong order: gpt-5-mini
+    answers first and Haiku only when it is down. Exact pairs in order, so a swap shows."""
+    candidates = policy.aliases["simulated-person"].candidates
+
+    assert tuple((c.provider, c.model) for c in candidates) == (
+        ("openai", "gpt-5-mini"),
+        ("anthropic", "claude-haiku-5-5"),
+    )
+
+
 def test_embed_lists_only_the_local_embedding_server(policy: Policy) -> None:
     """Catches a second embedding model on `embed`: a vector from another model sits
     in a different space and would quietly break search over stored vectors."""

@@ -7,24 +7,17 @@ case takes IS the claim it makes:
   "the pre-check ran BEFORE the borrow" is asserted as "no connection was
   borrowed at all", never as "the INSERT came back with an error";
 * `RecordingPool` keeps every statement and every `executemany`, so an accepted
-  boundary can assert the write was actually ISSUED - a writer that returned
-  quietly without writing anything raises nothing either, and would pass an "is
-  accepted" case that only checked for the absence of an exception.
+  boundary can assert the write was actually ISSUED.
 
-The cases needing a real server live in tests/storage/test_eval_store_postgres.py
-and are skipped without `OPSCONSOLE_TEST_DATABASE_URL`.
+The cases needing a real server live in tests/storage/test_eval_store_postgres.py.
 
-Every pattern is checked with `fullmatch`: `tenant`, `provider`, `case_id` and
-`category` against the resolver's identifier rule, `git_sha` against
-`report.SET_SHA_PATTERN`, `run_kind` against the three words `ops-eval` accepts. Each
-rejection table below carries a trailing newline, a trailing CRLF and a trailing space.
+Every pattern is checked with `fullmatch`; each rejection table carries a trailing
+newline, a trailing CRLF and a trailing space.
 
-This file is written for the conversation report. A case row's `details` holds the
-three checks, the judged replies and the error. The four measured columns stay NULL
-because a conversation answer measures none of them. `category` is any slug, because the
-help desk names its own categories, so the old closed list of twelve is gone with the
-single-reply format. The tests that only covered the removed assertions, residency
-verdict, taxonomy tags and 1-to-5 judge verdict were deleted with those modules.
+One case row is one case: `passed` is true when every scored play passed, `tags` are the
+rule ids the plays broke, and `details` holds the plays. The run row's `metrics` are the
+report's scores: `safety`, `outcome_every_play`, and the rest. The four measured columns
+stay NULL.
 """
 
 from __future__ import annotations
@@ -46,9 +39,8 @@ from psycopg_pool import ConnectionPool
 
 from app.cli.evals import RUN_KINDS
 from app.core.validation import MAX_IDENTIFIER_LENGTH, IdentifierInvalid
-from app.evals.checks import CaseCheck, TurnCheck
-from app.evals.report import REPORT_JSON_NAME, RunCalibration, RunReport, build_report
-from app.evals.runner import CaseLine
+from app.evals.report import REPORT_JSON_NAME, RunReport, build_report
+from app.evals.results import PlayRecord
 from app.storage.eval_store import (
     MAX_REPORT_PATH_LENGTH,
     MAX_SET_NAME_LENGTH,
@@ -59,7 +51,7 @@ from app.storage.eval_store import (
     rows_from_report,
 )
 
-from .builders import case_line
+from .builders import play_record
 
 Pool = ConnectionPool[Connection[TupleRow]]
 
@@ -84,10 +76,10 @@ AT_IDENTIFIER_CAP = "t" * MAX_IDENTIFIER_LENGTH
 OVER_IDENTIFIER_CAP = "t" * (MAX_IDENTIFIER_LENGTH + 1)
 
 
-def build(lines: tuple[CaseLine, ...], *, run_kind: str = "ci") -> RunReport:
-    """`build_report` over saved case lines, with the identity values above."""
+def build(plays: tuple[PlayRecord, ...], *, run_kind: str = "ci") -> RunReport:
+    """`build_report` over finished plays, with the identity values above."""
     return build_report(
-        lines,
+        plays,
         started_at=STARTED,
         finished_at=FINISHED,
         set_name=SET_NAME,
@@ -101,14 +93,16 @@ def build(lines: tuple[CaseLine, ...], *, run_kind: str = "ci") -> RunReport:
 
 
 MIXED = (
-    case_line("alpha", passed=True, verdicts=["pass"], category="paraphrases"),
-    case_line("beta", passed=False, verdicts=["fail", "pass"], category="follow_ups"),
-    case_line("gamma", passed=False, category="attacks"),
-    case_line("delta", passed=False, error="turn failed: HTTP 502 for delta", category="typos"),
+    play_record("alpha", 1, "pass", owner="access"),
+    play_record("alpha", 2, "pass", owner="access"),
+    play_record("beta", 1, "pass", owner="tickets"),
+    play_record("beta", 2, "fail", owner="tickets", broken=["early_change", "made_up_number"]),
+    play_record("gamma", 1, "needs_a_look", owner="reviews"),
+    play_record("delta", 1, "setup_wrong", owner="people"),
 )
-"""Four cases, one of each shape a real run produces, and no two alike in category, verdict
-or judged replies - so a mapping that fills one row from another case's record cannot pass
-by coincidence."""
+"""Four cases, one of each shape a run produces: all passed, one play failed with two broken
+rules, a needs a look play, and a case whose only play was setup wrong. No two alike in owner
+or plays, so a mapping that fills one row from another case's record cannot pass by chance."""
 
 
 def a_run_row(**overrides: Any) -> EvalRunRow:  # noqa: ANN401
@@ -124,7 +118,7 @@ def a_run_row(**overrides: Any) -> EvalRunRow:  # noqa: ANN401
         "target": TARGET,
         "tenant": TENANT,
         "git_sha": GIT_SHA,
-        "metrics": {"cases": 1, "passed": 1, "failed": 0},
+        "metrics": {"safety": 100.0, "outcome_every_play": 100.0},
         "passed": True,
         "report_path": f"/srv/evals/nightly/{REPORT_JSON_NAME}",
     }
@@ -142,7 +136,7 @@ def a_case_row(**overrides: Any) -> EvalCaseRow:  # noqa: ANN401
         "latency_ms": 137,
         "cost_usd": Decimal("0.001200"),
         "provider": PROVIDER,
-        "details": {"check": None, "judged": [], "error": None},
+        "details": {"plays": []},
     }
     fields.update(overrides)
     return EvalCaseRow(**fields)
@@ -255,13 +249,10 @@ def written(**overrides: Any) -> RecordingPool:  # noqa: ANN401
 
 
 def test_the_run_row_carries_every_identity_field_from_the_report() -> None:
-    """Catches a mapping that fills a column from the wrong field of the report - the two
-    SHAs, the set name, the tenant and the target are all `text`, so `set_sha` written
-    into `git_sha` is a row PostgreSQL accepts without a murmur. `id`, `passed` and
-    `metrics` are asserted from the report too, because a store that generated its own run
-    id would break the join every case row makes back to it, and `metrics` is what the
-    gate reads. The metrics are compared against the report's JSON form, the exact bytes
-    the file holds."""
+    """Catches a mapping that fills a column from the wrong field of the report (the two SHAs,
+    the set name, the tenant and the target are all `text`), a store that makes its own run id
+    so the case rows no longer join back, and a metrics column that differs from the
+    `report.json` bytes."""
     report = build(MIXED)
 
     run_row, _ = rows_from_report(report, report_path=Path("/srv/evals/nightly/report.json"))
@@ -276,59 +267,77 @@ def test_the_run_row_carries_every_identity_field_from_the_report() -> None:
     assert run_row.target == TARGET
     assert run_row.tenant == TENANT
     assert run_row.git_sha == GIT_SHA
-    assert run_row.passed is False
     assert run_row.metrics == json.loads(report.model_dump_json())["metrics"]
-    assert run_row.metrics["check_score"] == 25.0
 
 
-def test_there_is_one_case_row_per_case_report_in_report_order() -> None:
-    """Catches a store that writes only the failures, only the cases that answered, or
-    de-duplicates by category: the denominator of every score is counted over these rows.
-    Order is the report's own, which is the cases file's order."""
-    report = build(MIXED)
+def test_the_stored_metrics_hold_the_new_scores() -> None:
+    """Catches a metrics column still keyed by the old score names, or missing one of the new
+    ones: the gate reads `safety` and `outcome_every_play` from it. It must also go through
+    psycopg's `Jsonb` for real."""
+    run_row, _ = rows_from_report(build(MIXED), report_path=Path("/tmp/report.json"))
 
-    run_row, case_rows = rows_from_report(report, report_path=Path("/tmp/report.json"))
+    for key in ("safety", "outcome_every_play", "outcome_at_least_once", "needs_a_look"):
+        assert key in run_row.metrics
+    assert "check_score" not in run_row.metrics
+    assert "judge_score" not in run_row.metrics
+    assert JsonbBinaryDumper(Jsonb, Transformer()).dump(Jsonb(dict(run_row.metrics))) is not None
+
+
+def test_there_is_one_case_row_per_case_in_report_order() -> None:
+    """Catches a store that writes one row per play, only the failures, or drops a case whose
+    plays were all setup wrong: the denominator of every score is counted over these rows."""
+    run_row, case_rows = rows_from_report(build(MIXED), report_path=Path("/tmp/report.json"))
 
     assert [row.case_id for row in case_rows] == ["alpha", "beta", "gamma", "delta"]
-    assert [row.category for row in case_rows] == ["paraphrases", "follow_ups", "attacks", "typos"]
-    assert [row.passed for row in case_rows] == [True, False, False, False]
+    assert [row.category for row in case_rows] == ["access", "tickets", "reviews", "people"]
     assert {row.run_id for row in case_rows} == {run_row.id}
 
 
-def test_a_conversation_case_stores_no_measurements() -> None:
-    """Catches the four measured columns filled with `0` and `""`: a conversation answer
-    measures no latency, cost, or provider, and a zero would be averaged in as a
-    free, instant success. `is None` on each, for every case, the answered ones too."""
+def test_a_case_passes_only_when_every_scored_play_passed() -> None:
+    """Catches `passed` taken from the first play or from any play: beta passed once and failed
+    once so it is false, gamma only needed a look so it is false, and delta had no scored
+    play."""
+    _, case_rows = rows_from_report(build(MIXED), report_path=Path("/tmp/report.json"))
+
+    assert {row.case_id: row.passed for row in case_rows} == {
+        "alpha": True,
+        "beta": False,
+        "gamma": False,
+        "delta": False,
+    }
+
+
+def test_the_tags_are_the_rule_ids_the_plays_broke() -> None:
+    """Catches tags that stay empty (the old check names) or lose a rule: beta broke two
+    rules in one play, in this order."""
+    _, case_rows = rows_from_report(build(MIXED), report_path=Path("/tmp/report.json"))
+
+    by_case = {row.case_id: row for row in case_rows}
+    assert by_case["beta"].tags == ("early_change", "made_up_number")
+    assert by_case["alpha"].tags == ()
+
+
+def test_the_details_hold_the_plays() -> None:
+    """Catches a details column that keeps the old checks or drops the plays: the row is all
+    that is left once `report.json` is rotated away, so it must say which play got which
+    result. It goes through psycopg's `Jsonb` for real, since a pydantic model there is a
+    `TypeError` at INSERT time."""
+    _, case_rows = rows_from_report(build(MIXED), report_path=Path("/tmp/report.json"))
+
+    beta = case_rows[1].details
+    assert [(p["play"], p["result"]) for p in beta["plays"]] == [(1, "pass"), (2, "fail")]
+    assert JsonbBinaryDumper(Jsonb, Transformer()).dump(Jsonb(dict(beta))) is not None
+
+
+def test_a_case_row_stores_no_measurements() -> None:
+    """Catches the four measured columns filled with `0` and `""`: a zero would be averaged in
+    as a free, instant success. Effort lives in the metrics, not in these columns."""
     _, case_rows = rows_from_report(build(MIXED), report_path=Path("/tmp/report.json"))
 
     for row in case_rows:
         assert row.latency_ms is None
         assert row.cost_usd is None
         assert row.provider is None
-        assert row.tags == (("judge_low",) if row.case_id == "beta" else ())
-
-
-def test_a_failed_case_row_carries_the_report_tags() -> None:
-    """Catches a mapping that drops the tags (the row gets `()` and Taxonomy stays empty) or
-    reshapes them: a case tagged with two names must reach its row with both, in order."""
-    line = CaseLine(
-        case_id="tagged",
-        category="attacks",
-        passed=False,
-        error=None,
-        check=CaseCheck(
-            tools_in_order=False,
-            turns=(TurnCheck(turn=1, no_early_change=False, no_made_up_name=True),),
-        ),
-        judged=(),
-        answer=None,
-    )
-    report = build((line,))
-
-    _, case_rows = rows_from_report(report, report_path=Path("/tmp/report.json"))
-
-    assert report.cases[0].tags == ("wrong_tool", "early_change")
-    assert case_rows[0].tags == report.cases[0].tags
 
 
 def test_the_report_path_is_the_report_json_that_was_written() -> None:
@@ -339,65 +348,16 @@ def test_the_report_path_is_the_report_json_that_was_written() -> None:
     run_row, _ = rows_from_report(build(MIXED), report_path=written_path)
 
     assert run_row.report_path == str(written_path)
-    assert run_row.report_path.endswith(REPORT_JSON_NAME)
-
-
-def test_a_case_that_never_answered_keeps_its_error_in_the_details() -> None:
-    """Catches an error that is lost once `report.json` has been rotated away: the row is
-    all that is left, and it must still say why the case failed. `check` is `null`, not
-    absent."""
-    _, case_rows = rows_from_report(build(MIXED), report_path=Path("/tmp/report.json"))
-
-    broken = case_rows[3]
-    assert broken.case_id == "delta"
-    assert broken.details["error"] == "turn failed: HTTP 502 for delta"
-    assert broken.details["check"] is None
-
-
-def test_the_details_column_carries_the_judged_replies() -> None:
-    """Catches a `details` that drops the judged replies, which are the only record of WHY
-    a case whose three checks passed was still marked down by the judge. The keys are the
-    same on a case nothing judged (`judged` is an empty list), because a key that comes and
-    goes makes two rows of the same set unqueryable by one expression. The dump goes through
-    psycopg's `Jsonb` for real, since a pydantic model there is a `TypeError` at INSERT time."""
-    _, case_rows = rows_from_report(build(MIXED), report_path=Path("/tmp/report.json"))
-
-    judged = case_rows[1].details
-    assert set(judged) == {"check", "judged", "error"}
-    assert [(r["turn"], r["verdict"]) for r in judged["judged"]] == [(1, "fail"), (2, "pass")]
-    assert case_rows[2].details["judged"] == []
-    dumper = JsonbBinaryDumper(Jsonb, Transformer())
-    assert dumper.dump(Jsonb(dict(judged))) is not None
 
 
 def test_the_columns_nothing_fills_arrive_empty_rather_than_absent() -> None:
     """Catches `judge_kappa` or `alias_resolution` filled with `0.0`, which a dashboard
-    would render as a real, terrible score. This report carries no calibration, so both are
-    `None`. Asserted exactly rather than as falsy, because `0.0` and `None` are both falsy."""
+    would render as a real, terrible score. Asserted exactly, since `0.0` and `None` are both
+    falsy."""
     run_row, _ = rows_from_report(build(MIXED), report_path=Path("/tmp/report.json"))
 
     assert run_row.judge_kappa is None
     assert run_row.alias_resolution is None
-
-
-def test_the_stored_metrics_are_the_json_the_report_file_carries() -> None:
-    """Catches a `metrics` column that differs from `report.json`'s: the two must state the
-    same numbers. `check_score` and `judge_score` are JSON-native, so the dump through
-    psycopg's `Jsonb` works; the old metric names are gone."""
-    report = build(MIXED)
-
-    run_row, _ = rows_from_report(report, report_path=Path("/tmp/report.json"))
-
-    assert run_row.metrics == json.loads(report.model_dump_json())["metrics"]
-    assert run_row.metrics["judge_score"] == 66.67
-    assert "decision_accuracy" not in run_row.metrics
-    dumper = JsonbBinaryDumper(Jsonb, Transformer())
-    assert dumper.dump(Jsonb(dict(run_row.metrics))) is not None
-
-
-# --------------------------------------------------------------------------
-# the caps this module publishes
-# --------------------------------------------------------------------------
 
 
 def test_the_length_caps_are_the_published_ones() -> None:
@@ -686,17 +646,14 @@ def test_write_refuses_a_malformed_category_before_any_sql(label: str, value: st
 
 # --------------------------------------------------------------------------
 # the shape of the write
-# --------------------------------------------------------------------------
 
 
 def test_the_run_row_and_its_cases_are_written_in_one_transaction() -> None:
-    """The behaviour before a server can be involved. Catches a store issuing a statement per
-    case with no transaction around them: a run whose cases half-landed is counted by
-    every later query as a run with fewer cases, and nothing downstream can tell that from
-    a shorter golden set. One `executemany` over the cases is asserted with it, because a
-    per-case loop is the shape that makes the half-landing possible in the first place."""
-    report = build(MIXED)
-    run_row, case_rows = rows_from_report(report, report_path=Path("/tmp/report.json"))
+    """Catches a store issuing a statement per case with no transaction around them: a run
+    whose cases half-landed is counted by every later query as a run with fewer cases. One
+    `executemany` over the cases is asserted with it, because a per-case loop is the shape
+    that makes the half-landing possible."""
+    run_row, case_rows = rows_from_report(build(MIXED), report_path=Path("/tmp/report.json"))
     pool = RecordingPool()
 
     store_over(pool).write(run_row, case_rows)
@@ -705,58 +662,3 @@ def test_the_run_row_and_its_cases_are_written_in_one_transaction() -> None:
     assert len(pool.inserts()) >= 1
     assert len(pool.executemany_calls) == 1
     assert len(pool.executemany_calls[0][1]) == len(case_rows)
-
-
-# --------------------------------------------------------------------------
-# judge_kappa, filled from the run's own calibration record
-# --------------------------------------------------------------------------
-
-
-def calibrated_report(kappa: float | None) -> RunReport:
-    """The same MIXED run, built with a calibration record carrying that kappa."""
-    return build_report(
-        MIXED,
-        started_at=STARTED,
-        finished_at=FINISHED,
-        set_name=SET_NAME,
-        set_sha=SET_SHA,
-        set_sha_source="commit",
-        run_kind="ci",
-        git_sha=GIT_SHA,
-        tenant=TENANT,
-        target=TARGET,
-        judge_prompt_version=SIXTY_FOUR_HEX,
-        calibration=RunCalibration(
-            judge_prompt_version=SIXTY_FOUR_HEX,
-            labels_name="labels.jsonl",
-            labels_sha=SIXTY_FOUR_HEX,
-            pairs=40,
-            kappa=kappa,
-            trusted=kappa is not None and kappa >= 0.7,
-        ),
-    )
-
-
-def test_the_judge_kappa_column_is_filled_from_the_reports_calibration_record() -> None:
-    """The column that was declared and left NULL on every run since. Catches
-    `rows_from_report` still shipping `judge_kappa=None` while the report carries a number -
-    the prediction this row fills - and catches the value read out of the `metrics` mapping
-    instead of off the typed field: `metrics` is `dict[str, object]`, so that route needs a
-    cast `mypy --strict` cannot check and puts whatever the key holds into a `double
-    precision` column. `0.699` is a value nothing else in this file carries, so a column
-    filled from another number shows a wrong one."""
-    run_row, _ = rows_from_report(calibrated_report(0.699), report_path=Path("/tmp/report.json"))
-
-    assert run_row.judge_kappa == 0.699
-
-
-def test_a_calibration_whose_own_kappa_is_null_stores_null_rather_than_zero() -> None:
-    """the undefined kappa arriving on the stored row, and the state the two neighbouring
-    cases cannot see: the report DOES carry a calibration, so "no calibration" is not what
-    empties the column. Catches `report.calibration.kappa or 0.0` and any other falsy
-    coalescing, which would publish "the judge agrees no better than chance" as a
-    measurement in a `double precision` column a dashboard reads, and catches an
-    `AttributeError` from a record read without checking its kappa."""
-    run_row, _ = rows_from_report(calibrated_report(None), report_path=Path("/tmp/report.json"))
-
-    assert run_row.judge_kappa is None

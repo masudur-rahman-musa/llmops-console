@@ -151,29 +151,26 @@ tenant-key: ## Make a local tenant key and print its env line: make tenant-key [
 	echo "key: $$key"; \
 	echo "OPSCONSOLE_API_KEYS=$(TENANT):$$digest"
 # The eval gate: the help desk's 45 conversation cases, each played
-# EVAL_REPEATS times, against the real help desk agent, with this gateway beside
+# EVAL_PLAYS times, against the real help desk agent, with this gateway beside
 # it and the real cheap model (`agent-default`) answering, so `ANTHROPIC_API_KEY` must be set (in the shell,
 # as CI does, or in `backend/.env`). One run, then one gate check against
-# `backend/evals/conversation-baseline.json`; either failing fails the target.
+# `backend/evals/baseline.json`; either failing fails the target.
 # HELPDESK_DIR is the help desk checkout (CI checks it out to `helpdesk/`).
-# Each run makes two throwaway gateway keys, one per help desk tenant: the
-# digests go to the gateway, the keys to the help desk, and nothing is stored.
-# The judge uses the first key. A run's own exit code is not the verdict: failed
-# cases are the gate's input, and a run that wrote no report fails its gate
-# check instead. The gateway's response cache is cleared first, so no answer
-# from an older prompt is served again. A help desk scheduler left running on a
-# laptop is stopped first: its review job writes the same rows as the reset.
-# RUN_ID=<id> continues a stopped run: cases already saved under that id are
-# skipped, and the reports folder is kept. Without it the folder starts empty.
-# The judge is held to the labels only once `calibration.json` exists.
-HELPDESK_DIR ?= ../helpdesk-agentic-flow
+# Each run makes three throwaway gateway keys: one per help desk tenant, and one for the
+# evals tenant that the simulated person and the judge use. The digests go to the
+# gateway, the keys to the help desk, and nothing is stored.
+# The help desk data is reset before every play by `infra/evals/reset_helpdesk.sh`. A run's
+# own exit code is not the verdict: failed plays are the gate's input, and a run that
+# wrote no report fails its gate check instead. The gateway's response cache is cleared
+# first, so no answer from an older prompt is served again. A help desk scheduler left
+# running on a laptop is stopped first: its review job writes the same rows as the reset.
+# The reports folder starts empty.
+HELPDESK_DIR ?= ../ai-help-desk-governed-access
 EVAL_HELPDESK = $(abspath $(HELPDESK_DIR))
 EVAL_CASES = $(EVAL_HELPDESK)/backend/evals/conversations/cases.jsonl
 EVAL_REPORTS = backend/evals/reports/local
-EVAL_CALIBRATION = backend/evals/labels/calibration.json
-# Each case is played EVAL_REPEATS times; one that both passes and fails is
-# unstable and left out of check_score.
-EVAL_REPEATS ?= 3
+# Each case is played EVAL_PLAYS times.
+EVAL_PLAYS ?= 3
 EVAL_HELPDESK_COMPOSE = docker compose --project-directory $(EVAL_HELPDESK) -f $(EVAL_HELPDESK)/docker-compose.yml -f infra/evals/helpdesk.compose.yml --profile app
 eval:       ## The eval gate: the help desk's 45 conversations on the real cheap model, then the gate
 	@trap 'rc=$$?; infra/evals/restore_keys.sh $(EVAL_HELPDESK) || [ $$rc != 0 ] || rc=1; exit $$rc' EXIT; \
@@ -193,15 +190,14 @@ eval:       ## The eval gate: the help desk's 45 conversations on the real cheap
 	$(EVAL_HELPDESK_COMPOSE) stop helpdesk-scheduler || exit $$?; \
 	infra/evals/prepare_helpdesk.sh $(EVAL_HELPDESK) || exit $$?; \
 	$(EVAL_HELPDESK_COMPOSE) up -d --build --wait helpdesk-mcp-server helpdesk-agent-api || exit $$?; \
-	[ -n "$(RUN_ID)" ] || rm -rf $(EVAL_REPORTS); \
+	rm -rf $(EVAL_REPORTS); \
 	status=0; \
-	$(UV_ROOT) ops-eval conversations --repeats $(EVAL_REPEATS) --target http://localhost:8000 \
-	  --cases $(EVAL_CASES) --run-kind ci --judge-url http://localhost:8080 --out $(EVAL_REPORTS) \
-	  $(if $(RUN_ID),--run-id $(RUN_ID)) || status=1; \
+	$(UV_ROOT) ops-eval conversations --plays $(EVAL_PLAYS) --target http://localhost:8000 \
+	  --cases $(EVAL_CASES) --run-kind ci --gateway-url http://localhost:8080 \
+	  --reset-command infra/evals/reset_helpdesk.sh --out $(EVAL_REPORTS) || status=1; \
 	$(UV_ROOT) ops-eval gate --report $(EVAL_REPORTS)/report.json \
-	  --baseline backend/evals/conversation-baseline.json \
-	  $(if $(wildcard $(EVAL_CALIBRATION)),--calibration $(EVAL_CALIBRATION)) \
-	  --comment $(EVAL_REPORTS)/comment.md || status=1; \
+	  --baseline backend/evals/baseline.json \
+	  --comment $(EVAL_REPORTS)/gate-comment.md || status=1; \
 	exit $$status
 # Real numbers on every console tab, filled through the real app and checked.
 # First the real eval (it stores its run, so the eval run reaches

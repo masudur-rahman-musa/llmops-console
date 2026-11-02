@@ -56,13 +56,15 @@ Then build the table:
 Read this before quoting anything from the table.
 
 **Three cases.** The cases are `backend/evals/kind-cases.jsonl`, the small
-conversation file the kind cluster run in CI also uses, played through the stub
-target in `backend/evals/target-stub/`. The stub sends each message to the gateway
-as a plain chat under the `agent-default` alias, so every option answers the same
-messages and the ledger prices them. The stub reports the tool calls the cases
-expect, so `check_score` reads 100 for every option and does not tell them apart.
-The options are told apart on cost. The help desk's own 45 cases need the help
-desk running, not a stub, and are not part of this comparison.
+conversation file the kind end-to-end run also uses, played through the stub target
+(`backend/evals/target-stub/`). The stub sends each person's message to the gateway
+as a plain chat, under the `agent-default` alias, so every option answers the same
+messages and the ledger prices them. The stub makes no tool call and changes nothing,
+so `outcome_every_play` here reads 100 for every option and does not tell the options
+apart.
+The options are told apart on cost. The help
+desk's own 33 cases need the help desk running, not a stub, and are not part of this
+comparison.
 
 **One sequential single-stream pass.** Every turn is sent, answered and scored
 before the next one starts. That measures per-turn latency honestly and measures

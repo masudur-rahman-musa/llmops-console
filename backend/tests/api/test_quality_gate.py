@@ -1,4 +1,4 @@
-"""The quality page's gate rows: the newest run's scores beside the baseline thresholds.
+"""The quality page's gate rows: the newest run's scores beside the thresholds.
 
 No backing service. Each case builds the admin app with its own baseline file (a
 temporary file the case writes, or none) and swaps in a reader that answers fixed
@@ -6,8 +6,9 @@ runs, the same way test_console_routes.py swaps its stub reader in after startup
 
 What is pinned, each case naming the wrong implementation it catches:
 
-* The gate has two rows, `check_score` then `judge_score`, each with the newest
-  run's value, the baseline's threshold and a verdict.
+* The gate has two rows, `safety` then `outcome_every_play`, each with the newest
+  run's value, the threshold and a verdict. Safety's threshold is always 100; the
+  outcome threshold is the baseline's.
 * A score exactly on its threshold passes.
 * A baseline that is missing or unreadable never fails the page: thresholds and
   verdicts come back null.
@@ -40,19 +41,19 @@ from .conftest import (
 )
 
 QUALITY = "/console/quality"
-BASELINE = {"check_score": 48.48, "judge_score": 27.42}
+BASELINE = {"safety": 100, "outcome_every_play": 71.0}
 NEWEST = datetime(2026, 9, 15, 2, 40, tzinfo=UTC)
-SHIPPED_BASELINE = Path(__file__).resolve().parents[2] / "evals" / "conversation-baseline.json"
+SHIPPED_BASELINE = Path(__file__).resolve().parents[2] / "evals" / "baseline.json"
 
 
-def run(run_id: str, started_at: datetime, check: float, judge: float) -> EvalRunSummary:
+def run(run_id: str, started_at: datetime, safety: float, outcome: float) -> EvalRunSummary:
     return EvalRunSummary(
         id=run_id,
         started_at=started_at,
         run_kind="ci",
         git_sha=None,
         passed=True,
-        metrics={"check_score": check, "judge_score": judge},
+        metrics={"safety": safety, "outcome_every_play": outcome},
     )
 
 
@@ -91,7 +92,7 @@ def gate(
 
 @pytest.fixture
 def baseline(tmp_path: Path) -> Path:
-    path = tmp_path / "conversation-baseline.json"
+    path = tmp_path / "baseline.json"
     path.write_text(json.dumps(BASELINE), encoding="utf-8")
     return path
 
@@ -101,50 +102,58 @@ def runs() -> Iterator[tuple[EvalRunSummary, ...]]:
     # Newest first, as the reader answers; the older run passes both scores so a gate
     # that read it would show different verdicts.
     yield (
-        run("run-new", NEWEST, 52.1, 25.0),
-        run("run-old", NEWEST - timedelta(days=2), 60.0, 30.0),
+        run("run-new", NEWEST, 100.0, 65.0),
+        run("run-old", NEWEST - timedelta(days=2), 100.0, 80.0),
     )
 
 
-def test_the_gate_rows_compare_the_newest_run_to_the_baseline(
+def test_the_gate_rows_compare_the_newest_run_to_the_thresholds(
     baseline: Path, runs: tuple[EvalRunSummary, ...]
 ) -> None:
     """Catches a gate that reads the older run, swaps value and threshold, flips a verdict,
-    or lists the judge row before the check row."""
+    or lists the outcome row before the safety row."""
     _, rows = gate(baseline, runs)
 
-    notes = [row.pop("note") for row in rows]
     assert rows == [
         {
-            "name": "check_score",
-            "label": "Check score",
-            "value": 52.1,
-            "threshold": 48.48,
+            "name": "safety",
+            "label": "Safety",
+            "value": 100.0,
+            "threshold": 100.0,
             "passed": True,
+            "note": None,
         },
         {
-            "name": "judge_score",
-            "label": "Judge score",
-            "value": 25.0,
-            "threshold": 27.42,
+            "name": "outcome_every_play",
+            "label": "Outcome every play",
+            "value": 65.0,
+            "threshold": 71.0,
             "passed": False,
+            "note": None,
         },
     ]
-    assert notes[0] is None
-    assert "kappa 0.7" in notes[1]
 
 
 @pytest.mark.parametrize(
-    ("check", "passed"),
-    [(48.47, False), (48.48, True), (48.49, True)],
+    ("outcome", "passed"),
+    [(70.99, False), (71.0, True), (71.01, True)],
 )
-def test_a_run_landing_on_the_threshold_passes(baseline: Path, check: float, passed: bool) -> None:
+def test_a_run_landing_on_the_threshold_passes(
+    baseline: Path, outcome: float, passed: bool
+) -> None:
     """Catches a verdict that uses `>` instead of `>=`, which fails a run exactly on its
-    threshold, or one that rounds so 48.47 slips through."""
-    _, rows = gate(baseline, (run("run-new", NEWEST, check, 30.0),))
+    threshold, or one that rounds so 70.99 slips through."""
+    _, rows = gate(baseline, (run("run-new", NEWEST, 100.0, outcome),))
 
-    assert rows[0]["value"] == check
-    assert rows[0]["passed"] is passed
+    assert rows[1]["value"] == outcome
+    assert rows[1]["passed"] is passed
+
+
+def test_safety_just_under_one_hundred_fails(baseline: Path) -> None:
+    """Catches a safety row held to the baseline's number or rounded up: 99.9 fails."""
+    _, rows = gate(baseline, (run("run-new", NEWEST, 99.9, 100.0),))
+
+    assert rows[0]["passed"] is False
 
 
 @pytest.mark.parametrize("content", [None, "{not json", "[1, 2]"], ids=["missing", "junk", "list"])
@@ -153,15 +162,15 @@ def test_a_missing_baseline_gives_null_thresholds(
 ) -> None:
     """Catches a page that answers 500 when the baseline file is absent or unreadable, or
     that guesses a verdict and a threshold of zero without a baseline."""
-    path = tmp_path / "conversation-baseline.json"
+    path = tmp_path / "baseline.json"
     if content is not None:
         path.write_text(content, encoding="utf-8")
 
     _, rows = gate(path, runs)
 
     assert [(row["name"], row["value"], row["threshold"], row["passed"]) for row in rows] == [
-        ("check_score", 52.1, None, None),
-        ("judge_score", 25.0, None, None),
+        ("safety", 100.0, None, None),
+        ("outcome_every_play", 65.0, None, None),
     ]
 
 
@@ -171,8 +180,8 @@ def test_no_runs_gives_null_values(baseline: Path) -> None:
     _, rows = gate(baseline, ())
 
     assert [(row["name"], row["value"], row["threshold"], row["passed"]) for row in rows] == [
-        ("check_score", None, 48.48, None),
-        ("judge_score", None, 27.42, None),
+        ("safety", None, 100.0, None),
+        ("outcome_every_play", None, 71.0, None),
     ]
 
 
@@ -185,57 +194,3 @@ def test_the_default_path_is_the_committed_baseline(monkeypatch: pytest.MonkeyPa
 
     assert path == SHIPPED_BASELINE
     assert path.is_file()
-
-
-# --- the check score note -------------------------------------------------
-
-
-def run_with_counts(counts: dict[str, int]) -> EvalRunSummary:
-    """One run whose stored metrics hold the two scores and the given case counts."""
-    return EvalRunSummary(
-        id="run-new",
-        started_at=NEWEST,
-        run_kind="ci",
-        git_sha=None,
-        passed=True,
-        metrics={"check_score": 57.14, "judge_score": 30.0, **counts},
-    )
-
-
-def test_the_check_score_note_counts_stable_cases(baseline: Path) -> None:
-    """Catches a note that divides by all 45 cases (the figure beside the 57.14% card would
-    read 20 of 45 and contradict it), or one that hides how many unstable cases were left out."""
-    _, rows = gate(baseline, (run_with_counts({"cases": 45, "passed": 20, "unstable": 10}),))
-
-    assert rows[0]["name"] == "check_score"
-    assert rows[0]["note"] == "20 of 35 stable cases; 10 unstable, not counted"
-
-
-def test_no_unstable_cases_gives_a_plain_count(baseline: Path) -> None:
-    """Catches a note that still says "0 unstable, not counted" when every case was stable."""
-    _, rows = gate(baseline, (run_with_counts({"cases": 45, "passed": 35, "unstable": 0}),))
-
-    assert rows[0]["note"] == "35 of 45 cases"
-
-
-@pytest.mark.parametrize("missing", ["cases", "passed", "unstable"])
-def test_missing_counts_give_no_note(baseline: Path, missing: str) -> None:
-    """Catches a note built from a default of 0 for a count the run never stored (an old run
-    would read "0 of 0 cases"); each count missing on its own must give `None`."""
-    counts = {"cases": 45, "passed": 20, "unstable": 10}
-    del counts[missing]
-
-    _, rows = gate(baseline, (run_with_counts(counts),))
-
-    assert rows[0]["note"] is None
-
-
-def test_the_note_is_read_from_the_newest_run(baseline: Path) -> None:
-    """Catches a note taken from the older run when two runs are in the window."""
-    older = run_with_counts({"cases": 10, "passed": 9, "unstable": 0}).model_copy(
-        update={"id": "run-old", "started_at": NEWEST - timedelta(days=2)}
-    )
-
-    _, rows = gate(baseline, (older, run_with_counts({"cases": 45, "passed": 20, "unstable": 10})))
-
-    assert rows[0]["note"] == "20 of 35 stable cases; 10 unstable, not counted"

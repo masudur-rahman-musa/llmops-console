@@ -23,7 +23,7 @@ What the module refuses to do is the point of it:
   cannot quietly flatter the GPU.
 
 The winner rule, in full. A CANDIDATE is a row carrying both a
-`check_score` and a `usd_per_1000_turns`; `best` is the highest accuracy
+`outcome_every_play` and a `usd_per_1000_turns`; `best` is the highest accuracy
 among the candidates; a candidate QUALIFIES when its accuracy is at least
 `best - ACCURACY_TOLERANCE`, inclusively; the winner is the qualifying candidate
 with the lowest cost, ties going to the earlier manifest entry so two identical
@@ -77,7 +77,7 @@ rather than the ledger's six because the figure is per 1,000 turns: six places
 there is a hundredth of a cent nobody can act on."""
 
 ACCURACY_TOLERANCE: Final[Decimal] = Decimal("0.02")
-"""The band inside which two `check_score` values count as equal, in the
+"""The band inside which two `outcome_every_play` values count as equal, in the
 points `scores.py` emits. Widening it lets a materially less accurate option win
 on price."""
 
@@ -94,7 +94,7 @@ KIND_API: Final[str] = "api"
 KIND_SELF_HOSTED: Final[str] = "self_hosted"
 """A box rented by the hour: cost comes from the price and the measured throughput."""
 
-ROW_METRIC_NAMES: Final[tuple[str, ...]] = ("check_score", "judge_score")
+ROW_METRIC_NAMES: Final[tuple[str, ...]] = ("outcome_every_play", "safety")
 """The two metrics a row publishes, in the order the table renders them. The first is the
 accuracy the winner rule reads."""
 
@@ -118,15 +118,15 @@ CONCLUSION_HEADING: Final[str] = "## Conclusion"
 TABLE_HEADINGS: Final[tuple[str, ...]] = (
     "Option",
     "Kind",
-    "check_score",
-    "judge_score",
+    "outcome_every_play",
+    "safety",
     "USD per 1,000 turns",
 )
 """The markdown table's header cells. The first cell of every option row is the
 option's id, which is what the tests locate a row by."""
 
 NO_WINNER_LINE: Final[str] = (
-    "No option carries both a check_score and a cost, so this table names no winner."
+    "No option carries both an outcome_every_play and a cost, so this table names no winner."
 )
 """The whole conclusion when nothing can be compared. Every row is still
 published; what is refused is the claim."""
@@ -144,7 +144,7 @@ LEDGER_NOTE: Final[str] = (
 
 WINNER_LINE: Final[str] = (
     "{label} ({option_id}) wins at {cost} USD per 1,000 turns, the cheapest option within "
-    "{tolerance} check_score of the best row in the table."
+    "{tolerance} outcome_every_play of the best row in the table."
 )
 """The conclusion when a winner exists. It names the winner and no other option,
 so a reader quoting one sentence quotes the whole answer."""
@@ -401,7 +401,7 @@ def _row(option: TradeoffOption, report: RunReport, path: Path) -> TradeoffRow:
 
 
 def _accuracy(row: TradeoffRow) -> Decimal | None:
-    """One row's check_score as a `Decimal`, or `None` where it is null."""
+    """One row's outcome_every_play as a `Decimal`, or `None` where it is null."""
     value = row.metrics.get(ROW_METRIC_NAMES[0])
     return None if value is None else Decimal(str(value))
 
@@ -428,7 +428,7 @@ def _winner(rows: Sequence[TradeoffRow]) -> TradeoffRow | None:
     ]
     if not candidates:
         return None
-    # `is not None` and never a truthiness test: a check_score of 0.0 and a
+    # `is not None` and never a truthiness test: a outcome_every_play of 0.0 and a
     # cost of 0.0000 are both measurements, and dropping them would quietly remove
     # the worst row from the band and the cheapest row from the comparison.
     best = max(

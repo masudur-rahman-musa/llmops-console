@@ -46,7 +46,7 @@ import pytest
 from psycopg import sql
 
 from app.evals.report import REPORT_JSON_NAME, RunReport, build_report
-from app.evals.runner import CaseLine
+from app.evals.results import PlayRecord
 from app.storage.eval_store import EVAL_CASES, EVAL_RUNS, PostgresEvalStore, rows_from_report
 
 from .conftest import Pool, requires_postgres, table_names
@@ -92,30 +92,34 @@ EVAL_CASES_COLUMNS = (
 )
 
 
-def line(case_id: str, *, error: str | None) -> CaseLine:
-    """One saved case result. A case that never answered carries its error and no check."""
-    return CaseLine(
-        case_id=case_id,
-        category="paraphrases",
-        passed=error is None,
-        error=error,
-        check=None,
-        judged=(),
-        answer=None,
+def play(case_id: str, result: str, *broken: str) -> PlayRecord:
+    """One finished play with fixed effort numbers, so only the result and rules differ."""
+    return PlayRecord.model_validate(
+        {
+            "case_id": case_id,
+            "owner": "paraphrases",
+            "play": 1,
+            "result": result,
+            "broken": broken,
+            "flagged": (),
+            "turns": 2,
+            "tool_calls": 1,
+            "seconds": 3.0,
+            "cost_usd": None,
+            "checks": (),
+            "conversation": (),
+        }
     )
 
 
-LINES = (
-    line("alpha", error=None),
-    line("delta", error="turn failed: HTTP 502 for delta"),
-)
-"""One case of each shape a stored run has to survive: answered, and never answered."""
+PLAYS: tuple[PlayRecord, ...] = (play("alpha", "pass"), play("delta", "fail", "early_change"))
+"""One case of each shape a stored run has to survive: all plays passed, and a rule broken."""
 
 
 def a_report(*, run_kind: str = "ci") -> RunReport:
     """One built report, with a fresh run id of its own."""
     return build_report(
-        LINES,
+        PLAYS,
         started_at=STARTED,
         finished_at=FINISHED,
         set_name=SET_NAME,
@@ -247,7 +251,7 @@ def test_a_report_round_trips_into_the_two_tables(pool: Pool, migrated_schema: s
     because it is what the eval gate reads back, and a `jsonb` column handed a Python dict with
     no adapter is the first thing that breaks here. The expected mapping is the report's
     own JSON form (`model_dump(mode="json")["metrics"]`), the exact bytes the store writes,
-    so `check_score` and `judge_score` come back as the numbers jsonb holds. The two
+    so `safety` and `outcome_every_play` come back as the numbers jsonb holds. Decision F's two
     columns are asserted NULL in the same row, so a store that filled them with zeros fails."""
     report = a_report()
 
@@ -274,9 +278,9 @@ def test_a_report_round_trips_into_the_two_tables(pool: Pool, migrated_schema: s
     ]
     stored_metrics = run_rows(pool, migrated_schema)[0][EVAL_RUNS_COLUMNS.index("metrics")]
     assert isinstance(stored_metrics, dict)
-    assert stored_metrics["check_score"] == 50.0
-    assert stored_metrics["judge_score"] is None
-    assert "decision_accuracy" not in stored_metrics
+    assert stored_metrics["safety"] == 50.0
+    assert stored_metrics["outcome_every_play"] == 50.0
+    assert "check_score" not in stored_metrics
 
 
 @requires_postgres
@@ -302,12 +306,13 @@ def test_every_case_row_lands_with_its_own_measurements_and_its_details(
         assert case_column(measured, column) is None, column
 
     assert case_column(broken, "passed") is False
+    assert case_column(broken, "tags") == ["early_change"]
     assert case_column(broken, "latency_ms") is None
     assert case_column(broken, "cost_usd") is None
     assert case_column(broken, "provider") is None
     details = case_column(broken, "details")
     assert isinstance(details, dict)
-    assert details["error"] == "turn failed: HTTP 502 for delta"
+    assert [(p["play"], p["result"]) for p in details["plays"]] == [(1, "fail")]
 
 
 # --------------------------------------------------------------------------

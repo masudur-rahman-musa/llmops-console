@@ -63,7 +63,6 @@ from app.schemas.dashboard import (
     TagCount,
     UserCost,
 )
-from app.services.dashboard import JUDGE_NOTE
 from app.services.prometheus_reads import (
     ERROR_RATE_QUERY,
     P95_QUERY,
@@ -109,7 +108,7 @@ PROMETHEUS_PATHS = [HOME]
 
 LOGGER = "app.services.dashboard"
 
-SHIPPED_BASELINE = Path(__file__).resolve().parents[2] / "evals" / "conversation-baseline.json"
+SHIPPED_BASELINE = Path(__file__).resolve().parents[2] / "evals" / "baseline.json"
 
 ADMIN_HEADERS = {"Authorization": f"Bearer {ADMIN_KEY}"}
 TENANT_KEY = TEST_KEYS["nordlicht"]
@@ -131,7 +130,7 @@ HOME_READ = HomeRead(
     # The stored `passed` is the run's own "every stable case passed" and is false here; the
     # route answers the eval gate verdict from `last_eval_metrics` instead.
     last_eval=LastEval(id="run-a", finished_at=FINISHED, passed=False, check_score=57.14),
-    last_eval_metrics={"check_score": 57.14, "judge_score": 55.69},
+    last_eval_metrics={"safety": 100.0, "outcome_every_play": 57.14},
 )
 
 COST_READ = CostRead(
@@ -162,7 +161,7 @@ QUALITY_READ = QualityRead(
             run_kind="ci",
             git_sha="abc1234",
             passed=True,
-            metrics={"check_score": 0.91},
+            metrics={"safety": 0.91},
         ),
     ),
     release_markers=(ReleaseMarker(git_sha="abc1234", deployed_at=DEPLOYED, status="deployed"),),
@@ -586,13 +585,13 @@ def unconfigured_body(path: str) -> dict[str, Any]:
                 "name": name,
                 "label": label,
                 "value": None,
-                "threshold": baseline[name],
+                "threshold": threshold,
                 "passed": None,
-                "note": note,
+                "note": None,
             }
-            for name, label, note in (
-                ("check_score", "Check score", None),
-                ("judge_score", "Judge score", JUDGE_NOTE),
+            for name, label, threshold in (
+                ("safety", "Safety", 100.0),
+                ("outcome_every_play", "Outcome every play", baseline["outcome_every_play"]),
             )
         ]
     if path == COST:
@@ -730,7 +729,7 @@ def home_passed(
 ) -> Any:  # noqa: ANN401
     """The `last_eval.passed` the home route answers for one run's metrics and one baseline.
 
-    `baseline_text` None keeps the shipped baseline (check 48.48, judge 27.42); a string is
+    `baseline_text` None keeps the shipped baseline (safety 100, outcome every play 0); a string is
     written to a file and read instead, so an unreadable baseline can be arranged."""
     settings = admin_settings
     if baseline_text is not None:
@@ -749,7 +748,7 @@ def home_passed(
 
 def test_home_verdict_matches_the_eval_gate(wired: Wired) -> None:
     """Catches a home route that echoes the run's stored `passed` (false here) instead of
-    the eval gate verdict: check 57.14 and judge 55.69 beat the baseline 48.48 and 27.42."""
+    the eval gate verdict: safety 100 and outcome 57.14 beat the shipped line of 100 and 0."""
     assert HOME_READ.last_eval is not None
     assert HOME_READ.last_eval.passed is False
 
@@ -759,10 +758,11 @@ def test_home_verdict_matches_the_eval_gate(wired: Wired) -> None:
     assert body["last_eval"]["check_score"] == 57.14
 
 
+GATE_BASELINE = '{"safety": 100, "outcome_every_play": 71}'
 GATE_VERDICTS: list[tuple[str, dict[str, Any], bool | None]] = [
-    ("check one hundredth below", {"check_score": 48.47, "judge_score": 55.69}, False),
-    ("check exactly at the baseline", {"check_score": 48.48, "judge_score": 27.42}, True),
-    ("judge below with check above", {"check_score": 60.0, "judge_score": 27.41}, False),
+    ("safety one tenth below", {"safety": 99.9, "outcome_every_play": 100.0}, False),
+    ("outcome one hundredth below", {"safety": 100.0, "outcome_every_play": 70.99}, False),
+    ("both exactly on the line", {"safety": 100.0, "outcome_every_play": 71.0}, True),
     ("no gated score in the run", {"other": 1}, None),
 ]
 
@@ -777,10 +777,13 @@ def test_home_verdict_fails_when_one_gate_score_is_below(
     admin_settings: Settings,
     tmp_path: Path,
 ) -> None:
-    """Catches a verdict that uses `>` instead of `>=` (48.48 exactly must pass), one that
-    checks only the check score (judge 27.41 alone must fail), one that passes with
-    one gate score below, and one that says passed when no gated score exists to check."""
-    assert home_passed(admin_settings, tmp_path, metrics=metrics) is expected
+    """Catches a verdict that uses `>` instead of `>=` (71 exactly must pass), one that
+    checks only safety (outcome 70.99 alone must fail), one that passes with one gate score
+    below, and one that says passed when no gated score exists to check."""
+    assert (
+        home_passed(admin_settings, tmp_path, metrics=metrics, baseline_text=GATE_BASELINE)
+        is expected
+    )
 
 
 @pytest.mark.parametrize(
@@ -794,7 +797,7 @@ def test_home_verdict_is_null_without_a_baseline(
     passed = home_passed(
         admin_settings,
         tmp_path,
-        metrics={"check_score": 57.14, "judge_score": 55.69},
+        metrics={"safety": 100.0, "outcome_every_play": 57.14},
         baseline_text=baseline_text,
     )
 
@@ -842,10 +845,8 @@ def test_the_quality_body_carries_the_reader_answer(wired: Wired) -> None:
 
     assert response.status_code == 200, response.text
     body = response.json()
-    # The note is a fixed sentence the gate tests pin; here only that the judge row has one.
-    notes = [row.pop("note") for row in body["gate"]]
-    assert notes[0] is None
-    assert "kappa 0.7" in notes[1]
+    for row in body["gate"]:
+        assert row.pop("note") is None
     baseline = json.loads(SHIPPED_BASELINE.read_text(encoding="utf-8"))
     assert body == {
         "sources": {"postgres": OK, "prometheus": None},
@@ -856,17 +857,17 @@ def test_the_quality_body_carries_the_reader_answer(wired: Wired) -> None:
         "blocked": [],
         "gate": [
             {
-                "name": "check_score",
-                "label": "Check score",
+                "name": "safety",
+                "label": "Safety",
                 "value": 0.91,
-                "threshold": baseline["check_score"],
+                "threshold": 100.0,
                 "passed": False,
             },
             {
-                "name": "judge_score",
-                "label": "Judge score",
+                "name": "outcome_every_play",
+                "label": "Outcome every play",
                 "value": None,
-                "threshold": baseline["judge_score"],
+                "threshold": baseline["outcome_every_play"],
                 "passed": None,
             },
         ],

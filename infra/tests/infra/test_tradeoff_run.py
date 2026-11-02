@@ -978,7 +978,7 @@ def test_no_workflow_names_the_measurement_tooling() -> None:
 
 
 def test_the_run_readme_states_the_methodology_the_numbers_have_to_be_read_with() -> None:
-    """Ten cases move `check_score` in ten-point steps and one
+    """Criterion 62 and risk 4. Ten cases move `outcome_every_play` in ten-point steps and one
     sequential stream measures no concurrency, so a table published without those two sentences
     implies a precision it has not got. Catches a README that lists the commands and leaves the
     methodology out, and one whose cost table is missing entirely."""

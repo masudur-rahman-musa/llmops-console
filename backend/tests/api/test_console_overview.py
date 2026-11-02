@@ -77,6 +77,7 @@ def test_home_carries_the_live_routing_in_fallback_order(make_client: MakeClient
         ("agent-default", "Everyday help desk chat replies on the cheap model."),
         ("agent-strong", "Harder chat turns that need the strong model."),
         ("judge", "Grades eval answers against the reference labels."),
+        ("simulated-person", "Plays the person who talks to the help desk in an eval run."),
         ("embed", "Turns text into vectors for search and the semantic cache."),
     ]
     default = next(a for a in routing["aliases"] if a["name"] == "agent-default")

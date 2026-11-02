@@ -2,27 +2,16 @@
 # Put the help desk's local database and Qdrant back to the seed before an eval
 # run: `make eval` calls this, never by hand. Usage: prepare_helpdesk.sh <help desk dir>
 #
-# Runs the help desk's own reset (drop, migrate, checkpointer, seed, reviews),
-# minus its ingest step: on macOS that ingest can abort (134) as it exits, after
-# every document is written, and the reset counts the abort as a failure. The
-# ingest runs here instead, one tenant and corpus version at
-# a time. It redacts each
-# chunk through this gateway's `/v1/redact`, so it needs the gateway up and the
-# run's keys in HELPDESK_GATEWAY_API_KEYS.
+# Runs the reset and seed (`reset_helpdesk.sh`), then the ingest, one tenant and corpus
+# version at a time. It redacts each
+# chunk through this gateway's `/v1/redact`, so it needs the gateway up and the run's keys
+# in HELPDESK_GATEWAY_API_KEYS. The ingest runs once per eval run; the per-play reset that
+# follows leaves the ingested documents alone.
 set -euo pipefail
 
+"$(dirname "$0")/reset_helpdesk.sh" "$1"
+
 cd "$1/backend"
-
-# The reset reads DATABASE_URL from the environment, so it gets `.env.demo`.
-uv run --env-file .env.demo python - <<'PY'
-import sys
-
-sys.path.insert(0, "scripts")
-import e2e_reset
-
-e2e_reset._ingest = lambda *args, **kwargs: None
-e2e_reset.main()
-PY
 
 # Real environment wins over `.env.demo` and `.env` in the help desk's
 # settings, so a laptop's own gateway URL and keys are not used here.

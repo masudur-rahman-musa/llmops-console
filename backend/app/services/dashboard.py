@@ -19,7 +19,7 @@ from urllib.parse import quote
 import psycopg
 from fastapi import Request
 
-from app.evals.gate import Baseline, BaselineInvalid, load_baseline
+from app.evals.gate import FULL_SAFETY, Baseline, BaselineInvalid, load_baseline
 from app.limits.budget import budget_ratio, to_micro_usd
 from app.model_routing.policy import PolicyStore
 from app.schemas.dashboard import Budget, EvalRunSummary, GateScore, SourceState
@@ -99,17 +99,10 @@ def budgets(
 
 
 GATE_SCORES: Final[tuple[tuple[str, str], ...]] = (
-    ("check_score", "Check score"),
-    ("judge_score", "Judge score"),
+    ("safety", "Safety"),
+    ("outcome_every_play", "Outcome every play"),
 )
 """The scores the eval gate checks, in the order the quality page lists them."""
-
-JUDGE_NOTE: Final[str] = (
-    "Counts only while the judge agrees with people (kappa 0.7 or better). "
-    "Kappa measures that agreement: 1 means the judge and people always agree, "
-    "0 means they agree no more than chance would."
-)
-"""Fixed, because a run row stores no kappa to say whether the judge counted."""
 
 
 def gate_scores(baseline_path: Path, runs: tuple[EvalRunSummary, ...]) -> tuple[GateScore, ...]:
@@ -142,23 +135,6 @@ def _count(metrics: Mapping[str, Any], name: str) -> int | None:
     return raw if isinstance(raw, int) and not isinstance(raw, bool) else None
 
 
-def check_score_note(metrics: Mapping[str, Any] | None) -> str | None:
-    """What the check score counts: "20 of 35 stable cases; 10 unstable, not counted".
-
-    The check score leaves out unstable cases (passed on some tries, failed on others), so
-    it is passed over stable cases, not over all of them. With no unstable case it is a
-    plain "35 of 45 cases"; any count missing gives no note. A test pins this.
-    """
-    if metrics is None:
-        return None
-    cases, passed, unstable = (_count(metrics, name) for name in ("cases", "passed", "unstable"))
-    if cases is None or passed is None or unstable is None:
-        return None
-    if unstable == 0:
-        return f"{passed} of {cases} cases"
-    return f"{passed} of {cases - unstable} stable cases; {unstable} unstable, not counted"
-
-
 def _gate_rows(baseline_path: Path, metrics: Mapping[str, Any] | None) -> tuple[GateScore, ...]:
     """One gate row per gated score: the value from `metrics`, the threshold from the baseline."""
     try:
@@ -170,7 +146,12 @@ def _gate_rows(baseline_path: Path, metrics: Mapping[str, Any] | None) -> tuple[
     for name, label in GATE_SCORES:
         raw = None if metrics is None else metrics.get(name)
         value = float(raw) if isinstance(raw, int | float) and not isinstance(raw, bool) else None
-        threshold = None if baseline is None else getattr(baseline, name)
+        if baseline is None:
+            threshold: float | None = None
+        elif name == "safety":
+            threshold = FULL_SAFETY
+        else:
+            threshold = getattr(baseline, name)
         rows.append(
             GateScore(
                 name=name,
@@ -178,7 +159,7 @@ def _gate_rows(baseline_path: Path, metrics: Mapping[str, Any] | None) -> tuple[
                 value=value,
                 threshold=threshold,
                 passed=None if value is None or threshold is None else value >= threshold,
-                note=JUDGE_NOTE if name == "judge_score" else check_score_note(metrics),
+                note=None,
             )
         )
     return tuple(rows)

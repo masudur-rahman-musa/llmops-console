@@ -21,8 +21,7 @@ from app.core.errors import (
 )
 from app.core.http_errors import as_gateway_error
 from app.core.validation import IdentifierInvalid
-from app.evals.calibration import CalibrationRefused, CalibrationSetInvalid
-from app.evals.conversations import ConversationSetInvalid
+from app.evals.cases import CaseSetInvalid
 from app.evals.gate import GateInputInvalid
 from app.limits.errors import PriceTableInvalid
 from app.redaction.errors import (
@@ -32,8 +31,8 @@ from app.redaction.errors import (
     RedactionMapStoreUnavailable,
 )
 
-# Built explicitly, not by scanning the filesystem: this is the exact set of ten
-# library failures that are re-parented, and a drift in either direction is a
+# Built explicitly, not by scanning the filesystem: this is the exact set of
+# library failures, and a drift in either direction is a
 # finding this list must be edited to show.
 LIBRARY_FAILURES: list[type[LibraryError]] = [
     RedactionInputTooLong,
@@ -41,10 +40,8 @@ LIBRARY_FAILURES: list[type[LibraryError]] = [
     DirectoryNameInvalid,
     DirectoryStoreUnavailable,
     PriceTableInvalid,
-    ConversationSetInvalid,
+    CaseSetInvalid,
     GateInputInvalid,
-    CalibrationSetInvalid,
-    CalibrationRefused,
 ]
 
 

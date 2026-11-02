@@ -1,4 +1,4 @@
-"""The eval gate's wiring for the conversation run: baseline, workflow, overlay.
+"""The eval gate's wiring for the eval run: baseline, workflow, overlay, ADRs.
 
 Only files are read; nothing runs. The workflow is read with `yaml.safe_load`, which loads
 the bare key `on` as `True`, so nothing here reads the trigger. The repository root comes
@@ -21,8 +21,8 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EVALS = REPO_ROOT / "backend" / "evals"
-BASELINE = EVALS / "conversation-baseline.json"
-OLD_BASELINE = EVALS / "baseline.json"
+BASELINE = EVALS / "baseline.json"
+OLD_BASELINE = EVALS / "conversation-baseline.json"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "eval-gate.yml"
 MAKEFILE = REPO_ROOT / "Makefile"
 OVERLAY_COMPOSE = REPO_ROOT / "infra" / "evals" / "compose.yml"
@@ -57,18 +57,17 @@ def make_recipe(target: str) -> list[str]:
     return recipe
 
 
-def test_the_conversation_baseline_replaces_the_old_one() -> None:
-    """Catches the old `baseline.json` still on disk (a gate could read it by mistake and the
-    guard would watch a file nobody uses) and a conversation baseline that is not two plain
-    percent numbers: `check_score` is required and between 0 and 100, `judge_score` is
-    optional, and nothing else is in the file (the old thresholds block would be dead
-    weight)."""
+def test_the_new_baseline_replaces_the_conversation_baseline() -> None:
+    """Catches the retired `conversation-baseline.json` still on disk (a gate could read it by
+    mistake and the guard would watch a file nobody uses) and a baseline that is not two plain
+    percent numbers: `safety` and `outcome_every_play` are both required and between 0 and 100,
+    and nothing else is in the file."""
     assert not OLD_BASELINE.exists()
     document = json.loads(BASELINE.read_text(encoding="utf-8"))
 
-    assert set(document) <= {"check_score", "judge_score"}
-    assert 0.0 <= document["check_score"] <= 100.0
-    assert 0.0 <= document.get("judge_score", 0.0) <= 100.0
+    assert set(document) == {"safety", "outcome_every_play"}
+    assert 0.0 <= document["safety"] <= 100.0
+    assert 0.0 <= document["outcome_every_play"] <= 100.0
 
 
 def test_the_old_golden_set_and_its_label_readme_are_gone() -> None:
@@ -106,13 +105,13 @@ def test_the_eval_job_checks_out_the_help_desk_and_carries_the_model_key() -> No
     assert "secrets.ANTHROPIC_API_KEY" in yaml.safe_dump(job)
 
 
-def test_the_eval_recipe_gates_against_the_conversation_baseline() -> None:
+def test_the_eval_recipe_gates_against_the_baseline() -> None:
     """Catches a recipe that plays conversations and gates against nothing, or against the
-    removed baseline: `ops-eval gate` is given `conversation-baseline.json`."""
+    removed baseline: `ops-eval gate` is given `baseline.json`."""
     recipe = "\n".join(make_recipe("eval"))
 
     assert "ops-eval gate" in recipe
-    assert "backend/evals/conversation-baseline.json" in recipe
+    assert "backend/evals/baseline.json" in recipe
 
 
 def test_the_eval_compose_overlay_has_no_golden_set_mode() -> None:

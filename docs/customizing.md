@@ -78,29 +78,31 @@ these files without a restart, for a deployment that mounts them.
 
 You do not have to touch any of these to run the gateway.
 
-- **Keys and settings.** `backend/.env.example` lists every variable the gateway
-  reads. Copy it to a `.env` file in `backend/` and fill it in, as `docs/local-setup.md`
-  shows. For a cluster, the same values live SOPS-encrypted under
-  `infra/secrets/`.
-- **Running it.** `docker-compose.yml` brings up the whole local stack, and the
-  `Makefile` carries the commands the workflows use.
-- **Evaluations.** The eval engine plays conversation cases, meaning what a
-  person types, which tools should be called, and when the person says yes. Write
-  your cases in the shape `docs/eval-format.md` describes, and serve them through
-  the two endpoints in `docs/eval-target.md`.
-  `backend/evals/conversation-baseline.json` is the score the CI gate compares
-  against. Make it once from a run on your own cases, then change it only with a
-  reason. The gate itself is in `docs/eval-gate.md`.
-- **Reliability.** The alert rules are in `infra/k8s/monitoring/alerts/`. The two
-  SLO numbers, 99.5% availability and 95% of requests under 6 seconds, are in
-  `backend/app/services/prometheus_reads.py` and the Grafana gateway dashboard. Set them to what you really
-  promise.
-- **Infrastructure.** `infra/terraform/` provisions the hosts and `infra/k8s/`
-  holds the manifests. Both expect your own domain, state backend and registry.
-- **The console.** `web/` is the dashboard. It reads through the gateway's console
-  API and holds only its login settings and the admin key.
+- **Credentials.** [backend/.env.example](backend/.env.example) lists every variable the stack
+  reads, with placeholders. Copy it to your own env file and fill it in. For
+  the cluster, the same values live SOPS-encrypted under
+  [infra/secrets/](infra/secrets/).
+- **Running it.** `docker-compose.yml` brings the whole local stack up, and the
+  [Makefile](Makefile) carries the commands the workflows use.
+- **Evaluations.** The eval engine plays conversation cases: what a person types,
+  which tools should be called, and when the person says yes. Write your cases in the
+  shape [docs/eval-format.md](docs/eval-format.md) describes, and serve them through
+  the two endpoints in [docs/eval-target.md](docs/eval-target.md).
+  `backend/evals/baseline.json` is the scoreboard the CI gate compares
+  against; make it once from a run on your own cases, then leave it alone. The gate
+  itself is in [docs/eval-gate.md](docs/eval-gate.md).
+- **Reliability.** The seven service level objectives have
+  their alerts in
+  [infra/k8s/monitoring/alerts/](infra/k8s/monitoring/alerts/), and every alert has a response
+  section in the runbook. Retarget the numbers to what
+  you are actually promising.
+- **Infrastructure.** [infra/terraform/](infra/terraform/) provisions the hosts
+  and [infra/k8s/](infra/k8s/) holds the manifests. Both expect your own domain,
+  your own state backend and your own registry.
+- **The console.** [web/](web/) is the dashboard. It
+  reads through the gateway's console API and holds no credentials of its own.
 
-## Defaults you are taking on
+## Decisions you are inheriting
 
-If a default looks wrong for you, read the comment beside it. It says why it is
-the default, which is the fastest way to decide whether to change it.
+Every non-obvious choice in here was recorded when it was made. If a default looks wrong for you, the record of why it
+is the default is the fastest way to decide whether to change it.

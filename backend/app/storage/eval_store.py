@@ -29,19 +29,12 @@ and the reverse import would be a cycle. A test over the command's tuple keeps
 the two from drifting apart in silence. The CHECK constraint in
 `003_eval_runs.sql` is the second guard, for the row somebody loads with `psql`.
 
-`tags` is read straight off the report's own `CaseReport.tags` (the checks a failed
-case broke) rather than recomputed here. `metrics` carries `check_score`,
-`judge_score` and the counts the same way, in the report's own JSON form, exactly as
-they are in the file. The `eval_runs.metrics` column is `jsonb`, so the swap from the
-old metric names needed no migration.
-`alias_resolution` still ships NULL, and the migration says so column by column.
-`judge_kappa` is filled off the report's own `RunCalibration` record and never
-out of the `metrics` mapping - a typed field is what keeps `mypy --strict` honest
-about a value going into a `double precision` column, and a mapping lookup that
-came back `None` would ship NULL on a calibrated run and nothing would notice. A
-run made with no `--calibration` still stores `None` there, which is the column's
-"nothing measured this" and not a zero agreement. The judge verdict goes into
-`details` and never into a column of its own.
+`tags` is read straight off the report's own `CaseReport.tags` (the rule ids a case's plays
+broke) rather than recomputed here. `metrics` carries `safety`, `outcome_every_play` and
+the other scores the same way, in the report's own JSON form, exactly as they are in the
+file. The `eval_runs.metrics` column is `jsonb`, so the swap from the old metric names
+needed no migration. `alias_resolution` and `judge_kappa` still ship NULL, and the
+migration says so column by column. A case row's `details` holds the plays.
 """
 
 from __future__ import annotations
@@ -176,19 +169,13 @@ class EvalStore(Protocol):
 
 
 def _details(case: CaseReport) -> dict[str, Any]:
-    """The three things a case carries that no column of its own holds.
+    """What a case row keeps beyond its columns: the plays, each with its result.
 
     Dumped in JSON mode rather than as Python objects, because the column is `jsonb`: a
-    pydantic model handed to `Jsonb` raises inside `json.dumps`, at the end of a run
-    already paid for. `check` is `null` for a case that never answered and `judged` is an
-    empty list for a case nothing judged, never absent, so two rows of the same set answer
-    one query.
+    pydantic model or a `Decimal` handed to `Jsonb` raises inside `json.dumps`, at the end
+    of a run already paid for.
     """
-    return {
-        "check": None if case.check is None else case.check.model_dump(mode="json"),
-        "judged": [reply.model_dump(mode="json") for reply in case.judged],
-        "error": case.error,
-    }
+    return {"plays": [play.model_dump(mode="json") for play in case.plays]}
 
 
 def rows_from_report(
@@ -222,7 +209,6 @@ def rows_from_report(
         metrics=report.model_dump(mode="json")["metrics"],
         passed=report.passed,
         report_path=str(report_path),
-        judge_kappa=None if report.calibration is None else report.calibration.kappa,
     )
     case_rows = tuple(
         EvalCaseRow(
@@ -231,9 +217,9 @@ def rows_from_report(
             category=case.category,
             passed=case.passed,
             tags=case.tags,
-            latency_ms=case.latency_ms,
-            cost_usd=case.cost_usd,
-            provider=case.provider,
+            latency_ms=None,
+            cost_usd=None,
+            provider=None,
             details=_details(case),
         )
         for case in report.cases

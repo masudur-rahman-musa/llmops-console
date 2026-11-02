@@ -1,5 +1,4 @@
-r"""The kind e2e's eval target: the help desk's conversation contract, played from a small
-case file instead of a real agent.
+r"""The kind e2e's eval target: the help desk's one-turn contract, answered without a real agent.
 
 Stdlib only (`http.server`, `urllib.request`), so the throwaway image installs nothing. The
 contract is duplicated here, never imported: the stub's image carries
@@ -8,21 +7,19 @@ none of `opsconsole`.
 Two endpoints, both POST:
 
     /admin/test/reset         answered 204 with an empty body; this stub holds no seed
-    /v1/eval/conversation     {case_id, tenant, principal_user, turns} in, one record per
-                              user turn out: {case_id, turns: [{turn, reply, tool_calls}]}
+    /v1/eval/conversation     {case_id, tenant, principal_user, chat_id, message} in, one turn
+                              out: {chat_id, reply, tool_calls, world_before, world_after}
 
 The stub reads the case file (`CASES_PATH`, default `/cases/kind-cases.jsonl`, the same
-file `ops-eval conversations --cases` plays) and answers each case from its `expected`
-block: the case's expected tool calls are reported as made, each one on the turn the
-person says yes (`confirm_turn`) or on turn 1 when nothing may change. That is what lets
-the kind run pass without a real agent.
+file `ops-eval conversations --cases` plays) only to refuse a case id that is not in it. It
+makes no tool call and changes nothing: both worlds are empty. The kind cases are written for
+that, so each play ends in the state it started in.
 
 The reply text of a turn is one of two things. With `FORWARD_TO_GATEWAY` true (the
 default), the turn's message goes to the deployed gateway's `POST /v1/chat/completions`,
 alias `agent-default`, tenant `evals`, with no `X-Data-Class` header, so the measurement
 run writes real ledger rows and the answer is the model's own text. With it `false`
-(the kind cluster, which has no model), the reply is a fixed sentence that carries any
-request number the stub's own tool result holds.
+(the kind cluster, which has no model), the reply is a fixed sentence.
 """
 
 from __future__ import annotations
@@ -40,7 +37,9 @@ from typing import Any, Final, NamedTuple
 RESET_PATH: Final[str] = "/admin/test/reset"
 CONVERSATION_PATH: Final[str] = "/v1/eval/conversation"
 
-REQUEST_FIELDS: Final[frozenset[str]] = frozenset({"case_id", "tenant", "principal_user", "turns"})
+REQUEST_FIELDS: Final[frozenset[str]] = frozenset(
+    {"case_id", "tenant", "principal_user", "chat_id", "message"}
+)
 """Exactly the keys the console sends, no more and no fewer."""
 
 ALIAS: Final[str] = "agent-default"
@@ -53,10 +52,14 @@ GATEWAY_TIMEOUT_SECONDS: Final[float] = 30.0
 budget: a hang here is one case timing out rather than the stub itself."""
 
 
-CHANGE_RESULTS: Final[dict[str, dict[str, Any]]] = {
-    "create_access_request": {"request_number": "REQ-0001", "status": "pending"},
+EMPTY_WORLD: Final[dict[str, list[Any]]] = {
+    "requests": [],
+    "grants": [],
+    "tickets": [],
+    "people": [],
+    "reviews": [],
 }
-"""What the stub says a tool returned. A tool not listed returns an empty result."""
+"""The world the stub reports before and after every turn: nothing in it, nothing changed."""
 
 
 class MalformedRequest(Exception):
@@ -78,14 +81,17 @@ def load_cases(path: Path) -> dict[str, dict[str, Any]]:
 
 
 def checked_request(payload: object) -> dict[str, Any]:
-    """Refuse a body that is not a JSON object with exactly the four request fields."""
+    """Refuse a body that is not a JSON object with exactly the five request fields."""
     if not isinstance(payload, dict):
         raise MalformedRequest("the body is not a JSON object")
     if set(payload) != REQUEST_FIELDS:
         raise MalformedRequest(f"expected exactly {sorted(REQUEST_FIELDS)}, got {sorted(payload)}")
-    turns = payload["turns"]
-    if not isinstance(turns, list) or not turns or not all(isinstance(t, str) and t for t in turns):
-        raise MalformedRequest("turns is not a non-empty list of text")
+    message = payload["message"]
+    if not isinstance(message, str) or not message:
+        raise MalformedRequest("message is not text")
+    chat_id = payload["chat_id"]
+    if chat_id is not None and not isinstance(chat_id, str):
+        raise MalformedRequest("chat_id is neither null nor text")
     return payload
 
 
@@ -119,31 +125,8 @@ def call_gateway(content: str, *, base_url: str, api_key: str) -> GatewayReply:
     )
 
 
-def calls_for_turn(case: dict[str, Any], turn: int) -> list[dict[str, Any]]:
-    """The expected tool calls the stub reports as made on this turn."""
-    expected = case["expected"]
-    confirm = expected.get("confirm_turn")
-    call_turn = 1 if confirm is None else int(confirm)
-    if turn != call_turn:
-        return []
-    return [
-        {
-            "name": call["name"],
-            "args": dict(call.get("args_subset") or {}),
-            "ok": True,
-            "result": dict(CHANGE_RESULTS.get(call["name"], {})),
-            "error_code": None,
-        }
-        for call in expected["tool_calls"]
-    ]
-
-
-def canned_reply(calls: list[dict[str, Any]]) -> str:
-    """A fixed sentence that repeats only a request number a tool result holds."""
-    numbers = [str(c["result"]["request_number"]) for c in calls if "request_number" in c["result"]]
-    if numbers:
-        return f"Done. Your request number is {numbers[0]}."
-    return "Understood."
+CANNED_REPLY: Final[str] = "Understood."
+"""What the stub says when no gateway is forwarded to."""
 
 
 def conversation_response(
@@ -154,7 +137,7 @@ def conversation_response(
     api_key: str,
     caller: Callable[..., GatewayReply] = call_gateway,
 ) -> tuple[int, dict[str, Any]]:
-    """Answer one `/v1/eval/conversation` request: the status code and the JSON body.
+    """Answer one `/v1/eval/conversation` turn: the status code and the JSON body.
 
     `base_url` is `None` when the gateway is not forwarded to. `caller` is replaced in a
     test that needs no socket; production code never passes it."""
@@ -167,15 +150,18 @@ def conversation_response(
         return 400, {"error": str(exc)}
     except UnknownCase as exc:
         return 404, {"error": str(exc)}
-    turns: list[dict[str, Any]] = []
-    for number, text in enumerate(payload["turns"], start=1):
-        calls = calls_for_turn(case, number)
-        if base_url is None:
-            reply = canned_reply(calls)
-        else:
-            reply = caller(text, base_url=base_url, api_key=api_key).reply
-        turns.append({"turn": number, "reply": reply, "tool_calls": calls})
-    return 200, {"case_id": payload["case_id"], "turns": turns}
+    if base_url is None:
+        reply = CANNED_REPLY
+    else:
+        reply = caller(payload["message"], base_url=base_url, api_key=api_key).reply
+    chat_id = payload["chat_id"] or f"chat-{payload['case_id']}"
+    return 200, {
+        "chat_id": chat_id,
+        "reply": reply,
+        "tool_calls": [],
+        "world_before": EMPTY_WORLD,
+        "world_after": EMPTY_WORLD,
+    }
 
 
 def reset_response() -> tuple[int, bytes]:

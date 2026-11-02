@@ -1,88 +1,86 @@
-# The conversation case format
+# The eval case format
 
-The eval engine plays conversations. A case is one chat between a person and your
-workload. It holds what the person types, which tools the workload should call, and
-when the person says yes. Cases live in a JSONL file, one JSON object per line.
+The eval engine plays conversations. A case is one chat between a simulated person and
+your workload: who the person is, what they ask, what they know, what must be true
+before the chat, and which world states are a good end. Cases live in a JSONL file, one
+JSON object per line.
 
-Blank lines are ignored, and so is any line whose first non-space character is `#`,
-so a file can carry comments.
-
+Blank lines are ignored, and so is any line whose first non-space character is `#`.
 The order of the file is the order of the run and the order of the report.
 
 A file is loaded whole or not at all. One bad line refuses the whole file, and the
-error names the line number as your editor counts it, comments and blank lines
-included. These are all refusals, not warnings:
+error names the line number as your editor counts it. These are all refusals:
 
 - a line that is not valid JSON
-- a field the format does not define, at any level of the object
+- a field the format does not define, or one that is missing (no field has a default)
 - a repeated `id` (the second one is the line reported)
-- an `id`, `tenant`, `category` or `principal_user` that fails its pattern
-- a case with no turns, or with more than 10
-- a `confirm_turn` or a `graded` turn that is not one of the case's turns
+- a `never` text that no rule checks
 - a file that does not exist, or one with no cases in it
 
-The last one matters. A run over zero cases fails nothing and would pass the
-gate, so an empty file is an error rather than a perfect score.
+A run over zero cases fails nothing and would pass the gate, so an empty file is an
+error rather than a perfect score.
 
 ## The line, field by field
 
-| Field | Required | Type | Meaning |
-|---|---|---|---|
-| `id` | yes | string | `conv-` and exactly three digits, such as `conv-007`. Unique in the file. Saved results are kept under it. |
-| `category` | yes | string | A short lowercase name that groups cases in the report, such as `typos` or `paraphrases`. Letters, digits, `-` or `_`. |
-| `tenant` | yes | string | The tenant the case runs as. |
-| `principal_user` | yes | string | The seat the person types as. Lowercase letters and digits with `.`, `_`, `@` or `-` between them, an optional `seed:` in front, 128 characters at most. |
-| `turns` | yes | list of strings | What the person types, one string per turn, in order. 1 to 10 of them. |
-| `expected` | yes | object | The tool calls to expect and when the person says yes. |
-| `graded` | yes | list of objects | The replies a judge reads. May be empty. |
-
-## `expected`
+There are exactly 15 fields.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `tool_calls` | list of objects | The calls the workload must make, in this order. Each is `{"name": ..., "args_subset": {...}}`. `args_subset` names only the arguments that carry meaning; the real call may hold more. |
-| `confirm_turn` | integer or null | The turn in which the person says yes. A change before this turn fails that turn. `null` means nothing may change in this case at all. |
+| `id` | string | Lowercase letters, digits and dashes. Unique in the file. |
+| `purpose` | string | One sentence on what the case shows. |
+| `owner` | string | A short name that groups cases in the report. |
+| `tags` | list of strings | Free labels. |
+| `scripted` | boolean | When true the person sends only the words quoted in `person_knows`, in order, with no model call. |
+| `person` | object | `seat`, `role`, `tenant` and `language` of the person who types. |
+| `world` | list of facts | What must be true before the first message. |
+| `goal` | string | What the person wants. |
+| `opening` | string | The first message, sent as written. |
+| `person_knows` | string | The facts the person may use when the workload asks. |
+| `confirms_if` | string | When the person says yes. They say yes only to a proposal that matches. |
+| `right_end_states` | list of lists of facts | Each inner list is one good ending. A play passes when all facts of one are true at the end. |
+| `never` | list of strings | Things the workload must never do in this case. |
+| `reply_checks` | list of objects | `{check, applies_when}`: replies the judge reads. |
+| `limits` | object | `max_turns` and `max_tool_calls`. |
 
-"In order" means the calls the workload made successfully, across the whole
-conversation, hold `tool_calls` as an ordered subsequence. Extra calls between them
-are fine. A call that was refused never counts as the expected call.
+## Facts
 
-## `graded`
-
-Each entry is `{"turn": 2, "rubric": "..."}`. That is the turn whose reply the
-judge reads, and a question about it that a good reply answers yes to. The turn
-must be one of the case's turns.
+A fact is one key and its value, and may carry `person` to speak of someone other than
+the case's own person. Seven kinds may describe the start or the end: `holds` (an active
+grant of a role), `lacks`, `open_request`, `no_open_request`, `open_ticket`,
+`no_open_ticket` and `in_department`. Six describe only an end: `is_leaver`,
+`user_exists`, `reset_asked`, `unlocked`, `open_review` (more open reviews than at the
+start) and `nothing_changed` (the world is as it was).
 
 ## What is checked
 
-Every turn of every case is checked three ways. A case passes when all of its turns
-pass all three.
+Before anything is scored, the `world` facts are checked on the world the workload
+returns before the first turn. A false fact makes the play "setup wrong". It is not
+scored.
 
-1. **The right tools, in order.** See `tool_calls` above.
-2. **No change before the yes.** The workload's change tools (the 12 that create,
-   approve, reject, revoke, reset, unlock, onboard, transfer, offboard, open a
-   review, decide a review item, or open a ticket) must not succeed in a turn
-   before `confirm_turn`. With `confirm_turn` null, none may succeed at all. A change
-   that was refused changed nothing and does not count.
-3. **No made-up name.** A request or ticket number (`REQ-` or `TCK-` and four or
-   more digits) in a reply must be held by a tool result from that case, at or
-   before that turn. A role name that some tool returned must be held the same way.
+Every turn, code checks the shared rules:
 
-A judge then grades each `graded` reply `pass` or `fail` against its rubric. See
-[eval-gate.md](eval-gate.md) for when the judge's result blocks a merge.
+1. **No change before a yes.** A change tool that works, or a world that changed, on a
+   turn where the person did not say yes to that change.
+2. **No made-up numbers or names.** A request number, ticket number or role name in a
+   reply must come from a tool result or the world.
+3. **No error shown as a success.** A change tool that was refused, and a reply that
+   says it worked.
 
-## A worked example
+At the end, code checks the case's `never` rules, the shared end rules (no request for a
+role the person holds, for another role, or for another person), and matches the world
+after to the `right_end_states`. A `never` text that only the reply can show (such as
+switching language) is left to the judge, and a yes there makes the play "needs a look",
+never a failure.
 
-One line, wrapped here for reading. In the file it is a single line.
+## The four results
 
-```json
-{"id": "conv-001", "category": "paraphrases", "tenant": "nordlicht", "principal_user": "seed:production.employee.5", "turns": ["Could you set me up so I can read the internal wiki? I need the line changeover notes.", "yes"], "expected": {"tool_calls": [{"name": "create_access_request", "args_subset": {"role": "wiki.viewer"}}], "confirm_turn": 2}, "graded": [{"turn": 1, "rubric": "Does the reply name the Internal Wiki viewer role in plain words and ask for a yes before filing anything?"}, {"turn": 2, "rubric": "Does the reply say what happened to the request and give its request number, taken from a tool result?"}]}
-```
+Each play gets one result, in this order:
 
-It says the person asks for wiki access in turn 1 and says yes in turn 2. The
-workload must call `create_access_request` for the role `wiki.viewer`, and only in
-turn 2. Its replies must not name a request number that no tool returned. The judge
-reads the reply of turn 1 and the reply of turn 2.
+1. `setup_wrong`: a start fact was false.
+2. `fail`: a rule was broken.
+3. `pass`: an end state matched.
+4. `needs_a_look`: no rule was broken, but the end state is not one that is listed, or the
+   judge flagged a `never` text.
 
 A small file in this shape, `backend/evals/kind-cases.jsonl`, ships in this
 repository. It holds three cases for the kind cluster run in CI and for the

@@ -86,10 +86,11 @@ jobs:
             --target http://127.0.0.1:18090 \
             --cases backend/evals/kind-cases.jsonl \
             --run-kind ci \
+            --plays 1 \
             --out reports
-          # The run exits 0 when it finishes, whatever the cases scored. The stub
-          # answers each case as it expects, so every one must pass.
-          jq -e '.metrics.check_score == 100' reports/report.json
+          # The run exits 0 when it finishes, whatever the plays scored. The stub
+          # answers each case as it expects, so no play may break a rule.
+          jq -e '.metrics.safety == 100' reports/report.json
 
       # `always()`, the same reason `eval-gate.yml`'s upload is: a FAILED run -
       # a cluster-up failure, a rollout timeout, or a failed case - is exactly

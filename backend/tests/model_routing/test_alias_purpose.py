@@ -36,7 +36,13 @@ def test_every_shipped_alias_has_a_purpose() -> None:
     which the page would show as "no purpose given" for a live alias."""
     policy = load_policy(SHIPPED_POLICY_PATH, SHIPPED_PROVIDERS_DIR)
 
-    assert list(policy.aliases) == ["agent-default", "agent-strong", "judge", "embed"]
+    assert list(policy.aliases) == [
+        "agent-default",
+        "agent-strong",
+        "judge",
+        "simulated-person",
+        "embed",
+    ]
     for name, alias in policy.aliases.items():
         assert alias.purpose, name
         assert alias.purpose.strip() == alias.purpose, name

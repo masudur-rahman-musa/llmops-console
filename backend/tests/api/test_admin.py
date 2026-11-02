@@ -557,7 +557,13 @@ def test_a_reload_leaves_the_new_adapter_set_callable(tmp_path: Path) -> None:
         # The set the reload dropped is closed, which is the other half of C.
         assert http_client_of(dropped).is_closed
         # And the app still serves under the new snapshot.
-        assert listed_aliases(built.client) == ["agent-default", "agent-strong", "judge", "embed"]
+        assert listed_aliases(built.client) == [
+            "agent-default",
+            "agent-strong",
+            "judge",
+            "simulated-person",
+            "embed",
+        ]
 
 
 # --- Reload swaps the three together as one atomic runtime ----------

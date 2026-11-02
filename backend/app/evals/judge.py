@@ -1,25 +1,20 @@
-"""The LLM judge: one fixed prompt, three samples, pass or fail.
+"""The reply judge: one fixed prompt, one check per request, one answer each.
 
-The judge grades each `graded` reply of a conversation case against its rubric, and
-nothing else. It reaches a model the way every other client does, through the
-gateway's `/v1/chat/completions` naming the alias `judge`: the gateway puts the
-spend on the `evals` tenant's budget and in the ledger without this module knowing.
+The judge answers each reply check on its own with `yes`, `no` or `does_not_apply`, a quote
+from the reply and a one-sentence reason. It sees the whole conversation, the tool results
+and the world facts. It reaches a model the way every other client does, through the
+gateway's `/v1/chat/completions` naming the alias `judge`: the gateway puts the spend on the
+`evals` tenant's budget and in the ledger without this module knowing.
 
-Four properties are worth more than the arithmetic.
-
-* **Three samples and the MAJORITY**.
-  A single sample of a generative model is a coin toss dressed as a measurement. With
-  two classes and three samples there is always a majority, so no tie rule exists.
-  The three reasons are kept in the order taken.
-* **The rubric and the reply are DATA.** The system message is the prompt file
-  verbatim, and both strings travel in the user message under their own labels.
-An answer that
-  does not validate is a retry and then `None`, never a verdict, and the model's text
-  is parsed and never scanned for the word pass.
-* **A sample that cannot be used is retried exactly once, then the reply is
-  unjudged**. A judge
-  outage is a fact about our own gateway, not about the help desk.
-* **The prompt is a FILE and its sha256 is the version**.
+* **One check, one request, one sample.** Checks are never batched: one answer would colour
+  the next.
+* **The conversation is DATA.** The system message is the prompt file verbatim; the
+  conversation travels in the user message between fixed tags. An answer that does not
+  validate is a retry and then `None`, never a verdict.
+* **A request that cannot be used is retried exactly once**, then the check is unanswered.
+  A judge outage is a fact about our own gateway, not about the help desk, so an
+  unanswered check is left out of the scores.
+* **The prompt is a FILE and its sha256 is the version.**
 
 Nothing here opens a socket of its own: the `httpx.Client` is injected.
 """
@@ -28,134 +23,76 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Sequence
 from importlib import resources
-from typing import Any, Final, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Final, Literal
 
 import httpx
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+if TYPE_CHECKING:
+    from app.evals.cases import ReplyCheck
+    from app.evals.person import PlayedTurn
+
 JUDGE_ALIAS: Final[str] = "judge"
-"""The alias the judge names, and the only model name this package holds for it.
-`routing.yaml` decides which provider serves it."""
+"""The alias the judge names. `routing.yaml` decides which provider serves it."""
 
-JUDGE_PATH: Final[str] = "/v1/chat/completions"
-"""Where the judge speaks to the gateway, joined onto `--judge-url`."""
-
-JUDGE_SAMPLES: Final[int] = 3
-"""How many times one reply is graded. Three makes a majority of two classes."""
-
+CHAT_PATH: Final[str] = "/v1/chat/completions"
+"""Where the judge and the simulated person speak to the gateway."""
 
 DEFAULT_JUDGE_TIMEOUT_SECONDS: Final[float] = 60.0
-"""How long one sample may take; a real number, not httpx's `None`."""
+"""How long one request may take; a real number, not httpx's `None`."""
 
-MAX_JUDGE_REASON_LENGTH: Final[int] = 500
-"""Characters of each reason that are kept, inclusive. Cut, not refused: a long reason
-is not a bad verdict."""
+MAX_REASON_LENGTH: Final[int] = 500
+"""Characters of each reason and quote that are kept, inclusive. Cut, not refused."""
 
 JUDGE_TENANT: Final[str] = "evals"
-"""The tenant every judge and label request names in `X-Tenant`. The gateway refuses a
-chat request without it, and `evals` is the tenant whose policy lets the judge reach a
-US model; the key the caller passes must be this tenant's."""
+"""The tenant every judge and person request names in `X-Tenant`. The gateway refuses a
+chat request without it; the key the caller passes must be this tenant's."""
 
 JUDGE_DATA_CLASS: Final[str] = "internal"
-"""The data class the judge declares: seed replies and rubrics, never a person's data."""
+"""The data class declared: seed replies, never a person's data."""
 
 JUDGE_SESSION: Final[str] = "eval-judge"
-"""The `X-Session` every judge and label request carries. Opaque to the gateway, and the
-same for every sample, since the judge holds no conversation of its own."""
+"""The `X-Session` every request carries. Opaque to the gateway."""
 
 PROMPT_PACKAGE: Final[str] = "app.evals.prompts"
-"""Where the prompt file lives, read through `importlib.resources`."""
+PROMPT_RESOURCE: Final[str] = "judge-v3.md"
 
-PROMPT_RESOURCE: Final[str] = "judge-v2.md"
-"""The prompt file itself."""
+CONVERSATION_OPEN: Final[str] = "<conversation>"
+CONVERSATION_CLOSE: Final[str] = "</conversation>"
 
-RUBRIC_OPEN: Final[str] = "<rubric>"
-RUBRIC_CLOSE: Final[str] = "</rubric>"
-REPLY_OPEN: Final[str] = "<reply>"
-REPLY_CLOSE: Final[str] = "</reply>"
-"""The four delimiters the two case-supplied strings travel between."""
-
-Verdict = Literal["pass", "fail"]
+Answer = Literal["yes", "no", "does_not_apply"]
 
 
-class JudgeAnswer(BaseModel):
-    """One sample as the model answered it: a reason and a verdict, nothing else."""
+class CheckAnswer(BaseModel):
+    """One answer as the model gave it: a word, a quote and a reason, nothing else."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    answer: Answer
+    quote: str
     reason: str
-    verdict: Verdict
 
 
-class JudgeVerdict(BaseModel):
-    """What the judge decided about one reply: the majority and the three samples."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    verdict: Verdict
-    votes: tuple[Verdict, ...]
-    reasons: tuple[str, ...]
+def prompt_text(resource: str = PROMPT_RESOURCE) -> str:
+    """A prompt file's text, which is the system message verbatim."""
+    return (resources.files(PROMPT_PACKAGE) / resource).read_text(encoding="utf-8")
 
 
-class Grader(Protocol):
-    """Anything that grades one reply against one rubric. `JudgeClient` is one."""
+def prompt_version(resource: str = PROMPT_RESOURCE) -> str:
+    """The sha256 hex of a prompt file's bytes.
 
-    def grade(self, rubric: str, reply: str) -> JudgeVerdict | None:
-        """The verdict, or `None` when the grader could not be used."""
-        ...
-
-
-def _prompt_bytes() -> bytes:
-    return (resources.files(PROMPT_PACKAGE) / PROMPT_RESOURCE).read_bytes()
-
-
-def judge_prompt_version() -> str:
-    """The sha256 hex of the prompt file's bytes.
-
-    The file name is not the version: an edit to the wording with no rename changes
-    the hash, and every score after it is no longer comparable to the ones before.
+    The file name is not the version: an edit to the wording with no rename changes the
+    hash, and every score after it is no longer comparable to the ones before.
     """
-    return hashlib.sha256(_prompt_bytes()).hexdigest()
-
-
-def system_prompt() -> str:
-    """The prompt file's text, which is the system message verbatim."""
-    return _prompt_bytes().decode("utf-8")
-
-
-def user_message(rubric: str, reply: str) -> str:
-    """The rubric and the reply, each under its own label, the rubric first."""
-    return (
-        f"{RUBRIC_OPEN}\n{rubric}\n{RUBRIC_CLOSE}\n\n{REPLY_OPEN}\n{reply}\n{REPLY_CLOSE}\n\n"
-        "Grade the reply in the second block against the rubric in the first."
-    )
-
-
-def answer_from(document: object) -> JudgeAnswer | None:
-    """One chat answer turned into a sample, or `None` when it is unusable.
-
-    An envelope with no choice, a `content` that is not JSON and a payload the schema
-    refuses all end here. The reason is cut at `MAX_JUDGE_REASON_LENGTH`.
-    """
-    try:
-        content = document["choices"][0]["message"]["content"]  # type: ignore[index]
-    except (TypeError, KeyError, IndexError):
-        return None
-    if not isinstance(content, str):
-        return None
-    try:
-        answer = JudgeAnswer.model_validate(json.loads(content))
-    except (ValueError, ValidationError):
-        return None
-    return JudgeAnswer(reason=answer.reason[:MAX_JUDGE_REASON_LENGTH], verdict=answer.verdict)
+    return hashlib.sha256((resources.files(PROMPT_PACKAGE) / resource).read_bytes()).hexdigest()
 
 
 def chat_body(alias: str, system: str, user: str) -> dict[str, Any]:
     """One request body: the alias, a system and a user message.
 
-    No temperature: the judge and label models (Haiku 5.5, Sonnet 5.5) refuse any value
-    but their default, so the samples differ as the model's own sampling makes them.
+    No temperature: the judge and person models refuse any value but their default.
     """
     return {
         "model": alias,
@@ -166,20 +103,21 @@ def chat_body(alias: str, system: str, user: str) -> dict[str, Any]:
     }
 
 
-def sample_once_retried(
+def ask_retried[Parsed: BaseModel](
     client: httpx.Client,
     url: str,
     body: dict[str, Any],
     *,
     api_key: str,
     timeout: float,
-) -> JudgeAnswer | None:
-    """One sample, retried EXACTLY once when the first attempt is unusable.
+    model: type[Parsed],
+) -> Parsed | None:
+    """One request, retried EXACTLY once when the first attempt is unusable.
 
-    Once and never twice: giving up on the first bad answer leaves replies unjudged on
-    a model's ordinary flakiness, and retrying until it works is unbounded spend on a
-    failing gateway. A non-2xx, a body that is not JSON and a transport failure are the
-    same event here; nothing raises out of this function.
+    Once and never twice: giving up on the first bad answer leaves checks unanswered on a
+    model's ordinary flakiness, and retrying until it works is unbounded spend on a
+    failing gateway. A non-2xx, a body that is not JSON, an answer the model class refuses
+    and a transport failure are the same event here; nothing raises out of this function.
     """
     for _ in range(2):
         try:
@@ -199,13 +137,37 @@ def sample_once_retried(
         if not response.is_success:
             continue
         try:
-            document = response.json()
-        except ValueError:
+            content = response.json()["choices"][0]["message"]["content"]
+            parsed = model.model_validate(json.loads(content))
+        except (ValueError, TypeError, KeyError, IndexError, ValidationError):
             continue
-        answer = answer_from(document)
-        if answer is not None:
-            return answer
+        return parsed
     return None
+
+
+def render_conversation(turns: Sequence[PlayedTurn]) -> str:
+    """The whole conversation for the judge, between the fixed tags.
+
+    Every turn: what the person typed, every tool call with its result, the reply, and the
+    world facts the help desk reported before the first turn and after the last.
+    """
+    lines = [CONVERSATION_OPEN]
+    for number, turn in enumerate(turns, start=1):
+        lines.append(f"Turn {number}")
+        lines.append(f"Person: {turn.message}")
+        for call in turn.answer.tool_calls:
+            lines.append(
+                f"Tool {call.name} args={json.dumps(call.args, ensure_ascii=False)} "
+                f"ok={call.ok} error={call.error_code} "
+                f"result={json.dumps(call.result, ensure_ascii=False)}"
+            )
+        lines.append(f"Help desk: {turn.answer.reply}")
+    lines.append(CONVERSATION_CLOSE)
+    if turns:
+        first, last = turns[0].answer.world_before, turns[-1].answer.world_after
+        lines.append(f"World facts before the first turn: {first.model_dump_json()}")
+        lines.append(f"World facts after the last turn: {last.model_dump_json()}")
+    return "\n".join(lines)
 
 
 class JudgeClient:
@@ -219,30 +181,34 @@ class JudgeClient:
         api_key: str,
         timeout: float = DEFAULT_JUDGE_TIMEOUT_SECONDS,
     ) -> None:
-        self._base_url = base_url.rstrip("/")
+        self._url = f"{base_url.rstrip('/')}{CHAT_PATH}"
         self._client = client
         self._api_key = api_key
         self._timeout = timeout
 
-    def grade(self, rubric: str, reply: str) -> JudgeVerdict | None:
-        """Grade one reply against one rubric, or `None` when the judge could not be used.
-
-        A sample that failed twice ends the reply there and no further request is
-        made: a verdict built from two samples is not a majority of three.
-        """
-        url = f"{self._base_url}{JUDGE_PATH}"
-        body = chat_body(JUDGE_ALIAS, system_prompt(), user_message(rubric, reply))
-        answers: list[JudgeAnswer] = []
-        for _ in range(JUDGE_SAMPLES):
-            answer = sample_once_retried(
-                self._client, url, body, api_key=self._api_key, timeout=self._timeout
-            )
-            if answer is None:
-                return None
-            answers.append(answer)
-        passes = sum(1 for answer in answers if answer.verdict == "pass")
-        return JudgeVerdict(
-            verdict="pass" if passes * 2 > len(answers) else "fail",
-            votes=tuple(answer.verdict for answer in answers),
-            reasons=tuple(answer.reason for answer in answers),
+    def _ask(self, question: str, turns: Sequence[PlayedTurn]) -> CheckAnswer | None:
+        user = f"{question}\n\n{render_conversation(turns)}"
+        body = chat_body(JUDGE_ALIAS, prompt_text(), user)
+        answer = ask_retried(
+            self._client,
+            self._url,
+            body,
+            api_key=self._api_key,
+            timeout=self._timeout,
+            model=CheckAnswer,
         )
+        if answer is None:
+            return None
+        return CheckAnswer(
+            answer=answer.answer,
+            quote=answer.quote[:MAX_REASON_LENGTH],
+            reason=answer.reason[:MAX_REASON_LENGTH],
+        )
+
+    def check(self, check: ReplyCheck, turns: Sequence[PlayedTurn]) -> CheckAnswer | None:
+        """Answer one reply check, or `None` when the judge could not be used."""
+        return self._ask(f"Check: {check.check}\nApplies when: {check.applies_when}", turns)
+
+    def never(self, text: str, turns: Sequence[PlayedTurn]) -> CheckAnswer | None:
+        """Answer one never rule: `yes` means the agent did the thing it must never do."""
+        return self._ask(f"Never rule: the agent {text}", turns)

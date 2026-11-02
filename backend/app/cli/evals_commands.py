@@ -1,17 +1,19 @@
 """Command handlers for `ops-eval`.
 
-The six functions that do the actual work of each subcommand: `_conversations`,
-`_label`, `_calibrate`, `_gate`, `_tradeoff` and `_baseline_guard`. Each takes the parsed
-`argparse.Namespace` and returns the process exit code. Every HTTP client a command opens
-comes from one seam, `new_http_client()`, so a test replaces the network with one
-`httpx.MockTransport`.
+The four functions that do the actual work of each subcommand: `_conversations`, `_gate`,
+`_tradeoff` and `_baseline_guard`. Each takes the parsed `argparse.Namespace` and returns the
+process exit code. Every HTTP client a command opens comes from one seam,
+`new_http_client()`, so a test replaces the network with one `httpx.MockTransport`.
 """
 
 from __future__ import annotations
 
 import argparse
-import hashlib
+import shlex
+import subprocess
 import sys
+import time
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -22,16 +24,7 @@ from app.cli.evals_args import UsageError
 from app.core.config import Settings
 from app.core.validation import IdentifierInvalid, checked_identifier
 from app.evals.baseline_guard import GUARD_PASSED_LINE, check, offence_line
-from app.evals.calibration import (
-    CalibrationRefused,
-    CalibrationReport,
-    CalibrationSetInvalid,
-    calibrate,
-    load_labels,
-    read_calibration,
-    write_calibration,
-)
-from app.evals.conversations import ConversationSetInvalid, load_cases
+from app.evals.cases import CaseSetInvalid, EvalCase, load_cases
 from app.evals.gate import (
     GateInputInvalid,
     evaluate,
@@ -40,18 +33,12 @@ from app.evals.gate import (
     load_report,
     verdict_line,
 )
-from app.evals.judge import JudgeClient, judge_prompt_version
-from app.evals.labels import (
-    LABEL_TARGET,
-    GatewayLabelGrader,
-    LabelCandidate,
-    candidates_from,
-    make_labels,
-    write_labels,
-)
+from app.evals.judge import JudgeClient, prompt_version
+from app.evals.person import PersonModel, PersonTurn, PlayedTurn, SimulatedPerson
 from app.evals.push import push_metrics
 from app.evals.report import ALL_TENANTS, REPORT_JSON_NAME, RunReport, build_report, write_reports
-from app.evals.runner import CaseLine, load_run, run_conversations
+from app.evals.results import PlayRecord
+from app.evals.runner import run_eval
 from app.evals.target import TargetClient, TargetUnreachable
 from app.evals.tradeoff import (
     TradeoffInputInvalid,
@@ -71,7 +58,8 @@ UNSTORED_LINE: str = (
 )
 
 UNJUDGED_LINE: str = (
-    "no judge URL or no OPSCONSOLE_EVAL_JUDGE_KEY: this run judged nothing, and judge_score is null"
+    "no gateway URL or no OPSCONSOLE_EVAL_JUDGE_KEY: the simulated person ends each play "
+    "after the opening and nothing is judged"
 )
 
 
@@ -84,20 +72,27 @@ def new_http_client() -> httpx.Client:
     return httpx.Client()
 
 
-def _summary(report: RunReport) -> str:
+class _SilentPerson:
+    """The person when there is no gateway: the play ends after the opening."""
+
+    def answer(self, case: EvalCase, turns: Sequence[PlayedTurn]) -> PersonTurn | None:
+        return None
+
+
+def _summary(run_id: str, report: RunReport) -> str:
     """The one line `conversations` prints, so a CI log carries the real numbers."""
     metrics = report.metrics
     return (
-        f"cases {metrics['cases']} · passed {metrics['passed']} · failed {metrics['failed']} · "
-        f"check_score {metrics['check_score']} · judge_score {metrics['judge_score']}"
-        + (f" · unstable {metrics['unstable']}" if metrics.get("unstable") else "")
+        f"run {run_id} · cases {metrics['cases']} · plays {metrics['plays']} · "
+        f"safety {metrics['safety']} · outcome_every_play {metrics['outcome_every_play']} · "
+        f"needs a look {metrics['needs_a_look']} · setup wrong {metrics['setup_wrong']}"
     )
 
 
 def _store_rows(report: RunReport, out: Path) -> str | None:
     """Store the run and its cases, and answer what went wrong, or `None`.
 
-    Called AFTER both report files are written: the files are what survives a failed
+    Called AFTER the report files are written: the files are what survives a failed
     insert, and the gate reads them off disk. The failure is answered rather than raised
     so no storage complaint becomes a traceback over a run already paid for. With no
     `OPSCONSOLE_DATABASE_URL` nothing is stored, `UNSTORED_LINE` is printed and the run
@@ -115,70 +110,82 @@ def _store_rows(report: RunReport, out: Path) -> str | None:
     return None
 
 
-def _judge(judge_url: str | None, client: httpx.Client) -> JudgeClient | None:
-    """The judge this run grades with, or `None` with one line on stderr.
+def _model_clients(
+    gateway_url: str | None, client: httpx.Client
+) -> tuple[PersonModel, JudgeClient | None]:
+    """The simulated person and the judge, or a silent person and no judge with one line.
 
-    Both halves are required: a URL with no key would spend three 401s per graded
-    reply, and a key with no URL has nowhere to send them.
+    Both halves are required: a URL with no key would spend a 401 per request, and a key
+    with no URL has nowhere to send them.
     """
     api_key = Settings().eval_judge_key
-    if judge_url is None or not api_key:
+    if gateway_url is None or not api_key:
         print(UNJUDGED_LINE, file=sys.stderr)
-        return None
-    return JudgeClient(judge_url, client=client, api_key=api_key)
+        return _SilentPerson(), None
+    return (
+        SimulatedPerson(gateway_url, client=client, api_key=api_key),
+        JudgeClient(gateway_url, client=client, api_key=api_key),
+    )
 
 
-def _judged_prompt_version(lines: tuple[CaseLine, ...]) -> str | None:
-    """The prompt's sha256 when a reply was actually graded, and `None` otherwise.
-
-    Read off the RECORDS: a run whose every judge sample failed judged nothing, and a
-    hash recorded there would tell a later comparison a prompt scored what it did not.
-    """
-    if any(reply.verdict is not None for line in lines for reply in line.judged):
-        return judge_prompt_version()
-    return None
+def _reset_with(command: str) -> None:
+    """Run the reset command, or raise `TargetUnreachable` when it fails."""
+    try:
+        finished = subprocess.run(shlex.split(command), check=False)
+    except OSError as exc:
+        raise TargetUnreachable(f"--reset-command: {command!r} could not run: {exc}") from exc
+    if finished.returncode != 0:
+        raise TargetUnreachable(
+            f"--reset-command: {command!r} exited {finished.returncode}, so the data was not reset"
+        )
 
 
 def _conversations(options: argparse.Namespace) -> int:
-    """Play the cases, save each one as it finishes, write the report, and answer the exit code.
+    """Play the cases, write the report, and answer the exit code.
 
     Every pre-check runs BEFORE the help desk is touched, because after the reset the
-    seed is spent. The exit code is `EXIT_OK` whenever the run completed: failed cases are
-    the gate's business, not the run's, because the baseline run itself has failures.
-    Every refusal is one line on stderr and `EXIT_USAGE`.
+    seed is spent. The exit code is `EXIT_OK` whenever the run completed: failed plays are
+    the gate's business, not the run's. Every refusal is one line on stderr and `EXIT_USAGE`.
     """
     try:
         target = _eargs._checked_target(options.target)
         run_id = checked_identifier(options.run_id or _eargs._new_run_id(), "run_id")
-        repeats = _eargs._checked_repeats(options.repeats)
-        judge_url = _eargs._checked_judge_url(options.judge_url)
+        plays = _eargs._checked_plays(options.plays)
+        gateway_url = _eargs._checked_gateway_url(options.gateway_url)
         supplied_sha = _eargs._checked_set_sha(options.set_sha)
         cases_path = Path(options.cases)
         cases = load_cases(cases_path)
         set_sha, set_sha_source = _eargs._set_sha(supplied_sha, cases_path)
         out = _eargs._checked_out(options.out)
-    except (IdentifierInvalid, UsageError, ConversationSetInvalid) as exc:
+    except (IdentifierInvalid, UsageError, CaseSetInvalid) as exc:
         print(exc, file=sys.stderr)
         return EXIT_USAGE
 
     started_at = datetime.now(UTC)
     with new_http_client() as http:
+        target_client = TargetClient(target, client=http)
+        person, judge = _model_clients(gateway_url, http)
+        reset_command = options.reset_command
         try:
-            lines = run_conversations(
-                client=TargetClient(target, client=http),
+            records: tuple[PlayRecord, ...] = run_eval(
+                target=target_client,
                 cases=cases,
-                run_id=run_id,
-                reports_dir=out,
-                judge=_judge(judge_url, http),
-                repeats=repeats,
+                plays=plays,
+                person=person,
+                judge=judge,
+                reset=target_client.reset
+                if reset_command is None
+                else lambda: _reset_with(reset_command),
+                clock=time.monotonic,
+                now=lambda: datetime.now(UTC),
             )
-        except (TargetUnreachable, ConversationSetInvalid) as exc:
+        except TargetUnreachable as exc:
             print(exc, file=sys.stderr)
             return EXIT_USAGE
         finished_at = datetime.now(UTC)
 
         report = build_report(
-            lines,
+            records,
             started_at=started_at,
             finished_at=finished_at,
             set_name=cases_path.name,
@@ -188,7 +195,7 @@ def _conversations(options: argparse.Namespace) -> int:
             git_sha=_eargs._git_sha(),
             tenant=ALL_TENANTS,
             target=target,
-            judge_prompt_version=_judged_prompt_version(lines),
+            judge_prompt_version=prompt_version() if judge is not None else None,
         )
         try:
             write_reports(out, report)
@@ -206,106 +213,10 @@ def _conversations(options: argparse.Namespace) -> int:
             if pushed is not None:
                 print(pushed, file=sys.stderr)
 
-    print(_summary(report))
+    print(_summary(run_id, report))
     if stored is not None:
         print(stored, file=sys.stderr)
         return EXIT_USAGE
-    return EXIT_OK
-
-
-def _label(options: argparse.Namespace) -> int:
-    """Make the reference labels from a finished run, once, and answer the exit code.
-
-    The labels come from the replies, tool calls and results the run already saved, so
-    they cost no second run. The target file must not exist: it is refused BEFORE any
-    request, because the labels are made once and every grade is three paid requests.
-    Fewer than 40 unanimous replies still writes what there is and answers `EXIT_FAILED`.
-    """
-    try:
-        judge_url = _eargs._checked_judge_url_value(options.judge_url)
-        api_key = _eargs._checked_judge_key()
-        cases_path = Path(options.cases)
-        cases = {case.id: case for case in load_cases(cases_path)}
-        lines = load_run(Path(options.run))
-    except (UsageError, ConversationSetInvalid) as exc:
-        print(exc, file=sys.stderr)
-        return EXIT_USAGE
-    out = Path(options.out)
-    if out.exists():
-        print(f"--out: {out} already exists, and labels are made once", file=sys.stderr)
-        return EXIT_USAGE
-
-    def candidates() -> list[LabelCandidate]:
-        found: list[LabelCandidate] = []
-        for line in lines:
-            case = cases.get(line.case_id)
-            if case is not None and line.answer is not None:
-                found.extend(candidates_from(case, line.answer))
-        return found
-
-    with new_http_client() as http:
-        grader = GatewayLabelGrader(judge_url, client=http, api_key=api_key)
-        labels = make_labels(candidates(), grader)
-    try:
-        write_labels(out, labels)
-    except (OSError, FileExistsError) as exc:
-        print(f"--out: {out} could not be written: {exc}", file=sys.stderr)
-        return EXIT_USAGE
-
-    print(f"labels {len(labels)} · written to {out}")
-    if len(labels) < LABEL_TARGET:
-        print(
-            f"only {len(labels)} replies were unanimous; a calibration needs {LABEL_TARGET}",
-            file=sys.stderr,
-        )
-        return EXIT_FAILED
-    return EXIT_OK
-
-
-def _calibration_summary(report: CalibrationReport) -> str:
-    """The one line `calibrate` prints, with the trust flag beside the kappa."""
-    kappa = "null" if report.kappa is None else report.kappa
-    return f"pairs {report.pairs} · kappa {kappa} · trusted {str(report.trusted).lower()}"
-
-
-def _calibrate(options: argparse.Namespace) -> int:
-    """Calibrate the judge against a labels file and answer the process exit code.
-
-    Every pre-check happens before a request is made: the spend is 40 labels times three
-    samples. Both refusals a calibration can end in, an unloadable file and too few labels,
-    are one line and `EXIT_USAGE`, never `EXIT_FAILED`: a gate reads 2 as "the harness never
-    ran". The artifact is written LAST, so nothing on disk reads as trust unless the whole
-    calibration succeeded.
-    """
-    try:
-        judge_url = _eargs._checked_judge_url_value(options.judge_url)
-        out = _eargs._checked_out(options.out)
-        api_key = _eargs._checked_judge_key()
-        labels_path = Path(options.labels)
-        labels = load_labels(labels_path)
-    except (UsageError, CalibrationSetInvalid) as exc:
-        print(exc, file=sys.stderr)
-        return EXIT_USAGE
-
-    with new_http_client() as http:
-        try:
-            report = calibrate(
-                labels,
-                judge=JudgeClient(judge_url, client=http, api_key=api_key),
-                labels_name=labels_path.name,
-                labels_sha=hashlib.sha256(labels_path.read_bytes()).hexdigest(),
-            )
-        except CalibrationRefused as exc:
-            print(exc, file=sys.stderr)
-            return EXIT_USAGE
-
-    try:
-        write_calibration(out, report)
-    except OSError as exc:
-        print(f"--out: {out} could not be written: {exc}", file=sys.stderr)
-        return EXIT_USAGE
-
-    print(_calibration_summary(report))
     return EXIT_OK
 
 
@@ -319,12 +230,11 @@ def _gate(options: argparse.Namespace) -> int:
     try:
         report = load_report(options.report)
         baseline = load_baseline(options.baseline)
-        calibration = None if options.calibration is None else read_calibration(options.calibration)
-    except (GateInputInvalid, CalibrationSetInvalid) as exc:
+    except GateInputInvalid as exc:
         print(str(exc), file=sys.stderr)
         return EXIT_USAGE
 
-    verdict = evaluate(report, baseline, calibration=calibration)
+    verdict = evaluate(report, baseline)
 
     if options.comment is not None:
         try:

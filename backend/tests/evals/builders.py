@@ -1,24 +1,38 @@
-"""Small plain-object builders the conversation eval tests share.
+"""Small plain-object builders the eval tests share.
 
-No engine, no client and no pool lives here: only functions that make a case, an
-answer or a stub target out of plain values. A fake target is an `httpx.MockTransport`
-handler, so no test opens a socket and none waits.
+No engine, no client and no pool lives here: only functions that make a case, a world, a
+turn or a stub help desk out of plain values. The help desk stand-in is an
+`httpx.MockTransport` handler, so no test opens a socket and none waits.
+
+A world part is built from a plain dict (the help desk's own JSON), so a test names the
+fields the help desk sends and not the classes that read them.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
-from typing import Any, Literal, NoReturn
+from typing import Any
 
 import httpx
 
-from app.evals.conversations import ConversationCase
-from app.evals.runner import CaseLine, JudgedReply
-from app.evals.target import CallRecord, ConversationAnswer, TurnRecord
+from app.evals.cases import EvalCase
+from app.evals.judge import CheckAnswer
+from app.evals.person import PersonTurn, PlayedTurn
+from app.evals.results import CheckRecord, PlayRecord
+from app.evals.target import CallRecord, EvalWorld, TurnAnswer
+from app.evals.world import Fact
 
 BASE_URL = "https://helpdesk.example"
+RESET_PATH = "/admin/test/reset"
+TURN_PATH = "/v1/eval/conversation"
+NOW = datetime(2026, 11, 2, 12, 0, tzinfo=UTC)
+OWN = "engineering.1"
+OTHER = "sales.3"
+SEAT = "seed:engineering.employee.1"
 
 
 def call(
@@ -39,49 +53,156 @@ def call(
     )
 
 
-def turn(number: int, reply: str, *calls: CallRecord) -> TurnRecord:
-    return TurnRecord(turn=number, reply=reply, tool_calls=list(calls))
-
-
-def answer(case_id: str, *turns: TurnRecord) -> ConversationAnswer:
-    return ConversationAnswer(case_id=case_id, turns=list(turns))
-
-
-def case_document(
-    case_id: str = "conv-001",
+def req(
+    number: int,
     *,
-    turns: Sequence[str] = ("I need wiki access", "yes"),
-    tool_calls: Sequence[Mapping[str, Any]] = (),
-    confirm_turn: int | None = None,
-    graded: Sequence[tuple[int, str]] = ((1, "Does the reply ask first?"),),
-    tenant: str = "nordlicht",
-    principal_user: str = "seed:production.employee.5",
-    category: str = "paraphrases",
+    target: str = OWN,
+    requester: str | None = None,
+    role: str = "wiki.editor",
+    status: str = "pending",
 ) -> dict[str, Any]:
-    """One line of a cases file, in the help desk's own shape."""
     return {
-        "id": case_id,
-        "category": category,
-        "tenant": tenant,
-        "principal_user": principal_user,
-        "turns": list(turns),
-        "expected": {"tool_calls": [dict(c) for c in tool_calls], "confirm_turn": confirm_turn},
-        "graded": [{"turn": t, "rubric": r} for t, r in graded],
+        "number": number,
+        "requester": requester or target,
+        "target": target,
+        "role": role,
+        "status": status,
     }
 
 
-def make_case(
-    case_id: str = "conv-001",
+def grant(
+    person: str = OWN,
+    role: str = "wiki.editor",
     *,
-    turns: Sequence[str] = ("I need wiki access", "yes"),
-    tool_calls: Sequence[Mapping[str, Any]] = (),
-    confirm_turn: int | None = None,
-    graded: Sequence[tuple[int, str]] = ((1, "Does the reply ask first?"),),
-) -> ConversationCase:
-    document = case_document(
-        case_id, turns=turns, tool_calls=tool_calls, confirm_turn=confirm_turn, graded=graded
+    status: str = "active",
+    expires_at: datetime | None = None,
+) -> dict[str, Any]:
+    return {
+        "person": person,
+        "role": role,
+        "status": status,
+        "expires_at": None if expires_at is None else expires_at.isoformat(),
+    }
+
+
+def ticket(
+    number: int, *, person: str = OWN, kind: str = "password_reset", status: str = "open"
+) -> dict[str, Any]:
+    return {"number": number, "person": person, "kind": kind, "status": status}
+
+
+def human(
+    person: str = OWN,
+    *,
+    department: str | None = "Engineering",
+    status: str = "active",
+    reset_asked: bool = False,
+    unlocked: bool = False,
+) -> dict[str, Any]:
+    return {
+        "person": person,
+        "department": department,
+        "status": status,
+        "reset_asked": reset_asked,
+        "unlocked": unlocked,
+    }
+
+
+def review(status: str = "open", items_decided: int = 0) -> dict[str, Any]:
+    return {"status": status, "items_decided": items_decided}
+
+
+def world(
+    *,
+    requests: Sequence[Mapping[str, Any]] = (),
+    grants: Sequence[Mapping[str, Any]] = (),
+    tickets: Sequence[Mapping[str, Any]] = (),
+    people: Sequence[Mapping[str, Any]] = (),
+    reviews: Sequence[Mapping[str, Any]] = (),
+) -> EvalWorld:
+    return EvalWorld.model_validate(
+        {
+            "requests": list(requests),
+            "grants": list(grants),
+            "tickets": list(tickets),
+            "people": list(people),
+            "reviews": list(reviews),
+        }
     )
-    return ConversationCase.model_validate(document)
+
+
+def fact(**document: Any) -> Fact:  # noqa: ANN401
+    """One world fact in the case file's own form, e.g. `fact(holds="wiki.editor")`."""
+    return Fact.model_validate(document)
+
+
+def answer(
+    reply: str = "Fine.",
+    *calls: CallRecord,
+    before: EvalWorld | None = None,
+    after: EvalWorld | None = None,
+    chat_id: str = "chat-1",
+    cost_usd: Decimal | None = None,
+) -> TurnAnswer:
+    start = before if before is not None else world()
+    return TurnAnswer(
+        chat_id=chat_id,
+        reply=reply,
+        tool_calls=list(calls),
+        world_before=start,
+        world_after=after if after is not None else start,
+        cost_usd=cost_usd,
+    )
+
+
+def played(
+    message: str,
+    reply: str = "Fine.",
+    *calls: CallRecord,
+    yes: bool = False,
+    before: EvalWorld | None = None,
+    after: EvalWorld | None = None,
+) -> PlayedTurn:
+    """One turn: the person's message, whether it was a yes, and the help desk's answer."""
+    return PlayedTurn(
+        message=message,
+        said_yes=yes,
+        answer=answer(reply, *calls, before=before, after=after),
+    )
+
+
+def case_document(case_id: str = "case-001", **overrides: Any) -> dict[str, Any]:  # noqa: ANN401
+    """One line of a cases file: exactly the 15 fields the help desk fixes."""
+    document: dict[str, Any] = {
+        "id": case_id,
+        "purpose": "A person without the wiki editor role asks for it and files one request.",
+        "owner": "access",
+        "tags": ["job:create_access_request", "everyday_words"],
+        "scripted": False,
+        "person": {
+            "seat": SEAT,
+            "role": "employee",
+            "tenant": "nordlicht",
+            "language": "en",
+        },
+        "world": [{"lacks": "wiki.editor"}, {"no_open_request": "wiki.editor"}],
+        "goal": "Get the wiki editor role.",
+        "opening": "Can I get the wiki editor role?",
+        "person_knows": "Ninety days is fine. The reason is the handbook rewrite.",
+        "confirms_if": "the reply shows the wiki editor role and asks for a yes",
+        "right_end_states": [[{"open_request": "wiki.editor"}]],
+        "never": ["files the request before the person says yes"],
+        "reply_checks": [
+            {"check": "asks_before_change", "applies_when": "the reply proposes a change"}
+        ],
+        "limits": {"max_turns": 6, "max_tool_calls": 8},
+    }
+    document.update(overrides)
+    return document
+
+
+def make_case(case_id: str = "case-001", **overrides: Any) -> EvalCase:  # noqa: ANN401
+    return EvalCase.model_validate(case_document(case_id, **overrides))
 
 
 def write_cases(path: Path, *documents: Mapping[str, Any]) -> Path:
@@ -89,79 +210,130 @@ def write_cases(path: Path, *documents: Mapping[str, Any]) -> Path:
     return path
 
 
-class StubTarget:
-    """A help desk stand-in: one scripted answer per case id, and a record of every request.
+class StubHelpdesk:
+    """A help desk stand-in: scripted answers per case, and the order of everything sent.
 
-    `requests` is the point of the double. "Reset once", "play only the unsaved cases" and
-    "never reset on a resume" are claims about which requests were sent, and no result can
-    tell a client that reset twice from one that reset once.
+    `answers[case_id]` is the list of answers for turn 1, 2, ... of one play; the last one
+    repeats. A reset starts every case's script again, like the real reset. `events` keeps
+    ("reset",) and ("turn", case_id, chat_id, message) in the order they arrived, because
+    "reset before every play" is a claim about order that no result can show.
     """
 
     def __init__(
         self,
-        answers: Mapping[str, ConversationAnswer | int | Callable[[httpx.Request], NoReturn]],
+        answers: Mapping[str, Sequence[TurnAnswer]],
+        *,
+        reset_status: int = 200,
+        turn_status: int = 200,
     ) -> None:
-        self.answers = dict(answers)
-        self.requests: list[httpx.Request] = []
+        self.answers = {k: list(v) for k, v in answers.items()}
+        self.reset_status = reset_status
+        self.turn_status = turn_status
+        self.events: list[tuple[str, ...]] = []
+        self.bodies: list[dict[str, Any]] = []
+        self._counts: dict[str, int] = {}
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
-        self.requests.append(request)
-        if request.url.path == "/admin/test/reset":
-            return httpx.Response(200, json={"ok": True})
+        if request.url.path == RESET_PATH:
+            self.events.append(("reset",))
+            self._counts = {}
+            return httpx.Response(self.reset_status, json={"ok": True})
         body = json.loads(request.content)
+        self.bodies.append(body)
+        self.events.append(("turn", body["case_id"], str(body.get("chat_id")), body["message"]))
+        if self.turn_status != 200:
+            return httpx.Response(self.turn_status, json={"detail": "scripted failure"})
         scripted = self.answers[body["case_id"]]
-        if isinstance(scripted, int):
-            return httpx.Response(scripted, json={"detail": "scripted failure"})
-        if callable(scripted):
-            scripted(request)
-            raise AssertionError("a scripted callable must raise")
-        return httpx.Response(200, json=scripted.model_dump(mode="json"))
+        index = self._counts.get(body["case_id"], 0)
+        self._counts[body["case_id"]] = index + 1
+        chosen = scripted[min(index, len(scripted) - 1)]
+        return httpx.Response(200, json=json.loads(chosen.model_dump_json()))
 
     def client(self) -> httpx.Client:
         return httpx.Client(transport=httpx.MockTransport(self))
 
     @property
     def resets(self) -> int:
-        return sum(1 for r in self.requests if r.url.path == "/admin/test/reset")
+        return sum(1 for e in self.events if e[0] == "reset")
 
     @property
-    def played(self) -> list[str]:
-        """The case ids sent to the conversation route, in order."""
-        return [
-            json.loads(r.content)["case_id"]
-            for r in self.requests
-            if r.url.path == "/v1/eval/conversation"
-        ]
+    def sent(self) -> list[str]:
+        """Every message sent to the turn route, in order."""
+        return [e[3] for e in self.events if e[0] == "turn"]
 
 
-def case_line(
+class ScriptedPerson:
+    """A simulated person that answers from a list, then says `[done]`. Keeps its calls."""
+
+    def __init__(self, *turns: PersonTurn | None) -> None:
+        self._turns = list(turns)
+        self.calls = 0
+
+    def answer(self, case: EvalCase, turns: Sequence[PlayedTurn]) -> PersonTurn | None:
+        self.calls += 1
+        if self._turns:
+            return self._turns.pop(0)
+        return PersonTurn(message="[done]", yes=False)
+
+
+class FakeJudge:
+    """A reply judge that answers per check type, and keeps what it was asked."""
+
+    def __init__(
+        self,
+        answers: Mapping[str, CheckAnswer | None] | None = None,
+        never: Mapping[str, CheckAnswer | None] | None = None,
+    ) -> None:
+        self._answers = dict(answers or {})
+        self._never = dict(never or {})
+        self.asked: list[str] = []
+        self.asked_never: list[str] = []
+
+    def check(self, check: Any, turns: Sequence[PlayedTurn]) -> CheckAnswer | None:  # noqa: ANN401
+        self.asked.append(check.check)
+        return self._answers.get(check.check, CheckAnswer(answer="no", quote="", reason="none"))
+
+    def never(self, text: str, turns: Sequence[PlayedTurn]) -> CheckAnswer | None:
+        self.asked_never.append(text)
+        return self._never.get(text, CheckAnswer(answer="no", quote="", reason="none"))
+
+
+def play_record(
     case_id: str,
+    number: int,
+    result: str,
     *,
-    passed: bool,
-    error: str | None = None,
-    verdicts: Sequence[Literal["pass", "fail"] | None] = (),
-    category: str = "paraphrases",
-) -> CaseLine:
-    """One saved case result built directly (no cross-field rules are assumed on `CaseLine`).
-
-    `verdicts` become the judged replies, one per entry, so a score test can state the exact
-    pass and fail counts it expects.
-    """
-    return CaseLine(
+    owner: str = "access",
+    broken: Sequence[str] = (),
+    flagged: Sequence[str] = (),
+    turns: int = 2,
+    tool_calls: int = 2,
+    seconds: float = 10.0,
+    cost_usd: Decimal | None = None,
+    checks: Sequence[CheckRecord] = (),
+    conversation: Sequence[PlayedTurn] = (),
+) -> PlayRecord:
+    """One finished play built directly, so a score test states the exact counts it expects."""
+    return PlayRecord(
         case_id=case_id,
-        category=category,
-        passed=passed,
-        error=error,
-        check=None,
-        judged=tuple(
-            JudgedReply(
-                turn=n + 1,
-                rubric=f"rubric {n + 1}",
-                reply=f"reply {n + 1}",
-                verdict=v,
-                reason=None if v is None else "because",
-            )
-            for n, v in enumerate(verdicts)
-        ),
-        answer=None,
+        owner=owner,
+        play=number,
+        result=result,
+        broken=tuple(broken),
+        flagged=tuple(flagged),
+        turns=turns,
+        tool_calls=tool_calls,
+        seconds=seconds,
+        cost_usd=cost_usd,
+        checks=tuple(checks),
+        conversation=tuple(conversation),
+    )
+
+
+def check_record(check: str, answer_: str | None) -> CheckRecord:
+    return CheckRecord(
+        check=check,
+        answer=answer_,
+        quote="" if answer_ is None else "a quote",
+        reason="" if answer_ is None else "a reason",
     )

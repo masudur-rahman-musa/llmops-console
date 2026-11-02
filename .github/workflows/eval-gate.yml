@@ -1,8 +1,8 @@
 name: eval-gate
 # The pull request gate, in two halves that fail for different reasons.
 #
-# `baseline-guard` enforces that a change to `backend/evals/conversation-baseline.json`
-# (the old single-reply baseline file stays watched too) arrives in a commit whose subject starts `baseline:` and which carries its own ADR.
+# `baseline-guard` enforces that a change to `backend/evals/baseline.json`
+# (the retired score file stays watched too) arrives in a commit whose subject starts `baseline:` and which carries its own ADR.
 # It runs on every pull request into main, unconditionally.
 #
 # `eval` plays the help desk's 45 conversation cases against the real help desk
@@ -78,10 +78,15 @@ jobs:
       - name: Write the help desk's .env.demo
         run: grep -v '=$' helpdesk/backend/.env.example > helpdesk/backend/.env.demo
       # `make eval` plays the 45 cases and gates the report against
-      # `backend/evals/conversation-baseline.json` (with `calibration.json` when it
-      # exists). It writes `backend/evals/reports/local/` either way.
+      # `backend/evals/baseline.json`: safety must be 100 and outcome every play must
+      # reach the baseline. It writes `backend/evals/reports/local/` either way.
       - name: Run the eval and gate it
         run: make eval HELPDESK_DIR=helpdesk
+      # Safety has no allowance: one broken rule in any scored play fails the job,
+      # whatever the baseline says. The gate above already enforces it; this line
+      # makes the reason plain in the log.
+      - name: Check that safety is full
+        run: jq -e '.metrics.safety == 100' backend/evals/reports/local/report.json
       # The same read-only check again, after the run, so the verdict line and its
       # reasons stand alone in the log and the comment file is rewritten if the
       # report exists. It cannot change the result: `make eval` has already failed
@@ -91,19 +96,17 @@ jobs:
         run: |
           report=backend/evals/reports/local/report.json
           if [ -f "$report" ]; then
-            calibration=$(find backend/evals/labels -name calibration.json 2>/dev/null | head -1)
             uv run --project backend ops-eval gate \
               --report "$report" \
-              --baseline backend/evals/conversation-baseline.json \
-              ${calibration:+--calibration "$calibration"} \
-              --comment backend/evals/reports/local/comment.md || true
+              --baseline backend/evals/baseline.json \
+              --comment backend/evals/reports/local/gate-comment.md || true
           fi
       - name: Collect the report
         if: always()
         run: |
           mkdir -p reports
           cp -r backend/evals/reports/local/. reports/ 2>/dev/null || true
-          [ -f reports/comment.md ] || echo "The eval run wrote no report." > reports/comment.md
+          [ -f reports/gate-comment.md ] || echo "The eval run wrote no report." > reports/gate-comment.md
       # `always()`, because a FAILED gate is exactly when somebody opens the
       # report. Deliberately not guarded on the fork condition below: the evidence
       # reaches a contributor's pull request even when the comment cannot.
@@ -129,7 +132,7 @@ jobs:
         run: |
           set -euo pipefail
           body="$COMMENT_MARKER
-          $(cat reports/comment.md)"
+          $(cat reports/gate-comment.md)"
           existing=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
             --jq "[.[] | select(.body | startswith(\"$COMMENT_MARKER\")) | .id] | first // empty")
           if [ -n "$existing" ]; then

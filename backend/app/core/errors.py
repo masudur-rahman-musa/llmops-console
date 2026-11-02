@@ -179,8 +179,8 @@ class LibraryError(Exception):
     them.
 
     `code` and `http_status` are set by the two middle bases below that have an
-    HTTP answer; a direct subclass (`app.evals.calibration.CalibrationRefused`)
-    sets neither, because it is neither a bad input nor a store outage.
+    HTTP answer; a direct subclass would set neither, for a failure that is
+    neither a bad input nor a store outage.
     """
 
     code: ClassVar[ErrorCode]

@@ -1,4 +1,4 @@
-"""`evals/tradeoff.py`: the table over two or more conversation reports, ranked by check_score.
+"""`evals/tradeoff.py`: the table over two or more reports, ranked by outcome_every_play.
 
 Pure: manifests and reports are small JSON documents under `tmp_path`.
 
@@ -7,7 +7,7 @@ meaning: `TRADEOFF_MD_NAME`, `TRADEOFF_JSON_NAME`, `OPTION_ID_PATTERN`, `MIN_OPT
 `COST_SCALE`, `ACCURACY_TOLERANCE`, `TURNS_PER_1000`, `KIND_API`, `KIND_SELF_HOSTED`,
 `NA`, the heading and line constants, `TradeoffInputInvalid`):
 
-* `ROW_METRIC_NAMES == ("check_score", "judge_score")`, and the first of them is the accuracy
+* `ROW_METRIC_NAMES == ("outcome_every_play", "safety")`, and the first of them is the accuracy
   the winner rule reads. `COST_METRIC_NAME == "cost_usd_per_turn"` stays: an `api` option's
   cost is that metric from its report, times `TURNS_PER_1000`.
 * A report is read through `RunReport` (the conversation report). A report in the old
@@ -40,7 +40,7 @@ from app.evals.tradeoff import (
     tradeoff_markdown,
 )
 
-from .builders import case_line
+from .builders import play_record
 
 START = datetime(2026, 10, 22, 9, 0, tzinfo=UTC)
 SET_NAME = "cases.jsonl"
@@ -57,7 +57,7 @@ def write_report(
     set_name: str = SET_NAME,
 ) -> str:
     report = build_report(
-        [case_line(f"conv-{n:03d}", passed=True) for n in range(cases)],
+        [play_record(f"case-{n:03d}", 1, "pass") for n in range(cases)],
         started_at=START,
         finished_at=START + timedelta(minutes=30),
         set_name=set_name,
@@ -68,7 +68,7 @@ def write_report(
         tenant="all",
         target="https://helpdesk.example",
     )
-    metrics = {**report.metrics, "check_score": check, "judge_score": judge}
+    metrics = {**report.metrics, "outcome_every_play": check, "safety": judge}
     if cost is not None:
         metrics[COST_METRIC_NAME] = cost
     report = report.model_copy(update={"metrics": metrics, "id": option_id.ljust(32, "0")[:32]})
@@ -91,14 +91,14 @@ def table_of(directory: Path, *options: dict[str, Any]) -> TradeoffTable:
     return build_table(load_manifest(write_manifest(directory, *options)), base_dir=directory)
 
 
-def test_the_rows_read_check_score_and_judge_score() -> None:
-    """Catches a table still reading the old five metrics: the console ranks by
-    check_score, and a row without `judge_score` would hide the second number."""
-    assert ROW_METRIC_NAMES == ("check_score", "judge_score")
+def test_the_rows_read_outcome_every_play_and_safety() -> None:
+    """Catches a table still reading the old five metrics: the console and the plan rank by
+    outcome_every_play, and a row without `safety` would hide the second number."""
+    assert ROW_METRIC_NAMES == ("outcome_every_play", "safety")
     assert COST_METRIC_NAME == "cost_usd_per_turn"
 
 
-def test_tradeoff_ranks_by_check_score(tmp_path: Path) -> None:
+def test_tradeoff_ranks_by_outcome_every_play(tmp_path: Path) -> None:
     """Catches a winner chosen by the first row, by the highest score, or by the lowest price
     outside the band. 'strong' scores highest and costs most; 'cheap' scores 5 points lower,
     outside the band, and costs least; 'mid' is the cheapest inside the band. 'mid' must win,
@@ -114,8 +114,8 @@ def test_tradeoff_ranks_by_check_score(tmp_path: Path) -> None:
 
     assert table.winner_id == "mid"
     by_id = {row.id: row for row in table.rows}
-    assert by_id["strong"].metrics == {"check_score": 90.0, "judge_score": 70.0}
-    assert by_id["cheap"].metrics == {"check_score": 85.0, "judge_score": 60.0}
+    assert by_id["strong"].metrics == {"outcome_every_play": 90.0, "safety": 70.0}
+    assert by_id["cheap"].metrics == {"outcome_every_play": 85.0, "safety": 60.0}
     assert [row.id for row in table.rows] == ["strong", "cheap", "mid"]
 
 
@@ -144,7 +144,7 @@ def test_the_accuracy_band_is_inclusive_at_the_tolerance(tmp_path: Path) -> None
     assert out_table.winner_id == "best"
 
 
-def test_a_run_with_no_check_score_stays_in_the_table_and_never_wins(tmp_path: Path) -> None:
+def test_a_run_with_no_outcome_every_play_stays_in_the_table_and_never_wins(tmp_path: Path) -> None:
     """Catches a null score read as zero or as a pass: the unscored option is the cheapest
     and must not win, and with nothing else comparable there is no winner at all."""
     table = table_of(
@@ -192,7 +192,7 @@ def test_a_self_hosted_cost_is_the_hourly_price_over_the_measured_throughput(
 
 
 def test_the_markdown_and_json_publish_the_scores(tmp_path: Path) -> None:
-    """Catches output that still says decision accuracy: both files carry `check_score`, and
+    """Catches output that still says decision accuracy: both files carry `outcome_every_play`, and
     the markdown row starts with the option id."""
     table = table_of(
         tmp_path,
@@ -203,9 +203,9 @@ def test_the_markdown_and_json_publish_the_scores(tmp_path: Path) -> None:
     text = tradeoff_markdown(table)
     document = json.loads(tradeoff_json(table))
 
-    assert "check_score" in text and "decision_accuracy" not in text
+    assert "outcome_every_play" in text and "decision_accuracy" not in text
     assert any(line.startswith("| a ") for line in text.splitlines())
-    assert document["options"]["a"]["metrics"]["check_score"] == 80.0
+    assert document["options"]["a"]["metrics"]["outcome_every_play"] == 80.0
 
 
 def test_a_report_in_the_old_format_is_refused_and_names_its_path(tmp_path: Path) -> None:

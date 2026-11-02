@@ -4,11 +4,11 @@ The contract these cases are written against:
 
 * `PUSHGATEWAY_JOB: Final[str] = "eval_nightly"` - the fixed job label, pinned by value.
 * `push_metrics(metrics, pushgateway_url, *, client) -> str | None`, taking a
-  `Mapping[str, object]` shaped like `scores.compute_metrics`'s output and an injected
+  `Mapping[str, object]` shaped like `results.compute_scores`'s output and an injected
   `httpx.Client`. It answers `None` on a successful push or a short string on any way the
   push failed, and never raises for a transport failure.
-* Exactly two gauges can exist, one per `scores.METRIC_NAMES` key (`check_score`,
-  `judge_score`), named `gateway_eval_check_score` and `gateway_eval_judge_score`. A key
+* Exactly three gauges can exist, one per `scores.METRIC_NAMES` key (`safety`,
+  `outcome_every_play`, `outcome_at_least_once`), named `gateway_eval_safety` and so on. A key
   whose value is `None` contributes no series at all: a gauge left at its zero default
   would read as a real score of zero to `NightlyEvalRegression`. Any other key, old or
   new, is never pushed.
@@ -33,8 +33,8 @@ PUSHGATEWAY_URL = "http://pushgateway.example:9091"
 #: key of the old format, which must never become a gauge. Names are read BY NAME, not by
 #: iterating a fixed dict, so the exposition text is parsed and compared per name.
 METRICS: dict[str, object] = {
-    "check_score": 87.88,
-    "judge_score": None,
+    "outcome_every_play": 87.88,
+    "outcome_at_least_once": None,
     "cases": 33,
     "decision_accuracy": 88.0,
 }
@@ -120,9 +120,9 @@ def test_a_pushgateway_url_with_a_trailing_slash_is_not_doubled() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_push_sends_check_and_judge_scores() -> None:
+def test_push_sends_the_scores_that_exist() -> None:
     """Catches two wrong implementations at once, on the same small dict, by NAME rather than
-    by substring: one that emits a `gateway_eval_judge_score 0.0` line for the `None`
+    by substring: one that emits a `gateway_eval_outcome_at_least_once 0.0` line for the `None`
     key - a Gauge left at its unset default reads as a genuine score of zero to the alert
     this run feeds - and one that drops a present key entirely, e.g. by iterating
     `METRIC_NAMES` and calling `metrics[name]` in a way that only reads a subset. Values are
@@ -133,8 +133,8 @@ def test_push_sends_check_and_judge_scores() -> None:
 
     body = transport.requests[0].content
     values = parsed_exposition(body)
-    assert values.get("gateway_eval_check_score") == pytest.approx(87.88)
-    assert "gateway_eval_judge_score" not in values
+    assert values.get("gateway_eval_outcome_every_play") == pytest.approx(87.88)
+    assert "gateway_eval_outcome_at_least_once" not in values
 
 
 def test_the_content_type_is_prometheus_clients_own_exposition_type() -> None:
@@ -191,20 +191,27 @@ def test_a_successful_push_answers_none() -> None:
     assert result is None
 
 
-def test_both_scores_are_pushed_when_both_exist_and_nothing_else_is() -> None:
+def test_all_scores_are_pushed_when_they_exist_and_nothing_else_is() -> None:
     """Catches a push of the old metric names (`gateway_eval_decision_accuracy` would keep the
-    nightly alert reading a series nobody writes) and one that skips `judge_score`. Only the
-    two published names appear, so a count or an old key never becomes a gauge."""
+    nightly alert reading a series nobody writes) and one that skips a score. Only the
+    three published names appear, so a count or an old key never becomes a gauge."""
     transport = Transport(httpx.Response(200))
 
     push_metrics(
-        {"check_score": 90.0, "judge_score": 75.5, "cases": 33, "decision_accuracy": 88.0},
+        {
+            "safety": 100.0,
+            "outcome_every_play": 90.0,
+            "outcome_at_least_once": 95.5,
+            "cases": 33,
+            "check_score": 88.0,
+        },
         PUSHGATEWAY_URL,
         client=transport.client(),
     )
 
     values = parsed_exposition(transport.requests[0].content)
     assert values == {
-        "gateway_eval_check_score": pytest.approx(90.0),
-        "gateway_eval_judge_score": pytest.approx(75.5),
+        "gateway_eval_safety": pytest.approx(100.0),
+        "gateway_eval_outcome_every_play": pytest.approx(90.0),
+        "gateway_eval_outcome_at_least_once": pytest.approx(95.5),
     }

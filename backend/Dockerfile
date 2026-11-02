@@ -27,7 +27,7 @@ COPY app/ ./app/
 COPY config/ ./config/
 COPY migrations/ ./migrations/
 # Only the baseline from evals/: the quality page reads the gate's thresholds from it.
-COPY evals/conversation-baseline.json ./evals/conversation-baseline.json
+COPY evals/baseline.json ./evals/baseline.json
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev
 
@@ -57,7 +57,7 @@ ENV PATH="/app/.venv/bin:$PATH" \
     OPSCONSOLE_PROVIDERS_DIR=/app/config/providers \
     # Read on each quality page request, not at startup: a wrong path shows
     # "Threshold not set" rather than stopping the container.
-    OPSCONSOLE_EVAL_BASELINE_PATH=/app/evals/conversation-baseline.json
+    OPSCONSOLE_EVAL_BASELINE_PATH=/app/evals/baseline.json
 
 USER 1000
 EXPOSE 8080

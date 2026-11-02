@@ -13,22 +13,19 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
-from app.core.config import Settings
 from app.evals.baseline_guard import (
     MAX_REF_LENGTH,
     REF_PATTERN,
     Commit,
 )
 from app.evals.report import SET_SHA_PATTERN
-from app.evals.runner import MAX_REPEATS, RepeatsInvalid, checked_repeats
+from app.evals.runner import DEFAULT_PLAYS, MAX_PLAYS
 
 ALLOWED_TARGET_SCHEMES: frozenset[str] = frozenset({"http", "https"})
 
 RUN_KINDS: tuple[str, ...] = ("ci", "nightly", "manual")
 
 DEFAULT_RUN_KIND: str = "manual"
-
-DEFAULT_LABELS_PATH: Path = Path("backend/evals/labels/conversation-labels.jsonl")
 
 
 class UsageError(Exception):
@@ -48,56 +45,25 @@ def _checked_target(value: str) -> str:
     return value
 
 
-def _checked_repeats(value: int) -> int:
-    """`--repeats`: 1 to `MAX_REPEATS`, checked by the runner's own rule before any reset."""
-    try:
-        return checked_repeats(value)
-    except RepeatsInvalid:
-        raise UsageError(f"--repeats: {value} is not between 1 and {MAX_REPEATS}") from None
+def _checked_plays(value: int) -> int:
+    """`--plays`: 1 to `MAX_PLAYS`, checked before any reset."""
+    if not 1 <= value <= MAX_PLAYS:
+        raise UsageError(f"--plays: {value} is not between 1 and {MAX_PLAYS}")
+    return value
 
 
-def _checked_judge_url_value(value: str) -> str:
-    """Validate a `--judge-url` that was given, by `_checked_target`'s own rule.
+def _checked_gateway_url(value: str | None) -> str | None:
+    """`--gateway-url`, where absent means the simulated person and the judge are off.
 
-    The same function and not a second copy of the rule: the two URLs this command
-    takes would otherwise drift, and a judge URL of `gateway.example` is the same
-    defect as a target of one.
-    The message still names the
-    flag the operator typed.
-
-    Split from `_checked_judge_url` because the flag is OPTIONAL on `conversations` and
-    REQUIRED on `calibrate` and `label`: one function answering `str | None` would
-    leave the required caller narrowing a value argparse already guaranteed.
+    Checked by `_checked_target`'s own rule, so the two URLs cannot drift, and the message
+    still names the flag the operator typed.
     """
+    if value is None:
+        return None
     try:
         return _checked_target(value)
     except UsageError:
-        raise UsageError(f"--judge-url: {value!r} is not an absolute http(s) URL") from None
-
-
-def _checked_judge_url(value: str | None) -> str | None:
-    """`--judge-url` on `conversations`, where absent means the judge is simply off."""
-    if value is None:
-        return None
-    return _checked_judge_url_value(value)
-
-
-def _checked_judge_key() -> str:
-    """The judge key `calibrate` and `label` cannot run without.
-
-    Where `conversations` turns the judge OFF with no key and keeps its own exit code,
-    a calibration with no judge has nothing left to do, so it
-    refuses rather than writing an artifact with no kappa in it - a
-    `calibration.json` that exists is read as trust.
-    An empty string is
-    the same as absent: a `JudgeClient` built on one would spend a 401 per sample.
-    """
-    api_key = Settings().eval_judge_key
-    if not api_key:
-        raise UsageError(
-            "OPSCONSOLE_EVAL_JUDGE_KEY: not set, and a calibration cannot be made without the judge"
-        )
-    return api_key
+        raise UsageError(f"--gateway-url: {value!r} is not an absolute http(s) URL") from None
 
 
 def _checked_ref(value: str, flag: str) -> str:
@@ -248,8 +214,8 @@ def _new_run_id() -> str:
 
 
 def _parser() -> argparse.ArgumentParser:
-    """`ops-eval` and its six subcommands: `conversations`, `label`, `calibrate`, `gate`,
-    `baseline-guard`, `tradeoff`. The old `run` is gone: argparse refuses it with exit 2."""
+    """`ops-eval` and its four subcommands: `conversations`, `gate`, `baseline-guard`,
+    `tradeoff`. The retired `run`, `label` and `calibrate` are gone: argparse refuses them."""
     parser = argparse.ArgumentParser(
         prog="ops-eval", description="Play and score the help desk's conversation cases."
     )
@@ -268,12 +234,12 @@ def _parser() -> argparse.ArgumentParser:
         "--out",
         required=True,
         type=Path,
-        help="where <run-id>.jsonl, report.json and report.md are written",
+        help="where report.json, report.md, needs-a-look.md and comment.md are written",
     )
     conversations.add_argument(
         "--run-id",
         dest="run_id",
-        help="a short lowercase name; the same name on a restart skips saved cases "
+        help="a short lowercase name printed with the run's summary "
         "(default: run- and the start time)",
     )
     conversations.add_argument(
@@ -289,55 +255,27 @@ def _parser() -> argparse.ArgumentParser:
         help=f"why this run happened (default: {DEFAULT_RUN_KIND})",
     )
     conversations.add_argument(
-        "--judge-url",
-        dest="judge_url",
-        help="base URL of the gateway that serves the judge alias; without it, no judging",
+        "--gateway-url",
+        dest="gateway_url",
+        help="base URL of the gateway that serves the simulated-person and judge aliases; "
+        "without it, the person ends each play after the opening and nothing is judged",
     )
     conversations.add_argument(
-        "--repeats",
+        "--plays",
         type=int,
-        default=1,
-        help=f"play every case this many times, 1 to {MAX_REPEATS}; a case that both "
-        "passes and fails is unstable and left out of check_score (default: 1)",
+        default=DEFAULT_PLAYS,
+        help=f"play every case this many times, 1 to {MAX_PLAYS} (default: {DEFAULT_PLAYS})",
+    )
+    conversations.add_argument(
+        "--reset-command",
+        dest="reset_command",
+        help="a command that resets the help desk's data, run before every play; "
+        "without it, POST /admin/test/reset on the target",
     )
     conversations.add_argument(
         "--pushgateway-url",
         dest="pushgateway_url",
         help="base URL of a Pushgateway; without it, gateway_eval_* metrics are not pushed",
-    )
-
-    label = subcommands.add_parser(
-        "label", help="make the reference labels from a finished run, once"
-    )
-    label.add_argument("--cases", required=True, type=Path, help="the conversation cases, JSONL")
-    label.add_argument("--run", required=True, type=Path, help="the finished run's <run-id>.jsonl")
-    label.add_argument(
-        "--judge-url",
-        dest="judge_url",
-        required=True,
-        help="base URL of the gateway that serves the agent-strong alias",
-    )
-    label.add_argument(
-        "--out",
-        type=Path,
-        default=DEFAULT_LABELS_PATH,
-        help=f"the labels file; it must not exist yet (default: {DEFAULT_LABELS_PATH})",
-    )
-
-    calibrate_command = subcommands.add_parser(
-        "calibrate", help="grade the labels through the judge and report the agreement"
-    )
-    calibrate_command.add_argument(
-        "--labels", required=True, type=Path, help="the labelled replies, JSONL"
-    )
-    calibrate_command.add_argument(
-        "--judge-url",
-        dest="judge_url",
-        required=True,
-        help="base URL of the gateway that serves the judge alias",
-    )
-    calibrate_command.add_argument(
-        "--out", required=True, type=Path, help="where calibration.json is written"
     )
 
     gate_command = subcommands.add_parser(
@@ -348,12 +286,7 @@ def _parser() -> argparse.ArgumentParser:
         "--baseline",
         required=True,
         type=Path,
-        help="the checked-in backend/evals/conversation-baseline.json",
-    )
-    gate_command.add_argument(
-        "--calibration",
-        type=Path,
-        help="a calibration.json; the judge score gates only while its kappa is 0.7 or better",
+        help="the checked-in backend/evals/baseline.json",
     )
     gate_command.add_argument(
         "--comment", type=Path, help="where the PR comment markdown is written; without it, none"

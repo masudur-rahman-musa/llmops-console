@@ -38,11 +38,11 @@ SCANNED = [
     *sorted((REPO_ROOT / "infra" / "k8s" / "evals").rglob("*")),
 ]
 
-#: What may no longer be named. `baseline.json` alone: the conversation baseline is
-#: `conversation-baseline.json`, which has a hyphen in front and so does not match.
+#: What may no longer be named. The baseline is `baseline.json`; the file it replaced is
+#: `conversation-baseline.json`.
 FORBIDDEN = {
     "the golden folder": re.compile(r"golden/"),
-    "the old baseline": re.compile(r"(?<![-\w])baseline\.json"),
+    "the retired baseline": re.compile(r"conversation-baseline\.json"),
     "the single-reply route": re.compile(r"/v1/eval/turn"),
     "the retired command": re.compile(r"ops-eval run\b"),
 }
@@ -172,3 +172,39 @@ def test_every_path_the_eval_files_name_exists() -> None:
     assert named, "no repo path found in the eval files"
     missing = sorted(p for p in named if not (REPO_ROOT / p).exists())
     assert missing == [], f"named but missing: {missing}"
+
+
+RESET_SCRIPT = REPO_ROOT / "infra" / "evals" / "reset_helpdesk.sh"
+OLD_FLAGS = re.compile(r"--judge-url\b|--repeats\b|ops-eval (label|calibrate)\b|check_score")
+
+
+def all_eval_text() -> dict[str, str]:
+    """The `eval` recipe, the three workflows and the tradeoff script, by name."""
+    return {
+        "Makefile eval": make_recipe("eval"),
+        "eval-gate.yml": (WORKFLOWS / "eval-gate.yml").read_text(encoding="utf-8"),
+        "nightly-eval.yml": (WORKFLOWS / "nightly-eval.yml").read_text(encoding="utf-8"),
+        "e2e-kind.yml": (WORKFLOWS / "e2e-kind.yml").read_text(encoding="utf-8"),
+        "tradeoff_run.sh": TRADEOFF_SCRIPT.read_text(encoding="utf-8"),
+    }
+
+
+def test_every_eval_path_uses_the_new_flags_and_names_files_that_exist() -> None:
+    """Catches an eval path left on the retired flags or scores (`--judge-url`, `--repeats`,
+    `label`, `calibrate`, `check_score`), a `make eval` that does not hand the per-play reset
+    script to the runner, a nightly that plays three times instead of once, a gate workflow
+    that still reads the old score, and a reset script or baseline file that is named but
+    absent."""
+    texts = all_eval_text()
+
+    for name, text in texts.items():
+        assert not OLD_FLAGS.search(text), f"{name} still names a retired flag or score"
+    recipe = texts["Makefile eval"]
+    assert "--gateway-url" in recipe
+    assert "--reset-command infra/evals/reset_helpdesk.sh" in recipe
+    assert RESET_SCRIPT.is_file()
+    assert (REPO_ROOT / "backend" / "evals" / "baseline.json").is_file()
+    assert not (REPO_ROOT / "backend" / "evals" / "conversation-baseline.json").exists()
+    assert ".metrics.safety == 100" in texts["eval-gate.yml"]
+    nightly = [s for s in run_scripts("nightly-eval.yml", "nightly-eval") if "ops-eval conv" in s]
+    assert re.search(r"--plays\s+1\b", nightly[0])

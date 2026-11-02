@@ -16,8 +16,6 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from app.evals.report import RunReport
-
 REPO = Path(__file__).resolve().parents[2]
 
 # Residency words match in any case; the bare EU only as capitals, so a tenant named
@@ -71,7 +69,8 @@ def test_no_public_doc_names_residency() -> None:
 
 def test_no_committed_report_carries_region() -> None:
     """Catches a committed report.json that still has a `region` key on a case or in its
-    metrics, or one whose edit left it unreadable as a RunReport.
+    metrics, or one whose edit left it unreadable as JSON. An old report does not follow the
+    current report format, so it is read as plain JSON only.
 
     Only the files git tracks: `backend/evals/reports/` is gitignored, so what sits there
     is one machine's old runs, absent from CI and a fresh clone."""
@@ -86,7 +85,6 @@ def test_no_committed_report_carries_region() -> None:
     for path in reports:
         data = json.loads(path.read_text(encoding="utf-8"))
         assert not has_key(data, "region"), f"{path.relative_to(REPO)} still has a region key"
-        RunReport.model_validate(data)
 
 
 def candidate(token: str) -> str | None:

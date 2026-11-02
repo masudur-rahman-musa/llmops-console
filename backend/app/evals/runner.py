@@ -1,240 +1,197 @@
-"""Play every case in file order, save each one the moment it finishes, and resume.
+"""The loop: for each case and each play, reset, converse, check, and score the play.
 
-The loop is the whole module. The result of a case is a `CaseLine`, written as one
-flushed JSON line to `<reports_dir>/<run-id>.jsonl` as soon as the case is done, so a run that
-dies keeps every paid
-result. Starting again with the same run id plays only the cases not yet in the file,
-and never resets the help desk inside a round, because the cases act on what earlier
-ones filed. A new run id, or an empty file, resets once before the first case.
+Every play starts from freshly reset data, so no play can see what an earlier one changed. A
+play's start facts are checked on the world the help desk returned before the first turn: a
+false fact makes the play `setup_wrong`, which stops it after that one turn and costs the
+person and the judge nothing.
 
-With `repeats` above one the whole case list is played that many times. Each pass is a
-round: it starts with its own reset and plays the cases in file order. A round that already
-has a saved line is resumed with no reset. A line saved before rounds existed carries no
-round number and is read as round 1, so an old run file still resumes.
+After the conversation, code checks the shared rules and the case's own never rules and
+matches the world after to the right end states; then the judge, when there is one, answers
+each reply check on its own and each never text only it can see. A judge that answers `yes`
+to a never text flags the play and never fails it.
 
-Rules the record keeps that no single field states:
-
-* a failed case is a saved failure, and a resume does not replay it: replaying would
-  quietly give a flaky case a second sample;
-* a case passes exactly when its three checks pass; the judge never decides it;
-* the target's answer is kept on the line, so a resumed run still knows which role names
-  the run has seen.
-
-The run id names a file, so it is checked as a short slug before anything is sent or
-written.
+Nothing here opens a socket or reads a clock: the target, the person, the judge, the reset
+and both clocks are handed in, so the whole loop runs in tests with fakes.
 """
 
 from __future__ import annotations
 
-import os
-from collections.abc import Sequence
-from pathlib import Path
-from typing import Final
+import logging
+from collections.abc import Callable, Mapping, Sequence
+from datetime import datetime
+from decimal import Decimal
+from typing import Final, Protocol
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from app.evals.cases import EvalCase, ReplyCheck
+from app.evals.judge import CheckAnswer
+from app.evals.never_rules import code_never_rules, judge_never_texts
+from app.evals.person import PersonModel, PlayedTurn, converse
+from app.evals.results import CheckRecord, PlayRecord, play_result
+from app.evals.rules import end_rules, turn_rules
+from app.evals.target import TargetClient, TurnAnswer, TurnFailed
+from app.evals.world import false_start_facts, matching_end_state, person_name
 
-from app.core.errors import LibraryInputInvalid
-from app.core.validation import checked_identifier
-from app.evals.checks import CaseCheck, check_case, role_names_in
-from app.evals.conversations import ConversationCase, ConversationSetInvalid
-from app.evals.judge import Grader, Verdict
-from app.evals.target import ConversationAnswer, TargetClient, TurnFailed
+logger = logging.getLogger(__name__)
 
-MAX_REPEATS: Final[int] = 10
-"""The most rounds one run may play. Each round is a paid run of every case."""
+MAX_PLAYS: Final[int] = 10
+"""The most plays one case may get in a run."""
 
-
-class RepeatsInvalid(LibraryInputInvalid):
-    """`repeats` was outside 1 to `MAX_REPEATS`."""
-
-
-def checked_repeats(value: int) -> int:
-    """Refuse a round count outside 1 to `MAX_REPEATS`, before anything is sent."""
-    if not 1 <= value <= MAX_REPEATS:
-        raise RepeatsInvalid(f"repeats: {value} is not between 1 and {MAX_REPEATS}")
-    return value
+DEFAULT_PLAYS: Final[int] = 3
+"""How many times each case is played unless the caller says otherwise."""
 
 
-class JudgedReply(BaseModel):
-    """One graded reply and what the judge said. `verdict` is `None` when it was unusable."""
+class ReplyJudge(Protocol):
+    """Anything that answers a reply check and a never text. `JudgeClient` is one."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    def check(self, check: ReplyCheck, turns: Sequence[PlayedTurn]) -> CheckAnswer | None: ...
 
-    turn: int
-    rubric: str
-    reply: str
-    verdict: Verdict | None
-    reason: str | None
+    def never(self, text: str, turns: Sequence[PlayedTurn]) -> CheckAnswer | None: ...
 
 
-class CaseLine(BaseModel):
-    """What happened to one case: its checks, its judged replies, or why it has neither.
-
-    `check` is `None` exactly when the target failed, and `error` carries that failure.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    case_id: str
-    category: str
-    passed: bool
-    error: str | None
-    check: CaseCheck | None
-    judged: tuple[JudgedReply, ...]
-    answer: ConversationAnswer | None
-    round: int = 1
-    """Which pass over the case list this line belongs to, from 1."""
-
-
-def _judge_replies(
-    case: ConversationCase, answer: ConversationAnswer, judge: Grader | None
-) -> tuple[JudgedReply, ...]:
-    """Judge only the `graded` replies, each against its own rubric, and nothing else."""
-    if judge is None:
-        return ()
-    judged: list[JudgedReply] = []
-    for graded in case.graded:
-        reply = answer.turns[graded.turn - 1].reply
-        verdict = judge.grade(graded.rubric, reply)
-        judged.append(
-            JudgedReply(
-                turn=graded.turn,
-                rubric=graded.rubric,
-                reply=reply,
-                verdict=None if verdict is None else verdict.verdict,
-                reason=(
-                    None
-                    if verdict is None
-                    else next(
-                        (
-                            r
-                            for v, r in zip(verdict.votes, verdict.reasons, strict=True)
-                            if v == verdict.verdict
-                        ),
-                        None,
-                    )
-                ),
-            )
-        )
-    return tuple(judged)
-
-
-def _saved_lines(path: Path) -> dict[tuple[str, int], CaseLine]:
-    """The lines already in the file, by case id and round.
-
-    A last line cut short by a killed process is dropped and the file is rewritten
-    without it; a bad line anywhere else is refused, since it is not a crash's doing.
-    """
-    if not path.exists():
-        return {}
-    raw = path.read_text(encoding="utf-8").splitlines()
-    kept: dict[tuple[str, int], CaseLine] = {}
-    for number, text in enumerate(raw, start=1):
-        if not text.strip():
-            continue
-        try:
-            line = CaseLine.model_validate_json(text)
-        except ValidationError as exc:
-            if number == len(raw):
-                path.write_text("".join(f"{t}\n" for t in raw[:-1]), encoding="utf-8")
-                break
-            raise ConversationSetInvalid(
-                "holds a saved result that cannot be read", path=path, line=number
-            ) from exc
-        kept[(line.case_id, line.round)] = line
-    return kept
-
-
-def load_run(path: Path) -> tuple[CaseLine, ...]:
-    """The saved lines of one finished or stopped run, in file order.
-
-    The label maker reads a run's replies and tool results from here, so the labels
-    come from the same run the baseline was set on and cost no second one. Only round 1
-    is answered: one line per case, as the label maker expects.
-    """
-    return tuple(line for line in _saved_lines(path).values() if line.round == 1)
-
-
-def _append(path: Path, line: CaseLine) -> None:
-    """Add one line to the file and push it to disk before the next case starts."""
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(line.model_dump_json() + "\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-
-
-def run_conversations(
+def run_eval(
     *,
-    client: TargetClient,
-    cases: Sequence[ConversationCase],
-    run_id: str,
-    reports_dir: Path,
-    judge: Grader | None = None,
-    repeats: int = 1,
-) -> tuple[CaseLine, ...]:
-    """Play the cases not yet saved, `repeats` rounds, and answer every line, round by round.
+    target: TargetClient,
+    cases: Sequence[EvalCase],
+    plays: int,
+    person: PersonModel,
+    judge: ReplyJudge | None,
+    reset: Callable[[], None],
+    clock: Callable[[], float],
+    now: Callable[[], datetime],
+) -> tuple[PlayRecord, ...]:
+    """Play every case `plays` times, in file order, and answer the finished plays.
 
-    A `TurnFailed` becomes an error line and the run goes on; a `TargetUnreachable` from
-    the reset, and any other exception, propagate. Nothing is sent or written before the
-    run id and the round count have been checked. Role names are gathered per round,
-    because each round starts from a reset help desk.
+    `reset` runs before each play and may raise; the run stops there, because a run over a
+    world the last play changed cannot be compared to the baseline.
     """
-    checked_identifier(run_id, "run_id")
-    checked_repeats(repeats)
-    reports_dir.mkdir(parents=True, exist_ok=True)
-    path = reports_dir / f"{run_id}.jsonl"
-
-    saved = _saved_lines(path)
-    lines: list[CaseLine] = []
-    for round_number in range(1, repeats + 1):
-        in_round = [line for (_, r), line in saved.items() if r == round_number]
-        if not in_round:
-            client.reset()
-        roles: set[str] = set()
-        for line in in_round:
-            if line.answer is not None:
-                roles |= role_names_in(line.answer)
-        for case in cases:
-            existing = saved.get((case.id, round_number))
-            if existing is not None:
-                lines.append(existing)
-                continue
-            line = _play(client, case, judge, roles, round_number)
-            _append(path, line)
-            lines.append(line)
-    return tuple(lines)
+    records: list[PlayRecord] = []
+    for case in cases:
+        for number in range(1, plays + 1):
+            reset()
+            records.append(
+                _play_once(
+                    target=target,
+                    case=case,
+                    number=number,
+                    person=person,
+                    judge=judge,
+                    clock=clock,
+                    now=now,
+                )
+            )
+    return tuple(records)
 
 
-def _play(
-    client: TargetClient,
-    case: ConversationCase,
-    judge: Grader | None,
-    roles: set[str],
-    round_number: int,
-) -> CaseLine:
-    """Play one case and build its line. `roles` gains the names its answer showed."""
-    try:
-        answer = client.play(case)
-    except TurnFailed as exc:
-        return CaseLine(
-            case_id=case.id,
-            category=case.category,
-            passed=False,
-            error=str(exc),
-            check=None,
-            judged=(),
-            answer=None,
-            round=round_number,
+def _setup_is_wrong(case: EvalCase, turns: Sequence[PlayedTurn], now: datetime) -> bool:
+    if not turns:
+        return False
+    return bool(
+        false_start_facts(
+            case.world,
+            own=person_name(case.person.seat),
+            world=turns[0].answer.world_before,
+            now=now,
         )
-    roles |= role_names_in(answer)
-    check = check_case(case, answer, run_roles=frozenset(roles))
-    return CaseLine(
-        case_id=case.id,
-        category=case.category,
-        passed=check.passed,
-        error=None,
-        check=check,
-        judged=_judge_replies(case, answer, judge),
-        answer=answer,
-        round=round_number,
+    )
+
+
+def _play_once(
+    *,
+    target: TargetClient,
+    case: EvalCase,
+    number: int,
+    person: PersonModel,
+    judge: ReplyJudge | None,
+    clock: Callable[[], float],
+    now: Callable[[], datetime],
+) -> PlayRecord:
+    chat: dict[str, str | None] = {"id": None}
+
+    def send(message: str) -> TurnAnswer:
+        try:
+            answer = target.turn(case, chat["id"], message)
+        except TurnFailed as exc:
+            logger.warning("eval turn failed: %s", exc)
+            raise
+        chat["id"] = answer.chat_id
+        return answer
+
+    started = clock()
+    turns = converse(
+        case,
+        model=person,
+        send=send,
+        should_stop=lambda played: _setup_is_wrong(case, played, now()),
+    )
+    seconds = clock() - started
+
+    effort = {
+        "turns": len(turns),
+        "tool_calls": sum(len(t.answer.tool_calls) for t in turns),
+        "seconds": seconds,
+        "cost_usd": _cost(turns),
+    }
+    if _setup_is_wrong(case, turns, now()):
+        return _record(case, number, "setup_wrong", (), (), (), turns, effort)
+
+    broken = [*turn_rules(turns), *end_rules(case, turns), *code_never_rules(case, turns)]
+    matched = bool(turns) and (
+        matching_end_state(
+            case.right_end_states,
+            own=person_name(case.person.seat),
+            before=turns[0].answer.world_before,
+            after=turns[-1].answer.world_after,
+            now=now(),
+        )
+        is not None
+    )
+    checks: list[CheckRecord] = []
+    flagged: list[str] = []
+    if judge is not None and turns:
+        for check in case.reply_checks:
+            answer = judge.check(check, turns)
+            checks.append(_check_record(check.check, answer))
+        for text in judge_never_texts(case):
+            verdict = judge.never(text, turns)
+            if verdict is not None and verdict.answer == "yes":
+                flagged.append(text)
+    result = play_result(
+        setup_wrong=False, broken=broken, flagged=flagged, end_state_matched=matched
+    )
+    return _record(case, number, result, broken, flagged, checks, turns, effort)
+
+
+def _cost(turns: Sequence[PlayedTurn]) -> Decimal | None:
+    costs = [t.answer.cost_usd for t in turns if t.answer.cost_usd is not None]
+    return sum(costs, Decimal(0)) if costs else None
+
+
+def _check_record(name: str, answer: CheckAnswer | None) -> CheckRecord:
+    if answer is None:
+        return CheckRecord(check=name, answer=None, quote="", reason="")
+    return CheckRecord(check=name, answer=answer.answer, quote=answer.quote, reason=answer.reason)
+
+
+def _record(
+    case: EvalCase,
+    number: int,
+    result: str,
+    broken: Sequence[str],
+    flagged: Sequence[str],
+    checks: Sequence[CheckRecord],
+    turns: Sequence[PlayedTurn],
+    effort: Mapping[str, object],
+) -> PlayRecord:
+    return PlayRecord.model_validate(
+        {
+            "case_id": case.id,
+            "owner": case.owner,
+            "play": number,
+            "result": result,
+            "broken": tuple(broken),
+            "flagged": tuple(flagged),
+            "checks": tuple(checks),
+            "conversation": tuple(turns),
+            **effort,
+        }
     )

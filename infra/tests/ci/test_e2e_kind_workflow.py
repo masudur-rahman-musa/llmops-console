@@ -178,7 +178,7 @@ def test_the_kind_run_plays_the_small_conversation_file_against_the_stub(
     cases = REPO_ROOT / KIND_CASES
     assert cases.is_file()
     ids = [json.loads(line)["id"] for line in cases.read_text().splitlines() if line.strip()]
-    assert ids and all(re.fullmatch(r"conv-[0-9]{3}", case_id) for case_id in ids)
+    assert ids and all(re.fullmatch(r"kind-[0-9]{3}", case_id) for case_id in ids)
 
 
 def test_the_report_artifact_is_uploaded_even_when_the_run_fails(

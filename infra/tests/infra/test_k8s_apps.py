@@ -2057,13 +2057,12 @@ def test_the_image_carries_the_eval_baseline() -> None:
     environment = dockerfile_environment(text)
 
     assert any(
-        path == "evals/conversation-baseline.json"
-        or (path.endswith("/") and "evals/conversation-baseline.json".startswith(path))
+        path == "evals/baseline.json"
+        or (path.endswith("/") and "evals/baseline.json".startswith(path))
         for path in copied
-    ), f"the image copies {sorted(copied)}, not evals/conversation-baseline.json"
+    ), f"the image copies {sorted(copied)}, not evals/baseline.json"
     assert (
-        environment.get("OPSCONSOLE_EVAL_BASELINE_PATH")
-        == f"{IMAGE_WORKDIR}/evals/conversation-baseline.json"
+        environment.get("OPSCONSOLE_EVAL_BASELINE_PATH") == f"{IMAGE_WORKDIR}/evals/baseline.json"
     )
 
 

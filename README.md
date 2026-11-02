@@ -279,35 +279,31 @@ Process failures get a blameless write-up too, like
 
 ## How the evals work
 
-The eval engine plays multi-turn conversations. The help desk keeps 45 cases. Each
-holds what the person types, which tools the agent should call, and in which turn
-the person says yes. The format is in [docs/eval-format.md](docs/eval-format.md).
+The engine plays multi-turn conversations. The companion help desk keeps 33 cases;
+each one holds what the person types, which tools should be called, and when the
+person says yes. The format is described in
+[docs/eval-format.md](docs/eval-format.md).
 
-A run plays each case through the agent's conversation route and checks every
-turn three ways:
+A run plays each case through the help desk's conversation route and checks every
+turn three ways: the right tools were called in order, nothing was changed before the
+yes, and no request number, ticket number or role name appears that a tool did not
+return. A judge grades the marked replies pass or fail, and its own agreement with
+reference labels is measured rather than assumed. Until a person makes those
+labels, a model of the same family as the judge does, so that check is partly
+circular: it shows agreement, not correctness. The report shape is in
+[docs/eval-report.md](docs/eval-report.md) and the target it runs against in
+[docs/eval-target.md](docs/eval-target.md). Each finished case is saved at once, so a
+stopped run continues without paying for the cases it already played.
 
-- the right tools were called, in order,
-- nothing was changed before the person said yes,
-- no request number, ticket number or role name appears that a tool did not return.
-
-An LLM judge then grades the marked replies pass or fail against a rubric. The
-judge only counts toward the gate once a calibration run shows a Cohen's kappa of
-0.7 or better against 40 reference labels. Those labels are made by a model of the
-same family as the judge, so the check shows agreement, not correctness, until a
-person makes them. The report is described in
-[docs/eval-report.md](docs/eval-report.md) and the target contract in
-[docs/eval-target.md](docs/eval-target.md). Each finished case is saved at once,
-so a stopped run continues without paying again for what it already played.
-
-Real models do not answer the same way twice, so each case is played three times.
-A case that both passes and fails is marked unstable, listed on its own and left
-out of the score, so chance alone cannot turn the gate red. Each case also reports
-its pass rate with a 95% Wilson range.
-
-The gate fails the pull request when the check score falls below the baseline.
-There is no drop allowance. The baseline can only change in a commit whose subject
-starts with `baseline:` and that adds a written decision record, and CI checks
-that rule. The gate is in [docs/eval-gate.md](docs/eval-gate.md).
+`backend/evals/baseline.json` holds the committed numbers. The CI gate
+compares a run against them and fails the pull request when the percent of cases
+passed falls below the baseline, described in [docs/eval-gate.md](docs/eval-gate.md).
+On every pull request it plays the help desk's 33 cases three times each against the
+real help desk agent on the real cheap model, so it needs a model key and costs roughly
+$3 to $6 a run. Each case reports its pass rate with a 95% range. A case that both
+passes and fails is unstable: it is listed in its own group and left out of the score,
+so chance alone cannot turn the gate red. The baseline changes only through a commit that carries its own decision record,
+and never to make a failing run pass.
 
 ### Redaction accuracy
 

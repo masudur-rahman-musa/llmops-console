@@ -19,9 +19,7 @@ DEFAULT_PROVIDERS_DIR = Path(__file__).resolve().parents[2] / "config" / "provid
 """The shipped provider folder, one YAML file per provider, found the same way and
 for the same reason, with `OPSCONSOLE_PROVIDERS_DIR` as the escape hatch."""
 
-DEFAULT_EVAL_BASELINE_PATH = (
-    Path(__file__).resolve().parents[2] / "evals" / "conversation-baseline.json"
-)
+DEFAULT_EVAL_BASELINE_PATH = Path(__file__).resolve().parents[2] / "evals" / "baseline.json"
 """The committed eval baseline, found the same way, with
 `OPSCONSOLE_EVAL_BASELINE_PATH` as the escape hatch."""
 
