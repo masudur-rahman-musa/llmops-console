@@ -40,6 +40,7 @@ HELPDESK = "https://helpdesk.example"
 GATEWAY = "https://gateway.example"
 RUN_ID = "run-one"
 DONE = json.dumps({"message": "thanks [done]", "yes": False})
+JUDGE_NOT_APPLICABLE = json.dumps({"answer": "does_not_apply", "quote": "", "reason": "r"})
 
 
 class Hosts:
@@ -54,7 +55,9 @@ class Hosts:
             return self.helpdesk(request)
         if request.url.host == "gateway.example":
             self.gateway_requests.append(request)
-            return httpx.Response(200, json={"choices": [{"message": {"content": DONE}}]})
+            judged = json.loads(request.content)["model"] == "judge"
+            content = JUDGE_NOT_APPLICABLE if judged else DONE
+            return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
         raise AssertionError(f"unexpected host {request.url.host}")
 
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -425,3 +428,49 @@ def test_conversations_without_a_calibration_has_no_reply_quality(
 
     report = RunReport.model_validate_json((out / REPORT_JSON_NAME).read_text(encoding="utf-8"))
     assert report.metrics["reply_quality"] is None
+
+
+class SilentAliasHosts(JudgingHosts):
+    """The judging hosts, but the gateway answers one alias with a 502 every time."""
+
+    def __init__(self, helpdesk: StubHelpdesk, silent: str) -> None:
+        super().__init__(helpdesk)
+        self.silent = silent
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        if (
+            request.url.host == "gateway.example"
+            and json.loads(request.content)["model"] == self.silent
+        ):
+            self.gateway_requests.append(request)
+            return httpx.Response(502, json={"error": {"code": "provider_error"}})
+        return super().__call__(request)
+
+
+@pytest.mark.parametrize(
+    ("alias", "named"),
+    [("simulated-person", "simulated person"), ("judge", "judge")],
+    ids=["person", "judge"],
+)
+def test_a_person_or_judge_with_no_answer_fails_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    alias: str,
+    named: str,
+) -> None:
+    """Catches a run that passes while the simulated person or the judge never answered:
+    every play then ends after one reply, or every check is left open, and the report reads
+    like a real result. The run stops with exit 1, says which one went silent, and writes no
+    report for the gate to read."""
+    world = SilentAliasHosts(
+        StubHelpdesk({"case-001": [answer("Shall I file it?"), answer("Filed.")]}), alias
+    )
+    world.install(monkeypatch)
+    out = tmp_path / "out"
+
+    code = conversations(out, one_case(tmp_path), "--plays", "1")
+
+    assert code == EXIT_FAILED
+    assert named in capsys.readouterr().err
+    assert not (out / REPORT_JSON_NAME).exists()

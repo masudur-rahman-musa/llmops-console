@@ -28,7 +28,7 @@ from app.core.errors import CalibrationInvalid, LabelsInvalid
 from app.core.validation import IdentifierInvalid, checked_identifier
 from app.evals.baseline_guard import GUARD_PASSED_LINE, check, offence_line
 from app.evals.calibration import calibrate, calibration_json, judge_model_from_routing
-from app.evals.cases import CaseSetInvalid, EvalCase, load_cases
+from app.evals.cases import CaseSetInvalid, EvalCase, ReplyCheck, load_cases
 from app.evals.gate import (
     GateInputInvalid,
     evaluate,
@@ -37,7 +37,7 @@ from app.evals.gate import (
     load_report,
     verdict_line,
 )
-from app.evals.judge import JudgeClient, prompt_version
+from app.evals.judge import CheckAnswer, JudgeClient, prompt_version
 from app.evals.labels import load_labels
 from app.evals.person import PersonModel, PersonTurn, PlayedTurn, SimulatedPerson
 from app.evals.push import push_metrics
@@ -86,6 +86,51 @@ class _SilentPerson:
 
     def answer(self, case: EvalCase, turns: Sequence[PlayedTurn]) -> PersonTurn | None:
         return None
+
+
+class NoAnswer(Exception):
+    """The simulated person or the judge gave no usable answer, even after its one retry.
+
+    The run stops here. Going on would end every play after one reply, or leave every
+    check open, and the report would read like a real result.
+    """
+
+
+class _AnsweringPerson:
+    """The simulated person, but a missing answer stops the run instead of ending the play."""
+
+    def __init__(self, person: PersonModel) -> None:
+        self._person = person
+
+    def answer(self, case: EvalCase, turns: Sequence[PlayedTurn]) -> PersonTurn:
+        reply = self._person.answer(case, turns)
+        if reply is None:
+            raise NoAnswer(
+                f"the simulated person gave no answer in case {case.id}, "
+                "so the run stopped and no report was written"
+            )
+        return reply
+
+
+class _AnsweringJudge:
+    """The judge, but a missing answer stops the run instead of leaving the check open."""
+
+    def __init__(self, judge: JudgeClient) -> None:
+        self._judge = judge
+
+    def check(self, check: ReplyCheck, turns: Sequence[PlayedTurn]) -> CheckAnswer:
+        return _answered(self._judge.check(check, turns), f"check {check.check}")
+
+    def never(self, text: str, turns: Sequence[PlayedTurn]) -> CheckAnswer:
+        return _answered(self._judge.never(text, turns), f"never rule {text!r}")
+
+
+def _answered(answer: CheckAnswer | None, asked: str) -> CheckAnswer:
+    if answer is None:
+        raise NoAnswer(
+            f"the judge gave no answer to {asked}, so the run stopped and no report was written"
+        )
+    return answer
 
 
 def _summary(run_id: str, report: RunReport) -> str:
@@ -157,6 +202,8 @@ def _conversations(options: argparse.Namespace) -> int:
     Every pre-check runs BEFORE the help desk is touched, because after the reset the
     seed is spent. The exit code is `EXIT_OK` whenever the run completed: failed plays are
     the gate's business, not the run's. Every refusal is one line on stderr and `EXIT_USAGE`.
+    A simulated person or judge that gives no answer stops the run with one line on stderr
+    and `EXIT_FAILED`, and no report is written.
     """
     try:
         target = _eargs._checked_target(options.target)
@@ -182,8 +229,8 @@ def _conversations(options: argparse.Namespace) -> int:
                 target=target_client,
                 cases=cases,
                 plays=plays,
-                person=person,
-                judge=judge,
+                person=person if isinstance(person, _SilentPerson) else _AnsweringPerson(person),
+                judge=None if judge is None else _AnsweringJudge(judge),
                 reset=target_client.reset
                 if reset_command is None
                 else lambda: _reset_with(reset_command),
@@ -193,6 +240,9 @@ def _conversations(options: argparse.Namespace) -> int:
         except TargetUnreachable as exc:
             print(exc, file=sys.stderr)
             return EXIT_USAGE
+        except NoAnswer as exc:
+            print(exc, file=sys.stderr)
+            return EXIT_FAILED
         finished_at = datetime.now(UTC)
 
         report = build_report(

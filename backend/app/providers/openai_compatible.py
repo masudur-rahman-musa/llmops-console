@@ -131,6 +131,17 @@ spells `required` the same way the neutral contract does. The table exists so
 that stays a fact a test can hold rather than an assumption. The `tool`
 mode is absent because it carries a name and is built as an object."""
 
+MAX_TOKENS_FIELD = "max_tokens"
+"""The token limit's name on llama.cpp, vLLM and the other boxes we run ourselves."""
+
+MAX_COMPLETION_TOKENS_FIELD = "max_completion_tokens"
+"""The token limit's name at OpenAI itself.
+
+gpt-5 and the o-series answer `max_tokens` with a 400, and a 400 is not retried, so
+the alias's next candidate is never tried either. Every OpenAI chat model takes this
+name, so the vendor gets it for every model and no table of models is needed."""
+
+
 DONE_SENTINEL = "[DONE]"
 """The line that ends an OpenAI-compatible stream.
 
@@ -190,12 +201,13 @@ def _rendered_turn(index: int, message: ChatMessage) -> dict[str, Any]:
     return turn
 
 
-def to_openai(request: ChatRequest) -> dict[str, Any]:
+def to_openai(request: ChatRequest, *, limit_field: str = MAX_TOKENS_FIELD) -> dict[str, Any]:
     """Render a normalised request as an OpenAI-compatible chat completions body.
 
-    `max_tokens` is always sent: this wire treats an omitted value as unbounded,
-    and an unbounded generation on a CPU box holds a worker for minutes. `stream` and
-    `stream_options`
+    The token limit is always sent: this wire treats an omitted value as unbounded,
+    and an unbounded generation on a CPU box holds a worker for minutes. It travels
+    under `limit_field`, which is `max_tokens` for our own boxes and
+    `max_completion_tokens` for the vendor. `stream` and `stream_options`
     are deliberately NOT set here - they belong to the streamed call alone.
     """
     body: dict[str, Any] = {
@@ -203,7 +215,7 @@ def to_openai(request: ChatRequest) -> dict[str, Any]:
         "messages": [
             _rendered_turn(index, message) for index, message in enumerate(request.messages)
         ],
-        "max_tokens": request.max_tokens if request.max_tokens is not None else DEFAULT_MAX_TOKENS,
+        limit_field: request.max_tokens if request.max_tokens is not None else DEFAULT_MAX_TOKENS,
     }
 
     if request.temperature is not None:
@@ -638,11 +650,13 @@ class OpenAICompatibleAdapter(HttpAdapter):
         name: str,
         base_url: str,
         api_key: str | None = None,
+        limit_field: str = MAX_TOKENS_FIELD,
         transport: httpx.BaseTransport | None = None,
         sleep: Callable[[float], None] = time.sleep,
         jitter: Callable[[], float] = random.random,
     ) -> None:
         self.name = name
+        self.limit_field = limit_field
         self.http = ProviderTransport(
             name=name,
             base_url=base_url,
@@ -681,7 +695,7 @@ class OpenAICompatibleAdapter(HttpAdapter):
 
     def chat(self, request: ChatRequest) -> ChatResponse:
         """Run one non-streaming completion."""
-        body = to_openai(request)
+        body = to_openai(request, limit_field=self.limit_field)
         response = self.http.send(self._path(CHAT_COMPLETIONS_PATH, request.model), body)
         try:
             payload = response.json()
@@ -745,7 +759,7 @@ class OpenAICompatibleAdapter(HttpAdapter):
         event has been yielded the client has already been shown part of an
         answer, and nothing that cannot be un-sent is resent.
         """
-        body = to_openai(request)
+        body = to_openai(request, limit_field=self.limit_field)
         # Copied rather than mutated in place: `to_openai` is the shape the
         # non-streaming path sends, and the two extra fields belong to this call.
         streamed = {**body, "stream": True, "stream_options": {"include_usage": True}}

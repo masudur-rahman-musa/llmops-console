@@ -62,7 +62,11 @@ from app.providers.azure_openai import (
     AzureOpenAIAdapter,
 )
 from app.providers.base import Adapter
-from app.providers.openai_compatible import OPENAI_BASE_URL, OpenAICompatibleAdapter
+from app.providers.openai_compatible import (
+    MAX_COMPLETION_TOKENS_FIELD,
+    OPENAI_BASE_URL,
+    OpenAICompatibleAdapter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -120,16 +124,13 @@ def build_adapters(policy: Policy, environ: Mapping[str, str] | None = None) -> 
             if not api_key:
                 _warn_unusable_key(name, provider)
                 continue
-            # `max_tokens` is forwarded to the vendor as-is.
-            # `gpt-4o` accepts it and is the only OpenAI model the shipped policy
-            # routes to. The o-series and gpt-5 reject it and want
-            # `max_completion_tokens`, so adding one of those as a candidate is a
-            # change to the mapper next door, not a config edit - and until one is
-            # added, a translation table would be branching on a hypothetical.
+            # The vendor gets the token limit as `max_completion_tokens`: gpt-5
+            # and the o-series refuse `max_tokens`, and every model takes the new name.
             adapters[name] = OpenAICompatibleAdapter(
                 name=name,
                 base_url=provider.base_url if provider.base_url is not None else OPENAI_BASE_URL,
                 api_key=api_key,
+                limit_field=MAX_COMPLETION_TOKENS_FIELD,
             )
 
         elif provider.kind is ProviderKind.AZURE_OPENAI:

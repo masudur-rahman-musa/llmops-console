@@ -13,6 +13,7 @@ key and the `enabled` check could be deleted with the test still passing.
 
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 from pathlib import Path
@@ -23,7 +24,7 @@ import pytest
 from app.model_routing.policy import Policy, Provider, ProviderKind, load_policy
 from app.providers.anthropic import AnthropicAdapter
 from app.providers.azure_openai import AZURE_API_VERSION, AzureOpenAIAdapter
-from app.providers.base import Adapter, ChatMessage, ChatRequest
+from app.providers.base import DEFAULT_MAX_TOKENS, Adapter, ChatMessage, ChatRequest
 from app.providers.factory import build_adapters
 from app.providers.openai_compatible import OPENAI_BASE_URL, OpenAICompatibleAdapter
 
@@ -386,6 +387,32 @@ def test_an_openai_adapter_sends_the_key_only_as_a_bearer_header() -> None:
     assert [name for name, value in sent.headers.multi_items() if key in value] == ["authorization"]
     assert key not in str(sent.url)
     assert key not in sent.content.decode("utf-8")
+
+
+def test_an_openai_adapter_sends_max_completion_tokens_and_never_max_tokens() -> None:
+    """Catches the vendor adapter sending `max_tokens`: gpt-5 and the o-series answer it with
+    a 400, which is not retried, so every call to those models fails and no backup is tried.
+    The vendor takes `max_completion_tokens` on every chat model, so the limit travels under
+    that name and the old one is absent."""
+    adapters = build_adapters(OPENAI_POLICY, ENVIRON)
+    built = adapters[OPENAI_PROVIDER]
+    assert isinstance(built, OpenAICompatibleAdapter)
+
+    scripted = ScriptedTransport([local_ok("plain")])
+    factory_client = built.client
+    built.http.client = httpx.Client(
+        base_url=factory_client.base_url,
+        headers=factory_client.headers,
+        timeout=factory_client.timeout,
+        transport=scripted.transport,
+    )
+    factory_client.close()
+
+    built.chat(OPENAI_REQUEST)
+
+    body = json.loads(scripted.requests[0].content)
+    assert body["max_completion_tokens"] == DEFAULT_MAX_TOKENS
+    assert "max_tokens" not in body
 
 
 OPENAI_DROPPED_CASES: list[tuple[str, str, str | None]] = [
