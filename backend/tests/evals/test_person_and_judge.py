@@ -473,6 +473,43 @@ def test_a_failing_gateway_is_retried_once_for_the_judge() -> None:
     assert len(calls) == 2
 
 
+def test_the_judge_asks_for_its_answer_in_the_check_shape() -> None:
+    """Catches a judge left to write its JSON by hand: a quote of a reply holding double
+    quotes then broke the JSON twice in a row and stopped a whole run. The request names
+    the answer's own schema, closed and strict, so the model is held to it."""
+    gateway = Gateway(judge_reply("yes"))
+
+    JudgeClient(GATEWAY, client=gateway.client(), api_key="k").check(CHECKS[0], conversation())
+
+    asked = gateway.body()["response_format"]
+    assert asked["type"] == "json_schema"
+    assert asked["json_schema"]["strict"] is True
+    schema = asked["json_schema"]["schema"]
+    assert schema == CheckAnswer.model_json_schema()
+    assert schema["additionalProperties"] is False
+    assert sorted(schema["required"]) == ["answer", "quote", "reason"]
+    assert schema["properties"]["answer"]["enum"] == ["yes", "no", "does_not_apply"]
+
+
+def test_an_unreadable_judge_answer_is_printed(capsys: pytest.CaptureFixture[str]) -> None:
+    """Catches an unreadable answer thrown away unseen, which left a stopped run with no
+    clue why. A recorded answer whose quote holds bare double quotes is not JSON; it is
+    still unanswered after the retry, and its text is on stderr."""
+    raw = (
+        '{"answer": "yes", "quote": "I have filed "Finance Viewer" for you", '
+        '"reason": "It says so."}'
+    )
+    gateway = Gateway(lambda: chat_reply(raw))
+
+    result = JudgeClient(GATEWAY, client=gateway.client(), api_key="k").check(
+        CHECKS[0], conversation()
+    )
+
+    assert result is None
+    assert len(gateway.requests) == 2
+    assert raw in capsys.readouterr().err
+
+
 def test_the_prompt_files_exist_and_are_not_empty() -> None:
     """Catches a build that names a prompt it does not ship: both files are read through the
     package, and the retired `judge-v2.md` is gone."""

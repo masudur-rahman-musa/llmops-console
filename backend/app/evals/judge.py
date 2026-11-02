@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from collections.abc import Sequence
 from importlib import resources
 from typing import TYPE_CHECKING, Any, Final, Literal
@@ -65,6 +66,9 @@ PROMPT_RESOURCE: Final[str] = "judge-v3.md"
 
 CONVERSATION_OPEN: Final[str] = "<conversation>"
 CONVERSATION_CLOSE: Final[str] = "</conversation>"
+
+MAX_SHOWN_UNREADABLE: Final[int] = 4000
+"""Characters of an unreadable answer printed to stderr, so a huge one cannot flood the log."""
 
 MAX_WHOLE_ROLE_LIST: Final[int] = 10
 """A role list this long or shorter is sent to the judge whole; a longer one is cut."""
@@ -125,12 +129,28 @@ def ask_retried[Parsed: BaseModel](
     model's ordinary flakiness, and retrying until it works is unbounded spend on a
     failing gateway. A non-2xx, a body that is not JSON, an answer the model class refuses
     and a transport failure are the same event here; nothing raises out of this function.
+
+    The request names `model`'s own JSON schema as a strict `response_format`, so the
+    provider holds the answer to that shape: written by hand, a quote holding double
+    quotes broke the JSON. An answer that still cannot be read is printed to stderr,
+    so a stopped run shows why.
     """
+    shaped = {
+        **body,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": model.__name__,
+                "schema": model.model_json_schema(),
+                "strict": True,
+            },
+        },
+    }
     for _ in range(2):
         try:
             response = client.post(
                 url,
-                json=body,
+                json=shaped,
                 headers={
                     "Authorization": f"Bearer {api_key}",
                     "X-Tenant": JUDGE_TENANT,
@@ -143,10 +163,13 @@ def ask_retried[Parsed: BaseModel](
             continue
         if not response.is_success:
             continue
+        content: object = response.text
         try:
             content = response.json()["choices"][0]["message"]["content"]
-            parsed = model.model_validate(json.loads(content))
-        except (ValueError, TypeError, KeyError, IndexError, ValidationError):
+            parsed = model.model_validate(json.loads(str(content)))
+        except (ValueError, TypeError, KeyError, IndexError, ValidationError) as error:
+            shown = str(content)[:MAX_SHOWN_UNREADABLE]
+            print(f"unreadable {model.__name__} answer ({error!r}): {shown}", file=sys.stderr)
             continue
         return parsed
     return None
