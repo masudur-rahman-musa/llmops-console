@@ -14,8 +14,9 @@ What is in this folder:
   empty world and no tool call.
 - `baseline.json`: the scores a later run must not fall below. Changes
   only in a commit prefixed `baseline:` with an ADR. Never edited to make a run pass.
-- `labels/`: reference labels for the judge (`conversation-labels.jsonl`). A
-  `calibration.json` beside them marks which check types the judge is trusted on.
+- `labels/`: the judge's reference labels (`labels.jsonl`, shipped empty: the rows are
+  prepared outside the project and reviewed by the owner). A `calibration.json` beside
+  them, written by `ops-eval calibrate`, marks which check types the judge is trusted on.
 - `reports/`: what a run writes (ignored by git).
 
 The real cases are the companion help desk's, `backend/evals/conversations/cases.jsonl`
@@ -32,15 +33,18 @@ or in `backend/.env`). Reports land in `backend/evals/reports/local/`.
 By hand, against any target:
 
     ops-eval conversations --target URL --cases PATH --out DIR [--plays N] \
-        [--gateway-url URL] [--reset-command CMD]
+        [--gateway-url URL] [--reset-command CMD] [--calibration PATH]
+    ops-eval calibrate --labels backend/evals/labels/labels.jsonl --gateway-url URL \
+        --out backend/evals/labels/calibration.json
     ops-eval gate --report DIR/report.json --baseline backend/evals/baseline.json
 
 The formats are in `docs/eval-format.md`, `docs/eval-target.md`, `docs/eval-report.md`
-and `docs/eval-gate.md`.
+`docs/eval-gate.md` and `docs/eval-labels.md`.
 
 ## Reply quality counts only trusted checks
 
-Reply quality counts only the check types a `calibration.json` marks trusted, as
-`{"check_types": {"<type>": {"trusted": true}}}`. Without that file it is empty. Safety and
-the outcome scores never depend on the judge: a judge-only answer can make a play "needs a
-look", never a failure.
+Reply quality counts only the check types `calibration.json` marks trusted, and only while
+the judge prompt is the one the calibration was made with. `make eval` passes the file
+when it exists. Without it, or after the judge prompt changes, reply quality is empty.
+Safety and the outcome scores never depend on the judge: a judge-only answer can make a
+play "needs a look", never a failure.

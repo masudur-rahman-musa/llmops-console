@@ -49,6 +49,7 @@ from app.schemas.dashboard import (
     EvalRunSummary,
     LastEval,
     ModelTokens,
+    NeedsALookPlay,
     Regression,
     ReleaseMarker,
     RequestRow,
@@ -68,11 +69,20 @@ PAGE_SIZE: Final[int] = 20
 TOP_USERS_PER_TENANT: Final[int] = 10
 """How many users the Cost tab ranks for each tenant."""
 
-HIGHER_IS_BETTER_METRICS: Final[tuple[str, ...]] = ("check_score", "judge_score")
-"""The eval metrics where lower is worse, in `evals.scores.METRIC_NAMES` order.
+HIGHER_IS_BETTER_METRICS: Final[tuple[str, ...]] = (
+    "safety",
+    "outcome_every_play",
+    "outcome_at_least_once",
+    "reply_quality",
+)
+"""The eval scores where lower is worse.
 
 The rest of a report's metrics are counts, where lower is not a regression, so "a metric
 lower than last time" would list a run with fewer cases as a regression."""
+
+
+NOTHING_LISTED: Final[str] = "No rule broken, and the end state matches none that is listed."
+"""Why a play needs a look when the judge flagged nothing: no right end state matched."""
 
 
 class _Read(BaseModel):
@@ -148,6 +158,7 @@ class QualityRead(_Read):
     categories: tuple[CategoryCount, ...]
     taxonomy: tuple[TagCount, ...]
     blocked: tuple[BlockedRelease, ...]
+    needs_a_look: tuple[NeedsALookPlay, ...] = ()
 
 
 def _number(value: object) -> float | None:
@@ -257,9 +268,9 @@ class UnconfiguredConsoleReader:
         return ()
 
 
-def _accuracy(metrics: object) -> float | None:
-    """`check_score` out of a stored metrics document, or `None`."""
-    return _number(metrics.get("check_score")) if isinstance(metrics, dict) else None
+def _outcome(metrics: object) -> float | None:
+    """`outcome_every_play` out of a stored metrics document, or `None`."""
+    return _number(metrics.get("outcome_every_play")) if isinstance(metrics, dict) else None
 
 
 def _prompt_cache_saving(prices: PriceTable, row: tuple[Any, ...]) -> Decimal:
@@ -339,7 +350,7 @@ class PostgresConsoleReader:
             last_eval=None
             if run is None
             else LastEval(
-                id=run[0], finished_at=run[1], passed=run[2], check_score=_accuracy(run[3])
+                id=run[0], finished_at=run[1], passed=run[2], outcome_every_play=_outcome(run[3])
             ),
             last_eval_metrics=None if run is None or not isinstance(run[3], dict) else run[3],
         )
@@ -583,6 +594,18 @@ class PostgresConsoleReader:
                 ).format(cases_table, runs_table),
                 (since,),
             ).fetchall()
+            needs_a_look = (
+                conn.execute(
+                    sql.SQL(
+                        "SELECT case_id, play, flagged FROM {} "
+                        "WHERE run_id = %s AND result = 'needs_a_look' "
+                        "ORDER BY case_id, play LIMIT %s"
+                    ).format(self._table("eval_plays")),
+                    (runs[0][0], ROW_LIMIT),
+                ).fetchall()
+                if runs
+                else []
+            )
             blocked = conn.execute(
                 sql.SQL(
                     "SELECT rel.git_sha, rel.deployed_at, rel.pr_url, rel.eval_run_id, "
@@ -627,6 +650,10 @@ class PostgresConsoleReader:
                     previous_metrics=row[5],
                 )
                 for row in blocked
+            ),
+            needs_a_look=tuple(
+                NeedsALookPlay(case_id=row[0], play=row[1], why="; ".join(row[2]) or NOTHING_LISTED)
+                for row in needs_a_look
             ),
         )
 

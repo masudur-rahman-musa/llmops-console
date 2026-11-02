@@ -35,7 +35,7 @@ def push_metrics(
 ) -> str | None:
     """Push one run's non-null `gateway_eval_*` gauges, or answer what went wrong.
 
-    A key whose value is `None` (a `judge_score` when nothing was judged) contributes no
+    A key whose value is `None` (an `outcome_every_play` when no case was scored) contributes no
     series at all: a `Gauge` left at its unset zero would read as a genuine score of zero
     to `NightlyEvalRegression`. Only the two published scores can become gauges
     (`scores.METRIC_NAMES`); any other key, old or new, is never pushed. Never raises for a

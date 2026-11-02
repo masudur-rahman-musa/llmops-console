@@ -312,6 +312,7 @@ def play_record(
     cost_usd: Decimal | None = None,
     checks: Sequence[CheckRecord] = (),
     conversation: Sequence[PlayedTurn] = (),
+    end_state: int | None = None,
 ) -> PlayRecord:
     """One finished play built directly, so a score test states the exact counts it expects."""
     return PlayRecord(
@@ -327,6 +328,7 @@ def play_record(
         cost_usd=cost_usd,
         checks=tuple(checks),
         conversation=tuple(conversation),
+        end_state=end_state,
     )
 
 

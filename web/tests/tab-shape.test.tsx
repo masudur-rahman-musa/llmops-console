@@ -9,7 +9,7 @@ import CostPage from "@/app/(console)/cost/page";
 import HomePage from "@/app/(console)/page";
 import QualityPage from "@/app/(console)/quality/page";
 import RequestsPage from "@/app/(console)/requests/page";
-import { CHECK_SCORE_SENTENCE } from "@/lib/labels";
+import { OUTCOME_SENTENCE } from "@/lib/labels";
 
 type PageName = "home" | "requests" | "cost" | "quality";
 type Fixture = Record<string, unknown>;
@@ -135,7 +135,7 @@ describe("every tab has the same shape", () => {
   });
 
   it("overview cards", async () => {
-    // Catches a missing or renamed card, a card value formatted another way, a Last eval card that does not link to Quality, a check score sentence left on Overview, and a failed run shown as passed.
+    // Catches a missing or renamed card, a card value formatted another way, a Last eval card that does not link to Quality, an outcome sentence left on Overview, and a failed run shown as passed.
     const html = await render("home");
 
     expect(cards(html).map((item) => [item.label, item.value])).toEqual([
@@ -143,17 +143,17 @@ describe("every tab has the same shape", () => {
       ["Cost today", "$1,234.50"],
       ["p95 latency", "412 ms"],
       ["Error rate", "0.50%"],
-      ["Last eval", "93.12% passed"],
+      ["Last eval", "Outcome every play 93.12% passed"],
     ]);
     const link = anchors(html).filter((anchor) => anchor.href === "/quality" && anchor.label.includes("Last eval"));
     expect(link).toHaveLength(1);
-    expect(link[0].label).toContain("93.12% passed");
-    expect(text(html)).not.toContain(CHECK_SCORE_SENTENCE);
-    expect(text(html)).not.toContain("Check score:");
+    expect(link[0].label).toContain("Outcome every play 93.12% passed");
+    expect(text(html)).not.toContain(OUTCOME_SENTENCE);
+    expect(text(html)).not.toMatch(/check score/i);
 
     const failed = fixture("home");
     failed.last_eval = { ...(failed.last_eval as Fixture), passed: false };
-    expect(card(await render("home", failed), "Last eval").value).toBe("93.12% failed");
+    expect(card(await render("home", failed), "Last eval").value).toBe("Outcome every play 93.12% failed");
   });
 
   it("requests cards", async () => {
@@ -246,26 +246,43 @@ describe("every tab has the same shape", () => {
   });
 
   it("quality cards", async () => {
-    // Catches a score beside the wrong baseline, a verdict word taken from the wrong score, a missing baseline shown as a number or with a verdict, the kappa note moved above the cards or dropped, and the old gate table left behind.
+    // Catches a score beside the wrong baseline, a verdict word taken from the wrong score, a missing baseline shown as a number or with a verdict, the old two score cards left behind, effort cards from an older run, a Results card that drops a count, and the old gate table.
     const html = await render("quality");
 
-    expect(cards(html).map((item) => [item.label, item.value])).toEqual([
-      ["Check score", "52.10%"],
-      ["Judge score", "25.00%"],
+    expect(cards(html).map((item) => item.label)).toEqual([
+      "Safety",
+      "Outcome every play",
+      "Outcome at least once",
+      "Reply quality",
+      "Mean turns",
+      "Mean tool calls",
+      "Mean seconds",
+      "Mean cost",
+      "Results",
     ]);
-    expect(card(html, "Check score").text).toContain("Baseline 48.48% passed");
-    expect(card(html, "Judge score").text).toContain("27.40% failed");
+    expect(card(html, "Safety").value).toBe("100.00%");
+    expect(card(html, "Outcome every play").value).toBe("25.00%");
+    expect(card(html, "Safety").text).toContain("Baseline 100.00% passed");
+    expect(card(html, "Outcome every play").text).toContain("Baseline 27.40% failed");
+    expect(card(html, "Outcome at least once").value).toBe("75.00%");
+    expect(card(html, "Reply quality").value).toBe("80.00%");
+    expect(card(html, "Mean turns").value).toContain("3.5");
+    expect(card(html, "Mean tool calls").value).toContain("2.25");
+    expect(card(html, "Mean seconds").value).toContain("12.5");
+    expect(card(html, "Mean cost").value).toContain("0.0123");
+    for (const pattern of [/Pass\W*12\b/, /Fail\W*2\b/, /Needs a look\W*3\b/, /Setup wrong\W*1\b/]) {
+      expect(card(html, "Results").text).toMatch(pattern);
+    }
     const flat = text(html);
-    expect(flat.indexOf("kappa 0.7")).toBeGreaterThan(flat.indexOf("Judge score 25.00%"));
-    expect(rowTexts(html).filter((line) => line.startsWith("Check score 52.10%"))).toEqual([]);
+    expect(rowTexts(html).filter((line) => line.startsWith("Safety 100.00%"))).toEqual([]);
     expect(flat).not.toMatch(/threshold/i);
 
     const noBaseline = fixture("quality");
     Object.assign((noBaseline.gate as Array<Fixture>)[0], { threshold: null, passed: null });
     const missing = await render("quality", noBaseline);
-    expect(card(missing, "Check score").text).toContain("Baseline not set");
-    expect(card(missing, "Check score").text).not.toMatch(/passed|failed/);
-    expect(card(missing, "Judge score").text).not.toContain("Baseline not set");
+    expect(card(missing, "Safety").text).toContain("Baseline not set");
+    expect(card(missing, "Safety").text).not.toMatch(/passed|failed/);
+    expect(card(missing, "Outcome every play").text).not.toContain("Baseline not set");
   });
 
   it("plain labels", async () => {

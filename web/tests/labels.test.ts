@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { WINDOW_LINES, WINDOW_SENTENCE, plainName, redactionLabel } from "@/lib/labels";
+import * as labels from "@/lib/labels";
+import { OUTCOME_SENTENCE, WINDOW_LINES, WINDOW_SENTENCE, plainName, redactionLabel, scoreLabel } from "@/lib/labels";
 
 describe("plain labels", () => {
   it("redaction kinds read in plain words in either case", () => {
@@ -44,5 +45,35 @@ describe("plain labels", () => {
     expect(WINDOW_LINES.requests).toBe("Last 30 days. Newest requests lists every request, newest first.");
     expect(WINDOW_LINES.quality).toBe(WINDOW_SENTENCE);
     expect(WINDOW_SENTENCE).toBe("Last 30 days.");
+  });
+
+  it("each score key reads in the words the pages print", () => {
+    // Catches a score key shown raw or with its old name: the four gate and quality scores, the effort means, and the four result counts.
+    const rows: Array<[string, string]> = [
+      ["safety", "Safety"],
+      ["outcome_every_play", "Outcome every play"],
+      ["outcome_at_least_once", "Outcome at least once"],
+      ["reply_quality", "Reply quality"],
+      ["mean_turns", "Mean turns"],
+      ["mean_tool_calls", "Mean tool calls"],
+      ["mean_seconds", "Mean seconds"],
+      ["mean_cost_usd", "Mean cost"],
+      ["pass", "Pass"],
+      ["fail", "Fail"],
+      ["needs_a_look", "Needs a look"],
+      ["setup_wrong", "Setup wrong"],
+    ];
+    for (const [key, label] of rows) {
+      expect(scoreLabel(key), key).toBe(label);
+    }
+  });
+
+  it("one outcome sentence replaces the check score sentence", () => {
+    // Catches the old sentence kept beside the new one, or a new one that does not explain the score it sits under: it is one sentence, names the score, and mentions no check score.
+    expect("CHECK_SCORE_SENTENCE" in labels).toBe(false);
+    expect(OUTCOME_SENTENCE).toContain("Outcome every play");
+    expect(OUTCOME_SENTENCE.endsWith(".")).toBe(true);
+    expect(OUTCOME_SENTENCE.slice(0, -1)).not.toContain(". ");
+    expect(OUTCOME_SENTENCE).not.toMatch(/check score|judge score/i);
   });
 });

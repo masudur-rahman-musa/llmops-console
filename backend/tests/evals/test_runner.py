@@ -294,6 +294,27 @@ def test_a_right_end_after_a_yes_passes() -> None:
     assert (record.turns, record.tool_calls) == (2, 1)
 
 
+def test_a_play_records_the_index_of_the_end_state_it_matched() -> None:
+    """Catches an end state recorded as always 0, as a yes/no, or as the case's whole list: the
+    filing matches the SECOND listed end state, so the record says 1. A play that matched
+    none records `None`."""
+    two_states = [[{"open_request": "other.role"}], [{"open_request": ROLE}]]
+    matching = make_case(right_end_states=two_states)
+    unmatched = make_case(right_end_states=[[{"holds": ROLE}]])
+    person = ScriptedPerson(PersonTurn(message="yes", yes=True))
+
+    [hit] = play(StubHelpdesk({"case-001": filing_script()}), [matching], person=person)
+    [miss] = play(
+        StubHelpdesk({"case-001": filing_script()}),
+        [unmatched],
+        person=ScriptedPerson(PersonTurn(message="yes", yes=True)),
+    )
+
+    assert (hit.result, hit.end_state) == ("pass", 1)
+    assert miss.end_state is None
+    assert miss.result == "needs_a_look"
+
+
 def test_a_rule_broken_on_the_way_fails_even_when_the_end_state_matches() -> None:
     """Catches a pass that forgives a broken rule: the same filing, but the person's message
     was not a yes. The end state still matches, and the play is a fail naming the rule."""

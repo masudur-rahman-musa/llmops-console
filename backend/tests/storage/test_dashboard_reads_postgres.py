@@ -44,12 +44,14 @@ from app.schemas.dashboard import (
     EvalRunSummary,
     LastEval,
     ModelTokens,
+    NeedsALookPlay,
     ReleaseMarker,
     Saving,
     TagCount,
     UserCost,
 )
 from app.storage.dashboard_reads import (
+    ROW_LIMIT,
     BlockedRelease,
     HomeRead,
     PostgresConsoleReader,
@@ -231,7 +233,7 @@ def test_today_counts_only_the_current_utc_day(pool: Pool, migrated_schema: str)
         run_id="run-newest-start",
         started_at=newest_start,
         finished_at=newest_start + timedelta(minutes=5),
-        metrics={"check_score": 0.91},
+        metrics={"outcome_every_play": 0.91},
         passed=False,
     )
     insert_run(
@@ -240,7 +242,7 @@ def test_today_counts_only_the_current_utc_day(pool: Pool, migrated_schema: str)
         run_id="run-newest-finish",
         started_at=NOW - timedelta(hours=5),
         finished_at=NOW - timedelta(minutes=30),
-        metrics={"check_score": 0.5},
+        metrics={"outcome_every_play": 0.5},
     )
 
     read = PostgresConsoleReader(pool, schema=schema).home(now=NOW)
@@ -252,16 +254,16 @@ def test_today_counts_only_the_current_utc_day(pool: Pool, migrated_schema: str)
             id="run-newest-start",
             finished_at=newest_start + timedelta(minutes=5),
             passed=False,
-            check_score=0.91,
+            outcome_every_play=0.91,
         ),
-        last_eval_metrics={"check_score": 0.91},
+        last_eval_metrics={"outcome_every_play": 0.91},
     )
 
 
 def test_an_empty_ledger_answers_zeros_and_no_last_eval(pool: Pool, migrated_schema: str) -> None:
     """Catches `sum(cost_usd)` over no rows reaching the model as NULL (a validation error,
     so a 500 on a fresh install) instead of 0, and a missing eval run raising instead of
-    answering `last_eval: None`; the one run stored here has no `check_score`, which
+    answering `last_eval: None`; the one run stored here has no `outcome_every_play`, which
     must read as `None` rather than raise."""
     reader = PostgresConsoleReader(pool, schema=migrated_schema)
     assert reader.configured is True
@@ -278,7 +280,7 @@ def test_an_empty_ledger_answers_zeros_and_no_last_eval(pool: Pool, migrated_sch
     )
     last = reader.home(now=NOW).last_eval
     assert last is not None
-    assert last.check_score is None
+    assert last.outcome_every_play is None
 
 
 def test_hit_rate_counts_cached_rows_inside_the_window(pool: Pool, migrated_schema: str) -> None:
@@ -727,13 +729,13 @@ def insert_accuracy_run(
     passed: bool = True,
     set_name: str = "helpdesk",
 ) -> None:
-    """One eval run carrying only `check_score`, started `days_ago` before `NOW`."""
+    """One eval run carrying only `outcome_every_play`, started `days_ago` before `NOW`."""
     insert_run(
         pool,
         schema,
         run_id=run_id,
         started_at=NOW - timedelta(days=days_ago),
-        metrics={"check_score": accuracy},
+        metrics={"outcome_every_play": accuracy},
         passed=passed,
         set_name=set_name,
     )
@@ -786,8 +788,8 @@ def test_blocked_releases_carry_their_regressions(pool: Pool, migrated_schema: s
             deployed_at=linked_at,
             pr_url=pr_url,
             eval_run_id="linked",
-            metrics={"check_score": 0.85},
-            previous_metrics={"check_score": 0.90},
+            metrics={"outcome_every_play": 0.85},
+            previous_metrics={"outcome_every_play": 0.90},
         ),
         BlockedRelease(
             git_sha="bad-unlinked",
@@ -802,7 +804,7 @@ def test_blocked_releases_carry_their_regressions(pool: Pool, migrated_schema: s
             deployed_at=first_at,
             pr_url=None,
             eval_run_id="p-old",
-            metrics={"check_score": 0.80},
+            metrics={"outcome_every_play": 0.80},
             previous_metrics=None,
         ),
     )
@@ -1050,3 +1052,115 @@ def test_top_users_ranks_per_tenant_and_keeps_ten(
     assert user_of(1) not in {row.user_id for row in everyone}
     assert {row.user_id for row in nordlicht_rows} == {user_of(101), user_of(102)}
     assert only_cuan == tuple(cuan_rows)
+
+
+# --- the needs a look list ---------------------------------------------------------
+
+
+NOTHING_LISTED = "No rule broken, and the end state matches none that is listed."
+
+
+def insert_play(
+    pool: Pool,
+    schema: str,
+    /,
+    *,
+    run_id: str,
+    case_id: str,
+    play: int,
+    result: str,
+    flagged: list[str] | None = None,
+) -> None:
+    """One `eval_plays` row."""
+    with pool.connection() as conn:
+        conn.execute(
+            sql.SQL(
+                "INSERT INTO {} (run_id, case_id, play, result, end_state, broken, flagged, "
+                "checks, turns, tool_calls, seconds, cost_usd) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+            ).format(sql.Identifier(schema, "eval_plays")),
+            (
+                run_id,
+                case_id,
+                play,
+                result,
+                None,
+                [],
+                flagged or [],
+                Jsonb([]),
+                2,
+                1,
+                3.5,
+                None,
+            ),
+        )
+
+
+def test_the_needs_a_look_list_reads_the_newest_run_only(pool: Pool, migrated_schema: str) -> None:
+    """Catches a list read from every run in the window (the older run's play would show), one
+    that lists other results (the pass, the fail and the setup wrong play beside it), one
+    not ordered by case then play, and a `why` that is not the flagged texts joined by `; `
+    (or the fixed sentence when nothing was flagged). Only Postgres runs this query."""
+    schema = migrated_schema
+    insert_run(pool, schema, run_id="run-old", started_at=NOW - timedelta(days=5), metrics={})
+    insert_run(pool, schema, run_id="run-new", started_at=NOW - timedelta(days=1), metrics={})
+    insert_play(pool, schema, run_id="run-old", case_id="case-000", play=1, result="needs_a_look")
+    for case_id, play, result, flagged in (
+        ("case-009", 2, "needs_a_look", None),
+        ("case-002", 3, "needs_a_look", ["writes the poem", "sends the file"]),
+        ("case-002", 1, "needs_a_look", ["writes the poem"]),
+        ("case-001", 1, "pass", None),
+        ("case-003", 1, "fail", None),
+        ("case-004", 1, "setup_wrong", None),
+    ):
+        insert_play(
+            pool,
+            schema,
+            run_id="run-new",
+            case_id=case_id,
+            play=play,
+            result=result,
+            flagged=flagged,
+        )
+
+    read = PostgresConsoleReader(pool, schema=schema).quality(days=30, now=NOW)
+
+    assert read.needs_a_look == (
+        NeedsALookPlay(case_id="case-002", play=1, why="writes the poem"),
+        NeedsALookPlay(case_id="case-002", play=3, why="writes the poem; sends the file"),
+        NeedsALookPlay(case_id="case-009", play=2, why=NOTHING_LISTED),
+    )
+
+
+def test_the_needs_a_look_list_is_empty_without_a_run(pool: Pool, migrated_schema: str) -> None:
+    """Catches a list that raises, or reads plays of a run outside the window, when there is
+    no run to read: the only run is 40 days old, so the list is empty."""
+    schema = migrated_schema
+    insert_run(pool, schema, run_id="run-far", started_at=NOW - timedelta(days=40), metrics={})
+    insert_play(pool, schema, run_id="run-far", case_id="case-001", play=1, result="needs_a_look")
+
+    read = PostgresConsoleReader(pool, schema=schema).quality(days=30, now=NOW)
+
+    assert read.needs_a_look == ()
+
+
+def test_the_needs_a_look_list_stops_at_the_row_limit(pool: Pool, migrated_schema: str) -> None:
+    """Catches a list with no cap: one more play than the limit is stored, and the list holds
+    exactly the limit, the first ones in case order."""
+    schema = migrated_schema
+    insert_run(pool, schema, run_id="run-new", started_at=NOW - timedelta(days=1), metrics={})
+    for number in range(ROW_LIMIT + 1):
+        insert_play(
+            pool,
+            schema,
+            run_id="run-new",
+            case_id=f"case-{number:04d}",
+            play=1,
+            result="needs_a_look",
+        )
+
+    read = PostgresConsoleReader(pool, schema=schema).quality(days=30, now=NOW)
+
+    assert len(read.needs_a_look) == ROW_LIMIT
+    assert read.needs_a_look[0].case_id == "case-0000"
+    assert read.needs_a_look[-1].case_id == f"case-{ROW_LIMIT - 1:04d}"

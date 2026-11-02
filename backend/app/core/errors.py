@@ -13,6 +13,7 @@ Every class below is raised by something in the code.
 from __future__ import annotations
 
 from enum import StrEnum
+from pathlib import Path
 from typing import ClassVar
 
 
@@ -207,3 +208,22 @@ class LibraryDependencyUnavailable(LibraryError):
 
     code: ClassVar[ErrorCode] = ErrorCode.PROVIDER_ERROR
     http_status: ClassVar[int] = 502
+
+
+class LabelsInvalid(LibraryInputInvalid):
+    """A labels file could not be loaded.
+
+    An operator error reported to whoever ran the calibration. `line` is the 1-based file
+    line of the bad row, or `None` when the whole file is at fault.
+    """
+
+    def __init__(self, reason: str, *, path: Path, line: int | None = None) -> None:
+        self.reason = reason
+        self.path = path
+        self.line = line
+        location = f"{path}:{line}" if line is not None else str(path)
+        super().__init__(f"{location}: {reason}")
+
+
+class CalibrationInvalid(LibraryInputInvalid):
+    """A calibration could not be made, such as when no row was labelled by the owner."""

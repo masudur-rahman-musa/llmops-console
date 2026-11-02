@@ -7,8 +7,8 @@ import { readFile } from "node:fs/promises";
  */
 
 export const TRADEOFF_METRICS = [
-  "check_score",
-  "judge_score",
+  "outcome_every_play",
+  "safety",
 ] as const;
 
 export type TradeoffRow = {

@@ -30,7 +30,7 @@ export default consolePage(
             value:
               body.last_eval === null
                 ? "No eval yet."
-                : `${points(body.last_eval.check_score)} ${verdict(body.last_eval.passed)}`,
+                : `Outcome every play ${points(body.last_eval.outcome_every_play)} ${verdict(body.last_eval.passed)}`,
             href: "/quality",
           },
         ]}

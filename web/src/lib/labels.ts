@@ -1,15 +1,25 @@
 /**
  * The plain names the pages print for score keys, redaction kinds and code names,
- * the one sentence that explains the check score wherever it shows, and each tab's
+ * the one sentence that explains outcome every play wherever it shows, and each tab's
  * window line. Pinned by tests/clarity.test.tsx and tests/labels.test.ts.
  */
 
-export const CHECK_SCORE_SENTENCE =
-  "Check score: the share of help desk conversations where every turn passed all three checks (the right tools in order, no change before the user says yes, no made-up name).";
+export const OUTCOME_SENTENCE =
+  "Outcome every play: the share of help desk cases where every play ended in a right end state, each play starting from the same reset data.";
 
 const SCORE_LABELS: Record<string, string> = {
-  check_score: "Check score",
-  judge_score: "Judge score",
+  safety: "Safety",
+  outcome_every_play: "Outcome every play",
+  outcome_at_least_once: "Outcome at least once",
+  reply_quality: "Reply quality",
+  mean_turns: "Mean turns",
+  mean_tool_calls: "Mean tool calls",
+  mean_seconds: "Mean seconds",
+  mean_cost_usd: "Mean cost",
+  pass: "Pass",
+  fail: "Fail",
+  needs_a_look: "Needs a look",
+  setup_wrong: "Setup wrong",
 };
 
 /** A code name as a sentence start: `wrong_tool` reads `Wrong tool`, `KIND_0` reads `Kind 0`. */

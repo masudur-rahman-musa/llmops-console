@@ -171,6 +171,9 @@ EVAL_CASES = $(EVAL_HELPDESK)/backend/evals/conversations/cases.jsonl
 EVAL_REPORTS = backend/evals/reports/local
 # Each case is played EVAL_PLAYS times.
 EVAL_PLAYS ?= 3
+# The judge's calibration. The run gets it only when the file exists, since a fresh clone
+# has none until the owner runs `ops-eval calibrate`; without it reply quality stays empty.
+EVAL_CALIBRATION = backend/evals/labels/calibration.json
 EVAL_HELPDESK_COMPOSE = docker compose --project-directory $(EVAL_HELPDESK) -f $(EVAL_HELPDESK)/docker-compose.yml -f infra/evals/helpdesk.compose.yml --profile app
 eval:       ## The eval gate: the help desk's 45 conversations on the real cheap model, then the gate
 	@trap 'rc=$$?; infra/evals/restore_keys.sh $(EVAL_HELPDESK) || [ $$rc != 0 ] || rc=1; exit $$rc' EXIT; \
@@ -194,7 +197,8 @@ eval:       ## The eval gate: the help desk's 45 conversations on the real cheap
 	status=0; \
 	$(UV_ROOT) ops-eval conversations --plays $(EVAL_PLAYS) --target http://localhost:8000 \
 	  --cases $(EVAL_CASES) --run-kind ci --gateway-url http://localhost:8080 \
-	  --reset-command infra/evals/reset_helpdesk.sh --out $(EVAL_REPORTS) || status=1; \
+	  --reset-command infra/evals/reset_helpdesk.sh --out $(EVAL_REPORTS) \
+	  $$([ -f $(EVAL_CALIBRATION) ] && echo --calibration $(EVAL_CALIBRATION)) || status=1; \
 	$(UV_ROOT) ops-eval gate --report $(EVAL_REPORTS)/report.json \
 	  --baseline backend/evals/baseline.json \
 	  --comment $(EVAL_REPORTS)/gate-comment.md || status=1; \

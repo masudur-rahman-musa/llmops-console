@@ -214,8 +214,9 @@ def _new_run_id() -> str:
 
 
 def _parser() -> argparse.ArgumentParser:
-    """`ops-eval` and its four subcommands: `conversations`, `gate`, `baseline-guard`,
-    `tradeoff`. The retired `run`, `label` and `calibrate` are gone: argparse refuses them."""
+    """`ops-eval` and its five subcommands: `conversations`, `calibrate`, `gate`,
+    `baseline-guard`, `tradeoff`. The retired `run` and `label` are gone: argparse refuses
+    them."""
     parser = argparse.ArgumentParser(
         prog="ops-eval", description="Play and score the help desk's conversation cases."
     )
@@ -273,9 +274,31 @@ def _parser() -> argparse.ArgumentParser:
         "without it, POST /admin/test/reset on the target",
     )
     conversations.add_argument(
+        "--calibration",
+        type=Path,
+        help="the judge's calibration.json; reply quality counts the check types it trusts, "
+        "and only while the judge prompt is the one it was made with",
+    )
+    conversations.add_argument(
         "--pushgateway-url",
         dest="pushgateway_url",
         help="base URL of a Pushgateway; without it, gateway_eval_* metrics are not pushed",
+    )
+
+    calibrate_command = subcommands.add_parser(
+        "calibrate", help="ask the judge about the owner's labels and write calibration.json"
+    )
+    calibrate_command.add_argument(
+        "--labels", required=True, type=Path, help="the labels file, JSONL"
+    )
+    calibrate_command.add_argument(
+        "--gateway-url",
+        dest="gateway_url",
+        required=True,
+        help="base URL of the gateway that serves the judge alias",
+    )
+    calibrate_command.add_argument(
+        "--out", required=True, type=Path, help="the calibration.json file to write"
     )
 
     gate_command = subcommands.add_parser(

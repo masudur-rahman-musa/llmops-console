@@ -12,7 +12,7 @@ Contract these tests are written against:
   [--pushgateway-url URL]`. `--plays` is 1 to 10 (default 3), checked before anything is
   sent. `--out` receives `report.json`, `report.md`, `needs-a-look.md` and `comment.md`.
   Exit `0` whenever the run completed, `2` for anything that stopped it.
-* `--judge-url`, `--repeats` and the `label` and `calibrate` commands no longer exist:
+* `--judge-url`, `--repeats` and the `label` command no longer exist:
   argparse refuses them, exit `2`.
 * `ops-eval gate --report PATH --baseline PATH [--comment PATH]`: exit `0` passed, `1`
   failed, `2` for an unreadable input.
@@ -20,6 +20,7 @@ Contract these tests are written against:
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -29,9 +30,11 @@ import pytest
 from app.cli import evals as cli
 from app.cli import evals_args, evals_commands
 from app.cli.evals import EXIT_FAILED, EXIT_OK, EXIT_USAGE
+from app.evals.judge import prompt_version
 from app.evals.report import REPORT_JSON_NAME, RunReport
 
 from .builders import StubHelpdesk, answer, case_document, write_cases
+from .label_builders import label_document, write_labels
 
 HELPDESK = "https://helpdesk.example"
 GATEWAY = "https://gateway.example"
@@ -151,9 +154,8 @@ def test_plays_default_to_three(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
         ["conversations", "--judge-url", GATEWAY],
         ["conversations", "--repeats", "2"],
         ["label"],
-        ["calibrate"],
     ],
-    ids=["judge-url", "repeats", "label", "calibrate"],
+    ids=["judge-url", "repeats", "label"],
 )
 def test_the_removed_flags_and_commands_are_refused(argv: list[str]) -> None:
     """Catches an old flag or command surviving beside the new ones: each would read a file
@@ -243,3 +245,183 @@ def test_the_gate_exit_codes(tmp_path: Path) -> None:
         cli.main(["gate", "--report", str(tmp_path / "report.json"), "--baseline", "nope.json"])
         == EXIT_USAGE
     )
+
+
+# --- calibrate ----------------------------------------------------------------------------
+
+JUDGE_YES = json.dumps({"answer": "yes", "quote": "q", "reason": "r"})
+
+
+class JudgingHosts(Hosts):
+    """The same two hosts, but the gateway answers a `judge` request with `yes`."""
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        if request.url.host == "gateway.example":
+            self.gateway_requests.append(request)
+            content = JUDGE_YES if json.loads(request.content)["model"] == "judge" else DONE
+            return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+        return super().__call__(request)
+
+
+def calibrate_argv(labels: Path, out: Path) -> list[str]:
+    return [
+        "calibrate",
+        "--labels",
+        str(labels),
+        "--gateway-url",
+        GATEWAY,
+        "--out",
+        str(out),
+    ]
+
+
+def test_calibrate_writes_one_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Catches a calibrate that writes a directory of files or none, asks the judge about the
+    model's own labels, or leaves out the hashes: `--out` is the one file, the judge is asked
+    once per musa row (2 of the 3 rows), and the file names the judge prompt's hash and the
+    labels file's hash."""
+    world = JudgingHosts(StubHelpdesk({}))
+    world.install(monkeypatch)
+    labels = write_labels(
+        tmp_path / "labels.jsonl",
+        label_document("case-001", 1, "plain_words", answer="yes"),
+        label_document("case-002", 1, "plain_words", answer="yes", labelled_by="model"),
+        label_document("case-003", 1, "plain_words", answer="no"),
+    )
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    out = out_dir / "calibration.json"
+
+    code = cli.main(calibrate_argv(labels, out))
+
+    assert code == EXIT_OK
+    assert [p.name for p in out_dir.iterdir()] == ["calibration.json"]
+    document = json.loads(out.read_text(encoding="utf-8"))
+    assert document["judge_model"] == "anthropic/claude-sonnet-5-5"
+    assert document["judge_prompt_sha256"] == prompt_version()
+    assert document["labels_sha256"] == hashlib.sha256(labels.read_bytes()).hexdigest()
+    assert document["check_types"]["plain_words"]["labels"] == 2
+    assert document["check_types"]["plain_words"]["answered"] == 2
+    assert document["check_types"]["plain_words"]["agreed"] == 1
+    assert len(world.gateway_requests) == 2
+
+
+def test_calibrate_without_the_judge_key_exits_2(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Catches a calibrate that goes on without a key (every ask would be unanswered and the
+    file would say nothing is trusted) or that writes a file anyway: exit 2, one line on
+    stderr, no file, and nothing sent."""
+    world = JudgingHosts(StubHelpdesk({}))
+    world.install(monkeypatch)
+    monkeypatch.delenv("OPSCONSOLE_EVAL_JUDGE_KEY")
+    labels = write_labels(tmp_path / "labels.jsonl", label_document())
+    out = tmp_path / "calibration.json"
+
+    code = cli.main(calibrate_argv(labels, out))
+
+    assert code == EXIT_USAGE
+    assert not out.exists()
+    assert len(capsys.readouterr().err.strip().splitlines()) == 1
+    assert world.gateway_requests == []
+
+
+def test_calibrate_with_no_musa_rows_exits_2(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Catches a calibrate that writes an empty file when only the model labelled: exit 2, no
+    file, one line that says why, and the judge is never asked."""
+    world = JudgingHosts(StubHelpdesk({}))
+    world.install(monkeypatch)
+    labels = write_labels(tmp_path / "labels.jsonl", label_document(labelled_by="model"))
+    out = tmp_path / "calibration.json"
+
+    code = cli.main(calibrate_argv(labels, out))
+
+    assert code == EXIT_USAGE
+    assert not out.exists()
+    lines = capsys.readouterr().err.strip().splitlines()
+    assert len(lines) == 1
+    assert "musa" in lines[0]
+    assert world.gateway_requests == []
+
+
+@pytest.mark.parametrize("content", ["not json\n", '{"case_id": "x"}\n'], ids=["junk", "short"])
+def test_calibrate_with_a_bad_labels_file_exits_2(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, content: str
+) -> None:
+    """Catches a bad labels file that is skipped or crashes with a trace: exit 2, no file."""
+    world = JudgingHosts(StubHelpdesk({}))
+    world.install(monkeypatch)
+    labels = tmp_path / "labels.jsonl"
+    labels.write_text(content, encoding="utf-8")
+    out = tmp_path / "calibration.json"
+
+    assert cli.main(calibrate_argv(labels, out)) == EXIT_USAGE
+    assert not out.exists()
+    assert cli.main(calibrate_argv(tmp_path / "missing.jsonl", out)) == EXIT_USAGE
+    assert not out.exists()
+
+
+def write_calibration_file(path: Path, prompt_hash: str) -> Path:
+    path.write_text(
+        json.dumps(
+            {
+                "judge_model": "anthropic/claude-sonnet-5-5",
+                "judge_prompt_sha256": prompt_hash,
+                "labels_sha256": "l" * 64,
+                "made_on": "2026-11-02",
+                "check_types": {
+                    "asks_before_change": {
+                        "labels": 4,
+                        "answered": 4,
+                        "agreed": 4,
+                        "kappa": 1.0,
+                        "trusted": True,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.mark.parametrize(
+    ("hash_of", "expected"),
+    [("current", 100.0), ("stale", None)],
+    ids=["same judge prompt", "older judge prompt"],
+)
+def test_conversations_reads_the_calibration_against_the_current_judge_prompt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, hash_of: str, expected: float | None
+) -> None:
+    """Catches a `--calibration` that is accepted and dropped, or trusted whatever judge prompt
+    made it: with the current prompt's hash the trusted check type counts toward reply
+    quality, with another hash reply quality stays empty."""
+    world = JudgingHosts(StubHelpdesk({"case-001": [answer("Hello.")]}))
+    world.install(monkeypatch)
+    calibration = write_calibration_file(
+        tmp_path / "calibration.json", prompt_version() if hash_of == "current" else "0" * 64
+    )
+    out = tmp_path / "out"
+
+    code = conversations(out, one_case(tmp_path), "--plays", "1", "--calibration", str(calibration))
+
+    assert code == EXIT_OK
+    report = RunReport.model_validate_json((out / REPORT_JSON_NAME).read_text(encoding="utf-8"))
+    assert report.metrics["reply_quality"] == expected
+
+
+def test_conversations_without_a_calibration_has_no_reply_quality(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Catches a reply quality counted with no calibration given: the flag is optional and
+    without it nothing is trusted."""
+    world = JudgingHosts(StubHelpdesk({"case-001": [answer("Hello.")]}))
+    world.install(monkeypatch)
+    out = tmp_path / "out"
+
+    assert conversations(out, one_case(tmp_path), "--plays", "1") == EXIT_OK
+
+    report = RunReport.model_validate_json((out / REPORT_JSON_NAME).read_text(encoding="utf-8"))
+    assert report.metrics["reply_quality"] is None

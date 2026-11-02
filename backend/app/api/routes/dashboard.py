@@ -4,7 +4,8 @@ Four routes, one per console tab, all behind `app.api.deps.admin_key`:
 
     GET /console/home          today's traffic, spend, latency, the last eval, the live routing
     GET /console/cost          cost per day from the ledger, estimated cache savings, budgets
-    GET /console/quality       the eval gate, runs, categories, taxonomy, blocked releases
+    GET /console/quality       the eval gate, runs, categories, taxonomy, blocked releases,
+                               the plays that need a look
     GET /console/requests      redactions, refusals, blocks, tokens, hit rate, per day, newest
 
 The console reads through here and never touches Postgres or Prometheus itself.
@@ -231,6 +232,7 @@ def quality(request: Request, settings: SettingsDep, days: Days = DEFAULT_DAYS) 
         release_markers=read.release_markers,
         categories=read.categories,
         taxonomy=read.taxonomy,
+        needs_a_look=read.needs_a_look,
         blocked=tuple(
             BlockedItem(
                 git_sha=item.git_sha,

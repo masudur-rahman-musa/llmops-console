@@ -17,7 +17,7 @@ afterAll(() => {
 describe("readTradeoff", () => {
   it("rows follow order with the two scores in order", async () => {
     // Catches rows in the options object's key order, metrics in the file's key order, a missing metric other than null, or a dropped conclusion.
-    expect(TRADEOFF_METRICS).toEqual(["check_score", "judge_score"]);
+    expect(TRADEOFF_METRICS).toEqual(["outcome_every_play", "safety"]);
 
     const table = await readTradeoff(FIXTURE);
     expect(table).not.toBeNull();

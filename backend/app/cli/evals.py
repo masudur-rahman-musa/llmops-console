@@ -56,11 +56,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Answer the process exit code for whichever subcommand was named.
 
     Argparse's own `required=True` on the subparsers refuses a bare `ops-eval`, and its
-    choice check refuses the removed commands, so this dispatch needs no branch for them.
+    choice check refuses the removed `run` and `label`, so this dispatch needs no branch for them.
     """
     options = _eargs._parser().parse_args(argv)
     handlers = {
         "conversations": _ecmds._conversations,
+        "calibrate": _ecmds._calibrate,
         "gate": _ecmds._gate,
         "baseline-guard": _ecmds._baseline_guard,
         "tradeoff": _ecmds._tradeoff,

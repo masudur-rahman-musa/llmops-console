@@ -12,7 +12,7 @@ import { Table } from "@/components/ui/table";
 import type { CostBody } from "@/features/cost/guards";
 import { readCostFilters } from "@/lib/filters";
 import { NA, shortDay, smallUsd, usd } from "@/lib/format";
-import { CHECK_SCORE_SENTENCE, WINDOW_LINES, scoreLabel } from "@/lib/labels";
+import { OUTCOME_SENTENCE, WINDOW_LINES, scoreLabel } from "@/lib/labels";
 import { PAGE_PARAMS, pageOf } from "@/lib/paging";
 import { TRADEOFF_METRICS, readTradeoff, type Tradeoff } from "@/lib/tradeoff";
 
@@ -93,7 +93,7 @@ function TradeoffTable({ table }: { table: Tradeoff | null }) {
         }))}
       />
       <p>{table.conclusion}</p>
-      <p className="note">{CHECK_SCORE_SENTENCE}</p>
+      <p className="note">{OUTCOME_SENTENCE}</p>
     </>
   );
 }

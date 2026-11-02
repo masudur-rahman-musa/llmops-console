@@ -1,14 +1,16 @@
 """Command handlers for `ops-eval`.
 
-The four functions that do the actual work of each subcommand: `_conversations`, `_gate`,
-`_tradeoff` and `_baseline_guard`. Each takes the parsed `argparse.Namespace` and returns the
-process exit code. Every HTTP client a command opens comes from one seam,
-`new_http_client()`, so a test replaces the network with one `httpx.MockTransport`.
+The five functions that do the actual work of each subcommand: `_conversations`,
+`_calibrate`, `_gate`, `_tradeoff` and `_baseline_guard`. Each takes the parsed
+`argparse.Namespace` and returns the process exit code. Every HTTP client a command opens
+comes from one seam, `new_http_client()`, so a test replaces the network with one
+`httpx.MockTransport`.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import shlex
 import subprocess
 import sys
@@ -22,8 +24,10 @@ import httpx
 import app.cli.evals_args as _eargs
 from app.cli.evals_args import UsageError
 from app.core.config import Settings
+from app.core.errors import CalibrationInvalid, LabelsInvalid
 from app.core.validation import IdentifierInvalid, checked_identifier
 from app.evals.baseline_guard import GUARD_PASSED_LINE, check, offence_line
+from app.evals.calibration import calibrate, calibration_json, judge_model_from_routing
 from app.evals.cases import CaseSetInvalid, EvalCase, load_cases
 from app.evals.gate import (
     GateInputInvalid,
@@ -34,10 +38,11 @@ from app.evals.gate import (
     verdict_line,
 )
 from app.evals.judge import JudgeClient, prompt_version
+from app.evals.labels import load_labels
 from app.evals.person import PersonModel, PersonTurn, PlayedTurn, SimulatedPerson
 from app.evals.push import push_metrics
 from app.evals.report import ALL_TENANTS, REPORT_JSON_NAME, RunReport, build_report, write_reports
-from app.evals.results import PlayRecord
+from app.evals.results import PlayRecord, trusted_check_types
 from app.evals.runner import run_eval
 from app.evals.target import TargetClient, TargetUnreachable
 from app.evals.tradeoff import (
@@ -47,7 +52,7 @@ from app.evals.tradeoff import (
     write_tradeoff,
 )
 from app.storage.db import build_pool
-from app.storage.eval_store import PostgresEvalStore, rows_from_report
+from app.storage.eval_store import PostgresEvalStore, play_rows_from_report, rows_from_report
 
 EXIT_OK: int = 0
 EXIT_FAILED: int = 1
@@ -60,6 +65,10 @@ UNSTORED_LINE: str = (
 UNJUDGED_LINE: str = (
     "no gateway URL or no OPSCONSOLE_EVAL_JUDGE_KEY: the simulated person ends each play "
     "after the opening and nothing is judged"
+)
+
+NO_JUDGE_KEY_LINE: str = (
+    "no OPSCONSOLE_EVAL_JUDGE_KEY: the judge cannot be asked, so nothing was calibrated"
 )
 
 
@@ -104,7 +113,9 @@ def _store_rows(report: RunReport, out: Path) -> str | None:
         return None
     try:
         run_row, case_rows = rows_from_report(report, report_path=out / REPORT_JSON_NAME)
-        PostgresEvalStore(build_pool(database_url)).write(run_row, case_rows)
+        PostgresEvalStore(build_pool(database_url)).write(
+            run_row, case_rows, play_rows_from_report(report)
+        )
     except Exception as exc:
         return f"the eval store did not take this run: {exc}"
     return None
@@ -196,6 +207,9 @@ def _conversations(options: argparse.Namespace) -> int:
             tenant=ALL_TENANTS,
             target=target,
             judge_prompt_version=prompt_version() if judge is not None else None,
+            trusted_check_types=trusted_check_types(
+                options.calibration, judge_prompt_sha256=prompt_version()
+            ),
         )
         try:
             write_reports(out, report)
@@ -217,6 +231,57 @@ def _conversations(options: argparse.Namespace) -> int:
     if stored is not None:
         print(stored, file=sys.stderr)
         return EXIT_USAGE
+    return EXIT_OK
+
+
+def _calibrate(options: argparse.Namespace) -> int:
+    """Ask the judge about the owner's labels and write `calibration.json`.
+
+    Every check runs before the judge is asked, so a missing key or a file with no owner
+    rows spends nothing. Nothing is written unless the whole calibration finished.
+    """
+    try:
+        gateway_url = _eargs._checked_target(options.gateway_url)
+        labels_path = Path(options.labels)
+        rows = load_labels(labels_path)
+        labels_sha256 = hashlib.sha256(labels_path.read_bytes()).hexdigest()
+    except UsageError:
+        print(
+            f"--gateway-url: {options.gateway_url!r} is not an absolute http(s) URL",
+            file=sys.stderr,
+        )
+        return EXIT_USAGE
+    except LabelsInvalid as exc:
+        print(exc, file=sys.stderr)
+        return EXIT_USAGE
+    api_key = Settings().eval_judge_key
+    if not api_key:
+        print(NO_JUDGE_KEY_LINE, file=sys.stderr)
+        return EXIT_USAGE
+
+    with new_http_client() as http:
+        judge = JudgeClient(gateway_url, client=http, api_key=api_key)
+        try:
+            calibration = calibrate(
+                rows,
+                judge,
+                judge_model=judge_model_from_routing(Settings().routing_policy_path),
+                judge_prompt_sha256=prompt_version(),
+                labels_sha256=labels_sha256,
+                made_on=datetime.now(UTC).date(),
+            )
+        except CalibrationInvalid as exc:
+            print(f"{labels_path}: {exc}", file=sys.stderr)
+            return EXIT_USAGE
+
+    try:
+        Path(options.out).write_text(calibration_json(calibration), encoding="utf-8")
+    except OSError as exc:
+        print(f"--out: {options.out} could not be written: {exc.strerror}", file=sys.stderr)
+        return EXIT_USAGE
+
+    trusted = sorted(name for name, entry in calibration.check_types.items() if entry.trusted)
+    print(f"check types {len(calibration.check_types)} · trusted {', '.join(trusted) or 'none'}")
     return EXIT_OK
 
 

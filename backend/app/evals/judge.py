@@ -32,6 +32,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 if TYPE_CHECKING:
     from app.evals.cases import ReplyCheck
+    from app.evals.labels import LabelTurn
     from app.evals.person import PlayedTurn
 
 JUDGE_ALIAS: Final[str] = "judge"
@@ -155,12 +156,9 @@ def render_conversation(turns: Sequence[PlayedTurn]) -> str:
     for number, turn in enumerate(turns, start=1):
         lines.append(f"Turn {number}")
         lines.append(f"Person: {turn.message}")
-        for call in turn.answer.tool_calls:
-            lines.append(
-                f"Tool {call.name} args={json.dumps(call.args, ensure_ascii=False)} "
-                f"ok={call.ok} error={call.error_code} "
-                f"result={json.dumps(call.result, ensure_ascii=False)}"
-            )
+        lines.extend(
+            _tool_line(c.name, c.args, c.ok, c.error_code, c.result) for c in turn.answer.tool_calls
+        )
         lines.append(f"Help desk: {turn.answer.reply}")
     lines.append(CONVERSATION_CLOSE)
     if turns:
@@ -168,6 +166,32 @@ def render_conversation(turns: Sequence[PlayedTurn]) -> str:
         lines.append(f"World facts before the first turn: {first.model_dump_json()}")
         lines.append(f"World facts after the last turn: {last.model_dump_json()}")
     return "\n".join(lines)
+
+
+def render_label_conversation(turns: Sequence[LabelTurn]) -> str:
+    """A labelled conversation for the judge, in the same tags and lines a run uses.
+
+    A label row carries no world facts, so none are shown; the turns read exactly as
+    `render_conversation` writes them, so a calibration tests the prompt a run uses.
+    """
+    lines = [CONVERSATION_OPEN]
+    for number, turn in enumerate(turns, start=1):
+        lines.append(f"Turn {number}")
+        lines.append(f"Person: {turn.person}")
+        lines.extend(
+            _tool_line(c.name, c.args, c.ok, c.error_code, c.result) for c in turn.tool_calls
+        )
+        lines.append(f"Help desk: {turn.reply}")
+    lines.append(CONVERSATION_CLOSE)
+    return "\n".join(lines)
+
+
+def _tool_line(name: str, args: object, ok: bool, error_code: str | None, result: object) -> str:
+    return (
+        f"Tool {name} args={json.dumps(args, ensure_ascii=False)} "
+        f"ok={ok} error={error_code} "
+        f"result={json.dumps(result, ensure_ascii=False)}"
+    )
 
 
 class JudgeClient:
@@ -187,7 +211,10 @@ class JudgeClient:
         self._timeout = timeout
 
     def _ask(self, question: str, turns: Sequence[PlayedTurn]) -> CheckAnswer | None:
-        user = f"{question}\n\n{render_conversation(turns)}"
+        return self._ask_rendered(question, render_conversation(turns))
+
+    def _ask_rendered(self, question: str, conversation: str) -> CheckAnswer | None:
+        user = f"{question}\n\n{conversation}"
         body = chat_body(JUDGE_ALIAS, prompt_text(), user)
         answer = ask_retried(
             self._client,
@@ -212,3 +239,7 @@ class JudgeClient:
     def never(self, text: str, turns: Sequence[PlayedTurn]) -> CheckAnswer | None:
         """Answer one never rule: `yes` means the agent did the thing it must never do."""
         return self._ask(f"Never rule: the agent {text}", turns)
+
+    def label(self, question: str, conversation: Sequence[LabelTurn]) -> CheckAnswer | None:
+        """Answer a label row's question about its conversation, or `None` when unusable."""
+        return self._ask_rendered(question, render_label_conversation(conversation))

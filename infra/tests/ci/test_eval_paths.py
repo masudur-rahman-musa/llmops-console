@@ -175,7 +175,7 @@ def test_every_path_the_eval_files_name_exists() -> None:
 
 
 RESET_SCRIPT = REPO_ROOT / "infra" / "evals" / "reset_helpdesk.sh"
-OLD_FLAGS = re.compile(r"--judge-url\b|--repeats\b|ops-eval (label|calibrate)\b|check_score")
+OLD_FLAGS = re.compile(r"--judge-url\b|--repeats\b|ops-eval label\b|check_score")
 
 
 def all_eval_text() -> dict[str, str]:
@@ -191,7 +191,7 @@ def all_eval_text() -> dict[str, str]:
 
 def test_every_eval_path_uses_the_new_flags_and_names_files_that_exist() -> None:
     """Catches an eval path left on the retired flags or scores (`--judge-url`, `--repeats`,
-    `label`, `calibrate`, `check_score`), a `make eval` that does not hand the per-play reset
+    `label`, `check_score`), a `make eval` that does not hand the per-play reset
     script to the runner, a nightly that plays three times instead of once, a gate workflow
     that still reads the old score, and a reset script or baseline file that is named but
     absent."""
@@ -208,3 +208,21 @@ def test_every_eval_path_uses_the_new_flags_and_names_files_that_exist() -> None
     assert ".metrics.safety == 100" in texts["eval-gate.yml"]
     nightly = [s for s in run_scripts("nightly-eval.yml", "nightly-eval") if "ops-eval conv" in s]
     assert re.search(r"--plays\s+1\b", nightly[0])
+
+
+CALIBRATION_PATH = "backend/evals/labels/calibration.json"
+
+
+def test_make_eval_passes_the_calibration_only_when_it_exists() -> None:
+    """Catches a `make eval` that never hands the calibration to the run (reply quality would
+    stay empty for ever), and one that always does (a missing file would then stop every run
+    on a fresh clone, where nobody has calibrated yet). The recipe names the flag, the file
+    is named in the Makefile, and the flag sits behind a test that the file exists."""
+    makefile = MAKEFILE.read_text(encoding="utf-8")
+    recipe = make_recipe("eval")
+
+    assert "--calibration" in recipe
+    assert CALIBRATION_PATH in makefile
+    assert recipe.count("--calibration") == 1
+    guard = re.search(r"(wildcard|\[ -f|test -f)[^\n]*calibration", makefile, re.IGNORECASE)
+    assert guard, "the calibration flag is not behind a file-exists test"

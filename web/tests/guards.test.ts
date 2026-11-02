@@ -59,7 +59,7 @@ const RENDERED: Record<PageName, Path[]> = {
     ["grafana_url"],
     ["last_eval", "finished_at"],
     ["last_eval", "passed"],
-    ["last_eval", "check_score"],
+    ["last_eval", "outcome_every_play"],
     ["routing", "loaded_at"],
     ["routing", "aliases"],
     ["routing", "aliases", -1, "name"],
@@ -95,6 +95,10 @@ const RENDERED: Record<PageName, Path[]> = {
     ["categories"],
     ["taxonomy"],
     ["blocked"],
+    ["needs_a_look"],
+    ["needs_a_look", -1, "case_id"],
+    ["needs_a_look", -1, "play"],
+    ["needs_a_look", -1, "why"],
     ["runs", -1, "id"],
     ["runs", -1, "started_at"],
     ["runs", -1, "passed"],
@@ -159,7 +163,7 @@ const RENDERED: Record<PageName, Path[]> = {
 
 describe("page body guards", () => {
   it("each page fixture passes its guard", () => {
-    // Catches a guard stricter than console-api's output: one refusing an extra field, a null where the contract allows null, or an absent check_score.
+    // Catches a guard stricter than console-api's output: one refusing an extra field, a null where the contract allows null, or an absent outcome_every_play.
     expect(Object.keys(GUARDS).sort()).toEqual(Object.keys(CONSOLE_PATHS).sort());
     for (const name of PAGES) {
       expect(passes(name, fixture(name)), name).toBe(true);
@@ -170,10 +174,10 @@ describe("page body guards", () => {
       nullHome[field] = null;
     }
     expect(passes("home", nullHome), "home all null").toBe(true);
-    expect(passes("home", withValue("home", ["last_eval", "check_score"], null)), "home accuracy null").toBe(true);
+    expect(passes("home", withValue("home", ["last_eval", "outcome_every_play"], null)), "home accuracy null").toBe(true);
 
-    expect(passes("quality", withValue("quality", ["runs", -1, "metrics", "check_score"], null)), "accuracy null").toBe(true);
-    expect(passes("quality", without("quality", ["runs", -1, "metrics", "check_score"])), "accuracy absent").toBe(true);
+    expect(passes("quality", withValue("quality", ["runs", -1, "metrics", "outcome_every_play"], null)), "outcome null").toBe(true);
+    expect(passes("quality", without("quality", ["runs", -1, "metrics", "outcome_every_play"])), "outcome absent").toBe(true);
     expect(passes("quality", withValue("quality", ["blocked", -1, "regressed"], [])), "regressed empty").toBe(true);
 
     // Catches a quality guard that refuses a gate row whose value, threshold and verdict are all null (no run, no baseline).
@@ -236,6 +240,16 @@ describe("page body guards", () => {
     expect(passes("requests", withValue("requests", ["tenants"], []))).toBe(true);
     expect(passes("requests", withValue("requests", ["tenants"], "acme"))).toBe(false);
     expect(passes("requests", withValue("requests", ["models"], [7]))).toBe(false);
+  });
+
+  it("needs_a_look is required and shape-checked", () => {
+    // Catches a quality guard that ignores the needs-a-look list (a body without it, a row without a case or a why, a text play number or a play of 1.5 would reach the page), and one that refuses an empty list, which is the normal body of a run with nothing to look at.
+    expect(passes("quality", without("quality", ["needs_a_look"])), "key missing").toBe(false);
+    expect(passes("quality", withValue("quality", ["needs_a_look"], [])), "empty list").toBe(true);
+    expect(passes("quality", withValue("quality", ["needs_a_look", -1, "play"], "2")), "text play").toBe(false);
+    expect(passes("quality", withValue("quality", ["needs_a_look", -1, "play"], 1.5)), "fraction play").toBe(false);
+    expect(passes("quality", withValue("quality", ["needs_a_look", -1, "case_id"], 7)), "number case").toBe(false);
+    expect(passes("quality", withValue("quality", ["needs_a_look", -1, "why"], null)), "null why").toBe(false);
   });
 
   it("quality guard takes a marker eval_run_id", () => {

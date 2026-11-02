@@ -11,7 +11,7 @@
     "id": "run-2026-09-16-nightly",
     "finished_at": "2026-09-16T07:05:00Z",
     "passed": true,
-    "check_score": 93.12
+    "outcome_every_play": 93.12
   },
   "routing": {
     "loaded_at": "2026-10-26T09:00:00Z",
@@ -20,30 +20,53 @@
         "name": "agent-default",
         "purpose": "Everyday help desk chat replies on the cheap model.",
         "candidates": [
-          { "provider": "anthropic", "model": "claude-haiku-5-5" },
-          { "provider": "openai", "model": "gpt-5-mini" }
+          {
+            "provider": "anthropic",
+            "model": "claude-haiku-5-5"
+          },
+          {
+            "provider": "openai",
+            "model": "gpt-5-mini"
+          }
         ]
       },
       {
         "name": "agent-strong",
         "purpose": "Harder chat turns that need the strong model.",
         "candidates": [
-          { "provider": "anthropic", "model": "claude-sonnet-5-5" },
-          { "provider": "openai", "model": "gpt-5" }
+          {
+            "provider": "anthropic",
+            "model": "claude-sonnet-5-5"
+          },
+          {
+            "provider": "openai",
+            "model": "gpt-5"
+          }
         ]
       },
       {
         "name": "judge",
         "purpose": "Grades eval answers against the reference labels.",
         "candidates": [
-          { "provider": "anthropic", "model": "claude-haiku-5-5" },
-          { "provider": "openai", "model": "gpt-5-mini" }
+          {
+            "provider": "anthropic",
+            "model": "claude-haiku-5-5"
+          },
+          {
+            "provider": "openai",
+            "model": "gpt-5-mini"
+          }
         ]
       },
       {
         "name": "embed",
         "purpose": "Turns text into vectors for search and the semantic cache.",
-        "candidates": [{ "provider": "local_embed", "model": "bge-small-en-v1.5" }]
+        "candidates": [
+          {
+            "provider": "local_embed",
+            "model": "bge-small-en-v1.5"
+          }
+        ]
       }
     ]
   },

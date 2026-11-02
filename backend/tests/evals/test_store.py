@@ -48,10 +48,11 @@ from app.storage.eval_store import (
     EvalCaseRow,
     EvalRunRow,
     PostgresEvalStore,
+    play_rows_from_report,
     rows_from_report,
 )
 
-from .builders import play_record
+from .builders import check_record, play_record
 
 Pool = ConnectionPool[Connection[TupleRow]]
 
@@ -281,6 +282,63 @@ def test_the_stored_metrics_hold_the_new_scores() -> None:
     assert "check_score" not in run_row.metrics
     assert "judge_score" not in run_row.metrics
     assert JsonbBinaryDumper(Jsonb, Transformer()).dump(Jsonb(dict(run_row.metrics))) is not None
+
+
+def test_each_play_becomes_one_play_row() -> None:
+    """Catches play rows dropped, merged per case, or filled from the wrong play: 2 cases x 3
+    plays give 6 rows, each with its own result, end state, broken rules, judge flags, reply
+    check answers and effort, in report order, under the run's id."""
+    plays = (
+        play_record(
+            "alpha",
+            1,
+            "pass",
+            end_state=1,
+            turns=3,
+            tool_calls=2,
+            seconds=4.5,
+            cost_usd=Decimal("0.0123"),
+            checks=[check_record("plain_words", "yes"), check_record("cites", None)],
+        ),
+        play_record("alpha", 2, "fail", broken=["early_change", "made_up_number"], turns=5),
+        play_record("alpha", 3, "needs_a_look", flagged=["writes the poem"], turns=1),
+        play_record("beta", 1, "pass", end_state=0, owner="tickets"),
+        play_record("beta", 2, "setup_wrong", owner="tickets"),
+        play_record("beta", 3, "pass", end_state=0, owner="tickets"),
+    )
+    report = build(plays)
+
+    rows = play_rows_from_report(report)
+
+    assert len(rows) == 6
+    assert {row.run_id for row in rows} == {report.id}
+    assert [(r.case_id, r.play, r.result) for r in rows] == [
+        ("alpha", 1, "pass"),
+        ("alpha", 2, "fail"),
+        ("alpha", 3, "needs_a_look"),
+        ("beta", 1, "pass"),
+        ("beta", 2, "setup_wrong"),
+        ("beta", 3, "pass"),
+    ]
+    assert [r.end_state for r in rows] == [1, None, None, 0, None, 0]
+    assert rows[1].broken == ("early_change", "made_up_number")
+    assert rows[0].broken == ()
+    assert rows[2].flagged == ("writes the poem",)
+    assert rows[0].flagged == ()
+    first = rows[0]
+    assert [(c["check"], c["answer"]) for c in first.checks] == [
+        ("plain_words", "yes"),
+        ("cites", None),
+    ]
+    assert (first.turns, first.tool_calls, first.seconds, first.cost_usd) == (
+        3,
+        2,
+        4.5,
+        Decimal("0.0123"),
+    )
+    assert rows[1].turns == 5
+    assert rows[1].cost_usd is None
+    assert JsonbBinaryDumper(Jsonb, Transformer()).dump(Jsonb(list(first.checks))) is not None
 
 
 def test_there_is_one_case_row_per_case_in_report_order() -> None:

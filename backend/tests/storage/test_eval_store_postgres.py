@@ -39,6 +39,7 @@ The contract these cases are written against, before it exists:
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 
 import psycopg
@@ -47,7 +48,14 @@ from psycopg import sql
 
 from app.evals.report import REPORT_JSON_NAME, RunReport, build_report
 from app.evals.results import PlayRecord
-from app.storage.eval_store import EVAL_CASES, EVAL_RUNS, PostgresEvalStore, rows_from_report
+from app.storage.eval_store import (
+    EVAL_CASES,
+    EVAL_PLAYS,
+    EVAL_RUNS,
+    PostgresEvalStore,
+    play_rows_from_report,
+    rows_from_report,
+)
 
 from .conftest import Pool, requires_postgres, table_names
 
@@ -364,3 +372,153 @@ def test_a_write_that_fails_part_way_leaves_neither_table_changed(
 
     assert run_rows(pool, migrated_schema) == []
     assert case_rows(pool, migrated_schema) == []
+
+
+# --------------------------------------------------------------------------
+# the play rows
+# --------------------------------------------------------------------------
+
+EVAL_PLAYS_COLUMNS = (
+    "run_id",
+    "case_id",
+    "play",
+    "result",
+    "end_state",
+    "broken",
+    "flagged",
+    "checks",
+    "turns",
+    "tool_calls",
+    "seconds",
+    "cost_usd",
+)
+
+
+def two_cases_of_plays() -> tuple[PlayRecord, ...]:
+    """Plays that differ in every stored column, so a swapped binding shows as a wrong value."""
+    return (
+        PlayRecord.model_validate(
+            {
+                "case_id": "alpha",
+                "owner": "access",
+                "play": 1,
+                "result": "pass",
+                "end_state": 1,
+                "broken": (),
+                "flagged": (),
+                "turns": 3,
+                "tool_calls": 2,
+                "seconds": 4.5,
+                "cost_usd": Decimal("0.012300"),
+                "checks": ({"check": "plain_words", "answer": "yes", "quote": "q", "reason": "r"},),
+                "conversation": (),
+            }
+        ),
+        PlayRecord.model_validate(
+            {
+                "case_id": "alpha",
+                "owner": "access",
+                "play": 2,
+                "result": "fail",
+                "end_state": None,
+                "broken": ("early_change", "made_up_number"),
+                "flagged": (),
+                "turns": 5,
+                "tool_calls": 4,
+                "seconds": 9.25,
+                "cost_usd": None,
+                "checks": (),
+                "conversation": (),
+            }
+        ),
+        PlayRecord.model_validate(
+            {
+                "case_id": "beta",
+                "owner": "tickets",
+                "play": 1,
+                "result": "needs_a_look",
+                "end_state": None,
+                "broken": (),
+                "flagged": ("writes the poem",),
+                "turns": 1,
+                "tool_calls": 0,
+                "seconds": 1.0,
+                "cost_usd": None,
+                "checks": (),
+                "conversation": (),
+            }
+        ),
+    )
+
+
+def store_with_plays(pool: Pool, schema: str) -> RunReport:
+    report = build_report(
+        two_cases_of_plays(),
+        started_at=STARTED,
+        finished_at=FINISHED,
+        set_name=SET_NAME,
+        set_sha=SET_SHA,
+        set_sha_source="commit",
+        run_kind="ci",
+        git_sha=GIT_SHA,
+        tenant=TENANT,
+        target=TARGET,
+    )
+    run_row, cases = rows_from_report(report, report_path=REPORT_PATH)
+    PostgresEvalStore(pool, schema=schema).write(run_row, cases, play_rows_from_report(report))
+    return report
+
+
+def play_table_rows(pool: Pool, schema: str) -> list[dict[str, object]]:
+    with pool.connection() as conn:
+        rows = conn.execute(
+            sql.SQL("select {} from {} order by case_id, play").format(
+                sql.SQL(", ").join(sql.Identifier(name) for name in EVAL_PLAYS_COLUMNS),
+                sql.Identifier(schema, EVAL_PLAYS),
+            )
+        ).fetchall()
+    return [dict(zip(EVAL_PLAYS_COLUMNS, row, strict=True)) for row in rows]
+
+
+@requires_postgres
+def test_play_rows_round_trip_and_cascade(pool: Pool, migrated_schema: str) -> None:
+    """Catches a play table whose columns disagree with the store's statement (a swapped
+    binding of `broken` and `flagged`, an end state of 0 stored as NULL), a result column that
+    takes any word (a fifth result no query counts), and a play row left behind when its run
+    is deleted. Rows read back equal to what was written; result `maybe` is refused by the
+    table itself; deleting the run deletes its plays."""
+    schema = migrated_schema
+    report = store_with_plays(pool, schema)
+
+    stored = play_table_rows(pool, schema)
+
+    assert [
+        (r["case_id"], r["play"], r["result"], r["end_state"], r["broken"], r["flagged"])
+        for r in stored
+    ] == [
+        ("alpha", 1, "pass", 1, [], []),
+        ("alpha", 2, "fail", None, ["early_change", "made_up_number"], []),
+        ("beta", 1, "needs_a_look", None, [], ["writes the poem"]),
+    ]
+    assert {r["run_id"] for r in stored} == {report.id}
+    assert [(r["turns"], r["tool_calls"], r["seconds"], r["cost_usd"]) for r in stored] == [
+        (3, 2, 4.5, Decimal("0.012300")),
+        (5, 4, 9.25, None),
+        (1, 0, 1.0, None),
+    ]
+    checks = stored[0]["checks"]
+    assert isinstance(checks, list)
+    assert [(c["check"], c["answer"]) for c in checks] == [("plain_words", "yes")]
+
+    with pytest.raises(psycopg.errors.CheckViolation), pool.connection() as conn:
+        conn.execute(
+            sql.SQL("update {} set result = %s").format(sql.Identifier(schema, EVAL_PLAYS)),
+            ("maybe",),
+        )
+
+    with pool.connection() as conn:
+        conn.execute(
+            sql.SQL("delete from {} where id = %s").format(sql.Identifier(schema, EVAL_RUNS)),
+            (report.id,),
+        )
+    assert play_table_rows(pool, schema) == []

@@ -31,14 +31,14 @@ class _Body(BaseModel):
 
 
 class LastEval(_Body):
-    """The newest eval run. `check_score` is in percent points, as stored (57.14).
+    """The newest eval run. `outcome_every_play` is in percent points, as stored (57.14).
 
     `passed` is the eval gate verdict, `None` when there is no baseline to check against."""
 
     id: str
     finished_at: datetime
     passed: bool | None
-    check_score: float | None
+    outcome_every_play: float | None
 
 
 class CostDay(_Body):
@@ -97,6 +97,14 @@ class CategoryCount(_Body):
 class TagCount(_Body):
     tag: str
     count: int
+
+
+class NeedsALookPlay(_Body):
+    """One play of the newest run that needs a person to read it, and why."""
+
+    case_id: str
+    play: int
+    why: str
 
 
 class Regression(_Body):
@@ -223,6 +231,7 @@ class QualityPage(_Body):
     categories: tuple[CategoryCount, ...]
     taxonomy: tuple[TagCount, ...]
     blocked: tuple[BlockedItem, ...]
+    needs_a_look: tuple[NeedsALookPlay, ...] = ()
 
 
 class RedactionCount(_Body):

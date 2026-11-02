@@ -10,6 +10,7 @@ import HomePage from "@/app/(console)/page";
 import CostPage from "@/app/(console)/cost/page";
 import QualityPage from "@/app/(console)/quality/page";
 import RequestsPage from "@/app/(console)/requests/page";
+import { OUTCOME_SENTENCE } from "@/lib/labels";
 
 type PageName = "home" | "requests" | "cost" | "quality";
 type Fixture = Record<string, unknown>;
@@ -34,9 +35,6 @@ const QUESTIONS: Record<PageName, string> = {
   requests:
     "What did the gateway hide, how many tokens went in and out, how often did the cache answer, and where is each request's trace?",
 };
-
-const CHECK_SCORE_SENTENCE =
-  "Check score: the share of help desk conversations where every turn passed all three checks (the right tools in order, no change before the user says yes, no made-up name).";
 
 function fixture(name: PageName): Fixture {
   return JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), "utf8")) as Fixture;
@@ -130,26 +128,26 @@ describe("console pages are clear to a new reader", () => {
     }
   });
 
-  it("the check score sentence shows wherever the score does", async () => {
-    // Catches a page that leaves the check score unexplained, words it differently, or prints the sentence twice; Overview shows only a number card, so it carries none.
+  it("the outcome sentence shows wherever the score does", async () => {
+    // Catches a page that leaves outcome every play unexplained or prints the sentence twice; Overview shows only a number card, so it carries none. Quality has it once and Cost once, under the tradeoff table.
     const expected = { home: 0, quality: 1, cost: 1 } as const;
     for (const name of ["home", "quality", "cost"] as const) {
       const html = await render(name);
-      expect(occurrences(text(html), text(CHECK_SCORE_SENTENCE)), name).toBe(expected[name]);
+      expect(occurrences(text(html), text(OUTCOME_SENTENCE)), name).toBe(expected[name]);
     }
   });
 
-  it("cost shows the check score note only beside a measured table", async () => {
-    // Catches a note printed under "Not measured yet." where no check score shows (a note about nothing), and one dropped or doubled beside a table that does show it.
+  it("cost shows the outcome note only beside a measured table", async () => {
+    // Catches a note printed under "Not measured yet." where no outcome score shows (a note about nothing), and one dropped or doubled beside a table that does show it.
     vi.stubEnv("CONSOLE_TRADEOFF_PATH", fileURLToPath(new URL("./fixtures/no-such-tradeoff.json", import.meta.url)));
     const missing = await render("cost");
     expect(has(missing, "Not measured yet.")).toBe(true);
-    expect(occurrences(text(missing), text(CHECK_SCORE_SENTENCE))).toBe(0);
+    expect(occurrences(text(missing), text(OUTCOME_SENTENCE))).toBe(0);
 
     vi.stubEnv("CONSOLE_TRADEOFF_PATH", TRADEOFF);
     const measured = await render("cost");
     expect(has(measured, "Not measured yet.")).toBe(false);
-    expect(occurrences(text(measured), text(CHECK_SCORE_SENTENCE))).toBe(1);
+    expect(occurrences(text(measured), text(OUTCOME_SENTENCE))).toBe(1);
   });
 
   it("no table header is a raw key, and every table has a thead", async () => {
@@ -169,19 +167,18 @@ describe("console pages are clear to a new reader", () => {
   });
 
   it("the tradeoff table names its columns in words", async () => {
-    // Catches tradeoff headers left as check_score, judge_score and usd_per_1000_turns.
-    const table = tableWith(await render("cost"), ["Option", "Kind", "Check score", "Judge score", "Cost per 1,000 turns"]);
+    // Catches tradeoff headers left as the old scores or as raw keys (outcome_every_play, usd_per_1000_turns).
+    const table = tableWith(await render("cost"), ["Option", "Kind", "Outcome every play", "Safety", "Cost per 1,000 turns"]);
     expect(rows(table)).toHaveLength(4);
   });
 
   it("quality shows gate scores as percentages beside the baseline", async () => {
-    // Catches a score card that drops a score, swaps value and baseline, flips a verdict, loses the judge note, prints the scores as bare numbers with one decimal, still calls the baseline a threshold, or keeps the old gate table.
+    // Catches a score card that drops a score, swaps value and baseline, flips a verdict, prints the scores as bare numbers with one decimal, still calls the baseline a threshold, or keeps the old gate table.
     const html = await render("quality");
-    expect(has(html, "Check score 52.10% Baseline 48.48% passed")).toBe(true);
-    expect(has(html, "Judge score 25.00% Baseline 27.40% failed")).toBe(true);
-    expect(has(html, "kappa 0.7")).toBe(true);
+    expect(has(html, "Safety 100.00% Baseline 100.00% passed")).toBe(true);
+    expect(has(html, "Outcome every play 25.00% Baseline 27.40% failed")).toBe(true);
     const flat = text(html);
-    expect(flat.indexOf("Check score 52.10%")).toBeLessThan(flat.indexOf("Judge score 25.00%"));
+    expect(flat.indexOf("Safety 100.00%")).toBeLessThan(flat.indexOf("Outcome every play 25.00%"));
     expect(tables(html).filter((table) => headers(table).includes("Baseline"))).toEqual([]);
     expect(flat).not.toMatch(/threshold/i);
   });
@@ -192,11 +189,11 @@ describe("console pages are clear to a new reader", () => {
     const gate = body.gate as Array<Record<string, unknown>>;
     Object.assign(gate[0], { threshold: null, passed: null });
     const html = await render("quality", body);
-    expect(has(html, "Check score 52.10% Baseline not set")).toBe(true);
-    const card = (html.match(/<li class="card"[^>]*>[\s\S]*?<\/li>/g) ?? []).map(text).find((line) => line.startsWith("Check score"));
+    expect(has(html, "Safety 100.00% Baseline not set")).toBe(true);
+    const card = (html.match(/<li class="card"[^>]*>[\s\S]*?<\/li>/g) ?? []).map(text).find((line) => line.startsWith("Safety"));
     expect(card).toBeDefined();
     expect(card).not.toMatch(/passed|failed/);
-    // The judge card still has its baseline, so the notice belongs to the check card alone.
+    // The outcome card still has its baseline, so the notice belongs to the safety card alone.
     expect(occurrences(text(html), "Baseline not set")).toBe(1);
     expect(text(html)).not.toMatch(/threshold/i);
   });

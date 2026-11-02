@@ -135,7 +135,7 @@ def _play_once(
         return _record(case, number, "setup_wrong", (), (), (), turns, effort)
 
     broken = [*turn_rules(turns), *end_rules(case, turns), *code_never_rules(case, turns)]
-    matched = bool(turns) and (
+    end_state = (
         matching_end_state(
             case.right_end_states,
             own=person_name(case.person.seat),
@@ -143,7 +143,8 @@ def _play_once(
             after=turns[-1].answer.world_after,
             now=now(),
         )
-        is not None
+        if turns
+        else None
     )
     checks: list[CheckRecord] = []
     flagged: list[str] = []
@@ -156,9 +157,9 @@ def _play_once(
             if verdict is not None and verdict.answer == "yes":
                 flagged.append(text)
     result = play_result(
-        setup_wrong=False, broken=broken, flagged=flagged, end_state_matched=matched
+        setup_wrong=False, broken=broken, flagged=flagged, end_state_matched=end_state is not None
     )
-    return _record(case, number, result, broken, flagged, checks, turns, effort)
+    return _record(case, number, result, broken, flagged, checks, turns, effort, end_state)
 
 
 def _cost(turns: Sequence[PlayedTurn]) -> Decimal | None:
@@ -181,6 +182,7 @@ def _record(
     checks: Sequence[CheckRecord],
     turns: Sequence[PlayedTurn],
     effort: Mapping[str, object],
+    end_state: int | None = None,
 ) -> PlayRecord:
     return PlayRecord.model_validate(
         {
@@ -188,6 +190,7 @@ def _record(
             "owner": case.owner,
             "play": number,
             "result": result,
+            "end_state": end_state,
             "broken": tuple(broken),
             "flagged": tuple(flagged),
             "checks": tuple(checks),

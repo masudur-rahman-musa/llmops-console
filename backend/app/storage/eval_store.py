@@ -1,4 +1,4 @@
-r"""The two rows a run stores: `eval_runs` and `eval_cases`.
+r"""The rows a run stores: `eval_runs`, `eval_cases` and `eval_plays`.
 
 The eval runner writes the two report files; this module writes the two rows built
 from the same `RunReport`. It lives in `storage/` with the other Postgres writers.
@@ -34,7 +34,8 @@ broke) rather than recomputed here. `metrics` carries `safety`, `outcome_every_p
 the other scores the same way, in the report's own JSON form, exactly as they are in the
 file. The `eval_runs.metrics` column is `jsonb`, so the swap from the old metric names
 needed no migration. `alias_resolution` and `judge_kappa` still ship NULL, and the
-migration says so column by column. A case row's `details` holds the plays.
+migration says so column by column. A case row's `details` holds the plays with their
+conversations; `eval_plays` holds one row per play, with what a query counts or lists.
 """
 
 from __future__ import annotations
@@ -64,6 +65,9 @@ EVAL_CASES: Final[str] = "eval_cases"
 Both names are constants because the statements below build their identifiers
 from them and the Postgres tests read the catalogue by the
 same names, so a rename cannot reach only one of the two."""
+
+EVAL_PLAYS: Final[str] = "eval_plays"
+"""The per-play table `migrations/012_eval_plays.sql` creates, cascading from `eval_runs.id`."""
 
 MAX_SET_NAME_LENGTH: Final[int] = 128
 """The longest cases file name a run may record.
@@ -155,6 +159,27 @@ class EvalCaseRow(BaseModel):
     details: Mapping[str, Any]
 
 
+class EvalPlayRow(BaseModel):
+    """One play in one run, as `eval_plays` stores it."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    run_id: str
+    case_id: str
+    play: int
+    result: str
+    end_state: int | None
+    broken: tuple[str, ...]
+    flagged: tuple[str, ...]
+    checks: tuple[Mapping[str, Any], ...]
+    """Each reply check as the judge answered it, in JSON form: `check`, `answer`, `quote`,
+    `reason`."""
+    turns: int
+    tool_calls: int
+    seconds: float
+    cost_usd: Decimal | None
+
+
 class EvalStore(Protocol):
     """Where a run's rows go. `write` is the whole contract.
 
@@ -163,8 +188,13 @@ class EvalStore(Protocol):
     is allowed to RAISE - `app.cli.evals` is what guards it, in one place.
     """
 
-    def write(self, run_row: EvalRunRow, case_rows: Sequence[EvalCaseRow]) -> None:
-        """Store one run and its cases. May raise; the caller's guard is the only one."""
+    def write(
+        self,
+        run_row: EvalRunRow,
+        case_rows: Sequence[EvalCaseRow],
+        play_rows: Sequence[EvalPlayRow] = (),
+    ) -> None:
+        """Store one run, its cases and its plays. May raise; the caller's guard is the only one."""
         ...
 
 
@@ -227,8 +257,30 @@ def rows_from_report(
     return run_row, case_rows
 
 
+def play_rows_from_report(report: RunReport) -> tuple[EvalPlayRow, ...]:
+    """One row per play of the report, in report order, under the run's own id. Pure."""
+    return tuple(
+        EvalPlayRow(
+            run_id=report.id,
+            case_id=case.case_id,
+            play=play.play,
+            result=play.result,
+            end_state=play.end_state,
+            broken=play.broken,
+            flagged=play.flagged,
+            checks=tuple(check.model_dump(mode="json") for check in play.checks),
+            turns=play.turns,
+            tool_calls=play.tool_calls,
+            seconds=play.seconds,
+            cost_usd=play.cost_usd,
+        )
+        for case in report.cases
+        for play in case.plays
+    )
+
+
 class PostgresEvalStore:
-    """One run and its cases, in ONE transaction over a pooled connection. No DDL.
+    """One run, its cases and its plays, in ONE transaction over a pooled connection. No DDL.
 
     A run whose cases half-landed is counted by every later query as a
     run with fewer cases, and nothing downstream can tell that from a shorter
@@ -248,11 +300,18 @@ class PostgresEvalStore:
         self._pool = pool
         self._schema = checked_schema(schema)
 
-    def write(self, run_row: EvalRunRow, case_rows: Sequence[EvalCaseRow]) -> None:
-        """Store one run and its cases. Raises on a value that fails a pre-check."""
+    def write(
+        self,
+        run_row: EvalRunRow,
+        case_rows: Sequence[EvalCaseRow],
+        play_rows: Sequence[EvalPlayRow] = (),
+    ) -> None:
+        """Store one run, its cases and its plays. Raises on a value that fails a pre-check."""
         _check_run_row(run_row)
         for case_row in case_rows:
             _check_case_row(case_row)
+        for play_row in play_rows:
+            checked_identifier(play_row.case_id, "case_id")
 
         with self._pool.connection() as conn, conn.transaction():
             conn.execute(
@@ -306,6 +365,32 @@ class PostgresEvalStore:
                         for case_row in case_rows
                     ],
                 )
+                if play_rows:
+                    cursor.executemany(
+                        sql.SQL(
+                            "INSERT INTO {} ("
+                            "run_id, case_id, play, result, end_state, broken, flagged, "
+                            "checks, turns, tool_calls, seconds, cost_usd) "
+                            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                        ).format(sql.Identifier(self._schema, EVAL_PLAYS)),
+                        [
+                            (
+                                row.run_id,
+                                row.case_id,
+                                row.play,
+                                row.result,
+                                row.end_state,
+                                list(row.broken),
+                                list(row.flagged),
+                                Jsonb([dict(check) for check in row.checks]),
+                                row.turns,
+                                row.tool_calls,
+                                row.seconds,
+                                row.cost_usd,
+                            )
+                            for row in play_rows
+                        ],
+                    )
 
 
 def _check_run_row(row: EvalRunRow) -> None:

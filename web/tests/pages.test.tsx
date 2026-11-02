@@ -11,6 +11,8 @@ import CostPage, { dynamic as costDynamic } from "@/app/(console)/cost/page";
 import QualityPage, { dynamic as qualityDynamic } from "@/app/(console)/quality/page";
 import RequestsPage from "@/app/(console)/requests/page";
 
+import { MESSY } from "./fixtures/messy";
+
 type PageName = "home" | "cost" | "quality";
 type Fixture = Record<string, unknown>;
 
@@ -164,11 +166,11 @@ describe("console pages", () => {
       "Cost today $1,234.50",
       "p95 latency 412 ms",
       "Error rate 0.50%",
-      "Last eval 93.12% passed",
+      "Last eval Outcome every play 93.12% passed",
     ]);
     const failedEval = fixture("home");
     failedEval.last_eval = { ...(failedEval.last_eval as Fixture), passed: false };
-    expect(cardTexts(await render("home", failedEval))).toContain("Last eval 93.12% failed");
+    expect(cardTexts(await render("home", failedEval))).toContain("Last eval Outcome every play 93.12% failed");
     const nullHome = fixture("home");
     nullHome.requests_today = null;
     expect(cardTexts(await render("home", nullHome))).toContain("Requests today n/a");
@@ -205,8 +207,8 @@ describe("console pages", () => {
     expect(columns).toEqual([
       "Option",
       "Kind",
-      "Check score",
-      "Judge score",
+      "Outcome every play",
+      "Safety",
       "Cost per 1,000 turns",
     ]);
     expectInOrder(cost, [
@@ -218,7 +220,7 @@ describe("console pages", () => {
     expect(cost).not.toContain("Not measured yet.");
 
     const quality = await render("quality");
-    expect(has(quality, "Check score")).toBe(true);
+    expect(has(quality, "Outcome every play")).toBe(true);
     const qualityCharts = svgs(quality).filter((svg) => count(svg, /<circle\b/g) > 0);
     expect(qualityCharts).toHaveLength(1);
     expect(count(qualityCharts[0], /<circle\b/g)).toBe(3);
@@ -229,8 +231,8 @@ describe("console pages", () => {
     expect(has(quality, "Missed refusal 2")).toBe(true);
     expect(has(quality, "3f9c2a7b1e4d")).toBe(true);
     expect(has(quality, "a1b2c3d4e5f6")).toBe(true);
-    expect(has(quality, "Check score: 0.88 (was 0.93)")).toBe(true);
-    expect(has(quality, "Judge score: 0.9 (was 0.95)")).toBe(true);
+    expect(has(quality, "Outcome every play: 25 (was 31.25)")).toBe(true);
+    expect(has(quality, "Reply quality: 0.9 (was 0.95)")).toBe(true);
     expect(has(quality, "javascript:alert(1)")).toBe(true);
     const prLinks = anchors(quality).filter((anchor) => anchor.label === "PR");
     expect(prLinks.map((anchor) => anchor.href)).toEqual(["https://github.com/example/helpdesk/pull/41"]);
@@ -289,13 +291,13 @@ describe("console pages", () => {
   it("home shows the stored score once and the gate verdict", async () => {
     // Catches a score scaled by 100 a second time (57.14 shown as 5714.00%), a verdict word taken from anything but `passed`, and a null verdict drawn as failed or passed.
     const home = fixture("home");
-    home.last_eval = { ...(home.last_eval as Fixture), check_score: 57.14, passed: true };
+    home.last_eval = { ...(home.last_eval as Fixture), outcome_every_play: 57.14, passed: true };
     const html = await render("home", home);
-    expect(cardTexts(html)).toContain("Last eval 57.14% passed");
+    expect(cardTexts(html)).toContain("Last eval Outcome every play 57.14% passed");
     expect(html).not.toContain("5714");
 
     const noBaseline = fixture("home");
-    noBaseline.last_eval = { ...(noBaseline.last_eval as Fixture), check_score: 57.14, passed: null };
+    noBaseline.last_eval = { ...(noBaseline.last_eval as Fixture), outcome_every_play: 57.14, passed: null };
     const nullHtml = await render("home", noBaseline);
     const lastEval = cardTexts(nullHtml).find((card) => card.startsWith("Last eval")) ?? "";
     expect(lastEval).toContain("57.14%");
@@ -319,17 +321,17 @@ describe("console pages", () => {
     expect(await render("home")).not.toContain("No eval yet.");
   });
 
-  it("pages show an empty state for a run without check_score", async () => {
-    // Catches a null check_score drawn as 0%, as NaN, or as a plotted point: home says n/a and
+  it("pages show an empty state for a run without outcome_every_play", async () => {
+    // Catches a null outcome_every_play drawn as 0%, as NaN, or as a plotted point: home says n/a and
     // the quality chart has no data.
     const home = fixture("home");
-    home.last_eval = { ...(home.last_eval as Fixture), check_score: null };
+    home.last_eval = { ...(home.last_eval as Fixture), outcome_every_play: null };
     const lastEval = cardTexts(await render("home", home)).find((card) => card.startsWith("Last eval")) ?? "";
     expect(lastEval).toContain("n/a");
     expect(lastEval).not.toContain("0.00%");
 
     const quality = fixture("quality");
-    for (const run of list(quality, "runs")) run.metrics = { judge_score: 0.9 };
+    for (const run of list(quality, "runs")) run.metrics = { reply_quality: 90 };
     const qualityHtml = await render("quality", quality);
     expect(has(qualityHtml, "No data.")).toBe(true);
     expect(svgs(qualityHtml).filter((svg) => count(svg, /<circle\b/g) > 0)).toHaveLength(0);
@@ -497,15 +499,15 @@ describe("console pages", () => {
     expect(section(html, "Categories")).not.toContain("None in this window.");
   });
 
-  it("shows the check score note beside the cards", async () => {
-    // Catches a quality page that drops the check score's own note (the 57.14% card would sit beside "20 of 45 passed" with no word on the 10 unstable cases), or prints it away from the cards, after the fixed check score sentence.
+  it("shows a score's own note beside the cards", async () => {
+    // Catches a quality page that drops a gate row's own note (the Safety card would sit with no word on the plays left out), prints it away from the cards, or prints it twice.
     const body = fixture("quality");
-    (list(body, "gate")[0] as Fixture).note = "20 of 35 stable cases; 10 unstable, not counted";
+    (list(body, "gate")[0] as Fixture).note = "3 plays left out; setup wrong";
     const html = await render("quality", body);
-    const note = "Check score: 20 of 35 stable cases; 10 unstable, not counted";
+    const note = "Safety: 3 plays left out; setup wrong";
     expect(has(html, note)).toBe(true);
     const visible = text(html);
-    expect(visible.indexOf(text(note))).toBeGreaterThan(visible.indexOf(text("Judge score")));
+    expect(visible.indexOf(text(note))).toBeGreaterThan(visible.indexOf(text("Results")));
     expect(occurrences(visible, text(note))).toBe(1);
   });
 
@@ -520,14 +522,91 @@ describe("console pages", () => {
     expect(occurrences(text(html), "Unstable cases count as not passed here.")).toBe(1);
   });
 
+  it("quality shows the new scores and the four result counts", async () => {
+    // Catches a quality page that keeps the old two scores, builds the effort cards from an older run or an average of runs (the three runs differ), drops one of the four result counts, or prints a missing score as 0%. The gate cards come first with their baselines, then the newest run's scores, then one Results card.
+    const html = await render("quality");
+    const cardsText = cardTexts(html);
+
+    expect(cardsText).toHaveLength(9);
+    expect(cardsText[0]).toBe("Safety 100.00% Baseline 100.00% passed");
+    expect(cardsText[1]).toBe("Outcome every play 25.00% Baseline 27.40% failed");
+    expect(cardsText[2]).toBe("Outcome at least once 75.00%");
+    expect(cardsText[3]).toBe("Reply quality 80.00%");
+    expect(cardsText[4]).toMatch(/^Mean turns 3\.5\b/);
+    expect(cardsText[5]).toMatch(/^Mean tool calls 2\.25\b/);
+    expect(cardsText[6]).toMatch(/^Mean seconds 12\.5\b/);
+    expect(cardsText[7]).toMatch(/^Mean cost \$?0\.0123/);
+    expect(cardsText[8]).toMatch(/^Results\b/);
+    for (const pattern of [/Pass\W*12\b/, /Fail\W*2\b/, /Needs a look\W*3\b/, /Setup wrong\W*1\b/]) {
+      expect(cardsText[8]).toMatch(pattern);
+    }
+    expect(cardsText.join(" ")).not.toMatch(/check score|judge score/i);
+
+    const missing = fixture("quality");
+    const newest = list(missing, "runs")[0].metrics as Fixture;
+    newest.reply_quality = null;
+    const gaps = cardTexts(await render("quality", missing));
+    expect(gaps[3]).toBe("Reply quality n/a");
+  });
+
+  it("quality draws outcome every play with its baseline", async () => {
+    // Catches a chart still titled Check score, one that plots another score, or a baseline line taken from Safety (100) instead of the Outcome every play baseline (27.40). The chart's own key line is read, since the cards carry both baselines too.
+    const html = await render("quality");
+    const chart = svgs(html).filter((svg) => count(svg, /<circle\b/g) > 0)[0];
+    const key = text(html.match(/<p class="chart-key">[\s\S]*?<\/p>/)?.[0] ?? "");
+
+    expect(key).toContain("Outcome every play 25.00%");
+    expect(key).toContain("Baseline 27.40%");
+    expect(key).not.toContain("Baseline 100");
+    expect(count(chart, /<circle\b/g)).toBe(3);
+  });
+
+  it("quality lists the plays that need a look", async () => {
+    // Catches a missing Needs a look panel, a table with other columns, rows out of the order console-api sent, a play's reasons dropped, and an empty list drawn as a bare header instead of the empty-state line.
+    const section = (html: string): string => {
+      const start = html.indexOf("<h2>Needs a look</h2>");
+      expect(start).toBeGreaterThan(-1);
+      const next = html.indexOf("<h2", start + 1);
+      return html.slice(start, next === -1 ? undefined : next);
+    };
+
+    const html = section(await render("quality"));
+    const header = Array.from(html.matchAll(/<th\b[^>]*>([\s\S]*?)<\/th>/g), (match) => text(match[1]));
+    const rows = Array.from(html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g), (match) => text(match[1])).slice(1);
+
+    expect(header).toEqual(["Case", "Play", "Why"]);
+    expect(rows).toEqual([
+      "case-012 2 writes the poem; sends the file",
+      "case-031 1 No rule broken, and the end state matches none that is listed.",
+      "case-031 3 writes the poem",
+    ]);
+    expect(html).not.toContain("None in this window.");
+
+    const empty = fixture("quality");
+    empty.needs_a_look = [];
+    const emptyHtml = section(await render("quality", empty));
+    expect(emptyHtml).toContain("None in this window.");
+    expect(emptyHtml).not.toContain("<table");
+  });
+
+  it("no page names check score or judge score", async () => {
+    // Catches an old score name left in a page, a chart title, a note or a tradeoff column, on the fixtures and on the messy bodies.
+    const old = /check.?score|judge.?score/i;
+    for (const name of NAMES) {
+      expect(text(await render(name)), name).not.toMatch(old);
+    }
+    expect(text(await render("home", MESSY.home))).not.toMatch(old);
+    expect(text(await render("quality", MESSY.quality))).not.toMatch(old);
+  });
+
   it("blocked with empty regressed renders no regression recorded", async () => {
     // Catches an empty regressed list rendered as nothing, or the notice shown beside real regressions.
     const body = fixture("quality");
     list(body, "blocked")[0].regressed = [];
     const html = await render("quality", body);
     expect(occurrences(text(html), "No regression recorded.")).toBe(1);
-    expect(html).not.toContain("Check score: 0.88");
-    expect(has(html, "Judge score: 0.9 (was 0.95)")).toBe(true);
+    expect(html).not.toContain("Outcome every play: 25");
+    expect(has(html, "Reply quality: 0.9 (was 0.95)")).toBe(true);
   });
 
   it("external links carry rel noopener noreferrer", async () => {

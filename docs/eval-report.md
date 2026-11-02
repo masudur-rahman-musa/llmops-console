@@ -44,9 +44,9 @@ never `0`.
 | `safety` | the share of scored plays that broke no rule. A play set up wrong is not scored. |
 | `outcome_every_play` | the share of cases whose scored plays all passed |
 | `outcome_at_least_once` | the share of cases with at least one pass |
-| `reply_quality` | the share of yes answers among the yes and no answers of the check types the judge calibration trusts. `null` without a calibration file. |
+| `reply_quality` | the share of yes answers among the yes and no answers of the check types the judge calibration trusts. `null` without a calibration file, or with one made under another judge prompt. |
 | `mean_turns`, `mean_tool_calls`, `mean_seconds`, `mean_cost_usd` | effort per scored play. Cost stays `null` until the target sends it. |
-| `needs_a_look`, `setup_wrong` | how many plays ended each way, counted apart |
+| `pass`, `fail`, `needs_a_look`, `setup_wrong` | how many plays ended each way |
 | `cases`, `plays` | the counts behind the scores |
 
 ### cases
@@ -56,7 +56,7 @@ never `0`.
 | `case_id`, `category` | the case id and its `owner` |
 | `passed` | true when every scored play passed |
 | `tags` | the rule ids the plays broke, once each, in the order first broken |
-| `plays` | each play: `play`, `result` (`setup_wrong`, `fail`, `pass` or `needs_a_look`), `broken`, `flagged`, `turns`, `tool_calls`, `seconds`, `cost_usd`, `checks` and the `conversation` |
+| `plays` | each play: `play`, `result` (`setup_wrong`, `fail`, `pass` or `needs_a_look`), `end_state` (the index of the right end state matched, or `null`), `broken`, `flagged`, `turns`, `tool_calls`, `seconds`, `cost_usd`, `checks` and the `conversation` |
 
 A check holds the check type, the judge's answer (`yes`, `no`, `does_not_apply`, or
 `null` when the judge was unusable), a quote from the reply and a one-sentence reason.
@@ -69,6 +69,9 @@ be read is asked again once; if it fails again the check is left unanswered and 
 for nothing. The conversation reaches the model as data between fixed tags. Text in it
 that tries to give the judge instructions is read, not obeyed.
 
+How far the judge is trusted on each check type is measured against the owner's own
+labels; see `docs/eval-labels.md`.
+
 ## The simulated person
 
 The person runs on the gateway alias `simulated-person` with a fixed prompt file. It
@@ -77,8 +80,9 @@ answers from what the case says the person knows, says yes only when the proposa
 
 ## Storage
 
-The same run is also stored in PostgreSQL, in two tables the `003_eval_runs.sql`
-migration creates: one `eval_runs` row and one `eval_cases` row per case. The rows are
+The same run is also stored in PostgreSQL: one `eval_runs` row, one `eval_cases` row per
+case (both from the `003_eval_runs.sql` migration) and one `eval_plays` row per play (from
+`012_eval_plays.sql`). The rows are
 written after the files, in one transaction, so a storage outage costs a run its rows
 and never its report. With no database URL configured a run stores nothing, says so in
 one line on stderr and keeps its own exit code.
@@ -86,7 +90,8 @@ one line on stderr and keeps its own exit code.
 | table | what it holds |
 |---|---|
 | `eval_runs` | the run's identity, its `metrics` (the console reads them from here), `passed` and the `report_path` |
-| `eval_cases` | one row per case: `passed` (every scored play passed), `tags` (the broken rule ids) and `details` (the plays) |
+| `eval_cases` | one row per case: `passed` (every scored play passed), `tags` (the broken rule ids) and `details` (the plays with their conversations) |
+| `eval_plays` | one row per play: `result`, `end_state`, `broken`, `flagged`, `checks` (the reply check answers) and the effort (`turns`, `tool_calls`, `seconds`, `cost_usd`). The console's quality page lists the newest run's needs-a-look plays from here. Deleting a run deletes its plays. |
 
 ## Metrics for the dashboard
 

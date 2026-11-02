@@ -57,6 +57,7 @@ from app.schemas.dashboard import (
     CostDay,
     EvalRunSummary,
     LastEval,
+    NeedsALookPlay,
     Regression,
     ReleaseMarker,
     Saving,
@@ -129,7 +130,7 @@ HOME_READ = HomeRead(
     cost_usd_today=1.25,
     # The stored `passed` is the run's own "every stable case passed" and is false here; the
     # route answers the eval gate verdict from `last_eval_metrics` instead.
-    last_eval=LastEval(id="run-a", finished_at=FINISHED, passed=False, check_score=57.14),
+    last_eval=LastEval(id="run-a", finished_at=FINISHED, passed=False, outcome_every_play=57.14),
     last_eval_metrics={"safety": 100.0, "outcome_every_play": 57.14},
 )
 
@@ -363,7 +364,14 @@ POSTGRES_EMPTY: dict[str, dict[str, Any]] = {
         "cost_per_request": [],
         "top_users": [],
     },
-    QUALITY: {"runs": [], "release_markers": [], "categories": [], "taxonomy": [], "blocked": []},
+    QUALITY: {
+        "runs": [],
+        "release_markers": [],
+        "categories": [],
+        "taxonomy": [],
+        "blocked": [],
+        "needs_a_look": [],
+    },
 }
 
 PROMETHEUS_EMPTY: dict[str, dict[str, Any]] = {
@@ -713,7 +721,7 @@ def test_the_home_body_reads_both_sources(wired: Wired) -> None:
             "id": "run-a",
             "finished_at": HOME_READ.model_dump(mode="json")["last_eval"]["finished_at"],
             "passed": True,
-            "check_score": 57.14,
+            "outcome_every_play": 57.14,
         },
     }
     assert sorted(wired.prom.queries(QUERY_PATH)) == sorted([P95_QUERY, ERROR_RATE_QUERY])
@@ -755,7 +763,8 @@ def test_home_verdict_matches_the_eval_gate(wired: Wired) -> None:
     body = wired.get(HOME).json()
 
     assert body["last_eval"]["passed"] is True
-    assert body["last_eval"]["check_score"] == 57.14
+    assert body["last_eval"]["outcome_every_play"] == 57.14
+    assert "check_score" not in body["last_eval"]
 
 
 GATE_BASELINE = '{"safety": 100, "outcome_every_play": 71}'
@@ -855,6 +864,7 @@ def test_the_quality_body_carries_the_reader_answer(wired: Wired) -> None:
         "categories": [row.model_dump(mode="json") for row in QUALITY_READ.categories],
         "taxonomy": [row.model_dump(mode="json") for row in QUALITY_READ.taxonomy],
         "blocked": [],
+        "needs_a_look": [],
         "gate": [
             {
                 "name": "safety",
@@ -873,6 +883,35 @@ def test_the_quality_body_carries_the_reader_answer(wired: Wired) -> None:
         ],
     }
     assert wired.prom.calls == []
+
+
+def test_quality_carries_the_needs_a_look_list(wired: Wired) -> None:
+    """Catches a quality route that leaves the needs-a-look list out of the body, renames its
+    key or fields, or reorders the reader's rows: each row is case, play and why. With no run
+    stored (the unconfigured reader's answer) the key is still there, as an empty list."""
+    plays = (
+        NeedsALookPlay(case_id="case-002", play=1, why="writes the poem; sends the file"),
+        NeedsALookPlay(
+            case_id="case-007",
+            play=3,
+            why="No rule broken, and the end state matches none that is listed.",
+        ),
+    )
+    wired.reader.quality_read = QUALITY_READ.model_copy(update={"needs_a_look": plays})
+
+    listed = wired.get(QUALITY).json()["needs_a_look"]
+    wired.reader.quality_read = QUALITY_READ.model_copy(update={"needs_a_look": ()})
+    empty = wired.get(QUALITY).json()
+
+    assert listed == [
+        {"case_id": "case-002", "play": 1, "why": "writes the poem; sends the file"},
+        {
+            "case_id": "case-007",
+            "play": 3,
+            "why": "No rule broken, and the end state matches none that is listed.",
+        },
+    ]
+    assert empty["needs_a_look"] == []
 
 
 # --- budgets ---------------------------------------------------------------------
@@ -961,8 +1000,10 @@ def test_the_higher_is_better_metrics_are_pinned() -> None:
     would report every speed-up as a regression, and a listed accuracy dropped from it, which
     would hide a real drop on a blocked release."""
     assert HIGHER_IS_BETTER_METRICS == (
-        "check_score",
-        "judge_score",
+        "safety",
+        "outcome_every_play",
+        "outcome_at_least_once",
+        "reply_quality",
     )
 
 
@@ -971,34 +1012,34 @@ REGRESSION_ROWS: list[
 ] = [
     (
         "a listed metric lower than before",
-        {"check_score": 0.8},
-        {"check_score": 0.85},
-        (Regression(metric="check_score", value=0.8, previous=0.85),),
+        {"outcome_every_play": 0.8},
+        {"outcome_every_play": 0.85},
+        (Regression(metric="outcome_every_play", value=0.8, previous=0.85),),
     ),
-    ("equal is not a regression", {"check_score": 0.85}, {"check_score": 0.85}, ()),
-    ("higher is not a regression", {"check_score": 0.9}, {"check_score": 0.85}, ()),
+    ("equal is not a regression", {"outcome_every_play": 0.85}, {"outcome_every_play": 0.85}, ()),
+    ("higher is not a regression", {"outcome_every_play": 0.9}, {"outcome_every_play": 0.85}, ()),
     ("an unlisted metric lower than before", {"cost_usd": 0.5}, {"cost_usd": 0.9}, ()),
-    ("a bool current value", {"check_score": False}, {"check_score": True}, ()),
-    ("a bool previous value", {"judge_score": 0}, {"judge_score": True}, ()),
-    ("a string current value", {"judge_score": "0.5"}, {"judge_score": 0.9}, ()),
-    ("a null previous value", {"judge_score": 0.5}, {"judge_score": None}, ()),
+    ("a bool current value", {"outcome_every_play": False}, {"outcome_every_play": True}, ()),
+    ("a bool previous value", {"reply_quality": 0}, {"reply_quality": True}, ()),
+    ("a string current value", {"reply_quality": "0.5"}, {"reply_quality": 0.9}, ()),
+    ("a null previous value", {"reply_quality": 0.5}, {"reply_quality": None}, ()),
     (
         "integers count as numbers",
-        {"judge_score": 0},
-        {"judge_score": 1},
-        (Regression(metric="judge_score", value=0.0, previous=1.0),),
+        {"reply_quality": 0},
+        {"reply_quality": 1},
+        (Regression(metric="reply_quality", value=0.0, previous=1.0),),
     ),
-    ("absent from the current run", {}, {"check_score": 0.9}, ()),
-    ("absent from the previous run", {"check_score": 0.1}, {}, ()),
-    ("no current metrics", None, {"check_score": 0.9}, ()),
-    ("no previous metrics", {"check_score": 0.1}, None, ()),
+    ("absent from the current run", {}, {"outcome_every_play": 0.9}, ()),
+    ("absent from the previous run", {"outcome_every_play": 0.1}, {}, ()),
+    ("no current metrics", None, {"outcome_every_play": 0.9}, ()),
+    ("no previous metrics", {"outcome_every_play": 0.1}, None, ()),
     (
         "ordered by the list, not the mapping",
-        {"judge_score": 0.7, "check_score": 0.8},
-        {"judge_score": 0.9, "check_score": 0.85},
+        {"reply_quality": 0.7, "outcome_every_play": 0.8},
+        {"reply_quality": 0.9, "outcome_every_play": 0.85},
         (
-            Regression(metric="check_score", value=0.8, previous=0.85),
-            Regression(metric="judge_score", value=0.7, previous=0.9),
+            Regression(metric="outcome_every_play", value=0.8, previous=0.85),
+            Regression(metric="reply_quality", value=0.7, previous=0.9),
         ),
     ),
 ]
@@ -1025,7 +1066,7 @@ def test_regressed_metrics_decision_table(
 def test_a_regressed_metric_is_one_lower_than_the_previous_passed_run(wired: Wired) -> None:
     """Catches a quality route that passes the blocked release through without computing
     `regressed`, computes it against the wrong side (current and previous swapped reads the
-    rise in `check_score` as the regression), leaks the raw `metrics` maps into the
+    rise in `outcome_every_play` as the regression), leaks the raw `metrics` maps into the
     body, or fails on a release with no linked run or no earlier passed run."""
     linked = BlockedRelease(
         git_sha="bad0001",
@@ -1033,13 +1074,13 @@ def test_a_regressed_metric_is_one_lower_than_the_previous_passed_run(wired: Wir
         pr_url="https://github.com/example/repo/pull/7",
         eval_run_id="run-blocked",
         metrics={
-            "judge_score": 0.7,
-            "check_score": 0.99,
+            "reply_quality": 0.7,
+            "outcome_every_play": 0.99,
             "p95_latency_ms": 400,
         },
         previous_metrics={
-            "judge_score": 0.9,
-            "check_score": 0.9,
+            "reply_quality": 0.9,
+            "outcome_every_play": 0.9,
             "p95_latency_ms": 900,
         },
     )
@@ -1048,7 +1089,7 @@ def test_a_regressed_metric_is_one_lower_than_the_previous_passed_run(wired: Wir
         deployed_at=DEPLOYED,
         pr_url=None,
         eval_run_id="run-first",
-        metrics={"check_score": 0.1},
+        metrics={"outcome_every_play": 0.1},
         previous_metrics=None,
     )
     unlinked = BlockedRelease(
@@ -1074,7 +1115,7 @@ def test_a_regressed_metric_is_one_lower_than_the_previous_passed_run(wired: Wir
             "pr_url": "https://github.com/example/repo/pull/7",
             "eval_run_id": "run-blocked",
             "regressed": [
-                {"metric": "judge_score", "value": 0.7, "previous": 0.9},
+                {"metric": "reply_quality", "value": 0.7, "previous": 0.9},
             ],
         },
         {

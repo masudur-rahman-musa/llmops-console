@@ -13,8 +13,8 @@
       "turns_per_hour": "1200.00",
       "usd_per_1000_turns": "0.67",
       "metrics": {
-        "check_score": 0.86,
-        "judge_score": null
+        "outcome_every_play": 0.86,
+        "safety": null
       }
     },
     "hosted-large": {
@@ -28,8 +28,8 @@
       "turns_per_hour": null,
       "usd_per_1000_turns": null,
       "metrics": {
-        "check_score": 0.94,
-        "judge_score": 0.97
+        "outcome_every_play": 0.94,
+        "safety": 0.97
       }
     },
     "hosted-small": {
@@ -43,8 +43,8 @@
       "turns_per_hour": null,
       "usd_per_1000_turns": "1.90",
       "metrics": {
-        "check_score": 0.93,
-        "judge_score": 0.95
+        "outcome_every_play": 0.93,
+        "safety": 0.95
       }
     }
   },
