@@ -116,7 +116,9 @@ desk checkout, `../ai-help-desk-governed-access` by default; the key can be in
    the eval routes switched on (`infra/evals/helpdesk.compose.yml`).
 4. It plays the help desk's 45 conversation cases three times each
    (`EVAL_PLAYS ?= 3`) with `ops-eval conversations --plays`. The help desk data is reset
-   before every play (`infra/evals/reset_helpdesk.sh`). It writes the reports to
+   before every play (`infra/evals/reset_helpdesk.sh`). The reset keeps the loaded policy
+   rows, then checks that every policy in Qdrant still has its row; when one does not,
+   policy search would fail, so the run stops there. It writes the reports to
    `backend/evals/reports/local/` and runs `ops-eval gate` against the baseline.
 
 A mock cannot play a conversation. A case has no fixed answer for each model call,

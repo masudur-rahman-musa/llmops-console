@@ -513,18 +513,23 @@ NON_400_STATUSES = [401, 429, 500]
 
 
 @pytest.mark.parametrize("status", NON_400_STATUSES, ids=[str(s) for s in NON_400_STATUSES])
-def test_a_500_logs_nothing_new(
+def test_any_failure_logs_one_line_and_a_401_keeps_its_message_out(
     status: int, caplog: pytest.LogCaptureFixture, sleeps: SleepRecorder
 ) -> None:
-    """Catches a log on every failure status rather than on 400 alone: a 401 body can
-    quote part of the API key, and a retried 429 or 500 would write one line per attempt."""
+    """Catches a failure status that leaves no line (the caller sees a bare 502 and nobody
+    can say why), a retried 429 or 500 that writes one line per attempt, and a 401 line
+    that writes the provider's message, which can quote part of the API key."""
     body = {"error": {"message": f"{PROVIDER_DETAIL_MARKER}: status {status}"}}
     adapter, _ = make_local_adapter([(status, body)], sleep=sleeps)
 
     with caplog.at_level(logging.DEBUG, logger=TRANSPORT_LOGGER), pytest.raises(ProviderError):
         adapter.chat(REQUEST)
 
-    assert transport_records(caplog) == []
+    records = transport_records(caplog)
+    assert len(records) == 1, [record.getMessage() for record in records]
+    logged = records[0].getMessage()
+    assert f"answered {status}" in logged
+    assert (PROVIDER_DETAIL_MARKER in logged) is (status != 401)
 
 
 def test_a_400_still_raises_the_same_client_message(sleeps: SleepRecorder) -> None:

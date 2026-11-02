@@ -14,8 +14,8 @@ microseconds to test and produces exact delays rather than a range.
 
 This module knows no vendor. The path, the headers and the base URL are the
 adapter's to pass; nothing here reads a provider's body beyond truncating it for
-the log, pulling `error.message` out of a 400 so the reason a request was
-refused is in the gateway log rather than behind a bare 502, and reading
+the log, pulling `error.type` and `error.message` out of a failure so the reason a
+call failed is in the gateway log rather than behind a bare 502, and reading
 `error.code` to spot a content policy refusal, which is never retried.
 """
 
@@ -89,10 +89,10 @@ class ProviderTransport:
     message says, so two accounts on one vendor stay distinguishable in a log
     exactly as they are in the ledger and the resolver.
 
-    One thing is logged here: a 400's parsed `error.message` (see
-    `status_error`). Otherwise what reaches a log on a failure is
-    `ProviderError.provider_message`, which holds the provider's answer or the
-    transport's own exception text, never the request body or its headers.
+    One thing is logged here: one WARNING per failed call, once the retries are
+    spent (see `_log_failure`). It holds the status, the provider's parsed
+    `error.type` and `error.message`, and its request id, or the transport's own
+    exception text, never the request body or its headers.
     """
 
     def __init__(
@@ -127,19 +127,21 @@ class ProviderTransport:
         """
         attempt = 0
         while True:
+            failed: httpx.Response | httpx.RequestError
             try:
                 response = self.client.post(path, json=dict(body))
             except httpx.RequestError as exc:
-                error = self.transport_error(exc)
+                failed, error = exc, self.transport_error(exc)
             else:
                 if response.status_code == httpx.codes.OK:
                     return response
-                error = self.status_error(response)
+                failed, error = response, self.status_error(response)
 
             if error.retryable and attempt < MAX_RETRIES:
                 self._wait(attempt)
                 attempt += 1
                 continue
+            self._log_failure(failed, attempts=attempt + 1)
             raise error
 
     @contextlib.contextmanager
@@ -158,6 +160,7 @@ class ProviderTransport:
         """
         attempt = 0
         while True:
+            failed: httpx.Response | httpx.RequestError
             try:
                 with self.client.stream(
                     "POST",
@@ -169,36 +172,30 @@ class ProviderTransport:
                         yield response
                         return
                     response.read()
-                    error = self.status_error(response)
+                    failed, error = response, self.status_error(response)
             except httpx.RequestError as exc:
-                error = self.transport_error(exc)
+                failed, error = exc, self.transport_error(exc)
 
             if error.retryable and attempt < MAX_RETRIES:
                 self._wait(attempt)
                 attempt += 1
                 continue
+            self._log_failure(failed, attempts=attempt + 1)
             raise error
 
     def status_error(self, response: httpx.Response) -> ProviderError:
         """Turn a failure status into the typed error, keeping the provider's words out.
 
         `message` is client-facing and carries the provider name and the status
-        only; the body goes to `provider_message` for the log.
-
-        A 400 also logs one WARNING with the provider's parsed `error.message`,
-        cut to `PROVIDER_MESSAGE_LIMIT`: a 400 is a request the provider refused
-        as malformed, and without the reason it reads as a bare 502.
-        Only the parsed message, never the raw body, which is free-form and may
-        echo request text; a body with no readable message logs its length only. Other
-        statuses log nothing, since a 401 body can quote part of the key.
+        only; the body goes to `provider_message`. Nothing is logged here, since a
+        retried status that then succeeds is not a failure; `_log_failure` logs the
+        last one.
 
         A body whose `error.code` names a content policy refusal is `refused` at
         any status, and so never retried.
         """
         status = response.status_code
         payload = _parsed(response)
-        if status == httpx.codes.BAD_REQUEST:
-            self._log_bad_request(payload, len(response.content))
         if _is_refusal(payload):
             return ProviderError(
                 f"{self.name}: the provider refused the request for content policy",
@@ -211,20 +208,60 @@ class ProviderTransport:
             provider_message=response.text[:PROVIDER_MESSAGE_LIMIT],
         )
 
-    def _log_bad_request(self, payload: object, size: int) -> None:
-        """Log a 400's `error.message`, or only the body's length when there is none."""
-        message = _error_of(payload).get("message")
-        if isinstance(message, str):
+    def _log_failure(self, failed: httpx.Response | httpx.RequestError, *, attempts: int) -> None:
+        """Log one WARNING for a call that failed for good, so a 502 has its reason.
+
+        For a failure status: the status, the provider's parsed `error.type` and
+        `error.message` cut to `PROVIDER_MESSAGE_LIMIT`, and the provider's request id.
+        Only the parsed message, never the raw body, which is free-form and may echo
+        request text; a body with no readable message logs its length only. A 401 or
+        403 logs its type but not its message, since that message can quote part of
+        the key. For a call that never completed: the exception's type and text.
+        """
+        tried = f"after {attempts} attempts" if attempts > 1 else "on the first attempt"
+        if isinstance(failed, httpx.RequestError):
             logger.warning(
-                "%s: the provider answered 400: %s",
+                "%s: the request did not complete %s: %s: %s",
                 self.name,
+                tried,
+                type(failed).__name__,
+                str(failed)[:PROVIDER_MESSAGE_LIMIT],
+            )
+            return
+        status = failed.status_code
+        error = _error_of(_parsed(failed))
+        kind = error.get("type") or error.get("code")
+        message = error.get("message")
+        request_id = failed.headers.get("request-id") or failed.headers.get("x-request-id")
+        where = f" (request id {request_id})" if request_id else ""
+        label = f" {kind}" if isinstance(kind, str) else ""
+        if status in (httpx.codes.UNAUTHORIZED, httpx.codes.FORBIDDEN):
+            logger.warning(
+                "%s: the provider answered %d%s %s; its message is not logged%s",
+                self.name,
+                status,
+                label,
+                tried,
+                where,
+            )
+        elif isinstance(message, str):
+            logger.warning(
+                "%s: the provider answered %d%s %s: %s%s",
+                self.name,
+                status,
+                label,
+                tried,
                 message[:PROVIDER_MESSAGE_LIMIT],
+                where,
             )
         else:
             logger.warning(
-                "%s: the provider answered 400 with no readable error message (%d bytes)",
+                "%s: the provider answered %d %s with no readable error message (%d bytes)%s",
                 self.name,
-                size,
+                status,
+                tried,
+                len(failed.content),
+                where,
             )
 
     def transport_error(self, exc: httpx.RequestError) -> ProviderError:

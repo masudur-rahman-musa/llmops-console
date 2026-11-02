@@ -6,10 +6,11 @@
 # version at a time. It redacts each
 # chunk through this gateway's `/v1/redact`, so it needs the gateway up and the run's keys
 # in HELPDESK_GATEWAY_API_KEYS. The ingest runs once per eval run; the per-play reset that
-# follows leaves the ingested documents alone.
+# follows keeps the ingested documents and checks them. The reset here skips that check,
+# since it runs before the ingest has written anything.
 set -euo pipefail
 
-"$(dirname "$0")/reset_helpdesk.sh" "$1"
+"$(dirname "$0")/reset_helpdesk.sh" --no-check "$1"
 
 cd "$1/backend"
 

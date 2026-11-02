@@ -1,0 +1,7 @@
+{
+  "type": "error",
+  "error": {
+    "type": "authentication_error",
+    "message": "invalid x-api-key sk-ant-test-not-a-real-key upstream-detail-2f7c1a-do-not-leak"
+  }
+}

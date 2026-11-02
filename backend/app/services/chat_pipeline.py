@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping, Sequence
 
 from opentelemetry.trace import Span
@@ -90,6 +91,8 @@ from app.services.wire_mapping import (
     to_neutral,
     to_wire,
 )
+
+logger = logging.getLogger(__name__)
 
 COST_HEADER = "X-Gateway-Cost-USD"
 """The seventh `X-Gateway-*` header: what this request cost, in USD.
@@ -418,6 +421,11 @@ def walk_candidates[T](
     stops at the candidate that refused. The console's own blocks (redaction, budget,
     rate limit, a bad request) are not `ProviderError`s and
     pass straight through. Tests pin both.
+
+    Every failed candidate logs one WARNING naming its provider and model and the
+    client-facing message, never the request. The transport logs the provider's
+    own reason beside it; an answer the adapter could not use has no status, so
+    this line is the only place it shows.
     """
     if not candidates:
         raise AllProvidersUnavailable("no candidates: the resolver answered an empty tuple")
@@ -426,6 +434,14 @@ def walk_candidates[T](
         try:
             return call(chosen)
         except ProviderError as exc:
+            logger.warning(
+                "%s %s failed (candidate %d of %d): %s",
+                chosen.provider,
+                chosen.model,
+                attempt + 1,
+                last + 1,
+                exc.message,
+            )
             absorb_failure(breaker, chosen.provider, exc)
             if not exc.retryable or attempt == last:
                 raise
