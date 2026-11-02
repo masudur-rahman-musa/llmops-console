@@ -52,6 +52,7 @@ EIGHTH_VERSION = "008_ledger_cache_tokens"
 NINTH_VERSION = "009_ledger_status_latency"
 TENTH_VERSION = "010_ledger_user_id"
 ELEVENTH_VERSION = "011_drop_daily_rollup"
+TWELFTH_VERSION = "012_eval_plays"
 ALL_VERSIONS = (
     FIRST_VERSION,
     SECOND_VERSION,
@@ -64,6 +65,7 @@ ALL_VERSIONS = (
     NINTH_VERSION,
     TENTH_VERSION,
     ELEVENTH_VERSION,
+    TWELFTH_VERSION,
 )
 """Every migration that ships, in the order the runner applies them. A stem is
 the version string, so a file renamed after it has been applied somewhere would
@@ -105,7 +107,7 @@ def test_the_default_schema_is_the_published_one() -> None:
     assert DEFAULT_SCHEMA == "opsconsole"
 
 
-def test_the_runner_applies_all_eleven_sql_files_from_backend_migrations() -> None:
+def test_the_runner_applies_all_twelve_sql_files_from_backend_migrations() -> None:
     """The runner reads `backend/migrations/` (outside the package, shipped by the
     image's COPY), found from the module position rather than the working directory,
     so `make migrate` works both at the repo root and inside the container. Reading
@@ -126,6 +128,7 @@ def test_the_runner_applies_all_eleven_sql_files_from_backend_migrations() -> No
         "009_ledger_status_latency.sql",
         "010_ledger_user_id.sql",
         "011_drop_daily_rollup.sql",
+        "012_eval_plays.sql",
     ]
     assert (MIGRATIONS / f"{FIRST_VERSION}.sql").read_text(encoding="utf-8").strip() != ""
 
