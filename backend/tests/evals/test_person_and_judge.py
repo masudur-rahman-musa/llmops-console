@@ -12,12 +12,8 @@ Contract these tests are written against:
   sent first (never a yes). After each reply the person answers; the play ends on `[done]`,
   when the model gives no answer (`None`), or after the case's `max_turns` replies. `send`
   takes a message and returns a `TurnAnswer`. A scripted case never calls `model`: its
-  person sends the quoted words of `person_knows`, in order, and then stops.
-* `person.scripted_words(person_knows) -> tuple[str, ...]`: the pieces inside quotes (double
-  quotes, or single quotes that open after a space or the start and close before a space,
-  punctuation or the end, so an apostrophe inside a word does not close them).
-* `person.is_yes_word(text) -> bool`: `yes`, `ja`, `oui`, `ok`, any case, outer spaces and
-  punctuation ignored.
+  person sends the `say` of each step of the case's `script`, in order, with the step's own
+  `yes` mark, and then stops. Nothing is guessed from the words.
 * `person.SimulatedPerson(gateway_url, *, client, api_key)` with
   `.answer(case, turns) -> PersonTurn | None`. It asks the alias `simulated-person`, the
   prompt file `person-v1.md` is the system message, the case facts and the conversation are
@@ -48,8 +44,6 @@ from app.evals.person import (
     PlayedTurn,
     SimulatedPerson,
     converse,
-    is_yes_word,
-    scripted_words,
 )
 from app.evals.target import TurnAnswer
 
@@ -177,13 +171,13 @@ def test_the_person_is_asked_with_the_turns_played_so_far() -> None:
 # --- scripted cases -----------------------------------------------------------------
 
 
-def test_a_scripted_case_sends_its_quoted_words_with_no_model_call() -> None:
-    """Catches a scripted case that asks the model: the exact words matter there, so the
-    person says the quoted words in order and the model is never called. Words that are a
-    yes word count as a yes; others do not. When the words run out the play ends."""
+def test_a_scripted_case_sends_its_steps_with_their_yes_marks() -> None:
+    """Catches a scripted person that asks the model, or that takes a yes mark from anywhere
+    but the step: "Ja, bitte" is marked yes and "Gerne, 90 Tage" is not, in order, with no
+    model call."""
     case = make_case(
         scripted=True,
-        person_knows='Says "Ja" first, then "Gerne, 90 Tage" and nothing else.',
+        script=[{"say": "Ja, bitte", "yes": True}, {"say": "Gerne, 90 Tage", "yes": False}],
         limits={"max_turns": 6, "max_tool_calls": 8},
     )
     model = ScriptedPerson()
@@ -191,30 +185,36 @@ def test_a_scripted_case_sends_its_quoted_words_with_no_model_call() -> None:
 
     turns = converse(case, model=model, send=sender(sent))
 
-    assert sent == [case.opening, "Ja", "Gerne, 90 Tage"]
+    assert sent == [case.opening, "Ja, bitte", "Gerne, 90 Tage"]
     assert [t.said_yes for t in turns] == [False, True, False]
     assert model.calls == 0
 
 
-def test_a_scripted_case_with_no_quoted_words_sends_only_the_opening() -> None:
-    """Catches a scripted person that invents words when the case quotes none."""
-    case = make_case(scripted=True, person_knows="Answers only in German.")
-    model = ScriptedPerson()
-    sent: list[str] = []
+def test_a_scripted_yes_is_never_guessed_from_the_words() -> None:
+    """Catches a person that still guesses a yes from a word list: the step "yes" is marked
+    no and stays no, and "Na gut, mach es" is on no list but is marked yes and is one."""
+    case = make_case(
+        scripted=True,
+        script=[{"say": "yes", "yes": False}, {"say": "Na gut, mach es", "yes": True}],
+        limits={"max_turns": 6, "max_tool_calls": 8},
+    )
 
-    turns = converse(case, model=model, send=sender(sent))
+    turns = converse(case, model=ScriptedPerson(), send=sender([]))
 
-    assert sent == [case.opening]
-    assert len(turns) == 1
-    assert model.calls == 0
+    assert [t.message for t in turns] == [case.opening, "yes", "Na gut, mach es"]
+    assert [t.said_yes for t in turns] == [False, False, True]
 
 
 def test_a_scripted_case_still_stops_at_max_turns() -> None:
-    """Catches a scripted person that ignores the ceiling: three quoted words, two turns
-    allowed, two sent."""
+    """Catches a scripted person that ignores the ceiling: three steps, two turns allowed,
+    two sent."""
     case = make_case(
         scripted=True,
-        person_knows='"one" "two" "three"',
+        script=[
+            {"say": "one", "yes": False},
+            {"say": "two", "yes": False},
+            {"say": "three", "yes": False},
+        ],
         limits={"max_turns": 2, "max_tool_calls": 8},
     )
     sent: list[str] = []
@@ -222,42 +222,6 @@ def test_a_scripted_case_still_stops_at_max_turns() -> None:
     converse(case, model=ScriptedPerson(), send=sender(sent))
 
     assert sent == [case.opening, "one"]
-
-
-@pytest.mark.parametrize(
-    ("text", "words"),
-    [
-        ('They say "Ja" and then "Bitte sehr".', ("Ja", "Bitte sehr")),
-        ("They will say 'just tell me, don't do it'.", ("just tell me, don't do it",)),
-        ("Says 'yes' then \"no\".", ("yes", "no")),
-        ("Nothing quoted here, and it isn't a quote.", ()),
-    ],
-    ids=["double quotes", "single quotes with an apostrophe", "both, in order", "none"],
-)
-def test_scripted_words_are_the_quoted_pieces(text: str, words: tuple[str, ...]) -> None:
-    """Catches words taken from outside the quotes, a single-quote match that stops at an
-    apostrophe, and an apostrophe in plain text read as a quote."""
-    assert scripted_words(text) == words
-
-
-@pytest.mark.parametrize(
-    ("text", "expected"),
-    [
-        ("yes", True),
-        ("Yes!", True),
-        ("JA", True),
-        (" oui. ", True),
-        ("ok", True),
-        ("no", False),
-        ("yes, but not that one", False),
-        ("nein", False),
-        ("", False),
-    ],
-)
-def test_the_yes_words(text: str, expected: bool) -> None:
-    """Catches a yes test that is too wide (a sentence that starts with yes) or too narrow
-    (no other languages, no capital): yes, ja, oui and ok, nothing else."""
-    assert is_yes_word(text) is expected
 
 
 # --- the simulated person -----------------------------------------------------------

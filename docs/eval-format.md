@@ -22,7 +22,7 @@ error rather than a perfect score.
 
 ## The line, field by field
 
-There are exactly 15 fields.
+There are 15 fields, plus `script` on a scripted case.
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -30,7 +30,8 @@ There are exactly 15 fields.
 | `purpose` | string | One sentence on what the case shows. |
 | `owner` | string | A short name that groups cases in the report. |
 | `tags` | list of strings | Free labels. |
-| `scripted` | boolean | When true the person sends only the words quoted in `person_knows`, in order, with no model call. |
+| `scripted` | boolean | When true the person sends only its `script` steps, in order, with no model call. |
+| `script` | list of objects | Scripted cases only, at least one: `{say, yes}`. `say` is the message (1 to 4000 characters); `yes` says whether it agrees to the change on offer. The yes is never guessed from the words. |
 | `person` | object | `seat`, `role`, `tenant` and `language` of the person who types. |
 | `world` | list of facts | What must be true before the first message. |
 | `goal` | string | What the person wants. |

@@ -2,9 +2,10 @@
 
 The judge answers each reply check on its own with `yes`, `no` or `does_not_apply`, a quote
 from the reply and a one-sentence reason. It sees the whole conversation, the tool results
-and the world facts. It reaches a model the way every other client does, through the
-gateway's `/v1/chat/completions` naming the alias `judge`: the gateway puts the spend on the
-`evals` tenant's budget and in the ledger without this module knowing.
+and the world facts; a long role list is cut to the roles the reply names. It reaches a
+model the way every other client does, through the gateway's `/v1/chat/completions`
+naming the alias `judge`: the gateway puts the spend on the `evals` tenant's budget and in
+the ledger without this module knowing.
 
 * **One check, one request, one sample.** Checks are never batched: one answer would colour
   the next.
@@ -62,6 +63,9 @@ PROMPT_RESOURCE: Final[str] = "judge-v3.md"
 
 CONVERSATION_OPEN: Final[str] = "<conversation>"
 CONVERSATION_CLOSE: Final[str] = "</conversation>"
+
+MAX_WHOLE_ROLE_LIST: Final[int] = 10
+"""A role list this long or shorter is sent to the judge whole; a longer one is cut."""
 
 Answer = Literal["yes", "no", "does_not_apply"]
 
@@ -157,7 +161,8 @@ def render_conversation(turns: Sequence[PlayedTurn]) -> str:
         lines.append(f"Turn {number}")
         lines.append(f"Person: {turn.message}")
         lines.extend(
-            _tool_line(c.name, c.args, c.ok, c.error_code, c.result) for c in turn.answer.tool_calls
+            _tool_line(c.name, c.args, c.ok, c.error_code, c.result, turn.answer.reply)
+            for c in turn.answer.tool_calls
         )
         lines.append(f"Help desk: {turn.answer.reply}")
     lines.append(CONVERSATION_CLOSE)
@@ -179,19 +184,62 @@ def render_label_conversation(turns: Sequence[LabelTurn]) -> str:
         lines.append(f"Turn {number}")
         lines.append(f"Person: {turn.person}")
         lines.extend(
-            _tool_line(c.name, c.args, c.ok, c.error_code, c.result) for c in turn.tool_calls
+            _tool_line(c.name, c.args, c.ok, c.error_code, c.result, turn.reply)
+            for c in turn.tool_calls
         )
         lines.append(f"Help desk: {turn.reply}")
     lines.append(CONVERSATION_CLOSE)
     return "\n".join(lines)
 
 
-def _tool_line(name: str, args: object, ok: bool, error_code: str | None, result: object) -> str:
+def _is_role_list(value: object) -> bool:
     return (
+        isinstance(value, list)
+        and len(value) > MAX_WHOLE_ROLE_LIST
+        and all(isinstance(i, dict) and "system_slug" in i and "role_slug" in i for i in value)
+    )
+
+
+def _names_role(item: dict[str, Any], reply: str) -> bool:
+    said = reply.lower()
+    pair = f"{item['system_slug']}.{item['role_slug']}".lower()
+    name = item.get("role_name")
+    return pair in said or (isinstance(name, str) and bool(name) and name.lower() in said)
+
+
+def _cut_roles(result: object, reply: str) -> tuple[object, list[str]]:
+    """The result with each long role list cut to the roles the reply names, and one note
+    per cut list.
+
+    A tool can list 200 roles, and every check would send them all again; only the roles
+    the reply talks about matter to a check. A fixed cap would be shorter but could drop
+    the very role the reply names
+    (`test_a_long_role_list_keeps_only_the_roles_the_reply_names`).
+    """
+    if not isinstance(result, dict):
+        return result, []
+    cut: dict[str, Any] = {}
+    notes: list[str] = []
+    for key, value in result.items():
+        if _is_role_list(value):
+            kept = [item for item in value if _names_role(item, reply)]
+            notes.append(f"(kept {len(kept)} of {len(value)} roles: the ones the reply names)")
+            cut[key] = kept
+        else:
+            cut[key] = value
+    return cut, notes
+
+
+def _tool_line(
+    name: str, args: object, ok: bool, error_code: str | None, result: object, reply: str
+) -> str:
+    shown, notes = _cut_roles(result, reply) if ok else (result, [])
+    line = (
         f"Tool {name} args={json.dumps(args, ensure_ascii=False)} "
         f"ok={ok} error={error_code} "
-        f"result={json.dumps(result, ensure_ascii=False)}"
+        f"result={json.dumps(shown, ensure_ascii=False)}"
     )
+    return " ".join([line, *notes])
 
 
 class JudgeClient:

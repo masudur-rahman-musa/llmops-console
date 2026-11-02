@@ -172,7 +172,11 @@ def played(
 
 
 def case_document(case_id: str = "case-001", **overrides: Any) -> dict[str, Any]:  # noqa: ANN401
-    """One line of a cases file: exactly the 15 fields the help desk fixes."""
+    """One line of a cases file: the 15 fields the help desk fixes.
+
+    A scripted case also gets a `script` (one yes step) unless the test passes its own; an
+    unscripted case has no `script` key at all.
+    """
     document: dict[str, Any] = {
         "id": case_id,
         "purpose": "A person without the wiki editor role asks for it and files one request.",
@@ -198,6 +202,8 @@ def case_document(case_id: str = "case-001", **overrides: Any) -> dict[str, Any]
         "limits": {"max_turns": 6, "max_tool_calls": 8},
     }
     document.update(overrides)
+    if document["scripted"] and "script" not in document:
+        document["script"] = [{"say": "Ja", "yes": True}]
     return document
 
 

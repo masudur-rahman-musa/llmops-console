@@ -1,9 +1,9 @@
 """The eval case: its model and its loader.
 
-One JSONL line is one case, in the help desk's own shape: exactly 15 fields. Extras are
-forbidden at every level and nothing has a default, so a misspelt `confirms_if` cannot
-quietly let the simulated person say yes to anything. A never text that no rule checks
-stops the load, before a run is paid for.
+One JSONL line is one case, in the help desk's own shape: 15 fields, plus `script` on a
+scripted case. Extras are forbidden at every level and nothing else has a default, so a
+misspelt `confirms_if` cannot quietly let the simulated person say yes to anything. A
+never text that no rule checks stops the load, before a run is paid for.
 
 `load_cases` loads a file whole or not at all, names the 1-based FILE line of a bad
 case (blank lines count), and refuses a missing or empty file: a run over zero cases has
@@ -17,7 +17,15 @@ import re
 from pathlib import Path
 from typing import Final
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from app.core.errors import LibraryInputInvalid
 from app.evals.never_rules import NEVER_RULES
@@ -25,6 +33,9 @@ from app.evals.world import Fact
 
 CASE_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 """A case id: lowercase letters, digits and dashes, matched with `fullmatch`."""
+
+MAX_SAY_CHARS: Final[int] = 4000
+"""The longest scripted message: the help desk refuses a longer chat message."""
 
 
 class CaseSetInvalid(LibraryInputInvalid):
@@ -61,6 +72,20 @@ class ReplyCheck(BaseModel):
     applies_when: str
 
 
+class ScriptStep(BaseModel):
+    """One message a scripted person sends, and whether it is a yes.
+
+    The yes is written by the case author, never guessed from the words: "Ja, bitte" is a
+    yes in one case and a word like "yes" can be a refusal in another
+    (`test_a_scripted_yes_is_never_guessed_from_the_words`).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    say: str = Field(min_length=1, max_length=MAX_SAY_CHARS)
+    yes: StrictBool
+
+
 class Limits(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -88,6 +113,9 @@ class EvalCase(BaseModel):
     never: tuple[str, ...]
     reply_checks: tuple[ReplyCheck, ...]
     limits: Limits
+    script: tuple[ScriptStep, ...] = ()
+    """The messages a scripted case sends, in order. A scripted case has at least one; an
+    unscripted case has none, because its person is a model."""
 
     @field_validator("id")
     @classmethod
@@ -103,6 +131,14 @@ class EvalCase(BaseModel):
             if text not in NEVER_RULES:
                 raise ValueError(f"never: no rule checks {text!r}")
         return value
+
+    @model_validator(mode="after")
+    def _check_script(self) -> EvalCase:
+        if self.scripted and not self.script:
+            raise ValueError("script: a scripted case needs at least one step")
+        if not self.scripted and self.script:
+            raise ValueError("script: an unscripted case has no steps")
+        return self
 
 
 def load_cases(path: Path) -> tuple[EvalCase, ...]:

@@ -506,3 +506,67 @@ def test_the_old_conversation_format_is_refused(tmp_path: Path) -> None:
 
     with pytest.raises(CaseSetInvalid):
         load_cases(write_cases(tmp_path / "cases.jsonl", old))
+
+
+# --- the script of a scripted case --------------------------------------------------
+
+
+def scripted_line(path: Path, **overrides: Any) -> Path:  # noqa: ANN401
+    return write_cases(path / "cases.jsonl", case_document(scripted=True, **overrides))
+
+
+def test_a_script_step_is_say_and_yes(tmp_path: Path) -> None:
+    """Catches a loader that reads a step loosely: a step is exactly `say` text and a real
+    `yes` boolean. A missing `yes`, the string "true" (which a lax reader turns into a yes)
+    and an extra key are each refused, and the error names the file line (line 1)."""
+    good = load_cases(scripted_line(tmp_path, script=[{"say": "Ja", "yes": True}]))
+    assert good[0].script[0].say == "Ja"
+    assert good[0].script[0].yes is True
+
+    for bad in ({"say": "Ja"}, {"say": "Ja", "yes": "true"}, {"say": "Ja", "yes": True, "x": 1}):
+        with pytest.raises(CaseSetInvalid, match=r"cases\.jsonl:1"):
+            load_cases(scripted_line(tmp_path, script=[bad]))
+
+
+def test_a_say_is_one_to_4000_characters(tmp_path: Path) -> None:
+    """Catches a say limit that is off by one at either end: 1 and 4000 characters load, an
+    empty say and one of 4001 are refused. The loads come first, so a loader that refuses
+    for some other reason cannot pass the refusals."""
+    for length in (1, 4000):
+        path = scripted_line(tmp_path, script=[{"say": "a" * length, "yes": False}])
+        assert len(load_cases(path)[0].script[0].say) == length
+
+    for length in (0, 4001):
+        path = scripted_line(tmp_path, script=[{"say": "a" * length, "yes": False}])
+        with pytest.raises(CaseSetInvalid):
+            load_cases(path)
+
+
+@pytest.mark.parametrize("script", [None, []], ids=["no script", "empty script"])
+def test_a_scripted_case_needs_a_script(tmp_path: Path, script: list[Any] | None) -> None:
+    """Catches a scripted case that loads with nothing to say: its person would send the
+    opening and stop, and the case would wait for a yes that never comes. The same case
+    with one step loads first, so only the missing steps can be the reason."""
+    assert len(load_cases(scripted_line(tmp_path))) == 1
+    document = case_document(scripted=True)
+    if script is None:
+        del document["script"]
+    else:
+        document["script"] = script
+
+    with pytest.raises(CaseSetInvalid):
+        load_cases(write_cases(tmp_path / "cases.jsonl", document))
+
+
+def test_an_unscripted_case_has_no_script(tmp_path: Path) -> None:
+    """Catches an unscripted case that carries steps nobody will send: with one step it is
+    refused, with none it loads. The scripted case with the same step loads first, so only
+    `scripted` being false can be the reason."""
+    step = [{"say": "Ja", "yes": True}]
+    assert len(load_cases(scripted_line(tmp_path, script=step))) == 1
+    with_step = case_document(scripted=False, script=step)
+    with pytest.raises(CaseSetInvalid):
+        load_cases(write_cases(tmp_path / "with.jsonl", with_step))
+
+    assert "script" not in case_document(scripted=False)
+    assert len(load_cases(write_cases(tmp_path / "none.jsonl", case_document()))) == 1

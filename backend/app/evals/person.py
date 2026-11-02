@@ -4,14 +4,14 @@ The opening message is sent first and is never a yes. After each reply the perso
 from the case's `person_knows` and says yes only when the proposal matches `confirms_if`;
 a message that ends in `[done]` ends the play and is not sent. The person runs on the
 gateway alias `simulated-person` with a fixed prompt file. A scripted case never asks a
-model: its person sends the words quoted in `person_knows`, in order, and then stops.
+model: its person sends the case's `script` steps in order, each with the yes mark the
+case gives it, and then stops.
 
 The conversation travels in the user message between fixed tags, as data.
 """
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Sequence
 from typing import Final, Protocol
 
@@ -38,12 +38,6 @@ PERSON_PROMPT: Final[str] = "person-v1.md"
 DONE_MARK: Final[str] = "[done]"
 """A message that ends in this ends the play."""
 
-YES_WORDS: Final[frozenset[str]] = frozenset({"yes", "ja", "oui", "ok"})
-
-_QUOTED: Final[re.Pattern[str]] = re.compile(r"\"([^\"]+)\"|(?<![^\s])'(.+?)'(?=[\s.,;:!?)]|$)")
-"""A double-quoted piece, or a single-quoted one that opens after a space or the start and
-closes before a space, punctuation or the end, so an apostrophe inside a word is not a quote."""
-
 
 class PersonTurn(BaseModel):
     """What the person types next, and whether it is a yes."""
@@ -68,16 +62,6 @@ class PersonModel(Protocol):
     def answer(self, case: EvalCase, turns: Sequence[PlayedTurn]) -> PersonTurn | None: ...
 
 
-def scripted_words(person_knows: str) -> tuple[str, ...]:
-    """The pieces inside quotes, in order."""
-    return tuple(double or single for double, single in _QUOTED.findall(person_knows))
-
-
-def is_yes_word(text: str) -> bool:
-    """`yes`, `ja`, `oui` or `ok`, any case, with outer spaces and punctuation ignored."""
-    return text.strip(" \t\r\n.,!?;:").lower() in YES_WORDS
-
-
 def converse(
     case: EvalCase,
     *,
@@ -88,11 +72,11 @@ def converse(
     """Play one conversation: send the opening, then answer each reply until the end.
 
     The play ends on `[done]`, when the person gives no answer, when a scripted person has
-    no words left, when a turn cannot be answered by the help desk, when `should_stop` says
+    no steps left, when a turn cannot be answered by the help desk, when `should_stop` says
     so after a turn, or after the case's `max_turns` replies.
     """
     turns: list[PlayedTurn] = []
-    words = iter(scripted_words(case.person_knows)) if case.scripted else iter(())
+    steps = iter(case.script)
     message, said_yes = case.opening, False
     while True:
         try:
@@ -103,10 +87,10 @@ def converse(
         if len(turns) >= case.limits.max_turns or should_stop(turns):
             break
         if case.scripted:
-            word = next(words, None)
-            if word is None:
+            step = next(steps, None)
+            if step is None:
                 break
-            message, said_yes = word, is_yes_word(word)
+            message, said_yes = step.say, step.yes
             continue
         reply = model.answer(case, turns)
         if reply is None or reply.message.strip().endswith(DONE_MARK):
