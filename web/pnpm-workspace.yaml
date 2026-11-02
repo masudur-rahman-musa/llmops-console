@@ -1,9 +1,16 @@
 # GHSA-vfj7-8cjw-p6xm (braces <=3.0.3) has no patched version at all, so
 # `pnpm audit` would fail on it forever. Skipped on 2026-10-12; drop it
 # once a fixed braces ships.
+#
+# GHSA-g3hv-75wg-m249 (minimatch <11.0.1) is fixed only in minimatch 11, and
+# no eslint or typescript-eslint release accepts it yet (eslint 9 needs 3.x,
+# the newest ones 10.x), so forcing 11 would break the linter. It only runs
+# at lint time on our own globs, never in the shipped app. Skipped on
+# 2026-11-02; drop it once eslint takes a fixed minimatch.
 auditConfig:
   ignoreGhsas:
     - GHSA-vfj7-8cjw-p6xm
+    - GHSA-g3hv-75wg-m249
 
 overrides:
   postcss@<8.5.10: '>=8.5.10'
