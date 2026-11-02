@@ -45,8 +45,8 @@ aliases:
   simulated-person:
     purpose: "Plays the person who talks to the help desk in an eval run."
     candidates:
-      - { provider: openai, model: gpt-5-mini }
       - { provider: anthropic, model: claude-haiku-5-5 }
+      - { provider: openai, model: gpt-5-mini }
   # Only the local embedding server: a second embedding model writes vectors in
   # a different space and breaks search over the stored ones.
   embed:

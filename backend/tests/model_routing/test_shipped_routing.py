@@ -65,14 +65,14 @@ def test_each_chat_alias_names_its_models(policy: Policy) -> None:
     )
 
 
-def test_the_simulated_person_runs_on_gpt_5_mini_then_haiku(policy: Policy) -> None:
-    """Catches a simulated person on the wrong model or in the wrong order: gpt-5-mini
-    answers first and Haiku only when it is down. Exact pairs in order, so a swap shows."""
+def test_the_simulated_person_runs_on_haiku_then_gpt_5_mini(policy: Policy) -> None:
+    """Catches a simulated person on the wrong model or in the wrong order: Haiku answers
+    first and gpt-5-mini only when it is down. Exact pairs in order, so a swap shows."""
     candidates = policy.aliases["simulated-person"].candidates
 
     assert tuple((c.provider, c.model) for c in candidates) == (
-        ("openai", "gpt-5-mini"),
         ("anthropic", "claude-haiku-5-5"),
+        ("openai", "gpt-5-mini"),
     )
 
 
