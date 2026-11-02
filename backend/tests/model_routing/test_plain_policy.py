@@ -196,9 +196,12 @@ no per-user cap, so a line added to it is the only thing that changes."""
 
 
 def _policy_with_user_cap(tmp_path: Path, value: str | None) -> Path:
-    """The shipped policy with `user_budget_usd_month` set on `evals`, or left out."""
+    """The shipped policy with `evals` held at a 10.00 budget and `user_budget_usd_month`
+    set on it, or left out. The budget is fixed here so the cases below do not move when
+    the shipped budget does."""
     document = yaml.safe_load(SHIPPED_POLICY_PATH.read_text(encoding="utf-8"))
     tenant = document["tenants"][USER_CAP_TENANT]
+    tenant["budget_usd_month"] = "10.00"
     tenant.pop("user_budget_usd_month", None)
     if value is not None:
         tenant["user_budget_usd_month"] = value

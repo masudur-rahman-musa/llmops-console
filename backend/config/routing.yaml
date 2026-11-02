@@ -82,6 +82,6 @@ tenants:
       internal: { redact: false }
       confidential: { redact: true }
       pii: { redact: true }
-    budget_usd_month: "10.00"
+    budget_usd_month: "40.00"
     rate_limit: { rpm: 120, tpm: 120000 }
     trace_content: true
