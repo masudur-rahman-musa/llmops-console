@@ -24,7 +24,8 @@ Contract these tests are written against:
   `.never(text, turns) -> CheckAnswer | None`. The runner asks it each reply check once per
   scored play, and each judge-only never text once; a `yes` to a never text flags the play.
 * A reply judge also has `.fault(turns, *, people=...) -> FaultAnswer | None`. It is asked
-  once for each play whose result is `needs_a_look`, and for no other result. The answer is
+  once for each play whose result is `needs_a_look`, and for a `fail` play whose broken rules
+  include `early_change`, and for no other result. The answer is
   kept on the record as `fault` and `fault_reason`.
 * A play the eval broke (a help desk turn that fails, a person who gives nothing, a script
   that runs out) with no end state matched is `eval_bug`.
@@ -43,9 +44,8 @@ import pytest
 
 from app.evals.cases import EvalCase
 from app.evals.judge import CheckAnswer, FaultAnswer
-from app.evals.person import PersonTurn
 from app.evals.results import PlayRecord
-from app.evals.rules import EARLY_CHANGE
+from app.evals.rules import EARLY_CHANGE, MADE_UP_NUMBER
 from app.evals.runner import run_eval
 from app.evals.target import (
     RESET_PATH,
@@ -67,6 +67,7 @@ from .builders import (
     call,
     make_case,
     req,
+    said,
     world,
 )
 
@@ -258,7 +259,7 @@ def test_a_new_play_starts_a_new_chat() -> None:
             ]
         }
     )
-    person = ScriptedPerson(PersonTurn(message="more", yes=False))
+    person = ScriptedPerson(said("more"))
 
     play(stub, [case], plays=2, person=person)
 
@@ -272,7 +273,7 @@ def test_a_false_start_fact_makes_the_play_setup_wrong_and_costs_nothing_more() 
     one turn; the person and the judge are never asked and no rule is broken."""
     case = make_case(world=[{"open_request": ROLE}])
     stub = StubHelpdesk({"case-001": filing_script()})
-    person = ScriptedPerson(PersonTurn(message="yes", yes=True))
+    person = ScriptedPerson(said("yes", yes=True))
     judge = FakeJudge()
 
     [record] = play(stub, [case], person=person, judge=judge)
@@ -290,7 +291,7 @@ def test_a_right_end_after_a_yes_passes() -> None:
     call."""
     case = make_case()
     stub = StubHelpdesk({"case-001": filing_script()})
-    person = ScriptedPerson(PersonTurn(message="yes", yes=True))
+    person = ScriptedPerson(said("yes", yes=True))
 
     [record] = play(stub, [case], person=person)
 
@@ -306,13 +307,13 @@ def test_a_play_records_the_index_of_the_end_state_it_matched() -> None:
     two_states = [[{"open_request": "other.role"}], [{"open_request": ROLE}]]
     matching = make_case(right_end_states=two_states)
     unmatched = make_case(right_end_states=[[{"holds": ROLE}]])
-    person = ScriptedPerson(PersonTurn(message="yes", yes=True))
+    person = ScriptedPerson(said("yes", yes=True))
 
     [hit] = play(StubHelpdesk({"case-001": filing_script()}), [matching], person=person)
     [miss] = play(
         StubHelpdesk({"case-001": filing_script()}),
         [unmatched],
-        person=ScriptedPerson(PersonTurn(message="yes", yes=True)),
+        person=ScriptedPerson(said("yes", yes=True)),
     )
 
     assert (hit.result, hit.end_state) == ("pass", 1)
@@ -325,7 +326,7 @@ def test_a_rule_broken_on_the_way_fails_even_when_the_end_state_matches() -> Non
     was not a yes. The end state still matches, and the play is a fail naming the rule."""
     case = make_case()
     stub = StubHelpdesk({"case-001": filing_script()})
-    person = ScriptedPerson(PersonTurn(message="go on", yes=False))
+    person = ScriptedPerson(said("go on"))
 
     [record] = play(stub, [case], person=person)
 
@@ -338,7 +339,7 @@ def test_a_case_never_rule_is_checked_at_the_end() -> None:
     same early filing and its text lands in the broken list."""
     case = make_case(never=["files the request before the person says yes"])
     stub = StubHelpdesk({"case-001": filing_script()})
-    person = ScriptedPerson(PersonTurn(message="go on", yes=False))
+    person = ScriptedPerson(said("go on"))
 
     [record] = play(stub, [case], person=person)
 
@@ -363,16 +364,14 @@ def test_a_judge_only_never_text_flags_the_play_and_never_fails_it() -> None:
     broken, the judge says yes to `writes the poem`. The play is `needs_a_look` with the text
     flagged, not a fail. With a no it passes."""
     case = make_case(never=["writes the poem"])
-    person = ScriptedPerson(PersonTurn(message="yes", yes=True))
+    person = ScriptedPerson(said("yes", yes=True))
     flagged = FakeJudge(never={"writes the poem": CheckAnswer(answer="yes", quote="q", reason="r")})
     clean = FakeJudge()
 
     stub = StubHelpdesk({"case-001": filing_script()})
     [yes_record] = play(stub, [case], person=person, judge=flagged)
     stub = StubHelpdesk({"case-001": filing_script()})
-    [no_record] = play(
-        stub, [case], person=ScriptedPerson(PersonTurn(message="yes", yes=True)), judge=clean
-    )
+    [no_record] = play(stub, [case], person=ScriptedPerson(said("yes", yes=True)), judge=clean)
 
     assert yes_record.result == "needs_a_look"
     assert yes_record.flagged == ("writes the poem",)
@@ -399,9 +398,7 @@ def test_each_reply_check_is_asked_once_per_play_and_kept() -> None:
         }
     )
     stub = StubHelpdesk({"case-001": filing_script()})
-    person = ScriptedPerson(
-        PersonTurn(message="yes", yes=True), PersonTurn(message="yes", yes=True)
-    )
+    person = ScriptedPerson(said("yes", yes=True), said("yes", yes=True))
 
     records = play(stub, [case], plays=2, person=person, judge=judge)
 
@@ -420,7 +417,7 @@ def test_without_a_judge_nothing_is_judged() -> None:
     case = make_case(never=["writes the poem"])
     stub = StubHelpdesk({"case-001": filing_script()})
 
-    [record] = play(stub, [case], person=ScriptedPerson(PersonTurn(message="yes", yes=True)))
+    [record] = play(stub, [case], person=ScriptedPerson(said("yes", yes=True)))
 
     assert record.checks == ()
     assert record.flagged == ()
@@ -437,9 +434,9 @@ def test_effort_is_counted_from_the_play() -> None:
         answer("Filed.", CREATE, call("list_my_requests"), after=FILED, cost_usd=Decimal("0.02")),
     ]
     stub = StubHelpdesk({"case-001": priced})
-    [with_cost] = play(stub, [case], person=ScriptedPerson(PersonTurn(message="yes", yes=True)))
+    [with_cost] = play(stub, [case], person=ScriptedPerson(said("yes", yes=True)))
     stub = StubHelpdesk({"case-001": filing_script()})
-    [without_cost] = play(stub, [case], person=ScriptedPerson(PersonTurn(message="yes", yes=True)))
+    [without_cost] = play(stub, [case], person=ScriptedPerson(said("yes", yes=True)))
 
     assert with_cost.seconds == pytest.approx(10.0)
     assert with_cost.turns == 2
@@ -454,7 +451,7 @@ def test_a_play_keeps_its_conversation_for_the_report() -> None:
     case = make_case()
     stub = StubHelpdesk({"case-001": filing_script()})
 
-    [record] = play(stub, [case], person=ScriptedPerson(PersonTurn(message="yes", yes=True)))
+    [record] = play(stub, [case], person=ScriptedPerson(said("yes", yes=True)))
 
     assert [t.message for t in record.conversation] == [case.opening, "yes"]
     assert [t.answer.reply for t in record.conversation] == ["Shall I file this request?", "Filed."]
@@ -502,7 +499,7 @@ def test_the_judge_is_told_only_the_people_the_case_names() -> None:
         right_end_states=[[{"open_request": ROLE}], [{"holds": ROLE, "person": "sales.3"}]]
     )
     stub = StubHelpdesk({"case-001": filing_script()})
-    person = ScriptedPerson(PersonTurn(message="yes", yes=True))
+    person = ScriptedPerson(said("yes", yes=True))
     judge = FakeJudge()
 
     play(stub, [case], person=person, judge=judge)
@@ -518,22 +515,22 @@ BLAME = FaultAnswer(fault="case", quote="Ninety days.", reason="The case wants t
 
 def test_the_fault_question_is_asked_only_for_needs_a_look() -> None:
     """Catches a fault question asked for every play (cost, and a fault named for a pass), or
-    for a fail or an eval bug, where the result already says whose fault it is. One judge
-    sees four runs: a pass, a fail, an eval bug (every turn fails) and a needs a look. It is
-    asked exactly once, about the needs a look play's one turn."""
+    for a fail that rests on nothing the person said, or an eval bug, where the result already
+    says whose fault it is. One judge sees four runs: a pass, a fail that made up a number, an
+    eval bug (every turn fails) and a needs a look. It is asked exactly once, about the needs
+    a look play's one turn."""
     judge = FakeJudge(fault=BLAME)
     case = make_case()
 
     [passed] = play(
         StubHelpdesk({"case-001": filing_script()}),
         [case],
-        person=ScriptedPerson(PersonTurn(message="yes", yes=True)),
+        person=ScriptedPerson(said("yes", yes=True)),
         judge=judge,
     )
     [failed] = play(
-        StubHelpdesk({"case-001": filing_script()}),
+        StubHelpdesk({"case-001": [answer("Your request REQ-9999 is open.")]}),
         [case],
-        person=ScriptedPerson(PersonTurn(message="go on", yes=False)),
         judge=judge,
     )
     [bug] = play(StubHelpdesk({"case-001": filing_script()}, turn_status=500), [case], judge=judge)
@@ -547,9 +544,40 @@ def test_the_fault_question_is_asked_only_for_needs_a_look() -> None:
         "eval_bug",
         "needs_a_look",
     )
+    assert MADE_UP_NUMBER in failed.broken
+    assert EARLY_CHANGE not in failed.broken
     assert judge.asked_fault == [1]
     assert (passed.fault, failed.fault, bug.fault) == (None, None, None)
     assert (look.fault, look.fault_reason) == ("case", BLAME.reason)
+
+
+def test_a_change_before_a_yes_fail_gets_the_fault_answer() -> None:
+    """Catches a fail whose broken rule rests on the person's yes that gets no whose-fault
+    answer (the run where the person agreed with the flag false), and one that changes the
+    score for it. The filing comes after a person message that is not a yes, so the play
+    fails with `early_change`; the judge is asked once about its two turns, and the answer is
+    kept as fault and reason. The result is the same fail as without a judge."""
+    case = make_case()
+    judge = FakeJudge(fault=BLAME)
+
+    [asked] = play(
+        StubHelpdesk({"case-001": filing_script()}),
+        [case],
+        person=ScriptedPerson(said("go on")),
+        judge=judge,
+    )
+    [unasked] = play(
+        StubHelpdesk({"case-001": filing_script()}),
+        [case],
+        person=ScriptedPerson(said("go on")),
+    )
+
+    assert EARLY_CHANGE in asked.broken
+    assert asked.result == unasked.result == "fail"
+    assert asked.broken == unasked.broken
+    assert judge.asked_fault == [2]
+    assert (asked.fault, asked.fault_reason) == ("case", BLAME.reason)
+    assert (unasked.fault, unasked.fault_reason) == (None, "")
 
 
 def test_the_fault_is_asked_once_per_play_of_a_case() -> None:
@@ -635,7 +663,7 @@ def test_a_last_yes_that_ends_in_done_reaches_the_help_desk() -> None:
     desk gets "Yes, go ahead" as its second message, the request is filed and the play
     passes with the yes on its last turn."""
     stub = StubHelpdesk({"case-001": filing_script()})
-    person = ScriptedPerson(PersonTurn(message="Yes, go ahead [done]", yes=True))
+    person = ScriptedPerson(said("Yes, go ahead [done]", yes=True))
 
     [record] = play(stub, [make_case()], person=person)
 

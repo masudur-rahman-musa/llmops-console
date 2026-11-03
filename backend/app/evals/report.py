@@ -212,8 +212,15 @@ def _failure_lines(report: RunReport) -> list[str]:
     if not failed:
         return []
     lines = ["## Failures", ""]
-    lines += [f"- {case_id} play {play.play}: {', '.join(play.broken)}" for case_id, play in failed]
+    for case_id, play in failed:
+        lines.append(f"- {case_id} play {play.play}: {', '.join(play.broken)}")
+        if play.fault is not None:
+            lines.append(f"  {_fault_line(play)}")
     return lines
+
+
+def _fault_line(play: PlayRecord) -> str:
+    return f"Fault, as the judge sees it: {play.fault}. {_one_line(play.fault_reason)}"
 
 
 def _eval_bug_lines(report: RunReport) -> list[str]:
@@ -263,9 +270,7 @@ def needs_a_look_markdown(report: RunReport) -> str:
             else:
                 lines.append("No rule broken, and the end state matches none that is listed.")
             if play.fault is not None:
-                lines.append(
-                    f"Fault, as the judge sees it: {play.fault}. {_one_line(play.fault_reason)}"
-                )
+                lines.append(_fault_line(play))
             for turn in play.conversation:
                 lines.append(f"- person: {_one_line(turn.message)}")
                 lines.append(f"- help desk: {_one_line(turn.answer.reply)}")

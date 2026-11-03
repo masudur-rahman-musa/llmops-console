@@ -268,6 +268,11 @@ class StubHelpdesk:
         return [e[3] for e in self.events if e[0] == "turn"]
 
 
+def said(message: str, *, yes: bool = False) -> PersonTurn:
+    """A person's answer: a yes carries a proposal that matches, anything else carries none."""
+    return PersonTurn(proposal="the proposal" if yes else "", matches=yes, yes=yes, message=message)
+
+
 class ScriptedPerson:
     """A simulated person that answers from a list, then says `[done]`. Keeps its calls."""
 
@@ -279,7 +284,7 @@ class ScriptedPerson:
         self.calls += 1
         if self._turns:
             return self._turns.pop(0)
-        return PersonTurn(message="[done]", yes=False)
+        return said("[done]")
 
 
 class FakeJudge:

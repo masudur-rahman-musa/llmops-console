@@ -186,3 +186,27 @@ def test_a_needs_a_look_play_shows_its_fault_answer(tmp_path: Path) -> None:
     text = (tmp_path / NEEDS_A_LOOK_MD_NAME).read_text(encoding="utf-8")
     assert "fault" in text.lower()
     assert "the case wants two things" in text
+
+
+def test_a_fail_shows_its_fault_answer(tmp_path: Path) -> None:
+    """Catches a fault answer kept on a failed play and never shown: the failures section of
+    `report.md` gives the judge's fault and reason beside the play, and a failed play with no
+    fault answer shows no such line."""
+    plays = (
+        play_record(
+            "beta",
+            1,
+            "fail",
+            broken=["early_change"],
+            fault="eval",
+            fault_reason="the person agreed but did not mark a yes",
+        ),
+        play_record("beta", 2, "fail", broken=["early_change"]),
+    )
+
+    write_reports(tmp_path, build(plays))
+
+    text = (tmp_path / REPORT_MD_NAME).read_text(encoding="utf-8")
+    failures = text[text.index("## Failures") :]
+    assert "Fault, as the judge sees it: eval. the person agreed but did not mark a yes" in failures
+    assert failures.count("Fault, as the judge sees it") == 1

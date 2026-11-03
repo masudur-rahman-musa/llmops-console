@@ -5,7 +5,8 @@ over an `httpx.MockTransport`. No network, no waiting.
 
 Contract these tests are written against:
 
-* `person.PersonTurn(message, yes)`; `person.PlayedTurn(message, said_yes, answer)`.
+* `person.PersonTurn(proposal, matches, yes, message)`;
+  `person.PlayedTurn(message, said_yes, answer)`.
 * `person.DONE_MARK == "[done]"`. A person message that ends in it ends the play. The mark is
   cut off; what is left, when it is not empty, is sent as the last turn. A message that is
   only the mark sends nothing.
@@ -20,10 +21,11 @@ Contract these tests are written against:
   `yes` mark, and then stops. Nothing is guessed from the words.
 * `person.SimulatedPerson(gateway_url, *, client, api_key)` with
   `.answer(case, turns) -> PersonTurn | None`. It asks the alias `simulated-person`, the
-  prompt file `person-v3.md` is the system message, the case facts and the conversation are
+  prompt file `person-v4.md` is the system message, the case facts and the conversation are
   in the user message with the conversation between `<conversation>` and `</conversation>`.
-  The model answers `{"message": ..., "yes": ...}`. An unusable answer is retried once, then
-  `None`.
+  The model answers `{"proposal": ..., "matches": ..., "yes": ..., "message": ...}`. A `yes`
+  with `matches` false, or with a blank `proposal`, is not valid. An unusable answer is
+  retried once, then `None`.
 * `judge.JudgeClient(gateway_url, *, client, api_key)` with `.check(check, turns) ->
   CheckAnswer | None`: ONE request per check, alias `judge`, prompt file `judge-v3.md` as the
   system message, answer `{"answer": "yes" | "no" | "does_not_apply", "quote": ..., "reason":
@@ -57,7 +59,7 @@ from app.evals.person import (
 )
 from app.evals.target import TurnAnswer, TurnFailed
 
-from .builders import ScriptedPerson, answer, call, grant, make_case, played, world
+from .builders import ScriptedPerson, answer, call, grant, make_case, played, said, world
 
 GATEWAY = "https://gateway.example"
 CHAT_URL = f"{GATEWAY}/v1/chat/completions"
@@ -113,9 +115,9 @@ def test_the_person_ends_on_done() -> None:
     is sent for it, and the opening is not a yes."""
     case = make_case(limits={"max_turns": 6, "max_tool_calls": 8})
     person = ScriptedPerson(
-        PersonTurn(message="Ninety days.", yes=False),
-        PersonTurn(message=DONE_MARK, yes=False),
-        PersonTurn(message="never asked", yes=False),
+        said("Ninety days."),
+        said(DONE_MARK),
+        said("never asked"),
     )
     sent: list[str] = []
 
@@ -131,7 +133,7 @@ def test_the_person_ends_at_max_turns() -> None:
     """Catches a play with no ceiling: a person who never says `[done]` is stopped after the
     case's `max_turns` replies, and not one more."""
     case = make_case(limits={"max_turns": 3, "max_tool_calls": 8})
-    person = ScriptedPerson(*[PersonTurn(message=f"more {n}", yes=False) for n in range(10)])
+    person = ScriptedPerson(*[said(f"more {n}") for n in range(10)])
     sent: list[str] = []
 
     played_ = converse(case, model=person, send=sender(sent))
@@ -144,7 +146,7 @@ def test_a_yes_from_the_person_is_kept_on_the_turn_it_was_said() -> None:
     """Catches a yes lost between the model and the rules: the person's `yes` is what ties a
     change to a confirmation, so the turn that carries it says so and the others do not."""
     case = make_case()
-    person = ScriptedPerson(PersonTurn(message="yes please", yes=True))
+    person = ScriptedPerson(said("yes please", yes=True))
     sent: list[str] = []
 
     turns = converse(case, model=person, send=sender(sent)).turns
@@ -173,7 +175,7 @@ def test_the_person_is_asked_with_the_turns_played_so_far() -> None:
     class Spy:
         def answer(self, case_: Any, turns: Any) -> PersonTurn:  # noqa: ANN401
             seen.append(len(turns))
-            return PersonTurn(message=DONE_MARK, yes=False)
+            return said(DONE_MARK)
 
     converse(case, model=Spy(), send=sender([]))
 
@@ -240,7 +242,16 @@ def test_a_scripted_case_still_stops_at_max_turns() -> None:
 
 
 def person_reply(message: str, yes: bool) -> Callable[[], httpx.Response]:
-    return lambda: chat_reply(json.dumps({"message": message, "yes": yes}))
+    return lambda: chat_reply(
+        json.dumps(
+            {
+                "proposal": "the proposal" if yes else "",
+                "matches": yes,
+                "yes": yes,
+                "message": message,
+            }
+        )
+    )
 
 
 def test_the_person_asks_the_alias_with_the_conversation_as_data() -> None:
@@ -258,19 +269,111 @@ def test_the_person_asks_the_alias_with_the_conversation_as_data() -> None:
 
     result = person.answer(case, [played(case.opening, bot)])
 
-    assert result == PersonTurn(message="90 days", yes=False)
+    assert result == said("90 days")
     assert str(gateway.requests[0].url) == CHAT_URL
     assert gateway.requests[0].headers["Authorization"] == "Bearer sk-test"
     body = gateway.body()
     assert body["model"] == "simulated-person"
     system = body["messages"][0]
     assert system["role"] == "system"
-    assert system["content"] == prompt_text("person-v3.md")
+    assert system["content"] == prompt_text("person-v4.md")
     assert "Ninety days is fine." not in system["content"]
     user = gateway.user_text()
     assert user.index("<conversation>") < user.index(bot) < user.index("</conversation>")
     assert "Ninety days is fine." in user
     assert "the reply shows the wiki editor role" in user
+
+
+def test_the_person_answers_proposal_match_yes_and_message() -> None:
+    """Catches a person who drops the reading of the proposal: all four fields come back in
+    the turn, and the prompt's example lists them in the order proposal, matches, yes,
+    message, so the model writes its reading before its answer."""
+    content = json.dumps(
+        {
+            "proposal": "reject REQ-0002",
+            "matches": True,
+            "yes": True,
+            "message": "Yes, go ahead.",
+        }
+    )
+    gateway = Gateway(lambda: chat_reply(content))
+    case = make_case()
+    person = SimulatedPerson(GATEWAY, client=gateway.client(), api_key="k")
+
+    result = person.answer(case, [played(case.opening)])
+
+    assert result == PersonTurn(
+        proposal="reject REQ-0002", matches=True, yes=True, message="Yes, go ahead."
+    )
+    assert list(PersonTurn.model_fields) == ["proposal", "matches", "yes", "message"]
+    assert re.search(
+        r'"proposal".*?"matches".*?"yes".*?"message"', prompt_text(PERSON_PROMPT), re.DOTALL
+    )
+
+
+def test_a_yes_without_a_match_is_retried_then_no_answer() -> None:
+    """Catches a person who is believed when the yes says one thing and the reading says
+    another: a yes with matches false is invalid, so it is retried once (2 requests) and then
+    gives `None`. With a good second answer the retry is used."""
+    bad = json.dumps(
+        {"proposal": "reject REQ-0002", "matches": False, "yes": True, "message": "Yes"}
+    )
+    case = make_case()
+    turns = [played(case.opening)]
+    gives_up = Gateway(lambda: chat_reply(bad))
+    recovers = Gateway(lambda: chat_reply(bad), person_reply("Yes", True))
+
+    first = SimulatedPerson(GATEWAY, client=gives_up.client(), api_key="k").answer(case, turns)
+    second = SimulatedPerson(GATEWAY, client=recovers.client(), api_key="k").answer(case, turns)
+
+    assert first is None
+    assert len(gives_up.requests) == 2
+    assert second == said("Yes", yes=True)
+    assert len(recovers.requests) == 2
+
+
+@pytest.mark.parametrize("proposal", ["", "   ", "\n"], ids=["empty", "spaces", "newline"])
+def test_a_yes_with_no_proposal_is_not_valid(proposal: str) -> None:
+    """Catches a yes that answers nothing: the match is true but the assistant proposed
+    nothing to say yes to, so the answer is refused (retried once, then `None`). The match
+    is true here so only the empty proposal can refuse it."""
+    content = json.dumps({"proposal": proposal, "matches": True, "yes": True, "message": "Yes"})
+    gateway = Gateway(lambda: chat_reply(content))
+    case = make_case()
+
+    result = SimulatedPerson(GATEWAY, client=gateway.client(), api_key="k").answer(
+        case, [played(case.opening)]
+    )
+
+    assert result is None
+    assert len(gateway.requests) == 2
+
+
+def test_a_no_with_no_proposal_is_valid() -> None:
+    """Catches a rule that is too wide: when the assistant asked nothing the person may
+    still answer with a no and no proposal."""
+    gateway = Gateway(person_reply("90 days", False))
+    case = make_case()
+
+    result = SimulatedPerson(GATEWAY, client=gateway.client(), api_key="k").answer(
+        case, [played(case.opening)]
+    )
+
+    assert result == said("90 days")
+
+
+def test_the_person_prompt_decides_before_it_writes() -> None:
+    """Catches a prompt that lets the message come first: the steps (read the proposal,
+    match it against "say yes only if", decide yes or no, then write the message from the
+    decision) are in the prompt in that order."""
+    text = prompt_text("person-v4.md").lower()
+    write = re.search(r"write\W+(the\W+)?message\W+from (your|that) decision", text)
+
+    assert write is not None
+    assert "a yes agrees, a no does not" in text
+    assert "say yes only if" in text or "yes only if" in text
+    assert text.index('"yes" to true') < write.start()
+    assert text.index("proposal") < text.index("matches") < write.start()
 
 
 def test_the_person_reads_a_yes() -> None:
@@ -281,7 +384,7 @@ def test_the_person_reads_a_yes() -> None:
 
     result = person.answer(case, [played(case.opening)])
 
-    assert result == PersonTurn(message="yes", yes=True)
+    assert result == said("yes", yes=True)
 
 
 def test_the_person_retries_once_then_gives_nothing() -> None:
@@ -296,7 +399,7 @@ def test_the_person_retries_once_then_gives_nothing() -> None:
     first = SimulatedPerson(GATEWAY, client=recovers.client(), api_key="k").answer(case, turns)
     second = SimulatedPerson(GATEWAY, client=gives_up.client(), api_key="k").answer(case, turns)
 
-    assert first == PersonTurn(message="ok", yes=True)
+    assert first == said("ok", yes=True)
     assert len(recovers.requests) == 2
     assert second is None
     assert len(gives_up.requests) == 2
@@ -305,12 +408,13 @@ def test_the_person_retries_once_then_gives_nothing() -> None:
 @pytest.mark.parametrize(
     "content",
     [
-        json.dumps({"message": "hi"}),
-        json.dumps({"message": "hi", "yes": False, "extra": 1}),
-        json.dumps({"message": "hi", "yes": "maybe"}),
+        json.dumps({"proposal": "", "matches": False, "message": "hi"}),
+        json.dumps({"message": "hi", "yes": False}),
+        json.dumps({"proposal": "", "matches": False, "yes": False, "message": "hi", "extra": 1}),
+        json.dumps({"proposal": "", "matches": False, "yes": "maybe", "message": "hi"}),
         json.dumps(["hi"]),
     ],
-    ids=["missing yes", "extra field", "yes not a bool", "not an object"],
+    ids=["missing yes", "old two-field answer", "extra field", "yes not a bool", "not an object"],
 )
 def test_a_person_answer_that_breaks_the_shape_is_unusable(content: str) -> None:
     """Catches a person answer taken without checking its shape."""
@@ -524,10 +628,10 @@ def test_an_unreadable_judge_answer_is_printed(capsys: pytest.CaptureFixture[str
 
 def test_the_prompt_files_exist_and_are_not_empty() -> None:
     """Catches a build that names a prompt it does not ship: the three files are read through
-    the package, the person prompt is the third version, and the retired `judge-v2.md` and
+    the package, the person prompt is the fourth version, and the retired `judge-v2.md` and
     `person-v2.md` are gone."""
-    assert PERSON_PROMPT == "person-v3.md"
-    assert prompt_text("person-v3.md").strip() != ""
+    assert PERSON_PROMPT == "person-v4.md"
+    assert prompt_text("person-v4.md").strip() != ""
     assert prompt_text("judge-v3.md").strip() != ""
     assert prompt_text("fault-v1.md").strip() != ""
     assert not (resources.files("app.evals.prompts") / "judge-v2.md").is_file()
@@ -554,11 +658,11 @@ def test_a_never_text_is_asked_as_its_own_request() -> None:
 def test_the_person_prompt_ties_its_yes_to_its_words() -> None:
     """Catches the run where the person wrote "Yes, please open the ticket" with its yes
     flag false, so a change the person agreed to was counted as made without a yes. The
-    prompt says the flag follows the words, and never an agreement with the flag false."""
+    prompt says never an agreement with the flag false, and never a refusal with it true."""
     text = prompt_text(PERSON_PROMPT)
 
-    assert '"yes" must say the same as your message' in text
-    assert 'Never write an\nagreement with "yes" false' in text
+    assert re.search(r'never write an\s+agreement when "yes" is false', text.lower())
+    assert re.search(r'never write a\s+refusal when "yes" is true', text.lower())
 
 
 # --- the last message of a play -----------------------------------------------------
@@ -571,8 +675,8 @@ def test_a_yes_ending_in_done_is_still_sent() -> None:
     is not asked again."""
     case = make_case(limits={"max_turns": 6, "max_tool_calls": 8})
     person = ScriptedPerson(
-        PersonTurn(message=f"Yes, go ahead {DONE_MARK}", yes=True),
-        PersonTurn(message="never asked", yes=False),
+        said(f"Yes, go ahead {DONE_MARK}", yes=True),
+        said("never asked"),
     )
     sent: list[str] = []
 
@@ -592,9 +696,7 @@ def test_done_alone_ends_without_sending(message: str) -> None:
     case = make_case()
     sent: list[str] = []
 
-    result = converse(
-        case, model=ScriptedPerson(PersonTurn(message=message, yes=False)), send=sender(sent)
-    )
+    result = converse(case, model=ScriptedPerson(said(message)), send=sender(sent))
 
     assert sent == [case.opening]
     assert len(result.turns) == 1
@@ -613,17 +715,17 @@ def test_the_play_says_why_it_ended() -> None:
 
     done = converse(
         make_case(limits=three),
-        model=ScriptedPerson(PersonTurn(message=DONE_MARK, yes=False)),
+        model=ScriptedPerson(said(DONE_MARK)),
         send=sender([]),
     )
     ceiling = converse(
         make_case(limits=three),
-        model=ScriptedPerson(*[PersonTurn(message=f"more {n}", yes=False) for n in range(10)]),
+        model=ScriptedPerson(*[said(f"more {n}") for n in range(10)]),
         send=sender([]),
     )
     wrong_setup = converse(
         make_case(limits=three),
-        model=ScriptedPerson(PersonTurn(message="more", yes=False)),
+        model=ScriptedPerson(said("more")),
         send=sender([]),
         should_stop=lambda turns: True,
     )
@@ -667,9 +769,9 @@ def test_a_scripted_case_that_reaches_max_turns_did_not_run_out() -> None:
 
 def test_the_person_prompt_forbids_made_up_details_and_never_yes() -> None:
     """Catches the person prompt that lets the model invent a login problem or an error text
-    and say yes to a change the case says is never wanted. The third version holds both
+    and say yes to a change the case says is never wanted. The fourth version holds both
     rules: no made up detail, and no yes at all when "Say yes only if" starts with "never"."""
-    text = prompt_text("person-v3.md").lower()
+    text = prompt_text("person-v4.md").lower()
 
     assert re.search(r"never (make up|invent)", text)
     assert "error text" in text

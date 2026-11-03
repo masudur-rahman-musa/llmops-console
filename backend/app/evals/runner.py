@@ -8,8 +8,9 @@ person and the judge nothing.
 After the conversation, code checks the shared rules and the case's own never rules and
 matches the world after to the right end states; then the judge, when there is one, answers
 each reply check on its own and each never text only it can see. A judge that answers `yes`
-to a never text flags the play and never fails it. A play that still needs a look gets one
-more question, whose fault it is; the answer is kept beside the play and changes nothing.
+to a never text flags the play and never fails it. A play that still needs a look, or fails
+because a change came before a yes, gets one more question, whose fault it is; the answer
+is kept beside the play and changes nothing.
 A play the eval itself cut short is an eval bug, and its record says why in plain words.
 
 Nothing here opens a socket or reads a clock: the target, the person, the judge, the reset
@@ -28,8 +29,8 @@ from app.evals.cases import EvalCase, ReplyCheck
 from app.evals.judge import CheckAnswer, FaultAnswer
 from app.evals.never_rules import code_never_rules, judge_never_texts
 from app.evals.person import EndReason, PersonModel, PlayedTurn, converse
-from app.evals.results import EVAL_BUG, NEEDS_A_LOOK, CheckRecord, PlayRecord, play_result
-from app.evals.rules import end_rules, turn_rules
+from app.evals.results import EVAL_BUG, FAIL, NEEDS_A_LOOK, CheckRecord, PlayRecord, play_result
+from app.evals.rules import EARLY_CHANGE, end_rules, turn_rules
 from app.evals.target import TargetClient, TurnAnswer, TurnFailed
 from app.evals.world import false_start_facts, matching_end_state, person_name
 
@@ -194,11 +195,17 @@ def _play_once(
     record = _record(case, number, result, broken, flagged, checks, turns, effort, end_state)
     if result == EVAL_BUG:
         return record.model_copy(update={"fault_reason": EVAL_BUG_REASONS.get(played.ended, "")})
-    if result == NEEDS_A_LOOK and judge is not None and turns:
+    if _wants_fault(result, broken) and judge is not None and turns:
         fault = judge.fault(turns, people=named_people(case))
         if fault is not None:
             return record.model_copy(update={"fault": fault.fault, "fault_reason": fault.reason})
     return record
+
+
+def _wants_fault(result: str, broken: Sequence[str]) -> bool:
+    """Whether the whose-fault question is asked: a play to look at, or a failure that rests
+    on the person's yes, where the person may be what went wrong."""
+    return result == NEEDS_A_LOOK or (result == FAIL and EARLY_CHANGE in broken)
 
 
 def _cost(turns: Sequence[PlayedTurn]) -> Decimal | None:

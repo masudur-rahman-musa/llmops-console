@@ -18,7 +18,7 @@ from collections.abc import Callable, Sequence
 from typing import Final, Literal, Protocol
 
 import httpx
-from pydantic import BaseModel, ConfigDict, StrictBool
+from pydantic import BaseModel, ConfigDict, StrictBool, model_validator
 
 from app.evals.cases import EvalCase
 from app.evals.judge import (
@@ -35,19 +35,33 @@ from app.evals.target import TurnAnswer, TurnFailed
 PERSON_ALIAS: Final[str] = "simulated-person"
 """The alias the person names. `routing.yaml` decides which provider serves it."""
 
-PERSON_PROMPT: Final[str] = "person-v3.md"
+PERSON_PROMPT: Final[str] = "person-v4.md"
 
 DONE_MARK: Final[str] = "[done]"
 """A message that ends in this ends the play."""
 
 
 class PersonTurn(BaseModel):
-    """What the person types next, and whether it is a yes."""
+    """What the person decided and types next.
+
+    The fields are in the order the person reasons: what the assistant proposed, whether
+    that matches what the person agrees to, the yes, and only then the words. A yes needs a
+    proposal and a match, so a yes the person did not reason its way to is an invalid
+    answer, retried once like any other, and the play ends without one.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    message: str
+    proposal: str
+    matches: StrictBool
     yes: StrictBool
+    message: str
+
+    @model_validator(mode="after")
+    def _a_yes_follows_from_a_match(self) -> PersonTurn:
+        if self.yes and not (self.matches and self.proposal.strip()):
+            raise ValueError("a yes needs a proposal that matches")
+        return self
 
 
 class PlayedTurn(BaseModel):
