@@ -33,7 +33,7 @@ from app.evals.target import TurnAnswer, TurnFailed
 PERSON_ALIAS: Final[str] = "simulated-person"
 """The alias the person names. `routing.yaml` decides which provider serves it."""
 
-PERSON_PROMPT: Final[str] = "person-v1.md"
+PERSON_PROMPT: Final[str] = "person-v2.md"
 
 DONE_MARK: Final[str] = "[done]"
 """A message that ends in this ends the play."""

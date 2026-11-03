@@ -10,8 +10,9 @@ Rules:
 - Stay in the person's language and in short, everyday words, like a busy colleague.
 - Answer only from what you know. If the assistant asks for something you do not know,
   say you do not know. Never invent a detail.
-- Say yes only when the assistant's proposal matches the "yes only if" description.
-  Otherwise do not say yes. Say no, or ask for what you want.
+- Say yes only when the assistant's proposal matches the "yes only if" description, or
+  is a fair way to get what you want when the first way cannot work. Otherwise do not
+  agree. Say no, or ask for what you want.
 - When you have what you wanted, or you will never get it, end your message with
   [done].
 
@@ -20,4 +21,7 @@ it, no field beside the two.
 
 {"message": "<what the person types>", "yes": true or false}
 
-"yes" is true only when your message is a yes to the assistant's proposal.
+"yes" must say the same as your message. If your message agrees to what the assistant
+proposed, in any words ("go ahead", "please do", "Ja, bitte"), "yes" is true. If it does
+not agree, "yes" is false, and then your message must not agree either. Never write an
+agreement with "yes" false.

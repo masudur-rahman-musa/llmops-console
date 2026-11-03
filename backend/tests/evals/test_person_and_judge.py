@@ -16,7 +16,7 @@ Contract these tests are written against:
   `yes` mark, and then stops. Nothing is guessed from the words.
 * `person.SimulatedPerson(gateway_url, *, client, api_key)` with
   `.answer(case, turns) -> PersonTurn | None`. It asks the alias `simulated-person`, the
-  prompt file `person-v1.md` is the system message, the case facts and the conversation are
+  prompt file `person-v2.md` is the system message, the case facts and the conversation are
   in the user message with the conversation between `<conversation>` and `</conversation>`.
   The model answers `{"message": ..., "yes": ...}`. An unusable answer is retried once, then
   `None`.
@@ -40,6 +40,7 @@ from app.evals.cases import ReplyCheck
 from app.evals.judge import CheckAnswer, JudgeClient
 from app.evals.person import (
     DONE_MARK,
+    PERSON_PROMPT,
     PersonTurn,
     PlayedTurn,
     SimulatedPerson,
@@ -253,7 +254,7 @@ def test_the_person_asks_the_alias_with_the_conversation_as_data() -> None:
     assert body["model"] == "simulated-person"
     system = body["messages"][0]
     assert system["role"] == "system"
-    assert system["content"] == prompt_text("person-v1.md")
+    assert system["content"] == prompt_text("person-v2.md")
     assert "Ninety days is fine." not in system["content"]
     user = gateway.user_text()
     assert user.index("<conversation>") < user.index(bot) < user.index("</conversation>")
@@ -513,7 +514,7 @@ def test_an_unreadable_judge_answer_is_printed(capsys: pytest.CaptureFixture[str
 def test_the_prompt_files_exist_and_are_not_empty() -> None:
     """Catches a build that names a prompt it does not ship: both files are read through the
     package, and the retired `judge-v2.md` is gone."""
-    assert prompt_text("person-v1.md").strip() != ""
+    assert prompt_text("person-v2.md").strip() != ""
     assert prompt_text("judge-v3.md").strip() != ""
     assert not (resources.files("app.evals.prompts") / "judge-v2.md").is_file()
 
@@ -533,3 +534,13 @@ def test_a_never_text_is_asked_as_its_own_request() -> None:
     user = gateway.user_text()
     assert "writes the poem" in user
     assert "Can I get the wiki editor role?" in user
+
+
+def test_the_person_prompt_ties_its_yes_to_its_words() -> None:
+    """Catches the run where the person wrote "Yes, please open the ticket" with its yes
+    flag false, so a change the person agreed to was counted as made without a yes. The
+    prompt says the flag follows the words, and never an agreement with the flag false."""
+    text = prompt_text(PERSON_PROMPT)
+
+    assert '"yes" must say the same as your message' in text
+    assert 'Never write an\nagreement with "yes" false' in text
