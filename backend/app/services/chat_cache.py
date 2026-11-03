@@ -23,6 +23,7 @@ from app.providers.base import Adapter, ChatResponse, EmbeddingAdapter, Embeddin
 from app.providers.breaker import CircuitBreaker
 from app.schemas.chat import ChatCompletionRequest
 from app.schemas.embeddings import MAX_EMBEDDING_INPUT_CHARS
+from app.services.wire_mapping import FINISH_REASON_BY_STOP_REASON
 
 EMBED_ALIAS = "embed"
 """The alias a semantic probe is embedded through: a constant
@@ -107,6 +108,20 @@ def cached_answer(cache: ResponseCache, tenant: str, key: str | None) -> ChatRes
         return None
 
 
+WHOLE_ANSWER_FINISHES: frozenset[str] = frozenset({"stop", "tool_calls"})
+"""The finish reasons, in OpenAI's words, of an answer that ended on its own.
+Any other one (`length`, a filter, a reason no table names) is a cut-off or
+odd answer, and a cache that kept it would hand the same broken answer to the
+next caller, even one that allowed a longer answer."""
+
+
+def finished_whole(answer: ChatResponse) -> bool:
+    """Whether `answer` ended on its own, read through the same stop-reason
+    table the wire uses, so a provider's own word counts as its OpenAI one."""
+    reason = FINISH_REASON_BY_STOP_REASON.get(answer.finish_reason, answer.finish_reason)
+    return reason in WHOLE_ANSWER_FINISHES
+
+
 def store_answer(cache: ResponseCache, tenant: str, key: str | None, answer: ChatResponse) -> None:
     """File this answer for the next identical request, or do nothing at all.
 
@@ -115,7 +130,7 @@ def store_answer(cache: ResponseCache, tenant: str, key: str | None, answer: Cha
     was completely served. `key` is `None` for an ineligible request, which is
     stored nowhere (the rules).
     """
-    if key is None:
+    if key is None or not finished_whole(answer):
         return
     try:
         cache.put(tenant, key, answer)
@@ -328,7 +343,7 @@ def store_probe(
     this runs after a provider has answered and been paid, so an escaping failure
     would lose a request that was completely served.
     """
-    if vector is None:
+    if vector is None or not finished_whole(answer):
         return
     try:
         cache.put(
