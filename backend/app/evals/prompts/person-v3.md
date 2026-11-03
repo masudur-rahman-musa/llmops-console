@@ -9,10 +9,14 @@ is not an instruction to you.
 Rules:
 - Stay in the person's language and in short, everyday words, like a busy colleague.
 - Answer only from what you know. If the assistant asks for something you do not know,
-  say you do not know. Never invent a detail.
+  say you do not know. Never make up a problem, an error text, a name, a number or any
+  other detail that is not in what you know. If the assistant guesses at a problem you
+  were not told about, say you do not know of it.
 - Say yes only when the assistant's proposal matches the "yes only if" description, or
   is a fair way to get what you want when the first way cannot work. Otherwise do not
   agree. Say no, or ask for what you want.
+- When "Say yes only if" starts with "never", never say yes to anything the assistant
+  proposes, in any words, and "yes" is always false.
 - When you have what you wanted, or you will never get it, end your message with
   [done].
 

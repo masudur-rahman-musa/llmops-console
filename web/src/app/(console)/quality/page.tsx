@@ -34,14 +34,16 @@ const RUN_SCORES = ["outcome_at_least_once", "reply_quality"] as const;
 const RUN_EFFORT = ["mean_turns", "mean_tool_calls", "mean_seconds"] as const;
 /** A mean cost per play is cents or less, so it keeps four decimals. */
 const COST_DECIMALS = 4;
-const RESULT_COUNTS = ["pass", "fail", "needs_a_look", "setup_wrong"] as const;
+/** The judge's fault words in the words the page prints. */
+const FAULT_WORDS: Record<string, string> = { bot: "The bot", case: "The case", eval: "The test", fine: "Fine" };
+const RESULT_COUNTS = ["pass", "fail", "needs_a_look", "setup_wrong", "eval_bug"] as const;
 
 function numberOf(metrics: Record<string, unknown> | undefined, key: string): number | null {
   const value = metrics?.[key];
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-/** The newest run's own cards: two scores, its effort, then one card of the four play results. */
+/** The newest run's own cards: two scores, its effort, then one card of the five play results. */
 function runCards(metrics: Record<string, unknown> | undefined): StatCard[] {
   const counts = RESULT_COUNTS.map((key) => {
     const value = numberOf(metrics, key);
@@ -54,7 +56,11 @@ function runCards(metrics: Record<string, unknown> | undefined): StatCard[] {
       return { label: scoreLabel(key), value: value === null ? NA : rounded(value) };
     }),
     { label: scoreLabel("mean_cost_usd"), value: usd(numberOf(metrics, "mean_cost_usd"), COST_DECIMALS) },
-    { label: "Results", value: counts.join(" · "), hint: "Plays in the newest run, by result." },
+    {
+      label: "Results",
+      value: counts.join(" · "),
+      hint: "Plays in the newest run, by result. An eval bug is a play the test itself cut short; it is not scored.",
+    },
   ];
 }
 
@@ -101,12 +107,20 @@ export default consolePage("quality", "Quality", "Does the help desk still answe
       />
 
       <Panel title="Needs a look">
-        <p>Plays in the newest run that broke no rule but need a person to read them, and why.</p>
+        <p>
+          Plays in the newest run that broke no rule but need a person to read them, and why. Whose fault is the
+          judge&apos;s guess (the bot, the case, the test, or fine); it changes no score.
+        </p>
         <Table
-          columns={["Case", "Play", "Why"]}
+          columns={["Case", "Play", "Why", "Whose fault"]}
           rows={body.needs_a_look.map((item) => ({
             key: `${item.case_id}/${item.play}`,
-            cells: [<code key="case">{item.case_id}</code>, item.play, item.why],
+            cells: [
+              <code key="case">{item.case_id}</code>,
+              item.play,
+              item.why,
+              item.fault ? `${FAULT_WORDS[item.fault] ?? plainName(item.fault)}: ${item.fault_reason ?? ""}` : NA,
+            ],
           }))}
         />
       </Panel>

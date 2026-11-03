@@ -20,7 +20,7 @@ from typing import Any
 import httpx
 
 from app.evals.cases import EvalCase
-from app.evals.judge import CheckAnswer
+from app.evals.judge import CheckAnswer, FaultAnswer
 from app.evals.person import PersonTurn, PlayedTurn
 from app.evals.results import CheckRecord, PlayRecord
 from app.evals.target import CallRecord, EvalWorld, TurnAnswer
@@ -289,11 +289,15 @@ class FakeJudge:
         self,
         answers: Mapping[str, CheckAnswer | None] | None = None,
         never: Mapping[str, CheckAnswer | None] | None = None,
+        fault: FaultAnswer | None = None,
     ) -> None:
         self._answers = dict(answers or {})
         self._never = dict(never or {})
+        self._fault = fault
         self.asked: list[str] = []
         self.asked_never: list[str] = []
+        self.asked_fault: list[int] = []
+        """The number of turns of each conversation the fault question was asked about."""
         self.people: list[frozenset[str]] = []
 
     def check(
@@ -314,6 +318,13 @@ class FakeJudge:
         self.people.append(people)
         return self._never.get(text, CheckAnswer(answer="no", quote="", reason="none"))
 
+    def fault(
+        self, turns: Sequence[PlayedTurn], *, people: frozenset[str] = frozenset()
+    ) -> FaultAnswer | None:
+        self.asked_fault.append(len(turns))
+        self.people.append(people)
+        return self._fault
+
 
 def play_record(
     case_id: str,
@@ -330,6 +341,8 @@ def play_record(
     checks: Sequence[CheckRecord] = (),
     conversation: Sequence[PlayedTurn] = (),
     end_state: int | None = None,
+    fault: str | None = None,
+    fault_reason: str = "",
 ) -> PlayRecord:
     """One finished play built directly, so a score test states the exact counts it expects."""
     return PlayRecord(
@@ -346,6 +359,8 @@ def play_record(
         checks=tuple(checks),
         conversation=tuple(conversation),
         end_state=end_state,
+        fault=fault,
+        fault_reason=fault_reason,
     )
 
 

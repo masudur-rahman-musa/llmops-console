@@ -4,7 +4,7 @@ Only files are read; nothing runs. The workflow is read with `yaml.safe_load`, w
 the bare key `on` as `True`, so nothing here reads the trigger. The repository root comes
 from this file's own location, never the working directory.
 
-What each case pins is wiring, not behaviour: the gate now plays the help desk's 45 cases on
+What each case pins is wiring, not behaviour: the gate now plays the help desk's 42 cases on
 the real cheap model, so a condition that skips it, a missing checkout token, a missing model
 key, the old baseline still sitting there, or a mock still answering from a golden set would
 each leave the gate green while it checks nothing real.
@@ -122,3 +122,18 @@ def test_the_eval_compose_overlay_has_no_golden_set_mode() -> None:
 
     assert "MOCK_GOLDEN_SET" not in text
     assert "/golden" not in text
+
+
+def test_the_eval_comment_counts_42_cases_played_eval_repeats_times() -> None:
+    """Catches a Makefile that still tells the old case count: the help desk drops its three
+    other-language cases, so the comment above the target and the target's help line say 42,
+    and the old 45 is named nowhere on either."""
+    lines = MAKEFILE.read_text(encoding="utf-8").splitlines()
+    comment = next(i for i, line in enumerate(lines) if "The eval gate: the help desk's" in line)
+    help_line = next(line for line in lines if re.match(r"eval:(\s|$)", line))
+
+    assert lines[comment].startswith("# The eval gate: the help desk's 42 conversation cases")
+    assert "each played" in lines[comment]
+    assert lines[comment + 1].startswith("# EVAL_PLAYS times")
+    assert "the help desk's 42 conversations" in help_line
+    assert "45" not in lines[comment] + help_line

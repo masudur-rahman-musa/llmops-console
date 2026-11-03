@@ -150,7 +150,7 @@ tenant-key: ## Make a local tenant key and print its env line: make tenant-key [
 	digest=$$(printf '%s' "$$key" | openssl dgst -sha256 -r | cut -d' ' -f1); \
 	echo "key: $$key"; \
 	echo "OPSCONSOLE_API_KEYS=$(TENANT):$$digest"
-# The eval gate: the help desk's 45 conversation cases, each played
+# The eval gate: the help desk's 42 conversation cases, each played
 # EVAL_PLAYS times, against the real help desk agent, with this gateway beside
 # it and the real cheap model (`agent-default`) answering, so `ANTHROPIC_API_KEY` must be set (in the shell,
 # as CI does, or in `backend/.env`). One run, then one gate check against
@@ -175,7 +175,7 @@ EVAL_PLAYS ?= 3
 # has none until the owner runs `ops-eval calibrate`; without it reply quality stays empty.
 EVAL_CALIBRATION = backend/evals/labels/calibration.json
 EVAL_HELPDESK_COMPOSE = docker compose --project-directory $(EVAL_HELPDESK) -f $(EVAL_HELPDESK)/docker-compose.yml -f infra/evals/helpdesk.compose.yml --profile app
-eval:       ## The eval gate: the help desk's 45 conversations on the real cheap model, then the gate
+eval:       ## The eval gate: the help desk's 42 conversations on the real cheap model, then the gate
 	@trap 'rc=$$?; infra/evals/restore_keys.sh $(EVAL_HELPDESK) || [ $$rc != 0 ] || rc=1; exit $$rc' EXIT; \
 	nord=$$(openssl rand -hex 32); cuan=$$(openssl rand -hex 32); judge=$$(openssl rand -hex 32); \
 	nord_digest=$$(printf '%s' "$$nord" | openssl dgst -sha256 -r | cut -d' ' -f1); \

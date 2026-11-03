@@ -165,7 +165,7 @@ def evaluate(report: RunReport, baseline: Baseline) -> GateVerdict:
             f"outcome_every_play: {outcome} is under the baseline {baseline.outcome_every_play}"
         )
 
-    for name in ("needs_a_look", "setup_wrong"):
+    for name in ("needs_a_look", "setup_wrong", "eval_bug"):
         count = report.metrics.get(name)
         if count:
             notes.append(f"{name}: {count} plays, counted apart and gating nothing")

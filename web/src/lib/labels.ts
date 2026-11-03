@@ -20,6 +20,7 @@ const SCORE_LABELS: Record<string, string> = {
   fail: "Fail",
   needs_a_look: "Needs a look",
   setup_wrong: "Setup wrong",
+  eval_bug: "Eval bug",
 };
 
 /** A code name as a sentence start: `wrong_tool` reads `Wrong tool`, `KIND_0` reads `Kind 0`. */

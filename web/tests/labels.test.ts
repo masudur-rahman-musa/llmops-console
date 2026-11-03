@@ -76,4 +76,11 @@ describe("plain labels", () => {
     expect(OUTCOME_SENTENCE.slice(0, -1)).not.toContain(". ");
     expect(OUTCOME_SENTENCE).not.toMatch(/check score|judge score/i);
   });
+
+  it("eval_bug reads Eval bug", () => {
+    // Catches a result key shown raw (eval_bug) or with a stray capital (Eval Bug): the fifth result reads in the words the Quality page prints, next to its four neighbours.
+    expect(scoreLabel("eval_bug")).toBe("Eval bug");
+    expect(scoreLabel("setup_wrong")).toBe("Setup wrong");
+    expect(scoreLabel("needs_a_look")).toBe("Needs a look");
+  });
 });

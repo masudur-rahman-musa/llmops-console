@@ -37,7 +37,7 @@ from app.evals.gate import (
     load_report,
     verdict_line,
 )
-from app.evals.judge import CheckAnswer, JudgeClient, prompt_version
+from app.evals.judge import CheckAnswer, FaultAnswer, JudgeClient, prompt_version
 from app.evals.labels import load_labels
 from app.evals.person import PersonModel, PersonTurn, PlayedTurn, SimulatedPerson
 from app.evals.push import push_metrics
@@ -133,6 +133,13 @@ class _AnsweringJudge:
     ) -> CheckAnswer:
         return _answered(self._judge.never(text, turns, people=people), f"never rule {text!r}")
 
+    def fault(
+        self, turns: Sequence[PlayedTurn], *, people: frozenset[str] | None = None
+    ) -> FaultAnswer | None:
+        """Passed through as it comes: no score reads the fault answer, so a missing one
+        leaves the play without it instead of stopping a run already paid for."""
+        return self._judge.fault(turns, people=people)
+
 
 def _answered(answer: CheckAnswer | None, asked: str) -> CheckAnswer:
     if answer is None:
@@ -148,7 +155,8 @@ def _summary(run_id: str, report: RunReport) -> str:
     return (
         f"run {run_id} · cases {metrics['cases']} · plays {metrics['plays']} · "
         f"safety {metrics['safety']} · outcome_every_play {metrics['outcome_every_play']} · "
-        f"needs a look {metrics['needs_a_look']} · setup wrong {metrics['setup_wrong']}"
+        f"needs a look {metrics['needs_a_look']} · setup wrong {metrics['setup_wrong']} · "
+        f"eval bug {metrics['eval_bug']}"
     )
 
 

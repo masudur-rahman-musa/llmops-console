@@ -2,7 +2,9 @@
 
 The opening message is sent first and is never a yes. After each reply the person answers
 from the case's `person_knows` and says yes only when the proposal matches `confirms_if`;
-a message that ends in `[done]` ends the play and is not sent. The person runs on the
+a message that ends in `[done]` ends the play: the words before the mark are still sent as
+the last turn, so a "Yes, go ahead [done]" reaches the help desk; a bare `[done]` sends
+nothing. The person runs on the
 gateway alias `simulated-person` with a fixed prompt file. A scripted case never asks a
 model: its person sends the case's `script` steps in order, each with the yes mark the
 case gives it, and then stops.
@@ -13,7 +15,7 @@ The conversation travels in the user message between fixed tags, as data.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Final, Protocol
+from typing import Final, Literal, Protocol
 
 import httpx
 from pydantic import BaseModel, ConfigDict, StrictBool
@@ -33,7 +35,7 @@ from app.evals.target import TurnAnswer, TurnFailed
 PERSON_ALIAS: Final[str] = "simulated-person"
 """The alias the person names. `routing.yaml` decides which provider serves it."""
 
-PERSON_PROMPT: Final[str] = "person-v2.md"
+PERSON_PROMPT: Final[str] = "person-v3.md"
 
 DONE_MARK: Final[str] = "[done]"
 """A message that ends in this ends the play."""
@@ -58,6 +60,21 @@ class PlayedTurn(BaseModel):
     answer: TurnAnswer
 
 
+EndReason = Literal[
+    "done", "max_turns", "setup_wrong", "turn_failed", "person_silent", "script_ran_out"
+]
+"""Why a play ended. The last three are the eval's own trouble, not the help desk's."""
+
+
+class Conversation(BaseModel):
+    """A played conversation and why it ended."""
+
+    model_config = ConfigDict(frozen=True)
+
+    turns: tuple[PlayedTurn, ...]
+    ended: EndReason
+
+
 class PersonModel(Protocol):
     def answer(self, case: EvalCase, turns: Sequence[PlayedTurn]) -> PersonTurn | None: ...
 
@@ -68,35 +85,47 @@ def converse(
     model: PersonModel,
     send: Callable[[str], TurnAnswer],
     should_stop: Callable[[Sequence[PlayedTurn]], bool] = lambda turns: False,
-) -> tuple[PlayedTurn, ...]:
+) -> Conversation:
     """Play one conversation: send the opening, then answer each reply until the end.
 
-    The play ends on `[done]`, when the person gives no answer, when a scripted person has
-    no steps left, when a turn cannot be answered by the help desk, when `should_stop` says
-    so after a turn, or after the case's `max_turns` replies.
+    The play ends on `[done]` (after sending any words before it), when the person gives no
+    answer, when a scripted person has no steps left, when a turn cannot be answered by the
+    help desk, when `should_stop` says so after a turn (a wrong setup), or after the case's
+    `max_turns` replies. The answer says which, so a play the eval broke is not blamed on
+    the help desk.
     """
     turns: list[PlayedTurn] = []
     steps = iter(case.script)
     message, said_yes = case.opening, False
+    last = False
     while True:
         try:
             answer = send(message)
         except TurnFailed:
-            break
+            return Conversation(turns=tuple(turns), ended="turn_failed")
         turns.append(PlayedTurn(message=message, said_yes=said_yes, answer=answer))
-        if len(turns) >= case.limits.max_turns or should_stop(turns):
-            break
+        if should_stop(turns):
+            return Conversation(turns=tuple(turns), ended="setup_wrong")
+        if last:
+            return Conversation(turns=tuple(turns), ended="done")
+        if len(turns) >= case.limits.max_turns:
+            return Conversation(turns=tuple(turns), ended="max_turns")
         if case.scripted:
             step = next(steps, None)
             if step is None:
-                break
+                return Conversation(turns=tuple(turns), ended="script_ran_out")
             message, said_yes = step.say, step.yes
             continue
         reply = model.answer(case, turns)
-        if reply is None or reply.message.strip().endswith(DONE_MARK):
-            break
-        message, said_yes = reply.message, reply.yes
-    return tuple(turns)
+        if reply is None:
+            return Conversation(turns=tuple(turns), ended="person_silent")
+        text = reply.message.strip()
+        if text.endswith(DONE_MARK):
+            text = text.removesuffix(DONE_MARK).strip()
+            if not text:
+                return Conversation(turns=tuple(turns), ended="done")
+            last = True
+        message, said_yes = text if last else reply.message, reply.yes
 
 
 class SimulatedPerson:

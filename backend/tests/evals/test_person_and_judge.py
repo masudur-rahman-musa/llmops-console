@@ -6,17 +6,21 @@ over an `httpx.MockTransport`. No network, no waiting.
 Contract these tests are written against:
 
 * `person.PersonTurn(message, yes)`; `person.PlayedTurn(message, said_yes, answer)`.
-* `person.DONE_MARK == "[done]"`. A person message that ends in it ends the play and is NOT
-  sent to the help desk.
-* `person.converse(case, *, model, send) -> tuple[PlayedTurn, ...]`. The opening message is
-  sent first (never a yes). After each reply the person answers; the play ends on `[done]`,
-  when the model gives no answer (`None`), or after the case's `max_turns` replies. `send`
-  takes a message and returns a `TurnAnswer`. A scripted case never calls `model`: its
+* `person.DONE_MARK == "[done]"`. A person message that ends in it ends the play. The mark is
+  cut off; what is left, when it is not empty, is sent as the last turn. A message that is
+  only the mark sends nothing.
+* `person.converse(case, *, model, send, should_stop=...) -> Conversation`, a frozen object
+  with `.turns` (a tuple of `PlayedTurn`) and `.ended`, why the play ended: `done`,
+  `max_turns`, `setup_wrong` (`should_stop` said so), `turn_failed` (`send` raised
+  `TurnFailed`), `person_silent` (the model gave `None`) or `script_ran_out`. The opening
+  message is sent first (never a yes). After each reply the person answers; the play ends on
+  `[done]`, when the model gives no answer (`None`), or after the case's `max_turns` replies.
+  `send` takes a message and returns a `TurnAnswer`. A scripted case never calls `model`: its
   person sends the `say` of each step of the case's `script`, in order, with the step's own
   `yes` mark, and then stops. Nothing is guessed from the words.
 * `person.SimulatedPerson(gateway_url, *, client, api_key)` with
   `.answer(case, turns) -> PersonTurn | None`. It asks the alias `simulated-person`, the
-  prompt file `person-v2.md` is the system message, the case facts and the conversation are
+  prompt file `person-v3.md` is the system message, the case facts and the conversation are
   in the user message with the conversation between `<conversation>` and `</conversation>`.
   The model answers `{"message": ..., "yes": ...}`. An unusable answer is retried once, then
   `None`.
@@ -24,11 +28,16 @@ Contract these tests are written against:
   CheckAnswer | None`: ONE request per check, alias `judge`, prompt file `judge-v3.md` as the
   system message, answer `{"answer": "yes" | "no" | "does_not_apply", "quote": ..., "reason":
   ...}`. An unusable answer is retried once, then `None`.
+* `judge.JudgeClient.fault(turns, *, people=None) -> FaultAnswer | None`: ONE request, alias
+  `judge`, prompt file `fault-v1.md` as the system message, answer `{"fault": "bot" | "case" |
+  "eval" | "fine", "quote": ..., "reason": ...}`. An unusable answer is retried once, then
+  `None`.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from importlib import resources
 from typing import Any
@@ -37,7 +46,7 @@ import httpx
 import pytest
 
 from app.evals.cases import ReplyCheck
-from app.evals.judge import CheckAnswer, JudgeClient
+from app.evals.judge import CheckAnswer, FaultAnswer, JudgeClient
 from app.evals.person import (
     DONE_MARK,
     PERSON_PROMPT,
@@ -46,7 +55,7 @@ from app.evals.person import (
     SimulatedPerson,
     converse,
 )
-from app.evals.target import TurnAnswer
+from app.evals.target import TurnAnswer, TurnFailed
 
 from .builders import ScriptedPerson, answer, call, grant, make_case, played, world
 
@@ -99,21 +108,23 @@ def sender(sent: list[str], replies: list[TurnAnswer] | None = None) -> Callable
 
 
 def test_the_person_ends_on_done() -> None:
-    """Catches a play that goes on after the person is finished: the second answer ends in
-    `[done]`, so the play stops with 2 turns. The `[done]` message is not sent to the help
-    desk, and the opening is not a yes."""
+    """Catches a play that goes on after the person is finished: the second answer is only
+    `[done]`, so the play stops with 2 turns and the person is not asked a third time. Nothing
+    is sent for it, and the opening is not a yes."""
     case = make_case(limits={"max_turns": 6, "max_tool_calls": 8})
     person = ScriptedPerson(
         PersonTurn(message="Ninety days.", yes=False),
-        PersonTurn(message=f"Thanks {DONE_MARK}", yes=False),
+        PersonTurn(message=DONE_MARK, yes=False),
+        PersonTurn(message="never asked", yes=False),
     )
     sent: list[str] = []
 
-    turns = converse(case, model=person, send=sender(sent))
+    played_ = converse(case, model=person, send=sender(sent))
 
     assert sent == [case.opening, "Ninety days."]
-    assert len(turns) == 2
-    assert turns[0].said_yes is False
+    assert len(played_.turns) == 2
+    assert played_.turns[0].said_yes is False
+    assert person.calls == 2
 
 
 def test_the_person_ends_at_max_turns() -> None:
@@ -123,9 +134,9 @@ def test_the_person_ends_at_max_turns() -> None:
     person = ScriptedPerson(*[PersonTurn(message=f"more {n}", yes=False) for n in range(10)])
     sent: list[str] = []
 
-    turns = converse(case, model=person, send=sender(sent))
+    played_ = converse(case, model=person, send=sender(sent))
 
-    assert len(turns) == 3
+    assert len(played_.turns) == 3
     assert sent == [case.opening, "more 0", "more 1"]
 
 
@@ -136,7 +147,7 @@ def test_a_yes_from_the_person_is_kept_on_the_turn_it_was_said() -> None:
     person = ScriptedPerson(PersonTurn(message="yes please", yes=True))
     sent: list[str] = []
 
-    turns = converse(case, model=person, send=sender(sent))
+    turns = converse(case, model=person, send=sender(sent)).turns
 
     assert [t.said_yes for t in turns] == [False, True]
     assert [t.message for t in turns] == [case.opening, "yes please"]
@@ -148,7 +159,7 @@ def test_a_person_who_cannot_answer_ends_the_play() -> None:
     case = make_case()
     sent: list[str] = []
 
-    turns = converse(case, model=ScriptedPerson(None), send=sender(sent))
+    turns = converse(case, model=ScriptedPerson(None), send=sender(sent)).turns
 
     assert len(turns) == 1
 
@@ -184,7 +195,7 @@ def test_a_scripted_case_sends_its_steps_with_their_yes_marks() -> None:
     model = ScriptedPerson()
     sent: list[str] = []
 
-    turns = converse(case, model=model, send=sender(sent))
+    turns = converse(case, model=model, send=sender(sent)).turns
 
     assert sent == [case.opening, "Ja, bitte", "Gerne, 90 Tage"]
     assert [t.said_yes for t in turns] == [False, True, False]
@@ -200,7 +211,7 @@ def test_a_scripted_yes_is_never_guessed_from_the_words() -> None:
         limits={"max_turns": 6, "max_tool_calls": 8},
     )
 
-    turns = converse(case, model=ScriptedPerson(), send=sender([]))
+    turns = converse(case, model=ScriptedPerson(), send=sender([])).turns
 
     assert [t.message for t in turns] == [case.opening, "yes", "Na gut, mach es"]
     assert [t.said_yes for t in turns] == [False, False, True]
@@ -254,7 +265,7 @@ def test_the_person_asks_the_alias_with_the_conversation_as_data() -> None:
     assert body["model"] == "simulated-person"
     system = body["messages"][0]
     assert system["role"] == "system"
-    assert system["content"] == prompt_text("person-v2.md")
+    assert system["content"] == prompt_text("person-v3.md")
     assert "Ninety days is fine." not in system["content"]
     user = gateway.user_text()
     assert user.index("<conversation>") < user.index(bot) < user.index("</conversation>")
@@ -512,11 +523,15 @@ def test_an_unreadable_judge_answer_is_printed(capsys: pytest.CaptureFixture[str
 
 
 def test_the_prompt_files_exist_and_are_not_empty() -> None:
-    """Catches a build that names a prompt it does not ship: both files are read through the
-    package, and the retired `judge-v2.md` is gone."""
-    assert prompt_text("person-v2.md").strip() != ""
+    """Catches a build that names a prompt it does not ship: the three files are read through
+    the package, the person prompt is the third version, and the retired `judge-v2.md` and
+    `person-v2.md` are gone."""
+    assert PERSON_PROMPT == "person-v3.md"
+    assert prompt_text("person-v3.md").strip() != ""
     assert prompt_text("judge-v3.md").strip() != ""
+    assert prompt_text("fault-v1.md").strip() != ""
     assert not (resources.files("app.evals.prompts") / "judge-v2.md").is_file()
+    assert not (resources.files("app.evals.prompts") / "person-v2.md").is_file()
 
 
 def test_a_never_text_is_asked_as_its_own_request() -> None:
@@ -544,3 +559,184 @@ def test_the_person_prompt_ties_its_yes_to_its_words() -> None:
 
     assert '"yes" must say the same as your message' in text
     assert 'Never write an\nagreement with "yes" false' in text
+
+
+# --- the last message of a play -----------------------------------------------------
+
+
+def test_a_yes_ending_in_done_is_still_sent() -> None:
+    """Catches the eval throwing away the person's yes: "Yes, go ahead [done]" used to end the
+    play unsent, so the help desk never heard the yes. The help desk now gets "Yes, go ahead"
+    with the mark cut off, it is kept as a yes, the play ends after that turn, and the person
+    is not asked again."""
+    case = make_case(limits={"max_turns": 6, "max_tool_calls": 8})
+    person = ScriptedPerson(
+        PersonTurn(message=f"Yes, go ahead {DONE_MARK}", yes=True),
+        PersonTurn(message="never asked", yes=False),
+    )
+    sent: list[str] = []
+
+    result = converse(case, model=person, send=sender(sent))
+
+    assert sent == [case.opening, "Yes, go ahead"]
+    assert [t.message for t in result.turns] == [case.opening, "Yes, go ahead"]
+    assert [t.said_yes for t in result.turns] == [False, True]
+    assert result.ended == "done"
+    assert person.calls == 1
+
+
+@pytest.mark.parametrize("message", [DONE_MARK, f"  {DONE_MARK}  ", f"\n{DONE_MARK}\n"])
+def test_done_alone_ends_without_sending(message: str) -> None:
+    """Catches an empty message sent to the help desk: a message that is only the mark (with
+    spaces or a newline round it) sends nothing, so the play holds the opening turn only."""
+    case = make_case()
+    sent: list[str] = []
+
+    result = converse(
+        case, model=ScriptedPerson(PersonTurn(message=message, yes=False)), send=sender(sent)
+    )
+
+    assert sent == [case.opening]
+    assert len(result.turns) == 1
+    assert result.ended == "done"
+
+
+def test_the_play_says_why_it_ended() -> None:
+    """Catches an end reason that mixes two endings up, which would turn a play the eval broke
+    into a bot fault or the other way round. Each ending is its own play with its own reason:
+    the person finishing, the turn ceiling, a setup that is wrong, a help desk turn that
+    fails, a person who gives nothing, and a script with no steps left."""
+    three = {"max_turns": 3, "max_tool_calls": 8}
+
+    def failing(message: str) -> TurnAnswer:
+        raise TurnFailed("scripted failure")
+
+    done = converse(
+        make_case(limits=three),
+        model=ScriptedPerson(PersonTurn(message=DONE_MARK, yes=False)),
+        send=sender([]),
+    )
+    ceiling = converse(
+        make_case(limits=three),
+        model=ScriptedPerson(*[PersonTurn(message=f"more {n}", yes=False) for n in range(10)]),
+        send=sender([]),
+    )
+    wrong_setup = converse(
+        make_case(limits=three),
+        model=ScriptedPerson(PersonTurn(message="more", yes=False)),
+        send=sender([]),
+        should_stop=lambda turns: True,
+    )
+    failed = converse(make_case(limits=three), model=ScriptedPerson(), send=failing)
+    silent = converse(make_case(limits=three), model=ScriptedPerson(None), send=sender([]))
+    out_of_steps = converse(
+        make_case(scripted=True, script=[{"say": "one", "yes": False}], limits=three),
+        model=ScriptedPerson(),
+        send=sender([]),
+    )
+
+    assert done.ended == "done"
+    assert ceiling.ended == "max_turns"
+    assert wrong_setup.ended == "setup_wrong"
+    assert failed.ended == "turn_failed"
+    assert silent.ended == "person_silent"
+    assert out_of_steps.ended == "script_ran_out"
+    assert len(wrong_setup.turns) == 1
+    assert failed.turns == ()
+    assert len(out_of_steps.turns) == 2
+
+
+def test_a_scripted_case_that_reaches_max_turns_did_not_run_out() -> None:
+    """Catches a script that has steps left but is stopped by the ceiling being called
+    `script_ran_out`: that would make a case limit look like an eval bug. Three steps, two
+    turns allowed: the play ended at the ceiling."""
+    case = make_case(
+        scripted=True,
+        script=[
+            {"say": "one", "yes": False},
+            {"say": "two", "yes": False},
+            {"say": "three", "yes": False},
+        ],
+        limits={"max_turns": 2, "max_tool_calls": 8},
+    )
+
+    result = converse(case, model=ScriptedPerson(), send=sender([]))
+
+    assert result.ended == "max_turns"
+
+
+def test_the_person_prompt_forbids_made_up_details_and_never_yes() -> None:
+    """Catches the person prompt that lets the model invent a login problem or an error text
+    and say yes to a change the case says is never wanted. The third version holds both
+    rules: no made up detail, and no yes at all when "Say yes only if" starts with "never"."""
+    text = prompt_text("person-v3.md").lower()
+
+    assert re.search(r"never (make up|invent)", text)
+    assert "error text" in text
+    assert re.search(r"say yes only if.{0,300}never", text, re.DOTALL)
+    assert re.search(r"never say yes", text)
+
+
+# --- the fault question -------------------------------------------------------------
+
+
+def fault_reply(word: str, quote: str = "Shall I file it?") -> Callable[[], httpx.Response]:
+    return lambda: chat_reply(
+        json.dumps({"fault": word, "quote": quote, "reason": "Because of the quote."})
+    )
+
+
+@pytest.mark.parametrize("word", ["bot", "case", "eval", "fine"])
+def test_the_fault_answer_is_one_of_four(word: str) -> None:
+    """Catches a fault schema that refuses one of the four words: each parses with its quote
+    and reason, in ONE request to the `judge` alias with the prompt file `fault-v1.md`."""
+    gateway = Gateway(fault_reply(word))
+    judge = JudgeClient(GATEWAY, client=gateway.client(), api_key="sk-f")
+
+    result = judge.fault(conversation())
+
+    assert result == FaultAnswer(
+        fault=word, quote="Shall I file it?", reason="Because of the quote."
+    )
+    assert len(gateway.requests) == 1
+    assert gateway.requests[0].headers["Authorization"] == "Bearer sk-f"
+    body = gateway.body()
+    assert body["model"] == "judge"
+    assert body["messages"][0]["content"] == prompt_text("fault-v1.md")
+    user = gateway.user_text()
+    start, end = user.index("<conversation>"), user.index("</conversation>")
+    assert start < user.index("Can I get the wiki editor role?") < end
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        json.dumps({"fault": "maybe", "quote": "q", "reason": "r"}),
+        json.dumps({"fault": "Bot", "quote": "q", "reason": "r"}),
+        json.dumps({"fault": "", "quote": "q", "reason": "r"}),
+        json.dumps({"fault": "bot", "reason": "r"}),
+        json.dumps({"fault": "bot", "quote": "q"}),
+        json.dumps({"fault": "bot", "quote": "q", "reason": "r", "extra": 1}),
+        json.dumps({"answer": "yes", "quote": "q", "reason": "r"}),
+        "the bot is at fault",
+    ],
+    ids=[
+        "unknown word",
+        "capital letter",
+        "empty word",
+        "no quote",
+        "no reason",
+        "extra field",
+        "the check shape",
+        "not json",
+    ],
+)
+def test_anything_but_the_four_words_is_no_fault_answer(content: str) -> None:
+    """Catches a fault taken on trust: a fifth word, a wrong case, a missing part and the
+    reply-check shape are all no answer, after one retry (2 requests)."""
+    gateway = Gateway(lambda: chat_reply(content))
+
+    result = JudgeClient(GATEWAY, client=gateway.client(), api_key="k").fault(conversation())
+
+    assert result is None
+    assert len(gateway.requests) == 2

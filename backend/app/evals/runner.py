@@ -8,7 +8,9 @@ person and the judge nothing.
 After the conversation, code checks the shared rules and the case's own never rules and
 matches the world after to the right end states; then the judge, when there is one, answers
 each reply check on its own and each never text only it can see. A judge that answers `yes`
-to a never text flags the play and never fails it.
+to a never text flags the play and never fails it. A play that still needs a look gets one
+more question, whose fault it is; the answer is kept beside the play and changes nothing.
+A play the eval itself cut short is an eval bug, and its record says why in plain words.
 
 Nothing here opens a socket or reads a clock: the target, the person, the judge, the reset
 and both clocks are handed in, so the whole loop runs in tests with fakes.
@@ -23,10 +25,10 @@ from decimal import Decimal
 from typing import Final, Protocol
 
 from app.evals.cases import EvalCase, ReplyCheck
-from app.evals.judge import CheckAnswer
+from app.evals.judge import CheckAnswer, FaultAnswer
 from app.evals.never_rules import code_never_rules, judge_never_texts
-from app.evals.person import PersonModel, PlayedTurn, converse
-from app.evals.results import CheckRecord, PlayRecord, play_result
+from app.evals.person import EndReason, PersonModel, PlayedTurn, converse
+from app.evals.results import EVAL_BUG, NEEDS_A_LOOK, CheckRecord, PlayRecord, play_result
 from app.evals.rules import end_rules, turn_rules
 from app.evals.target import TargetClient, TurnAnswer, TurnFailed
 from app.evals.world import false_start_facts, matching_end_state, person_name
@@ -39,6 +41,13 @@ MAX_PLAYS: Final[int] = 10
 DEFAULT_PLAYS: Final[int] = 3
 """How many times each case is played unless the caller says otherwise."""
 
+EVAL_BUG_REASONS: Final[Mapping[EndReason, str]] = {
+    "turn_failed": "a help desk turn failed, so the play was cut short",
+    "person_silent": "the simulated person gave no answer, so the play was cut short",
+    "script_ran_out": "the script ran out of messages before any right end state",
+}
+"""What an eval bug play's record says about why the eval broke it."""
+
 
 class ReplyJudge(Protocol):
     """Anything that answers a reply check and a never text. `JudgeClient` is one."""
@@ -50,6 +59,10 @@ class ReplyJudge(Protocol):
     def never(
         self, text: str, turns: Sequence[PlayedTurn], *, people: frozenset[str] = ...
     ) -> CheckAnswer | None: ...
+
+    def fault(
+        self, turns: Sequence[PlayedTurn], *, people: frozenset[str] = ...
+    ) -> FaultAnswer | None: ...
 
 
 def named_people(case: EvalCase) -> frozenset[str]:
@@ -130,13 +143,14 @@ def _play_once(
         return answer
 
     started = clock()
-    turns = converse(
+    played = converse(
         case,
         model=person,
         send=send,
-        should_stop=lambda played: _setup_is_wrong(case, played, now()),
+        should_stop=lambda so_far: _setup_is_wrong(case, so_far, now()),
     )
     seconds = clock() - started
+    turns = played.turns
 
     effort = {
         "turns": len(turns),
@@ -171,9 +185,20 @@ def _play_once(
             if verdict is not None and verdict.answer == "yes":
                 flagged.append(text)
     result = play_result(
-        setup_wrong=False, broken=broken, flagged=flagged, end_state_matched=end_state is not None
+        setup_wrong=False,
+        broken=broken,
+        flagged=flagged,
+        end_state_matched=end_state is not None,
+        ended=played.ended,
     )
-    return _record(case, number, result, broken, flagged, checks, turns, effort, end_state)
+    record = _record(case, number, result, broken, flagged, checks, turns, effort, end_state)
+    if result == EVAL_BUG:
+        return record.model_copy(update={"fault_reason": EVAL_BUG_REASONS.get(played.ended, "")})
+    if result == NEEDS_A_LOOK and judge is not None and turns:
+        fault = judge.fault(turns, people=named_people(case))
+        if fault is not None:
+            return record.model_copy(update={"fault": fault.fault, "fault_reason": fault.reason})
+    return record
 
 
 def _cost(turns: Sequence[PlayedTurn]) -> Decimal | None:

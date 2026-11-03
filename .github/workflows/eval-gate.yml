@@ -5,7 +5,7 @@ name: eval-gate
 # (the retired score file stays watched too) arrives in a commit whose subject starts `baseline:` and which carries its own ADR.
 # It runs on every pull request into main, unconditionally.
 #
-# `eval` plays the help desk's 45 conversation cases against the real help desk
+# `eval` plays the help desk's 42 conversation cases against the real help desk
 # agent, with this gateway beside it and the real cheap model (`agent-default`)
 # answering, then checks the result against the stored baseline. It needs the
 # `ANTHROPIC_API_KEY` secret and costs roughly $1 to $2 a run. Until the owner adds
@@ -77,7 +77,7 @@ jobs:
       # containers itself.
       - name: Write the help desk's .env.demo
         run: grep -v '=$' helpdesk/backend/.env.example > helpdesk/backend/.env.demo
-      # `make eval` plays the 45 cases and gates the report against
+      # `make eval` plays the 42 cases and gates the report against
       # `backend/evals/baseline.json`: safety must be 100 and outcome every play must
       # reach the baseline. It writes `backend/evals/reports/local/` either way.
       - name: Run the eval and gate it

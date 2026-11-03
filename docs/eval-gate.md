@@ -114,7 +114,7 @@ desk checkout, `../ai-help-desk-governed-access` by default; the key can be in
 3. It resets and seeds the help desk's database and loads its policy text
    (`infra/evals/prepare_helpdesk.sh`), then starts its agent API and tool server with
    the eval routes switched on (`infra/evals/helpdesk.compose.yml`).
-4. It plays the help desk's 45 conversation cases three times each
+4. It plays the help desk's 42 conversation cases three times each
    (`EVAL_PLAYS ?= 3`) with `ops-eval conversations --plays`. The help desk data is reset
    before every play (`infra/evals/reset_helpdesk.sh`). The reset keeps the loaded policy
    rows, then checks that every policy in Qdrant still has its row; when one does not,

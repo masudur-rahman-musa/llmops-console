@@ -18,7 +18,13 @@ export type QualityBody = {
   release_markers: Array<{ git_sha: string; deployed_at: string; status: string; eval_run_id: string | null }>;
   categories: Array<{ category: string; passed: number; total: number }>;
   taxonomy: Array<{ tag: string; count: number }>;
-  needs_a_look: Array<{ case_id: string; play: number; why: string }>;
+  needs_a_look: Array<{
+    case_id: string;
+    play: number;
+    why: string;
+    fault?: string | null;
+    fault_reason?: string | null;
+  }>;
   blocked: Array<{
     git_sha: string;
     deployed_at: string;
@@ -26,6 +32,9 @@ export type QualityBody = {
     regressed: Array<{ metric: string; value: number; previous: number }>;
   }>;
 };
+
+/** Text, `null`, or left out by an older console-api that does not send the field. */
+const maybeText = (value: unknown): boolean => value === undefined || nullable(str)(value);
 
 const check = shape({
   sources,
@@ -43,7 +52,9 @@ const check = shape({
   release_markers: listOf(shape({ git_sha: str, deployed_at: str, status: str, eval_run_id: nullable(str) })),
   categories: listOf(shape({ category: str, passed: int, total: int })),
   taxonomy: listOf(shape({ tag: str, count: int })),
-  needs_a_look: listOf(shape({ case_id: str, play: int, why: str })),
+  needs_a_look: listOf(
+    shape({ case_id: str, play: int, why: str, fault: maybeText, fault_reason: maybeText }),
+  ),
   blocked: listOf(
     shape({
       git_sha: str,

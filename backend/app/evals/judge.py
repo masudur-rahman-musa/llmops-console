@@ -63,6 +63,7 @@ JUDGE_SESSION: Final[str] = "eval-judge"
 
 PROMPT_PACKAGE: Final[str] = "app.evals.prompts"
 PROMPT_RESOURCE: Final[str] = "judge-v3.md"
+FAULT_PROMPT: Final[str] = "fault-v1.md"
 
 CONVERSATION_OPEN: Final[str] = "<conversation>"
 CONVERSATION_CLOSE: Final[str] = "</conversation>"
@@ -74,6 +75,7 @@ MAX_WHOLE_ROLE_LIST: Final[int] = 10
 """A role list this long or shorter is sent to the judge whole; a longer one is cut."""
 
 Answer = Literal["yes", "no", "does_not_apply"]
+Fault = Literal["bot", "case", "eval", "fine"]
 
 
 class CheckAnswer(BaseModel):
@@ -82,6 +84,16 @@ class CheckAnswer(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     answer: Answer
+    quote: str
+    reason: str
+
+
+class FaultAnswer(BaseModel):
+    """Whose fault a play that needs a look is: a word, a quote and a reason, nothing else."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    fault: Fault
     quote: str
     reason: str
 
@@ -362,6 +374,31 @@ class JudgeClient:
     ) -> CheckAnswer | None:
         """Answer one never rule: `yes` means the agent did the thing it must never do."""
         return self._ask(f"Never rule: the agent {text}", turns, people)
+
+    def fault(
+        self, turns: Sequence[PlayedTurn], *, people: frozenset[str] | None = None
+    ) -> FaultAnswer | None:
+        """Whose fault a play that needs a look is, or `None` when the judge could not be used.
+
+        Its own prompt file, so the reply checks' prompt and its calibration stay as they
+        are. The answer is shown beside the play and never read by a score.
+        """
+        user = f"Whose fault is it?\n\n{render_conversation(turns, people)}"
+        answer = ask_retried(
+            self._client,
+            self._url,
+            chat_body(JUDGE_ALIAS, prompt_text(FAULT_PROMPT), user),
+            api_key=self._api_key,
+            timeout=self._timeout,
+            model=FaultAnswer,
+        )
+        if answer is None:
+            return None
+        return FaultAnswer(
+            fault=answer.fault,
+            quote=answer.quote[:MAX_REASON_LENGTH],
+            reason=answer.reason[:MAX_REASON_LENGTH],
+        )
 
     def label(self, question: str, conversation: Sequence[LabelTurn]) -> CheckAnswer | None:
         """Answer a label row's question about its conversation, or `None` when unusable."""

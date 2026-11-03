@@ -28,7 +28,14 @@ from typing import Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.evals.results import FAIL, NEEDS_A_LOOK, SETUP_WRONG, PlayRecord, compute_scores
+from app.evals.results import (
+    EVAL_BUG,
+    FAIL,
+    NEEDS_A_LOOK,
+    NOT_SCORED,
+    PlayRecord,
+    compute_scores,
+)
 
 REPORT_JSON_NAME: Final[str] = "report.json"
 """The machine-readable report, the file the eval gate reads."""
@@ -101,7 +108,7 @@ class RunReport(BaseModel):
 
 
 def _case_report(case_id: str, plays: Sequence[PlayRecord]) -> CaseReport:
-    scored = [p for p in plays if p.result != SETUP_WRONG]
+    scored = [p for p in plays if p.result not in NOT_SCORED]
     tags: list[str] = []
     for play in plays:
         tags.extend(rule for rule in play.broken if rule not in tags)
@@ -209,13 +216,34 @@ def _failure_lines(report: RunReport) -> list[str]:
     return lines
 
 
+def _eval_bug_lines(report: RunReport) -> list[str]:
+    """The plays the eval itself broke, apart from the failures: they say nothing about the
+    help desk, and each says why the eval broke it."""
+    bugs = [
+        (case.case_id, play)
+        for case in report.cases
+        for play in case.plays
+        if play.result == EVAL_BUG
+    ]
+    if not bugs:
+        return []
+    lines = ["## Eval bugs (not scored)", ""]
+    lines += [
+        f"- {case_id} play {play.play}: {_one_line(play.fault_reason) or 'no reason kept'}"
+        for case_id, play in bugs
+    ]
+    return lines
+
+
 def report_markdown(report: RunReport) -> str:
-    """`report.md`'s text: identity, scores, cases by owner, then the failures last."""
+    """`report.md`'s text: identity, scores, cases by owner, the failures, then the eval
+    bugs last."""
     sections = [
         _identity_lines(report),
         _metric_lines(report),
         _owner_lines(report),
         _failure_lines(report),
+        _eval_bug_lines(report),
     ]
     return "\n\n".join("\n".join(lines) for lines in sections if lines) + "\n"
 
@@ -234,6 +262,10 @@ def needs_a_look_markdown(report: RunReport) -> str:
                 lines.append(f"The judge flagged: {', '.join(play.flagged)}")
             else:
                 lines.append("No rule broken, and the end state matches none that is listed.")
+            if play.fault is not None:
+                lines.append(
+                    f"Fault, as the judge sees it: {play.fault}. {_one_line(play.fault_reason)}"
+                )
             for turn in play.conversation:
                 lines.append(f"- person: {_one_line(turn.message)}")
                 lines.append(f"- help desk: {_one_line(turn.answer.reply)}")
@@ -256,6 +288,7 @@ def comment_markdown(report: RunReport) -> str:
         f"| outcome_at_least_once | {_show(metrics.get('outcome_at_least_once'))} |\n\n"
         f"- needs a look: {_show(metrics.get('needs_a_look'))}\n"
         f"- setup wrong: {_show(metrics.get('setup_wrong'))}\n"
+        f"- eval bug: {_show(metrics.get('eval_bug'))}\n"
     )
 
 

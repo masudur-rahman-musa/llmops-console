@@ -597,7 +597,7 @@ class PostgresConsoleReader:
             needs_a_look = (
                 conn.execute(
                     sql.SQL(
-                        "SELECT case_id, play, flagged FROM {} "
+                        "SELECT case_id, play, flagged, fault, fault_reason FROM {} "
                         "WHERE run_id = %s AND result = 'needs_a_look' "
                         "ORDER BY case_id, play LIMIT %s"
                     ).format(self._table("eval_plays")),
@@ -652,7 +652,13 @@ class PostgresConsoleReader:
                 for row in blocked
             ),
             needs_a_look=tuple(
-                NeedsALookPlay(case_id=row[0], play=row[1], why="; ".join(row[2]) or NOTHING_LISTED)
+                NeedsALookPlay(
+                    case_id=row[0],
+                    play=row[1],
+                    why="; ".join(row[2]) or NOTHING_LISTED,
+                    fault=row[3],
+                    fault_reason=row[4],
+                )
                 for row in needs_a_look
             ),
         )

@@ -178,6 +178,10 @@ class EvalPlayRow(BaseModel):
     tool_calls: int
     seconds: float
     cost_usd: Decimal | None
+    fault: str | None = None
+    """The judge's answer to whose fault a play that needs a look is; `None` when not asked."""
+    fault_reason: str | None = None
+    """Its one sentence, or an eval bug's plain reason; `None` rather than empty text."""
 
 
 class EvalStore(Protocol):
@@ -273,6 +277,8 @@ def play_rows_from_report(report: RunReport) -> tuple[EvalPlayRow, ...]:
             tool_calls=play.tool_calls,
             seconds=play.seconds,
             cost_usd=play.cost_usd,
+            fault=play.fault,
+            fault_reason=play.fault_reason or None,
         )
         for case in report.cases
         for play in case.plays
@@ -370,8 +376,8 @@ class PostgresEvalStore:
                         sql.SQL(
                             "INSERT INTO {} ("
                             "run_id, case_id, play, result, end_state, broken, flagged, "
-                            "checks, turns, tool_calls, seconds, cost_usd) "
-                            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                            "checks, turns, tool_calls, seconds, cost_usd, fault, fault_reason) "
+                            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
                         ).format(sql.Identifier(self._schema, EVAL_PLAYS)),
                         [
                             (
@@ -387,6 +393,8 @@ class PostgresEvalStore:
                                 row.tool_calls,
                                 row.seconds,
                                 row.cost_usd,
+                                row.fault,
+                                row.fault_reason,
                             )
                             for row in play_rows
                         ],

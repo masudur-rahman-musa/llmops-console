@@ -16,6 +16,7 @@ Contract these tests are written against:
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -131,3 +132,57 @@ def test_a_run_with_a_failed_play_is_not_passed() -> None:
 def test_a_run_with_no_failed_play_is_passed(result: str) -> None:
     """Catches `passed` false for a needs a look play: that result breaks no rule."""
     assert build((play_record("alpha", 1, result),)).passed is True
+
+
+def test_eval_bugs_are_listed_apart_with_their_reason(tmp_path: Path) -> None:
+    """Catches an eval bug hidden among the failures or the plays to look at, or listed with
+    no reason: the report names the case, its play and the reason under its own eval bug
+    heading, the bug is not named in the failures or in the needs-a-look list, and the
+    comment counts it."""
+    plays = (
+        *PLAYS,
+        play_record(
+            "delta",
+            2,
+            "eval_bug",
+            fault_reason="the person stopped answering after the first reply",
+        ),
+    )
+    report = build(plays)
+
+    write_reports(tmp_path, report)
+    text = (tmp_path / REPORT_MD_NAME).read_text(encoding="utf-8")
+    found = re.search(r"^#+ .*eval bug", text, re.IGNORECASE | re.MULTILINE)
+    assert found is not None
+    heading = found.start()
+    listed = text[heading:]
+
+    assert "delta" in listed
+    assert "play 2" in listed
+    assert "the person stopped answering after the first reply" in listed
+    assert "delta" not in text[:heading]
+    assert "delta" not in (tmp_path / NEEDS_A_LOOK_MD_NAME).read_text(encoding="utf-8")
+    assert report.metrics["eval_bug"] == 1
+    assert "eval bug" in (tmp_path / COMMENT_MD_NAME).read_text(encoding="utf-8").lower()
+
+
+def test_a_run_with_an_eval_bug_play_is_not_failed_for_it() -> None:
+    """Catches an eval bug counted as a failed rule: it broke no rule, so the run still
+    passes."""
+    assert build((play_record("alpha", 1, "pass"), play_record("beta", 1, "eval_bug"))).passed
+
+
+def test_a_needs_a_look_play_shows_its_fault_answer(tmp_path: Path) -> None:
+    """Catches a fault answer stored and never shown: the needs-a-look list says "fault" and
+    gives the reason beside the play."""
+    plays = (
+        play_record(
+            "gamma", 1, "needs_a_look", fault="case", fault_reason="the case wants two things"
+        ),
+    )
+
+    write_reports(tmp_path, build(plays))
+
+    text = (tmp_path / NEEDS_A_LOOK_MD_NAME).read_text(encoding="utf-8")
+    assert "fault" in text.lower()
+    assert "the case wants two things" in text

@@ -23,6 +23,11 @@ Contract these tests are written against:
 * A reply judge has `.check(check, turns) -> CheckAnswer | None` and
   `.never(text, turns) -> CheckAnswer | None`. The runner asks it each reply check once per
   scored play, and each judge-only never text once; a `yes` to a never text flags the play.
+* A reply judge also has `.fault(turns, *, people=...) -> FaultAnswer | None`. It is asked
+  once for each play whose result is `needs_a_look`, and for no other result. The answer is
+  kept on the record as `fault` and `fault_reason`.
+* A play the eval broke (a help desk turn that fails, a person who gives nothing, a script
+  that runs out) with no end state matched is `eval_bug`.
 """
 
 from __future__ import annotations
@@ -31,13 +36,13 @@ import json
 from collections.abc import Callable
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 import pytest
 
 from app.evals.cases import EvalCase
-from app.evals.judge import CheckAnswer
+from app.evals.judge import CheckAnswer, FaultAnswer
 from app.evals.person import PersonTurn
 from app.evals.results import PlayRecord
 from app.evals.rules import EARLY_CHANGE
@@ -504,3 +509,136 @@ def test_the_judge_is_told_only_the_people_the_case_names() -> None:
 
     assert judge.people
     assert set(judge.people) == {frozenset({OWN, "sales.3"})}
+
+
+# --- the eval's own bugs and the fault question --------------------------------------
+
+BLAME = FaultAnswer(fault="case", quote="Ninety days.", reason="The case wants the wrong thing.")
+
+
+def test_the_fault_question_is_asked_only_for_needs_a_look() -> None:
+    """Catches a fault question asked for every play (cost, and a fault named for a pass), or
+    for a fail or an eval bug, where the result already says whose fault it is. One judge
+    sees four runs: a pass, a fail, an eval bug (every turn fails) and a needs a look. It is
+    asked exactly once, about the needs a look play's one turn."""
+    judge = FakeJudge(fault=BLAME)
+    case = make_case()
+
+    [passed] = play(
+        StubHelpdesk({"case-001": filing_script()}),
+        [case],
+        person=ScriptedPerson(PersonTurn(message="yes", yes=True)),
+        judge=judge,
+    )
+    [failed] = play(
+        StubHelpdesk({"case-001": filing_script()}),
+        [case],
+        person=ScriptedPerson(PersonTurn(message="go on", yes=False)),
+        judge=judge,
+    )
+    [bug] = play(StubHelpdesk({"case-001": filing_script()}, turn_status=500), [case], judge=judge)
+    assert judge.asked_fault == []
+
+    [look] = play(StubHelpdesk({"case-001": [answer("I do not know.")]}), [case], judge=judge)
+
+    assert (passed.result, failed.result, bug.result, look.result) == (
+        "pass",
+        "fail",
+        "eval_bug",
+        "needs_a_look",
+    )
+    assert judge.asked_fault == [1]
+    assert (passed.fault, failed.fault, bug.fault) == (None, None, None)
+    assert (look.fault, look.fault_reason) == ("case", BLAME.reason)
+
+
+def test_the_fault_is_asked_once_per_play_of_a_case() -> None:
+    """Catches a fault question asked once per case, or once per turn: three needs a look
+    plays are three questions, each about its own conversation."""
+    judge = FakeJudge(fault=BLAME)
+    stub = StubHelpdesk({"case-001": [answer("I do not know.")]})
+
+    records = play(stub, [make_case()], plays=3, judge=judge)
+
+    assert [r.result for r in records] == ["needs_a_look"] * 3
+    assert judge.asked_fault == [1, 1, 1]
+
+
+def test_without_a_judge_or_an_answer_a_needs_a_look_play_has_no_fault() -> None:
+    """Catches a run that needs the fault answer to finish: with no judge, or a judge that
+    gives no answer, the play is still `needs_a_look`, with `fault` of `None` and an empty
+    reason."""
+    stub = StubHelpdesk({"case-001": [answer("I do not know.")]})
+
+    [no_judge] = play(stub, [make_case()])
+    [no_answer] = play(stub, [make_case()], judge=FakeJudge(fault=None))
+
+    for record in (no_judge, no_answer):
+        assert record.result == "needs_a_look"
+        assert (record.fault, record.fault_reason) == (None, "")
+
+
+def test_the_fault_answer_does_not_change_the_result() -> None:
+    """Catches a result that follows the judge's blame: a judge blaming the eval, the bot or
+    the case leaves a needs a look play as it is."""
+    words: list[Literal["bot", "case", "eval", "fine"]] = ["bot", "case", "eval", "fine"]
+    for word in words:
+        judge = FakeJudge(fault=FaultAnswer(fault=word, quote="q", reason="r"))
+        stub = StubHelpdesk({"case-001": [answer("I do not know.")]})
+
+        [record] = play(stub, [make_case()], judge=judge)
+
+        assert record.result == "needs_a_look"
+        assert record.fault == word
+
+
+def test_a_help_desk_turn_that_fails_is_an_eval_bug() -> None:
+    """Catches a failed turn scored as the bot's fault or as a look: every turn is refused
+    with a 500, no end state can match, and the play is `eval_bug` with no turns."""
+    stub = StubHelpdesk({"case-001": filing_script()}, turn_status=500)
+
+    [record] = play(stub, [make_case()])
+
+    assert record.result == "eval_bug"
+    assert record.turns == 0
+    assert record.broken == ()
+
+
+def test_a_person_who_gives_nothing_is_an_eval_bug() -> None:
+    """Catches a silent person scored as `needs_a_look`: the opening is answered, the person
+    gives nothing and no end state matched, so the eval broke the play."""
+    stub = StubHelpdesk({"case-001": [answer("Shall I file this request?")]})
+
+    [record] = play(stub, [make_case()], person=ScriptedPerson(None))
+
+    assert record.result == "eval_bug"
+    assert record.turns == 1
+
+
+def test_a_script_that_runs_out_before_the_end_state_is_an_eval_bug() -> None:
+    """Catches a script that stops while the bot is still asking being scored as a look: one
+    scripted step, no yes in it, nothing filed. The play is `eval_bug`. The same script
+    ending on the right state passes."""
+    case = make_case(scripted=True, script=[{"say": "Maybe later", "yes": False}])
+    stub = StubHelpdesk({"case-001": [answer("Shall I file this request?")]})
+    filing = make_case(scripted=True, script=[{"say": "Yes, please", "yes": True}])
+
+    [out] = play(stub, [case])
+    [done] = play(StubHelpdesk({"case-001": filing_script()}), [filing])
+
+    assert out.result == "eval_bug"
+    assert done.result == "pass"
+
+
+def test_a_last_yes_that_ends_in_done_reaches_the_help_desk() -> None:
+    """Catches the yes that was never sent: the person says "Yes, go ahead [done]". The help
+    desk gets "Yes, go ahead" as its second message, the request is filed and the play
+    passes with the yes on its last turn."""
+    stub = StubHelpdesk({"case-001": filing_script()})
+    person = ScriptedPerson(PersonTurn(message="Yes, go ahead [done]", yes=True))
+
+    [record] = play(stub, [make_case()], person=person)
+
+    assert stub.sent[-1] == "Yes, go ahead"
+    assert record.result == "pass"
+    assert record.conversation[-1].said_yes is True

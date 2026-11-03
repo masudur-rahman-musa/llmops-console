@@ -105,6 +105,9 @@ class NeedsALookPlay(_Body):
     case_id: str
     play: int
     why: str
+    fault: str | None = None
+    """The judge's answer to whose fault it is (`bot`, `case`, `eval`, `fine`), or `None`."""
+    fault_reason: str | None = None
 
 
 class Regression(_Body):
