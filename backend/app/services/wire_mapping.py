@@ -91,9 +91,8 @@ OWN_MASKS_WORD = "request"
 A fixed word beside the stored-map id, matched exactly: `Request`, a trailing
 space or a word with an id after it is still a malformed value and a 422. The
 values come from the map the inline redaction step built for this same request,
-held only in memory, so only what this caller sent can come back. Pinned by
-`test_request_word_puts_back_this_requests_own_values` and
-`test_an_unknown_word_is_still_422_with_no_outbound_call`."""
+held only in memory, so only what this caller sent can come back. An unknown
+word is still a 422, and no call goes out."""
 
 
 def wants_own_masks(header: str | None) -> bool:

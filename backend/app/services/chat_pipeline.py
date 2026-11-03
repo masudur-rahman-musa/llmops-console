@@ -390,7 +390,7 @@ def _redacted(
     strings go into the SAME batch as the content: one numbering, one taken-token
     set, one cap per string. A caller that got its values put back and replays
     the call would otherwise send a person's address out raw, next to the mask
-    the person's own turn got (`test_tool_call_arguments_are_redacted_under_the_shared_numbering`).
+    the person's own turn got.
     """
     if not redaction_applies(policy, context.tenant, context.data_class):
         return body, False, {}

@@ -39,7 +39,7 @@ from .label_builders import label_document, write_labels
 HELPDESK = "https://helpdesk.example"
 GATEWAY = "https://gateway.example"
 RUN_ID = "run-one"
-DONE = json.dumps({"message": "thanks [done]", "yes": False})
+DONE = json.dumps({"proposal": "", "matches": False, "yes": False, "message": "thanks [done]"})
 JUDGE_NOT_APPLICABLE = json.dumps({"answer": "does_not_apply", "quote": "", "reason": "r"})
 
 
