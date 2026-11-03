@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import json
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from app.core.http_errors import as_gateway_error
@@ -144,6 +145,84 @@ def redact_batch(texts: Sequence[str], directory: NameDirectory | None = None) -
         rewritten.append("".join(pieces))
 
     return RedactedBatch(texts=tuple(rewritten), mapping=mapping, counts=minted)
+
+
+class _NotJson:
+    """Marks arguments that do not parse, so they are masked as one plain string."""
+
+
+_NOT_JSON = _NotJson()
+
+
+def _parsed_arguments(arguments: str) -> object:
+    """The arguments as JSON, or `_NOT_JSON` when they do not parse.
+
+    Too deep a document counts as not JSON too: masking it as one plain string
+    still runs every detector over it, where a crash would not.
+    """
+    try:
+        return json.loads(arguments)
+    except (ValueError, RecursionError):
+        return _NOT_JSON
+
+
+def _swap_strings(value: object, swap: Callable[[str], str]) -> object:
+    """`value` with every string in it, keys and values, passed through `swap`.
+
+    Depth first, a key before its value, so two walks over the same document
+    meet the strings in the same order.
+    """
+    if isinstance(value, str):
+        return swap(value)
+    if isinstance(value, list):
+        return [_swap_strings(item, swap) for item in value]
+    if isinstance(value, dict):
+        return {swap(key): _swap_strings(item, swap) for key, item in value.items()}
+    return value
+
+
+def argument_strings(arguments: str) -> tuple[str, ...]:
+    """Every string a tool call's arguments carry, in walk order, for one batch.
+
+    JSON arguments give their strings decoded, so a value written with a JSON
+    escape (`\\u0040` for `@`) reaches the detectors as the text it stands for.
+    Arguments that do not parse are one plain string.
+    """
+    parsed = _parsed_arguments(arguments)
+    if parsed is _NOT_JSON:
+        return (arguments,)
+    found: list[str] = []
+
+    def keep(text: str) -> str:
+        found.append(text)
+        return text
+
+    try:
+        _swap_strings(parsed, keep)
+    except RecursionError:
+        return (arguments,)
+    return tuple(found)
+
+
+def with_argument_strings(arguments: str, masked: Sequence[str]) -> str:
+    """The arguments with their strings replaced by `masked`, in `argument_strings` order.
+
+    Nothing changed means the arguments go out byte for byte as the caller sent
+    them: written back as JSON they would lose the caller's own spacing for no
+    gain. Changed JSON is written back as JSON, so the provider still gets a
+    payload that parses.
+    """
+    if tuple(masked) == argument_strings(arguments):
+        return arguments
+    parsed = _parsed_arguments(arguments)
+    if parsed is _NOT_JSON:
+        return masked[0]
+    pending = iter(masked)
+    try:
+        rebuilt = _swap_strings(parsed, lambda _: next(pending))
+    except RecursionError:
+        return masked[0]
+    return json.dumps(rebuilt, ensure_ascii=False)
 
 
 def redact_or_reject(

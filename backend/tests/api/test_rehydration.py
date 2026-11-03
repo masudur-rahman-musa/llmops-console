@@ -1208,6 +1208,40 @@ def test_request_word_puts_back_in_tool_call_arguments(own: OwnMaskApp) -> None:
     assert json.loads(streamed[0]["function"]["arguments"]) == {"to": EMAIL_A}
 
 
+def test_request_word_puts_back_values_masked_in_replayed_arguments(own: OwnMaskApp) -> None:
+    """Catches a route that masks content only: the address sits ONLY in a replayed call's
+    arguments, so an unmasked call sends it to the provider, and a put-back built from
+    content masks alone has nothing to restore. The provider must see no address in the
+    arguments, and the model's new call with `<EMAIL_1>` must come back holding it."""
+    new_call = ToolCall(id=STUB_TOOL_ID, name=STUB_TOOL_NAME, arguments='{"to": "<EMAIL_1>"}')
+    own.script(response=stub_response(content="Sending it now.", tool_calls=(new_call,)))
+    replayed = {
+        "role": "assistant",
+        "tool_calls": [
+            {
+                "id": "toolu_01ReplayedCall000000",
+                "type": "function",
+                "function": {"name": STUB_TOOL_NAME, "arguments": '{"to": "' + EMAIL_A + '"}'},
+            }
+        ],
+    }
+
+    response = post_own(
+        own,
+        chat_body(messages=[{"role": "user", "content": "mail it"}, replayed]),
+    )
+
+    sent = [
+        call.arguments
+        for request in own.stubs[0].requests + own.stubs[1].requests
+        for message in request.messages
+        for call in message.tool_calls
+    ]
+    assert sent == ['{"to": "<EMAIL_1>"}']
+    returned = tool_calls_of(response)
+    assert json.loads(returned[0]["function"]["arguments"]) == {"to": EMAIL_A}
+
+
 def test_request_word_on_a_stream_puts_back_split_placeholders(own: OwnMaskApp) -> None:
     """Catches a streamed put-back that substitutes frame by frame: `<EMAIL_` and `1>`
     arrive in two frames, so neither frame holds a whole mask, and only a route that holds

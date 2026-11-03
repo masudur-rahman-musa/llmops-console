@@ -29,6 +29,7 @@ a signature cannot be asserted through HTTP.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterator, Sequence
 from typing import cast
 
@@ -262,31 +263,34 @@ def test_every_chat_message_is_redacted_under_one_numbering(
     assert contents == ["from <EMAIL_1>", "noted, cc <EMAIL_2>", "still <EMAIL_1>"]
 
 
-def test_tool_call_arguments_are_not_redacted(
+def call_turn(*arguments: str) -> dict[str, object]:
+    """An assistant turn replaying one tool call per given `arguments` string."""
+    return {
+        "role": "assistant",
+        "tool_calls": [
+            {
+                "id": f"toolu_01StubMailCall000000{index}",
+                "type": "function",
+                "function": {"name": "send_mail", "arguments": text},
+            }
+            for index, text in enumerate(arguments)
+        ],
+    }
+
+
+def test_tool_call_arguments_are_redacted(
     inline_chat_client: TestClient, inline_chat_stub: StubAdapter
 ) -> None:
-    """Catches a route that redacts a tool call's JSON arguments: the arguments are a
-    machine payload the caller's own tool parses, and rewriting a value inside that JSON
-    hands the tool a placeholder it cannot act on. The user turn in the same request
-    carries an address, so "nothing was redacted at all" cannot pass this."""
+    """Catches a route that masks only each message's `content` and sends a replayed tool
+    call's arguments as written: the address in the call is a different person from the
+    one in the user turn, so it must get its own mask (`<EMAIL_2>`) under the shared
+    numbering, and the user turn proves redaction ran for this request."""
     response = post_chat(
         inline_chat_client,
         chat_body(
             messages=[
                 {"role": "user", "content": f"write to {EMAIL_A}"},
-                {
-                    "role": "assistant",
-                    "tool_calls": [
-                        {
-                            "id": "toolu_01StubMailCall0000000",
-                            "type": "function",
-                            "function": {
-                                "name": "send_mail",
-                                "arguments": '{"to": "' + EMAIL_B + '"}',
-                            },
-                        }
-                    ],
-                },
+                call_turn('{"to": "' + EMAIL_B + '"}'),
             ]
         ),
         data_class="confidential",
@@ -295,7 +299,233 @@ def test_tool_call_arguments_are_not_redacted(
     assert redacted_header(response) == "true"
     outbound = inline_chat_stub.requests[0].messages
     assert outbound[0].content == "write to <EMAIL_1>"
-    assert outbound[1].tool_calls[0].arguments == '{"to": "' + EMAIL_B + '"}'
+    assert outbound[1].tool_calls[0].arguments == '{"to": "<EMAIL_2>"}'
+
+
+def test_tool_call_arguments_are_redacted_under_the_shared_numbering(
+    inline_chat_client: TestClient, inline_chat_stub: StubAdapter
+) -> None:
+    """Catches arguments masked in a pass of their own: the same address in the user turn
+    and in a replayed call must be the SAME mask, and a separate numbering would hand the
+    call `<EMAIL_1>` for a different value or renumber it. The arguments must also still
+    parse as JSON, so a mask written over the raw string with a stray quote fails."""
+    response = post_chat(
+        inline_chat_client,
+        chat_body(
+            messages=[
+                {"role": "user", "content": f"write to {EMAIL_A}"},
+                call_turn('{"to": "' + EMAIL_A + '"}'),
+            ]
+        ),
+        data_class="confidential",
+    )
+
+    assert redacted_header(response) == "true"
+    outbound = inline_chat_stub.requests[0].messages
+    assert outbound[0].content == "write to <EMAIL_1>"
+    assert json.loads(outbound[1].tool_calls[0].arguments) == {"to": "<EMAIL_1>"}
+
+
+def test_no_detected_value_in_any_message_part_reaches_the_provider(
+    inline_chat_client: TestClient, inline_chat_stub: StubAdapter
+) -> None:
+    """Catches a mask that covers content and only some of the arguments (the first call,
+    or one kind): an email, a phone and an IBAN are spread over the content and two calls'
+    arguments, and none of the three raw values may appear anywhere in what the stub
+    received."""
+    phone = "+4915112345678"
+    iban = "DE89370400440532013000"
+    response = post_chat(
+        inline_chat_client,
+        chat_body(
+            messages=[
+                {"role": "user", "content": f"mail {EMAIL_A}"},
+                call_turn(
+                    '{"to": "' + EMAIL_B + '", "phone": "' + phone + '"}',
+                    '{"account": "' + iban + '"}',
+                ),
+                {"role": "user", "content": f"call {phone}"},
+            ]
+        ),
+        data_class="confidential",
+    )
+
+    assert redacted_header(response) == "true"
+    sent = inline_chat_stub.requests[0].messages
+    everything = " ".join(
+        [str(turn.content) for turn in sent]
+        + [call.arguments for turn in sent for call in turn.tool_calls]
+    )
+    for raw in (EMAIL_A, EMAIL_B, phone, iban):
+        assert raw not in everything
+    assert "<IBAN_1>" in everything
+
+
+def test_a_json_escaped_value_in_arguments_is_still_masked(
+    inline_chat_client: TestClient, inline_chat_stub: StubAdapter
+) -> None:
+    """Catches masking done on the raw argument string: `\\u0040` stands for `@` only
+    after the JSON is parsed, so a detector run over the raw text never sees an address
+    and the real one reaches the provider once the call is decoded."""
+    response = post_chat(
+        inline_chat_client,
+        chat_body(
+            messages=[
+                {"role": "user", "content": "send it"},
+                call_turn(r'{"to": "alice\u0040example.com"}'),
+            ]
+        ),
+        data_class="confidential",
+    )
+
+    assert response.status_code == 200, response.text
+    arguments = inline_chat_stub.requests[0].messages[1].tool_calls[0].arguments
+    assert EMAIL_A not in arguments
+    assert json.loads(arguments) == {"to": "<EMAIL_1>"}
+
+
+def test_a_value_used_as_a_json_key_is_masked(
+    inline_chat_client: TestClient, inline_chat_stub: StubAdapter
+) -> None:
+    """Catches a splitter that masks the values of the arguments object and walks past
+    its keys: an address used as a key reaches the provider as written."""
+    response = post_chat(
+        inline_chat_client,
+        chat_body(
+            messages=[
+                {"role": "user", "content": "send it"},
+                call_turn('{"' + EMAIL_A + '": 1}'),
+            ]
+        ),
+        data_class="confidential",
+    )
+
+    assert response.status_code == 200, response.text
+    arguments = inline_chat_stub.requests[0].messages[1].tool_calls[0].arguments
+    assert EMAIL_A not in arguments
+    assert json.loads(arguments) == {"<EMAIL_1>": 1}
+
+
+def test_arguments_that_are_not_json_are_masked_as_text(
+    inline_chat_client: TestClient, inline_chat_stub: StubAdapter
+) -> None:
+    """Catches a splitter that skips arguments it cannot parse (or rejects them): a caller
+    can replay any string, and text with no braces must still be masked, not passed on
+    raw and not refused."""
+    response = post_chat(
+        inline_chat_client,
+        chat_body(
+            messages=[
+                {"role": "user", "content": "send it"},
+                call_turn("to " + EMAIL_A),
+            ]
+        ),
+        data_class="confidential",
+    )
+
+    assert response.status_code == 200, response.text
+    assert inline_chat_stub.requests[0].messages[1].tool_calls[0].arguments == "to <EMAIL_1>"
+
+
+def test_arguments_with_nothing_found_are_sent_byte_for_byte(
+    inline_chat_client: TestClient, inline_chat_stub: StubAdapter
+) -> None:
+    """Catches arguments re-serialised after masking even when nothing was found: the
+    odd spacing is lost by a parse-and-dump round trip, so the provider would get bytes
+    the caller never sent. The user turn holds an address, so redaction demonstrably ran."""
+    untouched = '{"n":1,  "x":"a"}'
+    response = post_chat(
+        inline_chat_client,
+        chat_body(
+            messages=[
+                {"role": "user", "content": f"write to {EMAIL_A}"},
+                call_turn(untouched),
+            ]
+        ),
+        data_class="confidential",
+    )
+
+    assert redacted_header(response) == "true"
+    assert inline_chat_stub.requests[0].messages[1].tool_calls[0].arguments == untouched
+
+
+def test_a_caller_mask_in_arguments_is_never_handed_out_again(
+    inline_chat_client: TestClient, inline_chat_stub: StubAdapter
+) -> None:
+    """Catches a taken-token set built from the content alone: the arguments already hold
+    `<EMAIL_1>`, so a new address in the content must become `<EMAIL_2>`; otherwise two
+    different people share one mask and a put-back restores the wrong one."""
+    response = post_chat(
+        inline_chat_client,
+        chat_body(
+            messages=[
+                call_turn('{"to": "<EMAIL_1>"}'),
+                {"role": "user", "content": f"write to {EMAIL_A}"},
+            ]
+        ),
+        data_class="confidential",
+    )
+
+    assert redacted_header(response) == "true"
+    outbound = inline_chat_stub.requests[0].messages
+    assert outbound[1].content == "write to <EMAIL_2>"
+    assert outbound[0].tool_calls[0].arguments == '{"to": "<EMAIL_1>"}'
+
+
+def test_an_argument_string_at_the_cap_is_accepted(
+    inline_chat_client: TestClient, inline_chat_stub: StubAdapter
+) -> None:
+    """Catches the cap on argument strings written `>=`: one string of exactly 16384
+    characters inside the arguments is legal, and refusing it is the half of the boundary
+    pair a cap alone cannot get right."""
+    at_cap = "a" * MAX_REDACTION_INPUT_CHARS
+
+    response = post_chat(
+        inline_chat_client,
+        chat_body(
+            messages=[{"role": "user", "content": "go"}, call_turn('{"k": "' + at_cap + '"}')]
+        ),
+        data_class="confidential",
+    )
+
+    assert response.status_code == 200, response.text
+    assert len(inline_chat_stub.requests) == 1
+
+
+def test_an_argument_string_over_the_cap_is_422_with_no_outbound_call(
+    inline_chat_client: TestClient, inline_chat_stub: StubAdapter
+) -> None:
+    """Catches arguments left outside the cap: a string of 16385 characters inside a
+    call's arguments must be the same 422 as an over-cap message, and nothing may reach
+    the adapter."""
+    over_cap = "a" * (MAX_REDACTION_INPUT_CHARS + 1)
+
+    response = post_chat(
+        inline_chat_client,
+        chat_body(
+            messages=[{"role": "user", "content": "go"}, call_turn('{"k": "' + over_cap + '"}')]
+        ),
+        data_class="confidential",
+    )
+
+    assert_error_body(response, status=422, code="VALIDATION")
+    assert inline_chat_stub.requests == []
+
+
+def test_arguments_on_an_unredacted_class_are_sent_as_written(
+    inline_chat_client: TestClient, inline_chat_stub: StubAdapter
+) -> None:
+    """Catches masking of arguments applied whatever the class: on `internal` nothing is
+    redacted, so the raw address in the call must reach the stub exactly as sent."""
+    arguments = '{"to": "' + EMAIL_A + '"}'
+    response = post_chat(
+        inline_chat_client,
+        chat_body(messages=[{"role": "user", "content": "go"}, call_turn(arguments)]),
+        data_class="internal",
+    )
+
+    assert redacted_header(response) == "false"
+    assert inline_chat_stub.requests[0].messages[1].tool_calls[0].arguments == arguments
 
 
 def test_a_streamed_request_takes_the_same_inline_path(

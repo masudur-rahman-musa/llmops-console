@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 
 from opentelemetry.trace import Span
 from starlette.types import Scope
@@ -40,7 +40,7 @@ from app.model_routing.policy import Policy
 from app.model_routing.resolver import Resolved, resolve
 from app.providers.breaker import CircuitBreaker
 from app.redaction import DirectoryStore
-from app.schemas.chat import ChatCompletionRequest
+from app.schemas.chat import ChatCompletionRequest, WireToolCall
 from app.schemas.provider import Usage
 from app.services.chat_accounting import (
     ChatResult,
@@ -78,10 +78,12 @@ from app.services.chat_headers import (
 )
 from app.services.redaction_flow import (
     REDACT_SPAN,
+    argument_strings,
     masked_line,
     redact_or_reject,
     redaction_applies,
     tenant_directory,
+    with_argument_strings,
 )
 from app.services.streaming import StreamPlan, streamed
 from app.services.wire_mapping import (
@@ -383,26 +385,57 @@ def _redacted(
     `None` rather than becoming an empty string: `_neutral_messages` reads the two
     the same way, but a body rebuilt with the wrong one would be a silent shape
     change on the way to the admin surface.
+
+    A replayed tool call's arguments are text the provider reads too, so their
+    strings go into the SAME batch as the content: one numbering, one taken-token
+    set, one cap per string. A caller that got its values put back and replays
+    the call would otherwise send a person's address out raw, next to the mask
+    the person's own turn got (`test_tool_call_arguments_are_redacted_under_the_shared_numbering`).
     """
     if not redaction_applies(policy, context.tenant, context.data_class):
         return body, False, {}
 
+    texts: list[str] = [message.content or "" for message in body.messages]
+    for message in body.messages:
+        for call in message.tool_calls or ():
+            texts.extend(argument_strings(call.function.arguments))
+
     directory = tenant_directory(directory_store, context.tenant)
     with stage_span(scope, REDACT_SPAN) as span:
-        batch = redact_or_reject(
-            tuple(message.content or "" for message in body.messages),
-            param="messages",
-            directory=directory,
-        )
+        batch = redact_or_reject(texts, param="messages", directory=directory)
         note_step(
             span, input=counted(len(body.messages), "message"), output=masked_line(batch.counts)
         )
     record_redactions(tenant=context.tenant, counts=batch.counts)
+    contents = batch.texts[: len(body.messages)]
+    masked = iter(batch.texts[len(body.messages) :])
     rebuilt = tuple(
-        message.model_copy(update={"content": content if message.content is not None else None})
-        for message, content in zip(body.messages, batch.texts, strict=True)
+        message.model_copy(
+            update={
+                "content": content if message.content is not None else None,
+                "tool_calls": _masked_calls(message.tool_calls, masked),
+            }
+        )
+        for message, content in zip(body.messages, contents, strict=True)
     )
     return body.model_copy(update={"messages": rebuilt}), batch.redacted, batch.mapping
+
+
+def _masked_calls(
+    calls: tuple[WireToolCall, ...] | None, masked: Iterator[str]
+) -> tuple[WireToolCall, ...] | None:
+    """Each call with its arguments rebuilt from the next masked strings, in order."""
+    if calls is None:
+        return None
+    rebuilt: list[WireToolCall] = []
+    for call in calls:
+        arguments = call.function.arguments
+        strings = [next(masked) for _ in argument_strings(arguments)]
+        function = call.function.model_copy(
+            update={"arguments": with_argument_strings(arguments, strings)}
+        )
+        rebuilt.append(call.model_copy(update={"function": function}))
+    return tuple(rebuilt)
 
 
 def walk_candidates[T](
