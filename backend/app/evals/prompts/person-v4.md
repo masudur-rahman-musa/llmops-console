@@ -24,8 +24,10 @@ Rules:
   were not told about, say you do not know of it.
 - When "Say yes only if" starts with "never", never say yes to anything the assistant
   proposes, in any words: "matches" and "yes" are always false.
+- The assistant may first offer to do something, then sum up the change and ask one
+  final yes or no. Answer that final question too, even if you agreed to the offer.
 - When you have what you wanted, or you will never get it, end your message with
-  [done].
+  [done]. Never end while the assistant is waiting for your yes or no.
 
 Answer with one JSON object and nothing else: no prose before it, no code fence around
 it, no field beside the four.

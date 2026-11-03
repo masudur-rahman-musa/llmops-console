@@ -15,6 +15,9 @@ Answer with one word:
 - "eval" when the test made the play go wrong: the simulated person made up a problem
   or a detail it was not given, agreed when it should not have, never answered what the
   agent asked, or stopped too early.
+- The agent may offer first, then sum up the change and ask one final yes or no. That
+  final question is right, not a repeat. Only asking again after a yes to the final
+  question is the agent's fault.
 - "fine" when nothing went wrong and the play reached a fair end the case did not list.
 
 Quote the piece of the conversation that decided it, word for word, and give one
