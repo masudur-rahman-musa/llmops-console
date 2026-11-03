@@ -45,9 +45,10 @@ commands.
 - **Failure handling.** A circuit breaker per provider opens after 5 failures in
   60 seconds and tries again after 30. Calls retry twice with backoff. Fallback
   only goes to providers the alias lists. Every refusal is a typed error code.
-- **Eval gate.** The help desk's 45 conversation cases are played three times each.
-  Every turn gets three rule checks, and an LLM judge grades marked replies. The
-  pull request fails below `backend/evals/conversation-baseline.json`.
+- **Eval gate.** The help desk's 42 conversation cases are played three times each
+  by a simulated person. Code checks the rules and the end state of the data, and an
+  LLM judge answers the reply checks. The pull request fails when safety drops below
+  100 or the score falls below `backend/evals/baseline.json`.
 - **Ops console.** A Next.js 15 and React 19 app with four tabs (Overview,
   Requests, Cost, Quality) behind a password login. Grafana ships five dashboards
   and Prometheus ships twelve alert rules.
@@ -61,9 +62,8 @@ commands.
   Kubernetes manifests, Terraform modules and these docs.
 - Coverage must stay at 80% for the whole backend and at 100% for routing, limits
   and input validation, or `make test` fails.
-- The committed eval baseline is a check score of 48.48 and a judge score of 27.42,
-  both in percent. The judge does not block a merge yet, because no calibration
-  file shows it agrees with the reference labels.
+- The latest eval run played the help desk's 42 cases three times each: 126 of 126
+  plays pass after review, with safety at 100.
 
 ### Skills and tech shown
 
@@ -94,9 +94,9 @@ commands.
 - **Evals / LLM evaluation.** Multi-turn conversation evals, an LLM judge with
   Cohen's kappa calibration, pass rates with Wilson ranges, and a CI gate in
   `backend/app/evals/`.
-- **Agentic systems.** The evals check an agent's tool calls in order, that it
-  changes nothing before the user says yes, and that it invents no ticket numbers.
-- **Prompt engineering.** The judge prompt is a file, `backend/app/evals/prompts/judge-v2.md`,
+- **Agentic systems.** The evals check that an agent changes nothing before the user
+  says yes, breaks none of a case's rules, and leaves the data in a right end state.
+- **Prompt engineering.** The judge prompt is a file, `backend/app/evals/prompts/judge-v3.md`,
   and its sha256 is recorded on every run. Rubric and reply reach the judge as
   delimited data, not instructions.
 - **Guardrails / AI safety.** PII redaction before any provider call, provider
@@ -279,31 +279,31 @@ Process failures get a blameless write-up too, like
 
 ## How the evals work
 
-The engine plays multi-turn conversations. The companion help desk keeps 33 cases;
-each one holds what the person types, which tools should be called, and when the
-person says yes. The format is described in
-[docs/eval-format.md](docs/eval-format.md).
+The engine plays multi-turn conversations against the companion help desk, which keeps
+42 cases. Each case says who the person is, what they want, what they know, when they
+would say yes, what must never happen, and which end states of the help desk's data
+count as right. The format is described in [docs/eval-format.md](docs/eval-format.md).
 
-A run plays each case through the help desk's conversation route and checks every
-turn three ways: the right tools were called in order, nothing was changed before the
-yes, and no request number, ticket number or role name appears that a tool did not
-return. A judge grades the marked replies pass or fail, and its own agreement with
-reference labels is measured rather than assumed. Until a person makes those
-labels, a model of the same family as the judge does, so that check is partly
-circular: it shows agreement, not correctness. The report shape is in
-[docs/eval-report.md](docs/eval-report.md) and the target it runs against in
-[docs/eval-target.md](docs/eval-target.md). Each finished case is saved at once, so a
-stopped run continues without paying for the cases it already played.
+A simulated person, played by a cheap model, talks to the real help desk agent one turn
+at a time, starting from reset data. Code checks every play first: nothing was changed
+before a yes, no rule from the case's "never" list was broken, and the data at the end
+matches a right end state. A judge model then answers each reply check on its own, with
+a quote and a reason. For a play that needs a look it also says whose fault it is: the
+agent, the case, or the eval. That answer is shown beside the play and never changes a
+score. The report shape is in [docs/eval-report.md](docs/eval-report.md) and the target
+it runs against in [docs/eval-target.md](docs/eval-target.md).
 
-`backend/evals/baseline.json` holds the committed numbers. The CI gate
-compares a run against them and fails the pull request when the percent of cases
-passed falls below the baseline, described in [docs/eval-gate.md](docs/eval-gate.md).
-On every pull request it plays the help desk's 33 cases three times each against the
-real help desk agent on the real cheap model, so it needs a model key and costs roughly
-$3 to $6 a run. Each case reports its pass rate with a 95% range. A case that both
-passes and fails is unstable: it is listed in its own group and left out of the score,
-so chance alone cannot turn the gate red. The baseline changes only through a commit that carries its own decision record,
-and never to make a failing run pass.
+Each case is played three times, so chance alone cannot decide it. A play passes, fails,
+needs a look, was set up wrong, or hit an eval bug; the last two are not scored.
+`backend/evals/baseline.json` holds the committed numbers, and the gate fails a pull
+request when safety drops below 100 or the share of cases right in every play falls
+below the baseline. The gate is in [docs/eval-gate.md](docs/eval-gate.md). The baseline
+changes only through a commit that carries its own decision record, and never to make
+a failing run pass.
+
+The latest run played 42 cases three times each. All 126 plays pass after review, with
+safety at 100: every play the code did not pass on its own was read, and traced to the
+eval itself or to a bug that has since been fixed.
 
 ### Redaction accuracy
 
