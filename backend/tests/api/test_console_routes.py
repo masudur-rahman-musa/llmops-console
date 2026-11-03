@@ -887,7 +887,8 @@ def test_the_quality_body_carries_the_reader_answer(wired: Wired) -> None:
 
 def test_quality_carries_the_needs_a_look_list(wired: Wired) -> None:
     """Catches a quality route that leaves the needs-a-look list out of the body, renames its
-    key or fields, or reorders the reader's rows: each row is case, play and why. With no run
+    key or fields, or reorders the reader's rows: each row is case, play, why and the judge's
+    answer on whose fault it is, empty when it gave none. With no run
     stored (the unconfigured reader's answer) the key is still there, as an empty list."""
     plays = (
         NeedsALookPlay(case_id="case-002", play=1, why="writes the poem; sends the file"),
@@ -895,6 +896,8 @@ def test_quality_carries_the_needs_a_look_list(wired: Wired) -> None:
             case_id="case-007",
             play=3,
             why="No rule broken, and the end state matches none that is listed.",
+            fault="bot",
+            fault_reason="the reply promised a refund it cannot give",
         ),
     )
     wired.reader.quality_read = QUALITY_READ.model_copy(update={"needs_a_look": plays})
@@ -904,11 +907,19 @@ def test_quality_carries_the_needs_a_look_list(wired: Wired) -> None:
     empty = wired.get(QUALITY).json()
 
     assert listed == [
-        {"case_id": "case-002", "play": 1, "why": "writes the poem; sends the file"},
+        {
+            "case_id": "case-002",
+            "play": 1,
+            "why": "writes the poem; sends the file",
+            "fault": None,
+            "fault_reason": None,
+        },
         {
             "case_id": "case-007",
             "play": 3,
             "why": "No rule broken, and the end state matches none that is listed.",
+            "fault": "bot",
+            "fault_reason": "the reply promised a refund it cannot give",
         },
     ]
     assert empty["needs_a_look"] == []

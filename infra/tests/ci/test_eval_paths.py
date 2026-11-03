@@ -21,6 +21,13 @@ WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 MAKEFILE = REPO_ROOT / "Makefile"
 TRADEOFF_SCRIPT = REPO_ROOT / "infra" / "scripts" / "tradeoff_run.sh"
 
+
+def _bytecode(path: Path) -> bool:
+    """A compiled Python cache file, which a test or a run writes beside a script it loads.
+    It is not part of the repo and is not text, so the scans below leave it out."""
+    return "__pycache__" in path.parts
+
+
 #: The files that run, describe or ship an eval path. A reference to the removed single-reply
 #: format in any of them is a path someone will follow into nothing.
 SCANNED = [
@@ -33,9 +40,9 @@ SCANNED = [
     REPO_ROOT / "README.md",
     REPO_ROOT / "docs" / "tradeoff-run" / "README.md",
     *sorted((REPO_ROOT / "docs").glob("eval-*.md")),
-    *sorted((REPO_ROOT / "infra" / "evals").rglob("*")),
-    *sorted((REPO_ROOT / "infra" / "tradeoff").rglob("*")),
-    *sorted((REPO_ROOT / "infra" / "k8s" / "evals").rglob("*")),
+    *sorted(p for p in (REPO_ROOT / "infra" / "evals").rglob("*") if not _bytecode(p)),
+    *sorted(p for p in (REPO_ROOT / "infra" / "tradeoff").rglob("*") if not _bytecode(p)),
+    *sorted(p for p in (REPO_ROOT / "infra" / "k8s" / "evals").rglob("*") if not _bytecode(p)),
 ]
 
 #: What may no longer be named. The baseline is `baseline.json`; the file it replaced is

@@ -574,11 +574,11 @@ describe("console pages", () => {
     const header = Array.from(html.matchAll(/<th\b[^>]*>([\s\S]*?)<\/th>/g), (match) => text(match[1]));
     const rows = Array.from(html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g), (match) => text(match[1])).slice(1);
 
-    expect(header).toEqual(["Case", "Play", "Why"]);
+    expect(header).toEqual(["Case", "Play", "Why", "Whose fault"]);
     expect(rows).toEqual([
-      "case-012 2 writes the poem; sends the file",
-      "case-031 1 No rule broken, and the end state matches none that is listed.",
-      "case-031 3 writes the poem",
+      "case-012 2 writes the poem; sends the file n/a",
+      "case-031 1 No rule broken, and the end state matches none that is listed. n/a",
+      "case-031 3 writes the poem n/a",
     ]);
     expect(html).not.toContain("None in this window.");
 

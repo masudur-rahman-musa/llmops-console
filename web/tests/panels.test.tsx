@@ -31,7 +31,7 @@ const HEADINGS: Record<PageName, string[]> = {
   home: ["Model routing"],
   requests: ["Redactions by kind", "Help desk refusals by reason", "Tokens per model", "Newest requests"],
   cost: ["Budgets this month", "Top users by cost", "Daily cost", "Model tradeoff"],
-  quality: ["Categories", "Taxonomy", "Blocked releases"],
+  quality: ["Needs a look", "Categories", "Taxonomy", "Blocked releases"],
 };
 const NAMES = Object.keys(PAGES) as PageName[];
 
@@ -163,11 +163,11 @@ describe("panels", () => {
     expect(allHeadings).toEqual(HEADINGS[name]);
   });
 
-  it("there are twelve panels across the four pages", async () => {
-    // Catches a page set that covers only some pages, leaving the total short of the twelve named sections.
+  it("there are thirteen panels across the four pages", async () => {
+    // Catches a page set that covers only some pages, leaving the total short of the thirteen named sections.
     let total = 0;
     for (const name of NAMES) total += panels(await render(name)).length;
-    expect(total).toBe(12);
+    expect(total).toBe(13);
   });
 
   it("a section's notes, filters and pager stay inside its panel", async () => {

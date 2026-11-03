@@ -36,6 +36,12 @@ export type QualityBody = {
 /** Text, `null`, or left out by an older console-api that does not send the field. */
 const maybeText = (value: unknown): boolean => value === undefined || nullable(str)(value);
 
+/** One needs-a-look row. `shape` wants every field present, so the two fault fields are
+ * checked apart: an older console-api leaves them out and the row still counts. */
+const lookRow = shape({ case_id: str, play: int, why: str });
+const needsALookRow = (value: unknown): boolean =>
+  lookRow(value) && isRecord(value) && maybeText(value.fault) && maybeText(value.fault_reason);
+
 const check = shape({
   sources,
   gate: listOf(
@@ -52,9 +58,7 @@ const check = shape({
   release_markers: listOf(shape({ git_sha: str, deployed_at: str, status: str, eval_run_id: nullable(str) })),
   categories: listOf(shape({ category: str, passed: int, total: int })),
   taxonomy: listOf(shape({ tag: str, count: int })),
-  needs_a_look: listOf(
-    shape({ case_id: str, play: int, why: str, fault: maybeText, fault_reason: maybeText }),
-  ),
+  needs_a_look: listOf(needsALookRow),
   blocked: listOf(
     shape({
       git_sha: str,
