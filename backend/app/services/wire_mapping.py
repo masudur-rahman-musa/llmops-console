@@ -85,6 +85,22 @@ means off. The tests cover that, and the spelling is
 pinned by every case in the rehydration tests, which send this exact name."""
 
 
+OWN_MASKS_WORD = "request"
+"""The `X-Gateway-Rehydrate` value that asks for this request's own masks back.
+
+A fixed word beside the stored-map id, matched exactly: `Request`, a trailing
+space or a word with an id after it is still a malformed value and a 422. The
+values come from the map the inline redaction step built for this same request,
+held only in memory, so only what this caller sent can come back. Pinned by
+`test_request_word_puts_back_this_requests_own_values` and
+`test_an_unknown_word_is_still_422_with_no_outbound_call`."""
+
+
+def wants_own_masks(header: str | None) -> bool:
+    """Whether the request asked for its own inline masks to be put back."""
+    return header == OWN_MASKS_WORD
+
+
 def _neutral_messages(messages: tuple[WireMessage, ...]) -> tuple[ChatMessage, ...]:
     """Map the conversation into the neutral contract, in the caller's order.
 
@@ -280,6 +296,9 @@ def requested_mapping(
     header no longer refuses and each refusal below is re-asserted on a streamed
     body.
 
+    The own-masks word answers `None` here too: it reads no store, and the
+    pipeline takes its map from the inline redaction step instead.
+
     Three refusals, in the order they are cheapest to make:
 
     * A malformed id is 422 before the store is asked, against the store's own
@@ -294,7 +313,7 @@ def requested_mapping(
       answers the identical body - a message naming the id, or saying whose it
       was, would hand a caller an oracle for which ids exist.
     """
-    if header is None:
+    if header is None or wants_own_masks(header):
         return None
     if MAP_ID_PATTERN.fullmatch(header) is None:
         raise IdentifierInvalid(f"{REHYDRATE_HEADER}: not a valid map id", param=REHYDRATE_HEADER)

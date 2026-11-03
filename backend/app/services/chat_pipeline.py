@@ -90,6 +90,7 @@ from app.services.wire_mapping import (
     requested_mapping,
     to_neutral,
     to_wire,
+    wants_own_masks,
 )
 
 logger = logging.getLogger(__name__)
@@ -356,8 +357,11 @@ def _redacted(
     context: RequestContext,
     body: ChatCompletionRequest,
     directory_store: DirectoryStore,
-) -> tuple[ChatCompletionRequest, bool]:
-    """The request the adapter should see, and whether anything was actually replaced.
+) -> tuple[ChatCompletionRequest, bool, Mapping[str, str]]:
+    """The request the adapter should see, whether anything was replaced, and the map.
+
+    The map is what a caller asking for its own masks back gets put back through.
+    It stays in this request's memory: nothing here stores, logs or traces it.
 
     Returns the body unchanged and `False` when the tenant's rule for this data
     class does not ask for redaction, which is what keeps a `public` caller from
@@ -381,7 +385,7 @@ def _redacted(
     change on the way to the admin surface.
     """
     if not redaction_applies(policy, context.tenant, context.data_class):
-        return body, False
+        return body, False, {}
 
     directory = tenant_directory(directory_store, context.tenant)
     with stage_span(scope, REDACT_SPAN) as span:
@@ -398,7 +402,7 @@ def _redacted(
         message.model_copy(update={"content": content if message.content is not None else None})
         for message, content in zip(body.messages, batch.texts, strict=True)
     )
-    return body.model_copy(update={"messages": rebuilt}), batch.redacted
+    return body.model_copy(update={"messages": rebuilt}), batch.redacted, batch.mapping
 
 
 def walk_candidates[T](
@@ -501,6 +505,7 @@ def complete_chat(
             candidates,
             allowed=allowed,
             mapping=mapping,
+            own_masks=wants_own_masks(rehydrate_header),
             started=started,
         )
     except GatewayError as exc:
@@ -526,9 +531,15 @@ def _serve(
     *,
     allowed: bool,
     mapping: Mapping[str, str] | None,
+    own_masks: bool,
     started: float,
 ) -> ChatResult | StreamPlan:
-    """Everything after the alias resolved: both cache tiers, redaction, the fallback loop."""
+    """Everything after the alias resolved: both cache tiers, redaction, the fallback loop.
+
+    With `own_masks` the answer is put back through this request's own inline
+    redaction map. Caches and traces still get the masked answer, and a cached
+    answer is put back with this caller's map, never the caller who filled it.
+    """
     label_candidate(scope, body.model, candidates[0])
     note_request(scope, alias=body.model, messages=len(body.messages))
 
@@ -561,9 +572,15 @@ def _serve(
             cached=True,
             latency_ms=_elapsed_ms(clients, started),
         )
+        if own_masks:
+            _, _, mapping = _redacted(scope, clients.policy, context, body, clients.directory_store)
         return ChatResult(body=to_wire(rehydrated(hit, mapping), body.model), headers=headers)
 
-    outbound, redacted = _redacted(scope, clients.policy, context, body, clients.directory_store)
+    outbound, redacted, own_map = _redacted(
+        scope, clients.policy, context, body, clients.directory_store
+    )
+    if own_masks:
+        mapping = own_map
     annotate(scope, SpanAttributes(redacted=redacted))
 
     vector: tuple[float, ...] | None = None

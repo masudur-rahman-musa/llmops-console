@@ -69,7 +69,9 @@ from typing import Any, cast
 import pytest
 from fastapi.testclient import TestClient
 from httpx import Response
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
+from app.cache import ResponseCache
 from app.core.config import Settings
 from app.core.errors import ProviderError
 from app.providers.base import (
@@ -1006,3 +1008,331 @@ def test_the_rehydration_stub_satisfies_the_adapter_protocol() -> None:
     stub: Adapter = RehydrationStub(name="anthropic")
 
     assert stub.price_key("claude-haiku-4-5") == "anthropic/claude-haiku-4-5"
+
+
+# --------------------------------------------------------------------------
+# a request puts back its own masks
+# --------------------------------------------------------------------------
+#
+# These cases run under `confidential`, a class whose rule redacts, because the word
+# `request` has something to put back only where the inline step masked a value.
+# Both chat providers get a stub: the route may pick either for that class, and the
+# stubs are the same script, so no case depends on which one it was.
+
+OWN_WORD = "request"
+"""The one fixed word that asks for this request's own masks, lowercase and exact."""
+
+REDACTED_CLASS = "confidential"
+UNREDACTED_CLASS = "internal"
+
+SPLIT_FRAGMENTS = ("write to <EMAIL_", "1> now")
+"""A mask cut in two frames: the first ends on a proper prefix of `<EMAIL_1>`."""
+
+
+class CountingMapStore:
+    """A map store that records every read AND every write, and serves nothing.
+
+    The put-back for `request` must never touch a store, so a fake that answers
+    nothing is enough: any call at all is the failure, and both halves are recorded.
+    """
+
+    def __init__(self) -> None:
+        self.gets: list[tuple[str, str]] = []
+        self.puts: list[tuple[str, Mapping[str, str]]] = []
+
+    def put(self, tenant: str, mapping: Mapping[str, str]) -> str:
+        self.puts.append((tenant, dict(mapping)))
+        return WELL_FORMED_ID
+
+    def get(self, tenant: str, map_id: str) -> Mapping[str, str] | None:
+        self.gets.append((tenant, map_id))
+        return None
+
+
+class OneEntryCache:
+    """A response cache that keeps ONE answer and serves it for any key.
+
+    Two callers whose raw messages differ get different exact keys, so the
+    real cache could never show one masked entry serving both. This fake files the
+    last answer it was given and returns it to every lookup, which is the shape of
+    two callers whose redacted text is the same.
+    """
+
+    def __init__(self) -> None:
+        self.stored: list[ChatResponse] = []
+
+    def get(self, tenant: str, key: str) -> ChatResponse | None:
+        return self.stored[-1] if self.stored else None
+
+    def put(self, tenant: str, key: str, answer: ChatResponse) -> None:
+        self.stored.append(answer)
+
+
+@dataclass
+class OwnMaskApp:
+    """The app, its two stubs, and the fakes a case reads."""
+
+    client: TestClient
+    stubs: tuple[RehydrationStub, RehydrationStub]
+    store: CountingMapStore
+    cache: OneEntryCache
+
+    def script(
+        self, *, response: ChatResponse | None = None, events: tuple[StreamEvent, ...] | None = None
+    ) -> None:
+        for stub in self.stubs:
+            if response is not None:
+                stub.response = response
+            if events is not None:
+                stub.events = events
+
+    @property
+    def call_count(self) -> int:
+        return sum(stub.call_count for stub in self.stubs)
+
+    def sent_text(self) -> str:
+        """Everything the provider was handed, as one string."""
+        return " ".join(
+            str(message.content)
+            for stub in self.stubs
+            for request in stub.requests
+            for message in request.messages
+        )
+
+
+@pytest.fixture(scope="module")
+def own_mask_app(settings: Settings) -> Iterator[OwnMaskApp]:
+    """One app for the module's own-mask cases, with fake stores, built once."""
+    stubs = (RehydrationStub(name="anthropic"), RehydrationStub(name="openai"))
+    with build_chat_client(settings, {stub.name: stub for stub in stubs}) as client:
+        state = app_of(client).state
+        store = CountingMapStore()
+        cache = OneEntryCache()
+        state.redaction_map_store = store
+        state.response_cache = cast(ResponseCache, cache)
+        yield OwnMaskApp(client=client, stubs=stubs, store=store, cache=cache)
+
+
+@pytest.fixture
+def own(own_mask_app: OwnMaskApp) -> OwnMaskApp:
+    """The app with every script, record and cached answer forgotten."""
+    for stub in own_mask_app.stubs:
+        stub.reset()
+    own_mask_app.store.gets.clear()
+    own_mask_app.store.puts.clear()
+    own_mask_app.cache.stored.clear()
+    return own_mask_app
+
+
+def post_own(
+    own: OwnMaskApp,
+    body: Mapping[str, Any],
+    *,
+    word: str | None = OWN_WORD,
+    data_class: str = REDACTED_CLASS,
+) -> Response:
+    """POST as `evals`; the rehydrate header is sent only when `word` is given."""
+    headers = auth_headers(key=TEST_KEYS[TENANT], tenant=TENANT, data_class=data_class)
+    if word is not None:
+        headers[REHYDRATE_HEADER] = word
+    response: Response = own.client.post(CHAT, json=dict(body), headers=headers)
+    return response
+
+
+def mail_body(*emails: str, **overrides: object) -> dict[str, Any]:
+    """A request whose one user message carries the given addresses, in order."""
+    text = "write to " + " and ".join(emails)
+    return chat_body(messages=[{"role": "user", "content": text}], **overrides)
+
+
+def test_request_word_puts_back_this_requests_own_values(own: OwnMaskApp) -> None:
+    """Catches a route that accepts the word and returns the masked answer untouched (the
+    bug the help desk hit), or one that restores by position instead of by the map: two
+    addresses are masked, the answer names them in the OPPOSITE order, and each must come
+    back as its own address. The provider is asserted to have seen masks only, so the
+    put-back cannot be what a missing redaction looks like."""
+    own.script(response=stub_response(content="cc <EMAIL_2>, to <EMAIL_1>"))
+
+    response = post_own(own, mail_body(EMAIL_A, EMAIL_OTHER))
+
+    assert content_of(response) == f"cc {EMAIL_OTHER}, to {EMAIL_A}"
+    assert response.headers["x-gateway-redacted"] == "true"
+    assert own.call_count == 1
+    assert EMAIL_A not in own.sent_text()
+    assert EMAIL_OTHER not in own.sent_text()
+    assert "<EMAIL_1>" in own.sent_text()
+
+
+def test_without_the_header_this_requests_masks_stay_masked(own: OwnMaskApp) -> None:
+    """Catches a route that puts back this request's masks by default: the address was
+    masked and the answer names the mask, so only the missing header may keep it a mask."""
+    own.script(response=stub_response(content="to <EMAIL_1>"))
+
+    response = post_own(own, mail_body(EMAIL_A), word=None)
+
+    assert content_of(response) == "to <EMAIL_1>"
+    assert EMAIL_A not in response.text
+
+
+def test_request_word_puts_back_in_tool_call_arguments(own: OwnMaskApp) -> None:
+    """Catches a put-back that restores `content` only, on either path: the content here
+    holds no mask at all, so a content-only route answers a 200 that looks right and
+    hands the tool a call whose `to` is `<EMAIL_1>`. Id, name and index are pinned, and
+    the same call is made returned and streamed."""
+    arguments = '{"to": "<EMAIL_1>"}'
+    call = ToolCall(id=STUB_TOOL_ID, name=STUB_TOOL_NAME, arguments=arguments)
+    own.script(
+        response=stub_response(content="Sending it now.", tool_calls=(call,)),
+        events=stream_events(
+            fragments=(),
+            tool_calls=(ToolCallDelta(index=STREAM_TOOL_INDEX, call=call),),
+            finish_reason="tool_use",
+        ),
+    )
+
+    returned = tool_calls_of(post_own(own, mail_body(EMAIL_A)))
+    streamed_response = post_own(own, mail_body(EMAIL_A, stream=True))
+    streamed = [
+        piece
+        for delta in deltas(chunks(streamed_response))
+        for piece in (delta.get("tool_calls") or [])
+    ]
+
+    assert len(returned) == 1
+    assert returned[0]["id"] == STUB_TOOL_ID
+    assert returned[0]["function"]["name"] == STUB_TOOL_NAME
+    assert json.loads(returned[0]["function"]["arguments"]) == {"to": EMAIL_A}
+    assert len(streamed) == 1
+    assert streamed[0]["index"] == STREAM_TOOL_INDEX
+    assert streamed[0]["id"] == STUB_TOOL_ID
+    assert json.loads(streamed[0]["function"]["arguments"]) == {"to": EMAIL_A}
+
+
+def test_request_word_on_a_stream_puts_back_split_placeholders(own: OwnMaskApp) -> None:
+    """Catches a streamed put-back that substitutes frame by frame: `<EMAIL_` and `1>`
+    arrive in two frames, so neither frame holds a whole mask, and only a route that holds
+    the partial one across the frame boundary restores it. The mask text is asserted gone
+    from the whole body, so a route that passes the frames through fails."""
+    own.script(events=stream_events(fragments=SPLIT_FRAGMENTS))
+
+    response = post_own(own, mail_body(EMAIL_A, stream=True))
+
+    assert streamed_content(response) == f"write to {EMAIL_A} now"
+    assert "<EMAIL_" not in response.text
+    assert data_frames(response)[-1] == DONE_PAYLOAD
+
+
+def test_request_word_reads_and_writes_no_map_store(own: OwnMaskApp) -> None:
+    """Catches a put-back that files the inline map in the store and reads it back (the
+    way a stored id works): the answer would still be right, and a value the caller sent
+    would sit in Redis for the map's lifetime. The store records zero reads AND zero
+    writes, on a returned answer and on a stream."""
+    own.script(
+        response=stub_response(content="to <EMAIL_1>"),
+        events=stream_events(fragments=("to <EMAIL_1>",)),
+    )
+
+    returned = post_own(own, mail_body(EMAIL_A))
+    streamed = post_own(own, mail_body(EMAIL_A, stream=True))
+
+    assert content_of(returned) == f"to {EMAIL_A}"
+    assert streamed_content(streamed) == f"to {EMAIL_A}"
+    assert own.store.gets == []
+    assert own.store.puts == []
+
+
+def test_request_word_keeps_the_cache_and_trace_masked(
+    own: OwnMaskApp, spans: InMemorySpanExporter
+) -> None:
+    """Catches a put-back done BEFORE the answer is cached or traced: the caller still
+    gets its address, so a response-only assertion passes, while the cache entry and the
+    trace span would hold a value the caller sent. The entry is read off the cache fake
+    and the span attributes off the exporter; the request is eligible for the cache
+    (`temperature` 0) and `evals` has its trace content on."""
+    own.script(response=stub_response(content="to <EMAIL_1>"))
+    spans.clear()
+
+    response = post_own(own, mail_body(EMAIL_A, temperature=0))
+
+    assert content_of(response) == f"to {EMAIL_A}"
+    assert [answer.content for answer in own.cache.stored] == ["to <EMAIL_1>"]
+    attributes = " ".join(
+        f"{key}={value}"
+        for span in spans.get_finished_spans()
+        for key, value in dict(span.attributes or {}).items()
+    )
+    assert "to <EMAIL_1>" in attributes
+    assert EMAIL_A not in attributes
+
+
+def test_a_cached_answer_is_put_back_with_the_callers_own_values(own: OwnMaskApp) -> None:
+    """Catches a cache hit that is returned masked, and the worse one that is put back
+    with the map of whoever filled the entry: the second caller must get ITS address and
+    never the first caller's. One entry serves both (the fake keeps one answer), the
+    provider is dialled once, and the first address is asserted absent from the second
+    answer."""
+    own.script(response=stub_response(content="to <EMAIL_1>"))
+
+    first = post_own(own, mail_body(EMAIL_A, temperature=0))
+    second = post_own(own, mail_body(EMAIL_OTHER, temperature=0))
+
+    assert first.headers["x-gateway-cache"] == "miss"
+    assert content_of(first) == f"to {EMAIL_A}"
+    assert second.headers["x-gateway-cache"] == "hit"
+    assert own.call_count == 1
+    assert content_of(second) == f"to {EMAIL_OTHER}"
+    assert EMAIL_A not in second.text
+
+
+def test_a_placeholder_this_request_did_not_mask_is_left_alone(own: OwnMaskApp) -> None:
+    """Catches a put-back that rewrites any `<KIND_N>` it finds: `<EMAIL_7>` is a number
+    this request never issued and `<PERSON_1>` is a kind it never masked, and both are text
+    the model wrote. The mask that WAS issued is asserted restored in the same answer, so
+    a route that restores nothing cannot pass."""
+    own.script(response=stub_response(content="<EMAIL_1> <EMAIL_7> <PERSON_1>"))
+
+    response = post_own(own, mail_body(EMAIL_A))
+
+    assert content_of(response) == f"{EMAIL_A} <EMAIL_7> <PERSON_1>"
+
+
+@pytest.mark.parametrize("stream", [False, True], ids=["returned", "streamed"])
+@pytest.mark.parametrize(
+    "word",
+    [
+        pytest.param("Request", id="capitalised"),
+        pytest.param("REQUEST", id="upper case"),
+        pytest.param("requests", id="plural"),
+        pytest.param("self", id="another word"),
+        pytest.param("request\n", id="a trailing newline"),
+        pytest.param("request\r\n", id="a trailing CRLF"),
+        pytest.param("request ", id="a trailing space"),
+        pytest.param("request" + WELL_FORMED_ID, id="the word then an id"),
+    ],
+)
+def test_an_unknown_word_is_still_422_with_no_outbound_call(
+    own: OwnMaskApp, word: str, stream: bool
+) -> None:
+    """Catches a word check written loosely - case-folded, a prefix test, a `$`-anchored
+    match that lets a trailing newline through - or one that falls back to the map store
+    for a word that is not an id. The class is a redacting one, so the refusal cannot be
+    a class rule; the store is asserted never asked and no provider dialled."""
+    response = post_own(own, mail_body(EMAIL_A, stream=stream), word=word)
+
+    assert_error_body(response, status=422, code="VALIDATION")
+    assert own.call_count == 0
+    assert own.store.gets == []
+
+
+def test_request_word_on_an_unredacted_class_changes_nothing(own: OwnMaskApp) -> None:
+    """Catches a put-back that is not tied to this request's own map: under `internal`
+    nothing is masked, so a model-written `<EMAIL_1>` was never this caller's value and
+    must stay, and the provider must have been handed the raw address. A route that
+    refuses the word on this class fails the 200."""
+    own.script(response=stub_response(content="to <EMAIL_1>"))
+
+    response = post_own(own, mail_body(EMAIL_A), data_class=UNREDACTED_CLASS)
+
+    assert content_of(response) == "to <EMAIL_1>"
+    assert response.headers["x-gateway-redacted"] == "false"
+    assert EMAIL_A in own.sent_text()
