@@ -278,8 +278,7 @@ def _cut_roles(result: object, reply: str) -> tuple[object, list[str]]:
 
     A tool can list 200 roles, and every check would send them all again; only the roles
     the reply talks about matter to a check. A fixed cap would be shorter but could drop
-    the very role the reply names
-    (`test_a_long_role_list_keeps_only_the_roles_the_reply_names`).
+    the very role the reply names.
     """
     if not isinstance(result, dict):
         return result, []

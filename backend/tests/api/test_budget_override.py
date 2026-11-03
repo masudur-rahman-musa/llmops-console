@@ -79,8 +79,8 @@ ALIAS = "agent-default"
 PROVIDER = "anthropic"
 EMBED_PROVIDER = "local_embed"
 
-CAP_USD = Decimal("10.00")
-CAP = 10_000_000
+CAP_USD = Decimal("40.00")
+CAP = 40_000_000
 """`evals`'s shipped cap, in the counter's unit. Pinned against the loaded policy
 in tests/gateway/test_budget_enforcement.py, which is the file that arranges
 against it in every case."""

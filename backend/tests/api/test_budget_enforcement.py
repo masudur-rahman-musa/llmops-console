@@ -121,13 +121,13 @@ UNPOLICED_TENANT = "cap-key"
 check runs before the resolver, so this is the tenant that tells a check which
 looks its cap up with `policy.tenants[tenant]` from one that does not."""
 
-CAP_USD = Decimal("10.00")
-CAP = 10_000_000
+CAP_USD = Decimal("40.00")
+CAP = 40_000_000
 """`evals`'s shipped `budget_usd_month`, in dollars and in the counter's unit.
 Asserted against the loaded policy by the first case below, so an edit to
 `routing.yaml` fails there rather than making every other case here meaningless."""
 
-WARN_AT = 8_000_000
+WARN_AT = 32_000_000
 """Exactly 80% of `CAP`: the inclusive warn boundary, in micro-USD."""
 
 CHAT_MICRO = 28

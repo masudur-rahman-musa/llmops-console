@@ -513,17 +513,34 @@ def test_an_unknown_block_type_is_ignored() -> None:
     assert response.tool_calls == ()
 
 
-def test_an_answer_with_no_readable_block_raises() -> None:
+def test_an_answer_with_no_readable_block_raises_and_moves_on() -> None:
     """Catches the silent empty answer: a response of only unknown blocks would otherwise
     return `content=""` with real, billed usage, which is the zero-usage failure one field
-    over - the tenant pays for an answer the mapper dropped."""
+    over - the tenant pays for an answer the mapper dropped. It is retryable, so the next
+    candidate answers instead of the caller getting a 502, and its message names the stop
+    reason and the block types so the log says what came back."""
     payload = load_fixture("plain")
     payload["content"] = [{"type": "thinking", "thinking": "internal reasoning"}]
 
     with pytest.raises(ProviderError) as raised:
         from_anthropic(payload)
 
-    assert raised.value.retryable is False
+    assert raised.value.retryable is True
+    assert "block types=['thinking']" in raised.value.message
+    assert "stop_reason=" in raised.value.message
+
+
+def test_an_empty_answer_is_retryable() -> None:
+    """Catches the case seen in eval runs: an answer with an empty content list, which the
+    model gives now and then after a tool result. It moves on to the next candidate."""
+    payload = load_fixture("plain")
+    payload["content"] = []
+
+    with pytest.raises(ProviderError) as raised:
+        from_anthropic(payload)
+
+    assert raised.value.retryable is True
+    assert "block types=[]" in raised.value.message
 
 
 # --- the tool loop, request side ----------------------------------

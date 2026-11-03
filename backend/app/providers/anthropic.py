@@ -306,13 +306,19 @@ def from_anthropic(payload: Mapping[str, Any]) -> ChatResponse:
             # Not `transport.unreadable`: the body parsed fine, it simply carried nothing
             # this adapter can render. Saying so is what stops an operator
             # chasing a parse bug that is not there.
+            # Retryable: the model sometimes ends a turn with nothing in it, often right
+            # after a tool result, and the next candidate gives a real answer. Refusing it
+            # outright handed the caller a 502 for a call that a second try would serve.
+            # The stop reason and the block types go in the message so the fallback log
+            # says what came back; neither carries any of the request or the answer.
+            seen = (
+                f"stop_reason={payload.get('stop_reason')!r}, "
+                f"block types={[block.get('type') for block in payload['content']]}"
+            )
             raise ProviderError(
-                "the provider answered with no readable content block",
-                retryable=False,
-                provider_message=(
-                    f"stop_reason={payload.get('stop_reason')!r}, "
-                    f"block types={[block.get('type') for block in payload['content']]}"
-                ),
+                f"the provider answered with no readable content block ({seen})",
+                retryable=True,
+                provider_message=seen,
             )
 
         return ChatResponse(

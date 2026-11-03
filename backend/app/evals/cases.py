@@ -76,8 +76,7 @@ class ScriptStep(BaseModel):
     """One message a scripted person sends, and whether it is a yes.
 
     The yes is written by the case author, never guessed from the words: "Ja, bitte" is a
-    yes in one case and a word like "yes" can be a refusal in another
-    (`test_a_scripted_yes_is_never_guessed_from_the_words`).
+    yes in one case and a word like "yes" can be a refusal in another.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

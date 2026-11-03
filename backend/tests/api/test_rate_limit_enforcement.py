@@ -345,7 +345,7 @@ def drain_tokens(store: RecordingRateLimitStore) -> None:
 def over_budget(client: TestClient) -> None:
     """Put this tenant's whole monthly cap on its budget counter."""
     store = InProcessBudgetStore()
-    store.debit(TENANT, current_month(), to_micro_usd(Decimal("10.00")))
+    store.debit(TENANT, current_month(), to_micro_usd(Decimal("40.00")))
     app_of(client).state.budget_store = store
 
 

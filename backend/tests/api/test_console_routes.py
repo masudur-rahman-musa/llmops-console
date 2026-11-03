@@ -607,7 +607,7 @@ def unconfigured_body(path: str) -> dict[str, Any]:
         body["budgets"] = [
             {"tenant": "nordlicht", "cap_usd": 15.0, "spent_usd": None, "ratio": None},
             {"tenant": "cuan", "cap_usd": 60.0, "spent_usd": None, "ratio": None},
-            {"tenant": "evals", "cap_usd": 10.0, "spent_usd": None, "ratio": None},
+            {"tenant": "evals", "cap_usd": 40.0, "spent_usd": None, "ratio": None},
         ]
     return body
 
@@ -957,14 +957,14 @@ def test_budgets_show_the_ledger_month_spend(wired: Wired) -> None:
     assert response.json()["budgets"] == [
         {"tenant": "nordlicht", "cap_usd": 15.0, "spent_usd": 12.0, "ratio": 0.8},
         {"tenant": "cuan", "cap_usd": 60.0, "spent_usd": 0.0, "ratio": 0.0},
-        {"tenant": "evals", "cap_usd": 10.0, "spent_usd": 2.5, "ratio": 0.25},
+        {"tenant": "evals", "cap_usd": 40.0, "spent_usd": 2.5, "ratio": 0.0625},
     ]
     assert store.asked == []
 
     one = wired.get(COST, tenant="evals")
     assert one.status_code == 200, one.text
     assert one.json()["budgets"] == [
-        {"tenant": "evals", "cap_usd": 10.0, "spent_usd": 2.5, "ratio": 0.25}
+        {"tenant": "evals", "cap_usd": 40.0, "spent_usd": 2.5, "ratio": 0.0625}
     ]
 
     unknown = wired.get(COST, tenant="nobody")
@@ -987,7 +987,7 @@ def test_budgets_are_null_when_postgres_is_down(wired: Wired) -> None:
     assert response.json()["budgets"] == [
         {"tenant": "nordlicht", "cap_usd": 15.0, "spent_usd": None, "ratio": None},
         {"tenant": "cuan", "cap_usd": 60.0, "spent_usd": None, "ratio": None},
-        {"tenant": "evals", "cap_usd": 10.0, "spent_usd": None, "ratio": None},
+        {"tenant": "evals", "cap_usd": 40.0, "spent_usd": None, "ratio": None},
     ]
     assert store.asked == []
 
