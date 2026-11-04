@@ -224,7 +224,7 @@
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
           "instant": true,
-          "expr": "sum(increase(gateway_requests_total{status=~\"5..\"}[30d])) / sum(increase(gateway_requests_total[30d]))"
+          "expr": "(sum(increase(gateway_requests_total{status=~\"5..\"}[30d])) or vector(0)) / sum(increase(gateway_requests_total[30d]))"
         }
       ]
     },

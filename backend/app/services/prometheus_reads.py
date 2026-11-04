@@ -72,11 +72,12 @@ an
 error budget spends: a p95 under 6 s allows 5% of requests at 6 s or over."""
 
 AVAILABILITY_BUDGET_QUERY: Final[str] = (
-    'sum(increase(gateway_requests_total{status=~"5.."}[30d]))'
+    '(sum(increase(gateway_requests_total{status=~"5.."}[30d])) or vector(0))'
     " / sum(increase(gateway_requests_total[30d]))"
 )
 """The 5xx share over a fixed 30 days: the BAD ratio, which the route turns into
-`observed = 1 - bad` and `budget_remaining = 1 - bad / 0.005`.
+`observed = 1 - bad` and `budget_remaining = 1 - bad / 0.005`. A month with no 5xx has no
+5xx series at all, so `or vector(0)` makes it a 0 share rather than no answer.
 
 The two budget queries are literals rather than builders because Grafana's
 `gateway-overview.json` carries each one byte for byte, and
