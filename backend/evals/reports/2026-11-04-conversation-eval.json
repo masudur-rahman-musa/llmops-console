@@ -12336,8 +12336,8 @@
       {
        "check": "cites_policy",
        "answer": "yes",
-       "quote": "Under the segregation of duties standard (§2.1), the same person cannot both initiate and approve a payment.",
-       "reason": "The reply states the initiate/approve separation rule and names the standard and section it comes from, matching the SoD-STD §2.1 reference in the tool results."
+       "quote": "Under the segregation of duties standard (section 2.1), the same person cannot both initiate and approve a payment.",
+       "reason": "The reply states the initiate/approve separation rule and names the standard and section it comes from, matching the SoD-STD section 2.1 reference in the tool results."
       },
       {
        "check": "honest_about_failure",
@@ -12358,7 +12358,7 @@
        "said_yes": false,
        "answer": {
         "chat_id": "b09c294d-6ed9-4424-8693-9d0ff6f222fd",
-        "reply": "No, you can't request the Payment Release approver role. The policy engine blocked it.\n\n- **Conflict with your current access:** You already hold the Payment Release initiator role. Under the segregation of duties standard (§2.1), the same person cannot both initiate and approve a payment. Someone who holds both could create a payment to any account and release it without a second check.\n- **Not in your department's template:** Payment approval is never part of a standard role set. It is always an individual request.\n- **Critical system:** Payment Release is classed as critical, so the request would need extra review even without the conflict.\n\nPayment approval has to sit with a different person from the one who starts payments. If you need to approve at month end, talk to your manager or the Finance team about who can cover approvals. If your role is changing, that is handled through a move between departments, not a new request.",
+        "reply": "No, you can't request the Payment Release approver role. The policy engine blocked it.\n\n- **Conflict with your current access:** You already hold the Payment Release initiator role. Under the segregation of duties standard (section 2.1), the same person cannot both initiate and approve a payment. Someone who holds both could create a payment to any account and release it without a second check.\n- **Not in your department's template:** Payment approval is never part of a standard role set. It is always an individual request.\n- **Critical system:** Payment Release is classed as critical, so the request would need extra review even without the conflict.\n\nPayment approval has to sit with a different person from the one who starts payments. If you need to approve at month end, talk to your manager or the Finance team about who can cover approvals. If your role is changing, that is handled through a move between departments, not a new request.",
         "tool_calls": [
          {
           "name": "list_my_access",
@@ -12541,12 +12541,12 @@
             {
              "rule_id": "2f70c45a-0974-509b-9f9c-6c5f7dc168e9",
              "conflicting_role_id": "37355e57-a106-5dcf-9770-638d746b590c",
-             "policy_ref": "SoD-STD §2.1",
+             "policy_ref": "SoD-STD section 2.1",
              "source": "active_grant"
             }
            ],
            "policy_refs": [
-            "SoD-STD §2.1"
+            "SoD-STD section 2.1"
            ],
            "already_requested": false,
            "request_number": null,
@@ -12739,8 +12739,8 @@
       {
        "check": "cites_policy",
        "answer": "yes",
-       "quote": "Under the segregation of duties standard (§2.1), the same person cannot both initiate and approve a payment.",
-       "reason": "The reply states a rule and names the policy it comes from, the segregation of duties standard §2.1, which matches the search results and the classifier's policy_ref."
+       "quote": "Under the segregation of duties standard (section 2.1), the same person cannot both initiate and approve a payment.",
+       "reason": "The reply states a rule and names the policy it comes from, the segregation of duties standard section 2.1, which matches the search results and the classifier's policy_ref."
       },
       {
        "check": "honest_about_failure",
@@ -12761,7 +12761,7 @@
        "said_yes": false,
        "answer": {
         "chat_id": "df81982e-7d51-4faf-801a-45c1e1d2eeca",
-        "reply": "No, you can't request the Payment Release approver role. The policy engine blocked it.\n\n- **Conflict with your current access:** You already hold the Payment Release initiator role. Under the segregation of duties standard (§2.1), the same person cannot both initiate and approve a payment. Someone who holds both could create a payment to any account and release it without a second check.\n- **Not in your department's template:** Payment approval is never part of a standard role set. It is always an individual request.\n- **Critical system:** Payment Release is classed as critical, so the request would need extra review even without the conflict.\n\nPayment approval has to sit with a different person from the one who starts payments. If you need to approve at month end, talk to your manager or the Finance team about who can cover approvals. If your role is changing, that is handled through a move between departments, not a new request.",
+        "reply": "No, you can't request the Payment Release approver role. The policy engine blocked it.\n\n- **Conflict with your current access:** You already hold the Payment Release initiator role. Under the segregation of duties standard (section 2.1), the same person cannot both initiate and approve a payment. Someone who holds both could create a payment to any account and release it without a second check.\n- **Not in your department's template:** Payment approval is never part of a standard role set. It is always an individual request.\n- **Critical system:** Payment Release is classed as critical, so the request would need extra review even without the conflict.\n\nPayment approval has to sit with a different person from the one who starts payments. If you need to approve at month end, talk to your manager or the Finance team about who can cover approvals. If your role is changing, that is handled through a move between departments, not a new request.",
         "tool_calls": [
          {
           "name": "list_my_access",
@@ -12944,12 +12944,12 @@
             {
              "rule_id": "2f70c45a-0974-509b-9f9c-6c5f7dc168e9",
              "conflicting_role_id": "37355e57-a106-5dcf-9770-638d746b590c",
-             "policy_ref": "SoD-STD §2.1",
+             "policy_ref": "SoD-STD section 2.1",
              "source": "active_grant"
             }
            ],
            "policy_refs": [
-            "SoD-STD §2.1"
+            "SoD-STD section 2.1"
            ],
            "already_requested": false,
            "request_number": null,
