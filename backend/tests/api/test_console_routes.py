@@ -317,10 +317,24 @@ class Wired:
         return response
 
 
+HOME_BASELINE = '{"safety": 100, "outcome_every_play": 0}'
+"""The baseline the home verdict is judged against here: written per case, so the
+verdict tests do not change when the shipped baseline does."""
+
+
+def baseline_file(tmp_path: Path, text: str = HOME_BASELINE) -> Path:
+    """A baseline file with `text`, in this case's own folder."""
+    path = tmp_path / "baseline.json"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
 @pytest.fixture
-def wired(admin_settings: Settings) -> Iterator[Wired]:
-    """The admin app, both sources configured with stubs, per case (in-process, cheap)."""
-    app = create_app(admin_settings, NO_PROVIDER_KEYS)
+def wired(admin_settings: Settings, tmp_path: Path) -> Iterator[Wired]:
+    """The admin app, both sources configured with stubs, per case (in-process, cheap).
+    The home verdict reads `HOME_BASELINE`, not the shipped file."""
+    settings = admin_settings.model_copy(update={"eval_baseline_path": baseline_file(tmp_path)})
+    app = create_app(settings, NO_PROVIDER_KEYS)
     reader = StubReader()
     prom = PromStub()
     with TestClient(app) as client:
@@ -737,13 +751,10 @@ def home_passed(
 ) -> Any:  # noqa: ANN401
     """The `last_eval.passed` the home route answers for one run's metrics and one baseline.
 
-    `baseline_text` None keeps the shipped baseline (safety 100, outcome every play 0); a string is
-    written to a file and read instead, so an unreadable baseline can be arranged."""
-    settings = admin_settings
-    if baseline_text is not None:
-        path = tmp_path / "baseline.json"
-        path.write_text(baseline_text, encoding="utf-8")
-        settings = admin_settings.model_copy(update={"eval_baseline_path": path})
+    `baseline_text` None uses `HOME_BASELINE` (safety 100, outcome every play 0); a string is
+    written instead, so an unreadable baseline can be arranged."""
+    path = baseline_file(tmp_path, HOME_BASELINE if baseline_text is None else baseline_text)
+    settings = admin_settings.model_copy(update={"eval_baseline_path": path})
     app = create_app(settings, NO_PROVIDER_KEYS)
     reader = StubReader()
     reader.home_read = HOME_READ.model_copy(update={"last_eval_metrics": metrics})
@@ -756,7 +767,7 @@ def home_passed(
 
 def test_home_verdict_matches_the_eval_gate(wired: Wired) -> None:
     """Catches a home route that echoes the run's stored `passed` (false here) instead of
-    the eval gate verdict: safety 100 and outcome 57.14 beat the shipped line of 100 and 0."""
+    the eval gate verdict: safety 100 and outcome 57.14 beat the line of 100 and 0."""
     assert HOME_READ.last_eval is not None
     assert HOME_READ.last_eval.passed is False
 
@@ -856,7 +867,7 @@ def test_the_quality_body_carries_the_reader_answer(wired: Wired) -> None:
     body = response.json()
     for row in body["gate"]:
         assert row.pop("note") is None
-    baseline = json.loads(SHIPPED_BASELINE.read_text(encoding="utf-8"))
+    baseline = json.loads(HOME_BASELINE)
     assert body == {
         "sources": {"postgres": OK, "prometheus": None},
         "runs": [row.model_dump(mode="json") for row in QUALITY_READ.runs],
