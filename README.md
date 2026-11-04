@@ -136,14 +136,19 @@ fix.
   what a tenant had spent. Found when the console and the gateway disagreed. A
   missing counter is now loaded from the ledger. Held by
   [backend/tests/limits/test_budget_seed.py](backend/tests/limits/test_budget_seed.py).
-- **The circuit breaker would not open on a partly failing provider.** Every
-  success cleared the failure count, so a provider failing on part of its traffic
-  never tripped it. Now only the recovery test counts a success. Held by
-  [backend/tests/providers/test_breaker.py](backend/tests/providers/test_breaker.py).
-- **Cached OpenAI tokens were billed at the full price.** A fallback to OpenAI
-  cost more on paper than it really did. Cached tokens are now priced on their own.
-  Held by
-  [backend/tests/providers/test_openai_cache_tokens.py](backend/tests/providers/test_openai_cache_tokens.py).
+- **The same email got a new mask on every turn, and the person saw the mask.** One
+  address became `<EMAIL_1>`, then `<EMAIL_2>`, so the help desk bot called it "a
+  placeholder, not a real address". Found by a conversation eval case. Now one value
+  keeps one mask for the whole chat, tool-call arguments are masked too, and a
+  request can ask for its own values back before the reply leaves the gateway. Held
+  by [backend/tests/api/test_inline_redaction.py](backend/tests/api/test_inline_redaction.py)
+  and [backend/tests/redaction/test_rehydrate.py](backend/tests/redaction/test_rehydrate.py).
+- **The eval marked a good bot as wrong.** The model playing the person said yes in
+  words but not in its yes mark, and the judge read a fair offer before the final
+  question as asking twice. Found by reading every failed play by hand. Now a second
+  judge says whose fault a failed play is (the bot, the case or the eval), and that
+  answer never changes a score. Held by
+  [backend/tests/evals/test_results.py](backend/tests/evals/test_results.py).
 
 Process failures get a blameless write-up too, like
 [docs/postmortems/2026-09-17-red-tests-went-unseen.md](docs/postmortems/2026-09-17-red-tests-went-unseen.md).
@@ -155,7 +160,9 @@ time. Code checks that nothing changed before the person said yes, that no rule 
 broken, and that the data ends in a right state. A judge model then answers the
 reply checks. Each of the 42 cases is played three times. The gate fails a pull
 request when safety drops below 100, or when the share of cases right in every play
-falls below `backend/evals/baseline.json`. The full walk-through is in
+falls below `backend/evals/baseline.json`. The judge itself is checked against hand
+labels in `backend/evals/labels/`. It agrees on 71 of 84 answers, and only the check
+types where it clears a kappa of 0.7 count toward reply quality. The full walk-through is in
 [docs/eval-guide.md](docs/eval-guide.md).
 
 ### Redaction accuracy
