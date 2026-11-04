@@ -1,20 +1,16 @@
 # Media
 
-Screenshots and the walkthrough recording for the README's "Video and
-screenshots" section live here. None is committed yet.
-
-When they land, they use these names:
+The screenshots in the README's "Video and screenshots" section.
 
 | File | What it shows |
 |---|---|
-| `walkthrough.md` | a link to the recorded walkthrough |
 | `console-overview.png` | the console's Overview tab, with the headline numbers and model routing |
+| `console-quality.png` | the Quality tab, with the eval result, the plays that need a look and why plays did not pass |
 | `console-requests.png` | the Requests tab, with requests and errors per day, redactions and the newest requests |
-| `console-cost.png` | the Cost tab, with cost per day by tenant and budgets this month |
-| `console-quality.png` | the Quality tab, with the check score, categories and blocked releases |
-| `grafana-gateway.png` | the gateway overview dashboard in Grafana, with the SLO error budgets |
+| `console-cost.png` | the Cost tab, with cost per day by tenant, cache savings and budgets this month |
+| `langfuse-trace.png` | one chat turn traced in Langfuse, with each gateway step |
 
 Screenshots are taken against the local stack with demo traffic, so no real
-tenant, key or personal value appears in one. The recording is a link, not a
-committed file, because this repo does not carry video. Until a file lands, the
-README does not link a path that does not exist.
+tenant, key or personal value appears in one. A walkthrough video, once
+recorded, is linked rather than committed, because this repo does not carry
+video.

@@ -54,8 +54,29 @@ one place can answer. This project puts a gateway in that place.
 
 ## Video and screenshots
 
-No recording or screenshots are committed yet.
-[docs/media/README.md](docs/media/README.md) lists the file names they will use.
+Taken on the local stack with demo traffic. No real tenant, key or person shows.
+
+**Overview.** Is the gateway healthy today, and what has it cost?
+
+![Overview tab](docs/media/console-overview.png)
+
+**Quality.** The latest eval run against its baseline, and the plays that need a look, with the judge's guess at whose fault each one is.
+
+![Quality tab](docs/media/console-quality.png)
+
+**Requests.** Requests and errors per day, values hidden by redaction, tokens per model and every request with its trace.
+
+![Requests tab](docs/media/console-requests.png)
+
+**Cost.** Cost per day by tenant, what caching saved, and each tenant's budget.
+
+![Cost tab](docs/media/console-cost.png)
+
+**A trace in Langfuse.** One chat turn, with each gateway step and a fallback from Anthropic to OpenAI.
+
+![Langfuse trace](docs/media/langfuse-trace.png)
+
+No walkthrough video is recorded yet.
 
 ## How it fits together
 
@@ -229,7 +250,7 @@ folder.
 
 ### Not done yet
 
-- No video or screenshots are committed.
+- No walkthrough video is recorded.
 - The self-hosted vs API comparison has no measured run, so there is no table.
 - The AWS stack has never been deployed, so no AWS run is saved.
 - No load test result is committed.
