@@ -165,7 +165,7 @@ tenant-key: ## Make a local tenant key and print its env line: make tenant-key [
 # first, so no answer from an older prompt is served again. A help desk scheduler left
 # running on a laptop is stopped first: its review job writes the same rows as the reset.
 # The reports folder starts empty.
-HELPDESK_DIR ?= ../ai-help-desk-governed-access
+HELPDESK_DIR ?= ../helpdesk-agentic-flow
 EVAL_HELPDESK = $(abspath $(HELPDESK_DIR))
 EVAL_CASES = $(EVAL_HELPDESK)/backend/evals/conversations/cases.jsonl
 EVAL_REPORTS = backend/evals/reports/local

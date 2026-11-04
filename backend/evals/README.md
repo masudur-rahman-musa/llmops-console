@@ -38,8 +38,7 @@ By hand, against any target:
         --out backend/evals/labels/calibration.json
     ops-eval gate --report DIR/report.json --baseline backend/evals/baseline.json
 
-The formats are in `docs/eval-format.md`, `docs/eval-target.md`, `docs/eval-report.md`
-`docs/eval-gate.md` and `docs/eval-labels.md`.
+The formats are in `docs/eval-guide.md` and `docs/eval-report.md`.
 
 ## Reply quality counts only trusted checks
 

@@ -86,11 +86,11 @@ You do not have to touch any of these to run the gateway.
   [Makefile](Makefile) carries the commands the workflows use.
 - **Evaluations.** The eval engine plays conversation cases: what a person types,
   which tools should be called, and when the person says yes. Write your cases in the
-  shape [docs/eval-format.md](docs/eval-format.md) describes, and serve them through
-  the two endpoints in [docs/eval-target.md](docs/eval-target.md).
+  shape [docs/eval-guide.md](docs/eval-guide.md#the-case-format) describes, and serve them through
+  the two endpoints in [docs/eval-guide.md](docs/eval-guide.md#the-target-contract).
   `backend/evals/baseline.json` is the scoreboard the CI gate compares
   against; make it once from a run on your own cases, then leave it alone. The gate
-  itself is in [docs/eval-gate.md](docs/eval-gate.md).
+  itself is in [docs/eval-guide.md](docs/eval-guide.md#the-gate).
 - **Reliability.** The seven service level objectives have
   their alerts in
   [infra/k8s/monitoring/alerts/](infra/k8s/monitoring/alerts/), and every alert has a response

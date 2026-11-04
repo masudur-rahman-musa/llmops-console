@@ -11,7 +11,7 @@ Their names are fixed. A rerun into the same folder overwrites them, so a caller
 wants history keeps folders rather than file names, and the gate reads a known path.
 
 `--plays N` (1 to 10, default 3, the nightly run uses 1) plays every case N times. Each
-play starts from freshly reset data. See [eval-target.md](eval-target.md).
+play starts from freshly reset data. See [eval-guide.md](eval-guide.md#the-target-contract).
 
 ## report.json, field by field
 
@@ -70,7 +70,7 @@ for nothing. The conversation reaches the model as data between fixed tags. Text
 that tries to give the judge instructions is read, not obeyed.
 
 How far the judge is trusted on each check type is measured against the owner's own
-labels; see `docs/eval-labels.md`.
+labels; see `docs/eval-guide.md`.
 
 ## The simulated person
 

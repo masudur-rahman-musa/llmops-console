@@ -166,7 +166,7 @@ flowchart LR
     run --> report["report.json and report.md"]
     run --> pg[("eval_runs, eval_cases")]
     report --> gate["ops-eval gate"]
-    base["conversation-baseline.json"] --> gate
+    base["baseline.json"] --> gate
     gate -->|"exit 0, 1 or 2"| ci["Pull request check"]
 ```
 
@@ -174,8 +174,8 @@ A run resets the target to its seed, plays every case as the case's user, and
 checks each turn with three rules. The judge grades each marked reply three times
 and the majority wins. The gate exits 0 when every rule clears, 1 when a rule is
 breached and 2 when an input cannot be read, so CI can tell a worse run from a
-broken one. The full contract is in [docs/eval-target.md](docs/eval-target.md),
-[docs/eval-report.md](docs/eval-report.md) and [docs/eval-gate.md](docs/eval-gate.md).
+broken one. The full contract is in [docs/eval-guide.md](docs/eval-guide.md) and
+[docs/eval-report.md](docs/eval-report.md).
 
 ## Where it runs
 

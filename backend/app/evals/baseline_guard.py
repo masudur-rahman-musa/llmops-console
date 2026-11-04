@@ -43,7 +43,7 @@ BASELINE_PREFIX: Final[str] = "baseline:"
 
 The one commit subject in this repository that carries a colon: the house style
 has no `type: subject` prefixes, and this rule names the literal string. Published
-in `docs/eval-gate.md`."""
+in `docs/eval-guide.md`."""
 
 ADR_PREFIX: Final[str] = "docs/adr/"
 """The directory the justification must land in, trailing slash included: without

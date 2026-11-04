@@ -1,35 +1,19 @@
 # Run it on your laptop
 
-This page takes a fresh clone to a running gateway, console and Grafana. Everything
-runs in Docker on your own machine. Nothing here touches a cloud account.
+This page takes a fresh clone to a running gateway, console and Grafana, all in
+Docker on your machine.
 
 ## What you need
 
-- Docker with Compose v2. The compose file marks its env files as optional, which
-  needs Compose 2.24 or newer.
-- `make`, `curl`, `openssl` and `shasum`. macOS and most Linux systems have them.
-- [uv](https://docs.astral.sh/uv/) for the Python tests and the eval tools. It
-  installs Python 3.12 for you.
-- Node 22 and pnpm, only if you want to run the console tests outside Docker.
+Docker with Compose 2.24 or newer, `make`, `curl`, `openssl`, `shasum` and
+[uv](https://docs.astral.sh/uv/). Node 22 and pnpm only for the console tests.
 
-These host ports must be free. They are 8080 (gateway), 3001 (console), 3002 (Grafana), 9090
-(Prometheus), 9091 (Pushgateway), 8083 (embedding server), 15432 (Postgres),
-16379 (Redis) and 16333 (Qdrant). Postgres, Redis and Qdrant use shifted ports on
-purpose, so this stack can run next to the companion help desk, which uses the
-standard ones.
+These ports must be free. 8080 (gateway), 3001 (console), 3002 (Grafana), 9090
+(Prometheus), 9091 (Pushgateway), 8083 (embeddings), 15432 (Postgres), 16379 (Redis)
+and 16333 (Qdrant).
 
-## Which keys you need
-
-| Key | Needed for | Without it |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | chat, the judge, `make eval`, `make numbers` | chat answers 503 `ALL_PROVIDERS_FAILED`. Everything else still works. |
-| `OPENAI_API_KEY` | the fallback for every chat alias | chat runs on Anthropic alone |
-| Langfuse OTLP settings | sending traces to Langfuse | spans are built and dropped |
-
-No key is needed for health checks, `/v1/redact`, `/v1/embeddings` (served by the
-local llama.cpp container), `/v1/models`, the console, Grafana, the test suites or
-the load test. The load test runs the real gateway against a mock provider, so it
-needs no model key at all.
+Only chat, the judge, `make eval` and `make numbers` need `ANTHROPIC_API_KEY`.
+`OPENAI_API_KEY` is the optional fallback. Everything else works with no key.
 
 ## 1. Clone and fetch the embedding model
 
@@ -37,16 +21,12 @@ needs no model key at all.
     cd llmops-console
     make embed-model
 
-`make embed-model` downloads `bge-small-en-v1.5-q8_0.gguf` from Hugging Face into
-`.cache/models/` once, and checks its sha256 every time. `make up` runs it for you
-too.
+This downloads the model into `.cache/models/` once and checks its sha256.
 
 ## 2. Make the gateway keys
 
-The gateway stores only the sha256 digest of each key, never the key itself. Every
-value you make yourself is explained in
-[How to make each value](#how-to-make-each-value) below. Make one tenant key and
-one admin key:
+The gateway keeps only the sha256 digest of each key. Make one tenant key and one
+admin key.
 
     tenant_key=$(openssl rand -hex 32)
     admin_key=$(openssl rand -hex 32)
@@ -55,36 +35,18 @@ one admin key:
     echo "OPSCONSOLE_API_KEYS=nordlicht:$(printf %s "$tenant_key" | shasum -a 256 | cut -d' ' -f1)"
     echo "OPSCONSOLE_ADMIN_KEY_SHA256=$(printf %s "$admin_key" | shasum -a 256 | cut -d' ' -f1)"
 
-`make tenant-key TENANT=nordlicht` does the tenant half for you. It prints the
-key and the `OPSCONSOLE_API_KEYS=` line.
+`make tenant-key TENANT=nordlicht` does the tenant half for you. The tenant must
+be one that `backend/config/routing.yaml` defines (`nordlicht`, `cuan` or `evals`).
 
-Keep the two keys in your shell. You use the tenant key to call the gateway, and the
-console uses the admin key.
-
-The tenant must be one that `backend/config/routing.yaml` defines. The shipped file
-has three demo tenants, `nordlicht`, `cuan` and `evals`. A key for any other name
-is refused.
-
-## 3. Write `backend/.env`
+## 3. Write the env files
 
     cp backend/.env.example backend/.env
 
-Then edit `backend/.env`:
+In `backend/.env`, set `ANTHROPIC_API_KEY` if you have one. Paste the two lines
+printed above over the empty `OPSCONSOLE_API_KEYS=` and
+`OPSCONSOLE_ADMIN_KEY_SHA256=` lines.
 
-- Put your Anthropic key in `ANTHROPIC_API_KEY` if you have one. The line ships
-  empty, and an empty key leaves that provider off.
-- Paste the two lines the commands above printed over the empty
-  `OPSCONSOLE_API_KEYS=` and `OPSCONSOLE_ADMIN_KEY_SHA256=` lines.
-- Optional. Set `OPSCONSOLE_GRAFANA_URL=http://localhost:3002/d/gateway-overview`
-  so the console's Overview tab links to Grafana.
-
-Compose sets the Redis, Postgres, Qdrant and Prometheus addresses for the gateway
-itself, so you do not need to change those lines. Git ignores `backend/.env`.
-
-## 4. Write `web/.env.local`
-
-The console has a shared password login. Pick a password and write its digest, a
-session secret and the admin key into `web/.env.local`:
+The console has a password login. Write its settings to `web/.env.local`.
 
     password='pick-a-local-password'
     {
@@ -93,35 +55,34 @@ session secret and the admin key into `web/.env.local`:
       echo "CONSOLE_ADMIN_KEY=$admin_key"
     } > web/.env.local
 
-Compose points the console at the gateway for you. Git ignores this file too.
+Git ignores both files. `backend/.env.example` shows how to make the optional
+budget override secret and eval judge key. To send traces to Langfuse, make an API
+key pair in a Langfuse project and add these two lines to `backend/.env`.
 
-## 5. Start everything
+    pk='pk-lf-...'
+    sk='sk-lf-...'
+    echo "OPSCONSOLE_OTLP_ENDPOINT=https://cloud.langfuse.com/api/public/otel/v1/traces"
+    echo "OPSCONSOLE_OTLP_HEADERS=Authorization=Basic $(printf %s "$pk:$sk" | base64 | tr -d '\n')"
+
+## 4. Start everything
 
     make up
 
-This builds the gateway and console images and starts the gateway, the console,
-Postgres, Redis, Qdrant, the llama.cpp embedding server, Prometheus, the
-Pushgateway and Grafana. The ledger migrations run when the gateway starts, under a
-Postgres advisory lock, so there is no separate migration step. To run them by hand
-anyway (safe to run twice):
+This starts the whole stack. Migrations run when the gateway starts. To run them
+by hand (safe to run twice):
 
     docker compose exec gateway ops-migrate
 
-`docker compose up -d` on its own starts everything except the console.
-`make run` is for working on the gateway code. It starts the backing services in
-Docker and runs the gateway on this machine on port 8080, reloading on every save.
-`make down` stops the stack and keeps its data. `make rebuild gateway` rebuilds one
-service after a code change.
+`docker compose up -d` starts everything except the console. `make run` runs the
+gateway on this machine, reloading on save. `make down` stops the stack and keeps
+its data. `make rebuild gateway` rebuilds the gateway after a code change.
 
-## 6. Check it
+## 5. Check it
 
     curl -s localhost:8080/healthz
     curl -s localhost:8080/readyz
 
-`/healthz` says the process is up. `/readyz` says Postgres, Redis and Qdrant
-answer.
-
-Send a chat request. The client names an alias, never a model:
+Send a chat request. It names an alias, never a model.
 
     curl -s localhost:8080/v1/chat/completions \
       -H "Authorization: Bearer $tenant_key" \
@@ -130,13 +91,8 @@ Send a chat request. The client names an alias, never a model:
       -d '{"model":"agent-default","messages":[{"role":"user","content":"Hi, I am at jane.doe@example.com"}]}' \
       -D - -o /dev/null
 
-The response headers show what the gateway did. `X-Gateway-Provider` and
-`X-Gateway-Model` name who answered, `X-Gateway-Cost-USD` is the price,
-`X-Gateway-Redacted` says whether a value was replaced, and `X-Gateway-Trace-Id`
-is the trace. With no `X-Data-Class` header the request counts as `confidential`,
-which the demo tenants redact, so the email never reaches the provider.
-
-Redaction on its own needs no model key:
+The `X-Gateway-*` response headers show the provider, model, cost, trace id and
+whether a value was redacted. Redaction alone needs no model key.
 
     curl -s localhost:8080/v1/redact \
       -H "Authorization: Bearer $tenant_key" \
@@ -144,229 +100,40 @@ Redaction on its own needs no model key:
       -H "Content-Type: application/json" \
       -d '{"text":"Mail the report to sam.lee@example.com"}'
 
-## 7. Open the pages
-
-| Page | Address | Login |
-|---|---|---|
-| Console | http://localhost:3001 | the password you picked in step 4 |
-| Grafana | http://localhost:3002 | none, read-only viewer, bound to 127.0.0.1 |
-| Prometheus | http://localhost:9090 | none |
-
-There is no seed script. The console fills from real traffic, so send a few
-requests first. `make numbers` fills every tab in one go. It runs the real eval,
-sends six chat requests, records a release and then checks every tab. It needs the
-help desk checkout (next section) and `ANTHROPIC_API_KEY`, and it spends real
-tokens.
-
-## How to make each value
-
-Every value below is either a random string you make with `openssl`, or a key you
-get from an account. The backend ones go in `backend/.env`. The console's go in
-`web/.env.local`.
-
-### Keys and fingerprints, the idea behind most of them
-
-Many values here come in pairs, a key and its SHA-256 digest. A digest is a
-one-way scramble of the key. The side that sends the key keeps the key. The side
-that checks it keeps only the digest. To check a key, the gateway scrambles it
-again and compares. Someone who reads the gateway's settings sees only digests
-and still cannot call it.
-
-So the usual steps are these. Make one random key, keep it where it is sent from,
-and put its digest where it is checked.
-
-```bash
-key=$(openssl rand -hex 32)
-echo "the key:    $key"
-echo "its digest: $(printf %s "$key" | shasum -a 256 | cut -d' ' -f1)"
-```
-
-`printf %s` is used instead of `echo` on purpose. `echo` adds a line break at the
-end, and a key with a line break has a different digest.
-
-### `OPSCONSOLE_API_KEYS`
-
-What it is for. The tenant keys the gateway accepts. A tenant is one customer,
-with its own budget, rate limits and redaction rules in
-`backend/config/routing.yaml`.
-
-The shape is `tenant:digest,tenant:digest`. The tenant must be one that
-`routing.yaml` defines, which ships with `nordlicht`, `cuan` and `evals`.
-
-How to make it. `make tenant-key TENANT=nordlicht` prints a new key and its line.
-The key goes to whoever calls the gateway. For the companion help desk, that is
-its `GATEWAY_API_KEYS` setting, in the shape `nordlicht:key`. The digest line goes
-here. Join several tenants with commas.
-
-### `OPSCONSOLE_ADMIN_KEY_SHA256` and `CONSOLE_ADMIN_KEY`
-
-What they are for. The console reads its numbers from the gateway's admin routes.
-Those routes take one admin key.
-
-How to make them. One key, made with the command above. The digest goes in
-`OPSCONSOLE_ADMIN_KEY_SHA256` in `backend/.env`. The key itself goes in
-`CONSOLE_ADMIN_KEY` in `web/.env.local`, because the console is the side that
-sends it. If they do not match, every console page says the data is unavailable.
-
-### `CONSOLE_PASSWORD_SHA256`
-
-What it is for. The console has one shared login password. This is its digest, so
-the password itself is never stored.
-
-How to make it. Pick a password, then print its digest.
-
-```bash
-printf %s 'pick-a-local-password' | shasum -a 256 | cut -d' ' -f1
-```
-
-You type the password at the login page. Only the digest goes in
-`web/.env.local`.
-
-### `CONSOLE_SESSION_SECRET`
-
-What it is for. It signs the console's login cookie, so nobody can make a cookie
-that looks signed in. It needs 32 characters or more.
-
-How to make it.
-
-```bash
-openssl rand -hex 32
-```
-
-Changing it later only signs everyone out.
-
-### `OPSCONSOLE_BUDGET_OVERRIDE_SECRET`
-
-What it is for. Optional. When a tenant has spent its monthly budget, the gateway
-refuses its calls. An override token lets one tenant through for one month on
-purpose. This secret signs those tokens. Empty means no override is ever accepted.
-
-How to make it.
-
-```bash
-python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
-```
-
-This one is the secret itself, not a digest, because checking a signed token
-needs the same secret. `backend/.env.example` shows the command that makes a
-token for one tenant and one month.
-
-### `OPSCONSOLE_EVAL_JUDGE_KEY`
-
-What it is for. Optional. When an eval run grades the replies with a model, the
-grading tool calls this gateway like any other client, as the `evals` tenant.
-This is that tenant's key.
-
-How to make it. Make a key with the command above. The key goes here. Its digest
-goes in `OPSCONSOLE_API_KEYS` as `evals:digest`. You only need it for runs by
-hand, since `make eval` makes its own throwaway keys and puts the old ones back
-when it ends.
-
-### `OPSCONSOLE_OTLP_ENDPOINT` and `OPSCONSOLE_OTLP_HEADERS`
-
-What they are for. Optional. They send the gateway's traces to Langfuse. Without
-them, spans are built and dropped.
-
-How to make them. Make a free Langfuse project and create an API key pair in its
-settings. Langfuse shows a public key that starts `pk-lf-` and a secret key that
-starts `sk-lf-`. The endpoint is your region's address plus
-`/api/public/otel/v1/traces`. The header is the two keys joined by a colon and
-base64 encoded.
-
-```bash
-pk='pk-lf-...'
-sk='sk-lf-...'
-echo "OPSCONSOLE_OTLP_ENDPOINT=https://cloud.langfuse.com/api/public/otel/v1/traces"
-echo "OPSCONSOLE_OTLP_HEADERS=Authorization=Basic $(printf %s "$pk:$sk" | base64 | tr -d '\n')"
-```
-
-Use your own region's address if your project is not on `cloud.langfuse.com`.
-
-### `POSTGRES_PASSWORD`
-
-What it is for. The password of the local database, used by the database
-container and by `OPSCONSOLE_DATABASE_URL`. The shipped `opsconsole` is fine on a
-laptop. If you change it, change it in both places. Postgres reads it only when it
-first creates its data, so an old volume keeps the old password until
-`docker compose down -v`, which also deletes all local data.
-
-### The paid keys
-
-These are not made by a command. Each comes from an account.
-
-- `ANTHROPIC_API_KEY` from the Anthropic Console, under API keys.
-- `OPENAI_API_KEY` from the OpenAI platform, under API keys. Optional, it is only
-  the fallback.
-- `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_KEY` from your Azure OpenAI resource
-  in the Azure portal, under Keys and Endpoint. Optional, see
-  [azure.md](azure.md).
+Open the console at http://localhost:3001 with your password, Grafana at
+http://localhost:3002 and Prometheus at http://localhost:9090. The console fills
+from real traffic. `make numbers` fills every tab at once. It needs the help desk
+checkout (see below) and `ANTHROPIC_API_KEY`, and it spends real tokens.
 
 ## Run the tests
 
     make fast            # every test not marked slow, no services needed
     docker compose up -d
-    make test            # the full suite with Postgres, Redis and Qdrant, plus coverage floors
-    make verify          # format, lint, types, tests and the security scans, as CI runs them
-
-`make fast` is the everyday loop. On a laptop it ran 3,683 passing tests in about
-32 seconds, with 132 skipped because they need the backing services. `make test`
-points those at the compose ports and fails if a service is missing, rather than
-skipping. It holds the whole tree to 80% coverage, and the routing, limits and
-validation code to 100%. `make verify` also runs gitleaks in Docker, `pip-audit`
-and `pnpm audit`.
-
-The console has its own tests:
-
+    make test            # the full suite with the services, plus coverage floors
+    make verify          # format, lint, types, tests and security scans, as CI runs them
     pnpm -C web install
-    pnpm -C web test
+    pnpm -C web test     # the console tests
+    make load            # k6 against a mock provider, no model key needed
 
 ## Run an eval
 
-The eval gate plays the help desk's 45 conversation cases against the real help
-desk agent, with this gateway in front of the real cheap model. It needs:
-
-- the companion repo checked out next to this one, at `../helpdesk-agentic-flow`
-  (or set `HELPDESK_DIR`),
-- `ANTHROPIC_API_KEY` in your shell or in `backend/.env`,
-- the help desk's own ports free (5432, 6379, 6333, 8000 and its web app on 3000).
-
-Then:
+`make eval` plays the help desk's 42 cases against the real help desk agent. It
+needs the companion repo checked out beside this one. The Makefile looks in
+`../helpdesk-agentic-flow`, and `HELPDESK_DIR` changes that. It also needs
+`ANTHROPIC_API_KEY` and the help desk's ports free (5432, 6379, 6333, 8000, 3000).
 
     make eval
-
-It makes throwaway gateway keys for the run, starts both stacks, resets and seeds
-the help desk, plays every case three times, writes the reports to
-`backend/evals/reports/local/` and runs the gate against
-`backend/evals/conversation-baseline.json`. When it ends, pass or fail,
-`infra/evals/restore_keys.sh` puts both stacks back on their normal keys. A run
-spends real tokens. `RUN_ID=<id> make eval` continues a stopped run without paying
-again for the cases already saved.
-
-The gate itself is a pure check over two files, so you can run it on any report:
-
+    RUN_ID=<id> make eval     # continue a stopped run without paying again
     uv run --project backend ops-eval gate \
       --report backend/evals/reports/local/report.json \
-      --baseline backend/evals/conversation-baseline.json
+      --baseline backend/evals/baseline.json
 
-## Run the load test
-
-    make load
-
-This starts the gateway with a mock provider that answers after a fixed 400 ms,
-then runs k6 at 50 requests a second for ten minutes. It fails if chat p95 reaches
-6 s, if more than 0.5% of requests fail, or if k6 drops an iteration. The summary
-lands in `infra/load/results/`, which git ignores. No model key is needed.
+A run spends real tokens. How it works is in [eval-guide.md](eval-guide.md).
 
 ## When something goes wrong
 
-- **The gateway exits at start.** Read `docker compose logs gateway`. A bad
-  `routing.yaml` or provider file stops the start with the file and field named.
-- **Every call is 401.** The key and `X-Tenant` must match a pair in
-  `OPSCONSOLE_API_KEYS`, and the tenant must exist in `routing.yaml`.
-- **Chat is 503.** No chat provider has a key. Set `ANTHROPIC_API_KEY` and run
-  `make rebuild gateway`.
-- **The console says data is unavailable.** `CONSOLE_ADMIN_KEY` in
-  `web/.env.local` must be the key whose digest is in
+- **The gateway exits at start.** Read `docker compose logs gateway`.
+- **Every call is 401.** The key and `X-Tenant` must match `OPSCONSOLE_API_KEYS`.
+- **Chat is 503.** Set `ANTHROPIC_API_KEY`, then `make rebuild gateway`.
+- **The console says data is unavailable.** `CONSOLE_ADMIN_KEY` must match
   `OPSCONSOLE_ADMIN_KEY_SHA256`.
-- **A port is taken.** Stop the other stack, or the companion help desk if it
-  still holds a port this one needs.
