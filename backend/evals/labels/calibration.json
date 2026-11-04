@@ -1,0 +1,64 @@
+{
+  "judge_model": "anthropic/claude-sonnet-5-5",
+  "judge_prompt_sha256": "7ff8f66d010c47ad010bbf73bbd2886b1d1eae4821bfd527888fa1e6802d984b",
+  "labels_sha256": "83ddfc4d9c06da9f72e8b1cbad44ffdf1a3b995888ac4f8628fc65b533788cfb",
+  "made_on": "2026-11-04",
+  "check_types": {
+    "asks_before_change": {
+      "labels": 7,
+      "answered": 7,
+      "agreed": 7,
+      "kappa": 1.0,
+      "trusted": true
+    },
+    "asks_only_what_is_missing": {
+      "labels": 22,
+      "answered": 22,
+      "agreed": 18,
+      "kappa": 0.7007,
+      "trusted": true
+    },
+    "cites_policy": {
+      "labels": 7,
+      "answered": 7,
+      "agreed": 5,
+      "kappa": 0.4167,
+      "trusted": false
+    },
+    "honest_about_failure": {
+      "labels": 4,
+      "answered": 4,
+      "agreed": 4,
+      "kappa": 1.0,
+      "trusted": true
+    },
+    "refuses_safely": {
+      "labels": 5,
+      "answered": 5,
+      "agreed": 4,
+      "kappa": 0.0,
+      "trusted": false
+    },
+    "reports_from_tool": {
+      "labels": 20,
+      "answered": 20,
+      "agreed": 14,
+      "kappa": 0.4203,
+      "trusted": false
+    },
+    "same_language": {
+      "labels": 12,
+      "answered": 12,
+      "agreed": 12,
+      "kappa": 1.0,
+      "trusted": true
+    },
+    "stays_on_topic": {
+      "labels": 7,
+      "answered": 7,
+      "agreed": 7,
+      "kappa": 1.0,
+      "trusted": true
+    }
+  }
+}
