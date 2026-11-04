@@ -246,7 +246,7 @@ describe("every tab has the same shape", () => {
   });
 
   it("quality cards", async () => {
-    // Catches a score beside the wrong baseline, a verdict word taken from the wrong score, a missing baseline shown as a number or with a verdict, the old two score cards left behind, effort cards from an older run, a Results card that drops a count, and the old gate table.
+    // Catches a score beside the wrong baseline, a verdict word taken from the wrong score, a missing baseline shown as a number or with a verdict, the old two score cards left behind, effort cards from an older run, the turns and tool call boxes, a Results card that drops a count or keeps Setup wrong, and the old gate table.
     const html = await render("quality");
 
     expect(cards(html).map((item) => item.label)).toEqual([
@@ -254,8 +254,6 @@ describe("every tab has the same shape", () => {
       "Outcome every play",
       "Outcome at least once",
       "Reply quality",
-      "Mean turns",
-      "Mean tool calls",
       "Mean seconds",
       "Mean cost",
       "Results",
@@ -266,13 +264,12 @@ describe("every tab has the same shape", () => {
     expect(card(html, "Outcome every play").text).toContain("Baseline 27.40% failed");
     expect(card(html, "Outcome at least once").value).toBe("75.00%");
     expect(card(html, "Reply quality").value).toBe("80.00%");
-    expect(card(html, "Mean turns").value).toContain("3.5");
-    expect(card(html, "Mean tool calls").value).toContain("2.25");
     expect(card(html, "Mean seconds").value).toContain("12.5");
     expect(card(html, "Mean cost").value).toContain("0.0123");
-    for (const pattern of [/Pass\W*12\b/, /Fail\W*2\b/, /Needs a look\W*3\b/, /Setup wrong\W*1\b/]) {
+    for (const pattern of [/Pass\W*12\b/, /Fail\W*2\b/, /Needs a look\W*3\b/]) {
       expect(card(html, "Results").text).toMatch(pattern);
     }
+    expect(card(html, "Results").text).not.toMatch(/Setup wrong|Eval bug/);
     const flat = text(html);
     expect(rowTexts(html).filter((line) => line.startsWith("Safety 100.00%"))).toEqual([]);
     expect(flat).not.toMatch(/threshold/i);
@@ -283,6 +280,83 @@ describe("every tab has the same shape", () => {
     expect(card(missing, "Safety").text).toContain("Baseline not set");
     expect(card(missing, "Safety").text).not.toMatch(/passed|failed/);
     expect(card(missing, "Outcome every play").text).not.toContain("Baseline not set");
+  });
+
+  it("quality hides n/a boxes and the effort boxes", async () => {
+    // Catches a page that prints a score box with n/a (Reply quality and Mean cost are null here), or that keeps the Mean turns and Mean tool calls boxes. The scores that have a value stay, so hiding every box cannot pass.
+    const body = fixture("quality");
+    const newest = (body.runs as Array<{ metrics: Fixture }>)[0].metrics;
+    newest.reply_quality = null;
+    newest.mean_cost_usd = null;
+    const html = await render("quality", body);
+
+    expect(cards(html).map((item) => item.label)).toEqual([
+      "Safety",
+      "Outcome every play",
+      "Outcome at least once",
+      "Mean seconds",
+      "Results",
+    ]);
+    expect(cards(html).filter((item) => item.value === "n/a")).toEqual([]);
+  });
+
+  it("quality results keeps three counts", async () => {
+    // Catches a Results box that still counts Setup wrong or Eval bug (the newest run has 1 of each), or that drops one of the three counts or changes their order.
+    const body = fixture("quality");
+    Object.assign((body.runs as Array<{ metrics: Fixture }>)[0].metrics, { setup_wrong: 1, eval_bug: 1 });
+    const html = await render("quality", body);
+
+    expect(card(html, "Results").value).toBe("Pass 12 · Fail 2 · Needs a look 3");
+  });
+
+  it("quality shows the last run date", async () => {
+    // Catches a page that prints no date for the newest run, prints it in another form, or reads the date from an older run (the other two runs start on other days).
+    const body = fixture("quality");
+    (body.runs as Array<{ started_at: string }>)[0].started_at = "2026-10-12T08:30:00Z";
+    const html = await render("quality", body);
+
+    expect(text(html)).toContain("Last run 12 Oct 2026");
+    expect(text(html)).not.toContain("Last run 14 Sep");
+  });
+
+  it("needs a look rows link to the play page", async () => {
+    // Catches a Needs a look row with no link, a link to the wrong run (the newest run's id is used, not an older one), or one that leaves out the case or the play number.
+    const body = fixture("quality");
+    const runId = (body.runs as Array<{ id: string }>)[0].id;
+    const html = await render("quality", body);
+
+    const links = anchors(html)
+      .map((item) => item.href)
+      .filter((href) => href?.startsWith("/quality/plays/"));
+    expect(links).toEqual([
+      `/quality/plays/${runId}/case-012/2`,
+      `/quality/plays/${runId}/case-031/1`,
+      `/quality/plays/${runId}/case-031/3`,
+    ]);
+  });
+
+  it("reasons panel reads in words", async () => {
+    // Catches the old Taxonomy title or its Failure tag and Cases columns, and a fault word printed raw (fault_bot) instead of in plain words.
+    const body = fixture("quality");
+    body.taxonomy = [
+      { tag: "fault_bot", count: 3 },
+      { tag: "early_change", count: 2 },
+      { tag: "no_end_state", count: 1 },
+    ];
+    const html = await render("quality", body);
+    const start = html.indexOf("<h2>Why plays didn&#x27;t pass</h2>");
+    expect(start).toBeGreaterThan(-1);
+    const next = html.indexOf("<h2", start + 1);
+    const panel = html.slice(start, next === -1 ? undefined : next);
+
+    expect(html).not.toContain("<h2>Taxonomy</h2>");
+    const header = Array.from(panel.matchAll(/<th\b[^>]*>([\s\S]*?)<\/th>/g), (match) => text(match[1]));
+    expect(header).toEqual(["Reason", "Plays"]);
+    const rows = rowTexts(panel).slice(1);
+    expect(rows[0]).toBe("The bot 3");
+    expect(rows).toHaveLength(3);
+    expect(tableCells(panel)).not.toContain("fault_bot");
+    for (const cell of tableCells(panel)) expect(cell).not.toMatch(UNDERSCORE_WORD);
   });
 
   it("plain labels", async () => {

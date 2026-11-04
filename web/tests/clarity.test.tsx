@@ -198,11 +198,11 @@ describe("console pages are clear to a new reader", () => {
     expect(text(html)).not.toMatch(/threshold/i);
   });
 
-  it("categories and taxonomy say what they hold", async () => {
+  it("categories and reasons say what they hold", async () => {
     // Catches tables with no column words and no line above them saying what the rows are.
     const html = await render("quality");
     const categories = tableWith(html, ["Category", "Cases passed"]);
-    const taxonomy = tableWith(html, ["Failure tag", "Cases"]);
+    const taxonomy = tableWith(html, ["Reason", "Plays"]);
     expect(descriptionAbove(html, categories).length).toBeGreaterThan(10);
     expect(descriptionAbove(html, taxonomy).length).toBeGreaterThan(10);
   });

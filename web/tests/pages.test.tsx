@@ -166,11 +166,11 @@ describe("console pages", () => {
       "Cost today $1,234.50",
       "p95 latency 412 ms",
       "Error rate 0.50%",
-      "Last eval Outcome every play 93.12% passed",
+      "Last eval Outcome every play 93.12% passed Last run 16 Sep 2026",
     ]);
     const failedEval = fixture("home");
     failedEval.last_eval = { ...(failedEval.last_eval as Fixture), passed: false };
-    expect(cardTexts(await render("home", failedEval))).toContain("Last eval Outcome every play 93.12% failed");
+    expect(cardTexts(await render("home", failedEval))).toContain("Last eval Outcome every play 93.12% failed Last run 16 Sep 2026");
     const nullHome = fixture("home");
     nullHome.requests_today = null;
     expect(cardTexts(await render("home", nullHome))).toContain("Requests today n/a");
@@ -293,7 +293,7 @@ describe("console pages", () => {
     const home = fixture("home");
     home.last_eval = { ...(home.last_eval as Fixture), outcome_every_play: 57.14, passed: true };
     const html = await render("home", home);
-    expect(cardTexts(html)).toContain("Last eval Outcome every play 57.14% passed");
+    expect(cardTexts(html)).toContain("Last eval Outcome every play 57.14% passed Last run 16 Sep 2026");
     expect(html).not.toContain("5714");
 
     const noBaseline = fixture("home");
@@ -494,7 +494,7 @@ describe("console pages", () => {
     body.taxonomy = [];
     body.blocked = [];
     const html = await render("quality", body);
-    expect(section(html, "Taxonomy")).toContain("None in this window.");
+    expect(section(html, "Why plays didn&#x27;t pass")).toContain("None in this window.");
     expect(section(html, "Blocked releases")).toContain("None in this window.");
     expect(section(html, "Categories")).not.toContain("None in this window.");
   });
@@ -522,31 +522,31 @@ describe("console pages", () => {
     expect(occurrences(text(html), "Unstable cases count as not passed here.")).toBe(1);
   });
 
-  it("quality shows the new scores and the four result counts", async () => {
-    // Catches a quality page that keeps the old two scores, builds the effort cards from an older run or an average of runs (the three runs differ), drops one of the four result counts, or prints a missing score as 0%. The gate cards come first with their baselines, then the newest run's scores, then one Results card.
+  it("quality shows the new scores and the three result counts", async () => {
+    // Catches a quality page that keeps the old two scores, builds the effort cards from an older run or an average of runs (the three runs differ), keeps the turns and tool call boxes, prints Setup wrong or Eval bug in Results, or prints a missing score as a box (the box is left out). The gate cards come first with their baselines, then the newest run's scores, then one Results card.
     const html = await render("quality");
     const cardsText = cardTexts(html);
 
-    expect(cardsText).toHaveLength(9);
+    expect(cardsText).toHaveLength(7);
     expect(cardsText[0]).toBe("Safety 100.00% Baseline 100.00% passed");
     expect(cardsText[1]).toBe("Outcome every play 25.00% Baseline 27.40% failed");
     expect(cardsText[2]).toBe("Outcome at least once 75.00%");
     expect(cardsText[3]).toBe("Reply quality 80.00%");
-    expect(cardsText[4]).toMatch(/^Mean turns 3\.5\b/);
-    expect(cardsText[5]).toMatch(/^Mean tool calls 2\.25\b/);
-    expect(cardsText[6]).toMatch(/^Mean seconds 12\.5\b/);
-    expect(cardsText[7]).toMatch(/^Mean cost \$?0\.0123/);
-    expect(cardsText[8]).toMatch(/^Results\b/);
-    for (const pattern of [/Pass\W*12\b/, /Fail\W*2\b/, /Needs a look\W*3\b/, /Setup wrong\W*1\b/]) {
-      expect(cardsText[8]).toMatch(pattern);
+    expect(cardsText[4]).toMatch(/^Mean seconds 12\.5\b/);
+    expect(cardsText[5]).toMatch(/^Mean cost \$?0\.0123/);
+    expect(cardsText[6]).toMatch(/^Results\b/);
+    for (const pattern of [/Pass\W*12\b/, /Fail\W*2\b/, /Needs a look\W*3\b/]) {
+      expect(cardsText[6]).toMatch(pattern);
     }
-    expect(cardsText.join(" ")).not.toMatch(/check score|judge score/i);
+    expect(cardsText[6]).not.toMatch(/Setup wrong|Eval bug/);
+    expect(cardsText.join(" ")).not.toMatch(/check score|judge score|Mean turns|Mean tool calls/i);
 
     const missing = fixture("quality");
     const newest = list(missing, "runs")[0].metrics as Fixture;
     newest.reply_quality = null;
     const gaps = cardTexts(await render("quality", missing));
-    expect(gaps[3]).toBe("Reply quality n/a");
+    expect(gaps).toHaveLength(6);
+    expect(gaps.some((item) => item.startsWith("Reply quality"))).toBe(false);
   });
 
   it("quality draws outcome every play with its baseline", async () => {

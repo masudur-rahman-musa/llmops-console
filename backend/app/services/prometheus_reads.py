@@ -49,9 +49,14 @@ P95_QUERY: Final[str] = (
 range series, where each hourly point is then a rolling day."""
 
 ERROR_RATE_QUERY: Final[str] = (
-    'sum(rate(gateway_requests_total{status=~"5.."}[1d])) / sum(rate(gateway_requests_total[1d]))'
+    '(sum(rate(gateway_requests_total{status=~"5.."}[1d])) or vector(0))'
+    " / sum(rate(gateway_requests_total[1d]))"
 )
-"""The share of requests answered 5xx over the last day, reused the same way."""
+"""The share of requests answered 5xx over the last day, reused the same way.
+
+With no 5xx series the numerator would be empty and the card would read n/a, so it falls
+back to 0. The denominator has no fallback: no traffic at all stays empty, since no traffic
+is not a 0% error rate. `test_error_rate_numerator_falls_back_to_zero` pins this."""
 
 CIRCUITS_QUERY: Final[str] = "max by (provider) (gateway_circuit_state)"
 """The worst breaker state per provider across replicas. The breaker is in-process, so two pods

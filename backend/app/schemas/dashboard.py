@@ -39,6 +39,8 @@ class LastEval(_Body):
     finished_at: datetime
     passed: bool | None
     outcome_every_play: float | None
+    threshold: float | None = None
+    """The baseline's outcome every play, in percent points; `None` when no baseline is set."""
 
 
 class CostDay(_Body):
@@ -108,6 +110,23 @@ class NeedsALookPlay(_Body):
     fault: str | None = None
     """The judge's answer to whose fault it is (`bot`, `case`, `eval`, `fine`), or `None`."""
     fault_reason: str | None = None
+
+
+class PlayTurn(_Body):
+    """One turn of a played conversation: the person's message, the reply, the tools called."""
+
+    message: str
+    reply: str
+    tools: tuple[str, ...]
+
+
+class PlayConversation(_Body):
+    """One play of an eval run, turn by turn, as the play page shows it."""
+
+    run_id: str
+    case_id: str
+    play: int
+    turns: tuple[PlayTurn, ...]
 
 
 class Regression(_Body):
@@ -235,6 +254,13 @@ class QualityPage(_Body):
     taxonomy: tuple[TagCount, ...]
     blocked: tuple[BlockedItem, ...]
     needs_a_look: tuple[NeedsALookPlay, ...] = ()
+
+
+class PlayPage(_Body):
+    """One stored play; `play` is null when no such play is stored."""
+
+    sources: Sources
+    play: PlayConversation | None
 
 
 class RedactionCount(_Body):

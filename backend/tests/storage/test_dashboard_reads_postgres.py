@@ -45,6 +45,8 @@ from app.schemas.dashboard import (
     LastEval,
     ModelTokens,
     NeedsALookPlay,
+    PlayConversation,
+    PlayTurn,
     ReleaseMarker,
     Saving,
     TagCount,
@@ -601,14 +603,107 @@ def test_cost_per_request_excludes_cached_rows(
     assert all(isinstance(row, AliasCost) for row in read.cost_per_request)
 
 
+# --- plays with their rules and the judge's answer ---------------------------------
+
+
+def insert_full_play(
+    pool: Pool,
+    schema: str,
+    /,
+    *,
+    run_id: str,
+    case_id: str,
+    play: int,
+    result: str,
+    broken: list[str] | None = None,
+    flagged: list[str] | None = None,
+    fault: str | None = None,
+    fault_reason: str | None = None,
+) -> None:
+    """One `eval_plays` row with the broken rules and the judge's fault answer set."""
+    with pool.connection() as conn:
+        conn.execute(
+            sql.SQL(
+                "INSERT INTO {} (run_id, case_id, play, result, end_state, broken, flagged, "
+                "checks, turns, tool_calls, seconds, cost_usd, fault, fault_reason) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+            ).format(sql.Identifier(schema, "eval_plays")),
+            (
+                run_id,
+                case_id,
+                play,
+                result,
+                None,
+                broken or [],
+                flagged or [],
+                Jsonb([]),
+                2,
+                1,
+                3.5,
+                None,
+                fault,
+                fault_reason,
+            ),
+        )
+
+
+def stored_play(play: int, turns: list[tuple[str, str, list[str]]]) -> dict[str, Any]:
+    """One play as the eval harness stores it inside `eval_cases.details`: the person's
+    message, the help desk's reply and the tool calls of each turn."""
+    return {
+        "case_id": "ignored-here",
+        "owner": "someone",
+        "play": play,
+        "result": "needs_a_look",
+        "broken": [],
+        "flagged": [],
+        "turns": len(turns),
+        "tool_calls": sum(len(names) for _, _, names in turns),
+        "seconds": 1.5,
+        "cost_usd": None,
+        "checks": [],
+        "conversation": [
+            {
+                "message": message,
+                "said_yes": False,
+                "answer": {
+                    "chat_id": "chat-1",
+                    "reply": reply,
+                    "tool_calls": [
+                        {"name": name, "args": {}, "ok": True, "result": {}, "error_code": None}
+                        for name in names
+                    ],
+                },
+            }
+            for message, reply, names in turns
+        ],
+    }
+
+
+def insert_case_with_plays(
+    pool: Pool, schema: str, /, *, run_id: str, case_id: str, plays: list[dict[str, Any]]
+) -> None:
+    """One `eval_cases` row whose `details` holds the given plays."""
+    with pool.connection() as conn:
+        conn.execute(
+            sql.SQL(
+                "INSERT INTO {} (run_id, case_id, category, passed, tags, details) "
+                "VALUES (%s, %s, %s, %s, %s, %s)"
+            ).format(sql.Identifier(schema, "eval_cases")),
+            (run_id, case_id, "routing", False, [], Jsonb({"plays": plays})),
+        )
+
+
 # --- quality ---------------------------------------------------------------------
 
 
 def test_quality_runs_categories_taxonomy_and_markers(pool: Pool, migrated_schema: str) -> None:
     """Catches runs not windowed (the 40-day-old run), windowed with `>` (the run exactly at
     the window's start), or not newest first; categories counted over every run's cases
-    instead of the newest run's (`zzz` belongs to an older run); a taxonomy not windowed
-    (`stale`) or ordered by count alone; and release markers not windowed or not newest
+    instead of the newest run's (`zzz` belongs to an older run); reasons counted from the
+    case tags instead of the broken rules of the newest run's failed plays (the case tags
+    here would give `hallucination 2`), counted over older runs' plays (`refusal_miss`,
+    `stale`), or ordered by count alone; and release markers not windowed or not newest
     first."""
     schema = migrated_schema
     newest = NOW - timedelta(days=2)
@@ -638,6 +733,16 @@ def test_quality_runs_categories_taxonomy_and_markers(pool: Pool, migrated_schem
             category=category,
             passed=passed,
             tags=tags,
+        )
+
+    for run_id, case_id, broken in (
+        ("run-newest", "c1", ["wrong_tool", "hallucination"]),
+        ("run-newest", "c2", ["wrong_tool"]),
+        ("run-older", "c1", ["hallucination", "refusal_miss"]),
+        ("run-outside", "c1", ["stale", "stale", "stale"]),
+    ):
+        insert_full_play(
+            pool, schema, run_id=run_id, case_id=case_id, play=1, result="fail", broken=broken
         )
 
     insert_release(pool, schema, git_sha="s1", deployed_at=NOW - timedelta(days=1))
@@ -679,9 +784,8 @@ def test_quality_runs_categories_taxonomy_and_markers(pool: Pool, migrated_schem
         CategoryCount(category="routing", passed=2, total=2),
     )
     assert read.taxonomy == (
-        TagCount(tag="hallucination", count=2),
         TagCount(tag="wrong_tool", count=2),
-        TagCount(tag="refusal_miss", count=1),
+        TagCount(tag="hallucination", count=1),
     )
     assert read.release_markers == (
         ReleaseMarker(git_sha="s1", deployed_at=NOW - timedelta(days=1), status="deployed"),
@@ -1133,11 +1237,9 @@ def test_the_needs_a_look_list_reads_the_newest_run_only(pool: Pool, migrated_sc
 
 
 def test_the_needs_a_look_list_is_empty_without_a_run(pool: Pool, migrated_schema: str) -> None:
-    """Catches a list that raises, or reads plays of a run outside the window, when there is
-    no run to read: the only run is 40 days old, so the list is empty."""
+    """Catches a list that raises when there is no run at all to read: the list is empty.
+    A run outside the window is read as the newest run instead (see the fallback test)."""
     schema = migrated_schema
-    insert_run(pool, schema, run_id="run-far", started_at=NOW - timedelta(days=40), metrics={})
-    insert_play(pool, schema, run_id="run-far", case_id="case-001", play=1, result="needs_a_look")
 
     read = PostgresConsoleReader(pool, schema=schema).quality(days=30, now=NOW)
 
@@ -1164,3 +1266,165 @@ def test_the_needs_a_look_list_stops_at_the_row_limit(pool: Pool, migrated_schem
     assert len(read.needs_a_look) == ROW_LIMIT
     assert read.needs_a_look[0].case_id == "case-0000"
     assert read.needs_a_look[-1].case_id == f"case-{ROW_LIMIT - 1:04d}"
+
+
+# --- the newest run outside the window, the reasons and one play ---------------------
+
+
+def test_quality_falls_back_to_the_newest_run_outside_the_window(
+    pool: Pool, migrated_schema: str
+) -> None:
+    """Catches a quality read that goes empty when no run sits in the window, one that falls
+    back to every old run (a 50-day-old run is stored too) instead of the single newest, and
+    one that finds the run but reads its categories and needs-a-look plays from nowhere."""
+    schema = migrated_schema
+    newest = NOW - timedelta(days=40)
+    insert_run(pool, schema, run_id="run-far", started_at=newest, metrics={"a": 1})
+    insert_run(pool, schema, run_id="run-farther", started_at=NOW - timedelta(days=50), metrics={})
+    insert_case(
+        pool,
+        schema,
+        run_id="run-far",
+        case_id="c1",
+        category="routing",
+        passed=True,
+        tags=[],
+    )
+    insert_case(
+        pool,
+        schema,
+        run_id="run-farther",
+        case_id="c1",
+        category="zzz",
+        passed=True,
+        tags=[],
+    )
+    insert_play(pool, schema, run_id="run-far", case_id="case-001", play=1, result="needs_a_look")
+    insert_play(
+        pool, schema, run_id="run-farther", case_id="case-009", play=1, result="needs_a_look"
+    )
+
+    read = PostgresConsoleReader(pool, schema=schema).quality(days=30, now=NOW)
+
+    assert read.runs == (
+        EvalRunSummary(
+            id="run-far",
+            started_at=newest,
+            run_kind="ci",
+            git_sha=None,
+            passed=True,
+            metrics={"a": 1},
+        ),
+    )
+    assert read.categories == (CategoryCount(category="routing", passed=1, total=1),)
+    assert read.needs_a_look == (NeedsALookPlay(case_id="case-001", play=1, why=NOTHING_LISTED),)
+    assert read.taxonomy == (TagCount(tag="no_end_state", count=1),)
+
+
+def test_quality_reasons_count_every_play_that_did_not_pass(
+    pool: Pool, migrated_schema: str
+) -> None:
+    """Catches reasons that skip needs-a-look plays (only `early_change` would show), that
+    count setup wrong or eval bug plays (both carry broken rules and flags here that must
+    stay uncounted), that count a pass, that let a flagged text beat the judge's fault word
+    (the `bot` play is flagged too), that name a play with no fault and no flag anything but
+    `no_end_state`, or one with a flag anything but `judge_flagged`, and that read an older
+    run's plays (its `case` fault must stay out). Only Postgres runs this query."""
+    schema = migrated_schema
+    insert_run(pool, schema, run_id="run-old", started_at=NOW - timedelta(days=5), metrics={})
+    insert_run(pool, schema, run_id="run-new", started_at=NOW - timedelta(days=1), metrics={})
+    insert_full_play(
+        pool,
+        schema,
+        run_id="run-old",
+        case_id="case-001",
+        play=1,
+        result="needs_a_look",
+        fault="case",
+    )
+    insert_full_play(
+        pool,
+        schema,
+        run_id="run-old",
+        case_id="case-002",
+        play=1,
+        result="fail",
+        broken=["old_rule"],
+    )
+    plays: list[tuple[str, int, str, dict[str, Any]]] = [
+        ("case-001", 1, "fail", {"broken": ["early_change"]}),
+        (
+            "case-002",
+            1,
+            "needs_a_look",
+            {"fault": "bot", "fault_reason": "promised a refund", "flagged": ["writes the poem"]},
+        ),
+        ("case-003", 1, "needs_a_look", {}),
+        ("case-004", 1, "needs_a_look", {"flagged": ["sends the file"]}),
+        ("case-005", 1, "setup_wrong", {"broken": ["setup_rule"], "flagged": ["x flagged"]}),
+        ("case-006", 1, "eval_bug", {"broken": ["bug_rule"], "fault_reason": "turn failed"}),
+        ("case-007", 1, "pass", {}),
+    ]
+    for case_id, play, result, extra in plays:
+        insert_full_play(
+            pool, schema, run_id="run-new", case_id=case_id, play=play, result=result, **extra
+        )
+
+    read = PostgresConsoleReader(pool, schema=schema).quality(days=30, now=NOW)
+
+    assert read.taxonomy == (
+        TagCount(tag="early_change", count=1),
+        TagCount(tag="fault_bot", count=1),
+        TagCount(tag="judge_flagged", count=1),
+        TagCount(tag="no_end_state", count=1),
+    )
+
+
+def test_play_conversation_reads_one_play(pool: Pool, migrated_schema: str) -> None:
+    """Catches a read that returns the first play of the case instead of the asked one (the
+    case holds two), that reorders the turns, that drops the tool names of a turn, and
+    one that invents a play for an unknown case, an unknown play number or another run's
+    case id (each answers None)."""
+    schema = migrated_schema
+    insert_run(pool, schema, run_id="run-a", started_at=NOW - timedelta(days=1), metrics={})
+    insert_run(pool, schema, run_id="run-b", started_at=NOW - timedelta(days=2), metrics={})
+    insert_case_with_plays(
+        pool,
+        schema,
+        run_id="run-a",
+        case_id="case-002",
+        plays=[
+            stored_play(1, [("first play message", "first play reply", [])]),
+            stored_play(
+                2,
+                [
+                    ("Hi, I need 2.5 refunds", "Let me look", ["lookup_order"]),
+                    ("Yes please", "Done, $12.50 back", ["lookup_order", "approve_refund"]),
+                    ("Thanks", "You are welcome", []),
+                ],
+            ),
+        ],
+    )
+    reader = PostgresConsoleReader(pool, schema=schema)
+
+    found = reader.play_conversation("run-a", "case-002", 2)
+
+    assert found == PlayConversation(
+        run_id="run-a",
+        case_id="case-002",
+        play=2,
+        turns=(
+            PlayTurn(
+                message="Hi, I need 2.5 refunds", reply="Let me look", tools=("lookup_order",)
+            ),
+            PlayTurn(
+                message="Yes please",
+                reply="Done, $12.50 back",
+                tools=("lookup_order", "approve_refund"),
+            ),
+            PlayTurn(message="Thanks", reply="You are welcome", tools=()),
+        ),
+    )
+    assert reader.play_conversation("run-a", "case-404", 2) is None
+    assert reader.play_conversation("run-a", "case-002", 3) is None
+    assert reader.play_conversation("run-b", "case-002", 2) is None

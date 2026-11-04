@@ -147,6 +147,46 @@ describe("overview", () => {
   });
 });
 
+describe("overview cards", () => {
+  function lastEval(overrides: Fixture): Fixture {
+    const body = fixture();
+    body.last_eval = {
+      id: "run-2026-11-04-nightly",
+      finished_at: "2026-11-04T07:05:00Z",
+      passed: true,
+      outcome_every_play: 85.71,
+      threshold: 83.0,
+      ...overrides,
+    };
+    return body;
+  }
+
+  it("last eval shows baseline and date", async () => {
+    // Catches a Last eval card that leaves out the baseline or the run date, prints the baseline from the wrong field, or prints baseline words when none is set (threshold null).
+    const withBaseline = text(await render(lastEval({})));
+    expect(withBaseline).toContain("Outcome every play 85.71%, baseline 83.00%, passed");
+    expect(withBaseline).toContain("Last run 4 Nov 2026");
+
+    const without = text(await render(lastEval({ threshold: null })));
+    expect(without).toContain("Outcome every play 85.71% passed");
+    expect(without).toContain("Last run 4 Nov 2026");
+    expect(without).not.toMatch(/baseline/i);
+  });
+
+  it("error rate zero reads 0.00%", async () => {
+    // Catches an error rate card that treats 0 as missing and prints n/a, and one that prints 0.00% for a missing rate (no traffic is not 0%).
+    const zero = fixture();
+    zero.error_rate = 0;
+    expect(text(await render(zero))).toContain("Error rate 0.00%");
+
+    const none = fixture();
+    none.error_rate = null;
+    const html = text(await render(none));
+    expect(html).toContain("Error rate n/a");
+    expect(html).not.toContain("Error rate 0.00%");
+  });
+});
+
 describe("removed tabs", () => {
   it("safeNext refuses a removed tab", () => {
     // Catches an allowlist that still holds a removed path, which would redirect a sign-in to a 404.

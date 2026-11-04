@@ -1,12 +1,15 @@
 """The console's read surface: one route per page, every number a page shows.
 
-Four routes, one per console tab, all behind `app.api.deps.admin_key`:
+Four routes, one per console tab, and the play page under Quality, all behind
+`app.api.deps.admin_key`:
 
     GET /console/home          today's traffic, spend, latency, the last eval, the live routing
     GET /console/cost          cost per day from the ledger, estimated cache savings, budgets
     GET /console/quality       the eval gate, runs, categories, taxonomy, blocked releases,
                                the plays that need a look
     GET /console/requests      redactions, refusals, blocks, tokens, hit rate, per day, newest
+    GET /console/quality/plays/{run_id}/{case_id}/{play}
+                               one stored eval play, turn by turn
 
 The console reads through here and never touches Postgres or Prometheus itself.
 A working tenant key is 401 on all four, as on `/admin/*`. The sums and source
@@ -24,13 +27,15 @@ days (both ends kept) is 422 naming `to`.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, date, datetime
 from typing import Annotated, Final
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Path, Query, Request
 
 from app.api.deps import PolicyDep, PricesDep, SettingsDep, checked_tenant
 from app.core.validation import IdentifierInvalid
+from app.evals.cases import CASE_ID_PATTERN
 from app.model_routing.policy import PolicyStore
 from app.schemas.dashboard import (
     BlockedItem,
@@ -40,6 +45,7 @@ from app.schemas.dashboard import (
     ModelAlias,
     ModelCandidate,
     ModelTokens,
+    PlayPage,
     QualityPage,
     RedactionCount,
     RefusalCount,
@@ -49,6 +55,7 @@ from app.schemas.dashboard import (
 )
 from app.schemas.dashboard import SourceState as SourceState
 from app.services.dashboard import (
+    baseline_threshold,
     budgets,
     first,
     gate_scores,
@@ -80,6 +87,15 @@ CONSOLE_PATHS: Final[tuple[str, ...]] = (
     CONSOLE_REQUESTS,
 )
 """All four, spelled as literals and kept off every public router."""
+
+CONSOLE_PLAY: Final[str] = "/console/quality/plays/{run_id}/{case_id}/{play}"
+"""One play of a stored run; a part of the Quality tab, so not one of the four above."""
+
+RUN_ID_PATTERN: Final[re.Pattern[str]] = re.compile(r"[0-9a-f]{32}")
+"""A stored run id: a `uuid4` hex, 32 lowercase hex characters, with `re.fullmatch`."""
+
+MIN_PLAY: Final[int] = 1
+MAX_PLAY: Final[int] = 10
 
 DAYS_PARAM: Final[str] = "days"
 FROM_PARAM: Final[str] = "from"
@@ -140,7 +156,10 @@ def home(request: Request, store: PolicyDep, settings: SettingsDep) -> HomePage:
         last_eval=None
         if read is None or read.last_eval is None
         else read.last_eval.model_copy(
-            update={"passed": gate_verdict(settings.eval_baseline_path, read.last_eval_metrics)}
+            update={
+                "passed": gate_verdict(settings.eval_baseline_path, read.last_eval_metrics),
+                "threshold": baseline_threshold(settings.eval_baseline_path),
+            }
         ),
         routing=routing(store),
         grafana_url=settings.grafana_url,
@@ -246,6 +265,26 @@ def quality(request: Request, settings: SettingsDep, days: Days = DEFAULT_DAYS) 
     )
 
 
+@router.get(CONSOLE_PLAY)
+def play(
+    request: Request,
+    run_id: str,
+    case_id: str,
+    play: Annotated[int, Path(ge=MIN_PLAY, le=MAX_PLAY)],
+) -> PlayPage:
+    """One stored play, turn by turn; `play: null` when it is not stored, since there is no
+    not-found code. Each path part is checked with `re.fullmatch` before any read, so a
+    trailing newline or an uppercase id is 422 `VALIDATION`. Tests pin this."""
+    if RUN_ID_PATTERN.fullmatch(run_id) is None:
+        raise IdentifierInvalid("run_id: not 32 lowercase hex characters", param="run_id")
+    if CASE_ID_PATTERN.fullmatch(case_id) is None:
+        raise IdentifierInvalid("case_id: not a case id", param="case_id")
+    pg, found = postgres(
+        request, "play", lambda reader: reader.play_conversation(run_id, case_id, play)
+    )
+    return PlayPage(sources=Sources(postgres=pg, prometheus=None), play=found)
+
+
 RequestCounts = tuple[
     tuple[RedactionCount, ...],
     tuple[RefusalCount, ...],
@@ -303,12 +342,13 @@ def requests(
 
     def read(client: PrometheusClient) -> RequestCounts:
         return (
+            # A kind or a reason with none in the window is left out, so the table never
+            # shows a row of 0 and can say "None in this window.".
             tuple(
                 RedactionCount(kind=labels.get("kind", ""), count=value)
                 for labels, value in client.instant_query(redactions_query(days))
+                if value != 0
             ),
-            # A reason with no refusals in the window is left out, so the table can say
-            # "None in this window.".
             tuple(
                 RefusalCount(reason=labels.get("reason", ""), count=value)
                 for labels, value in client.instant_query(refusals_query(days))

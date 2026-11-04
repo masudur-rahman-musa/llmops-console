@@ -675,3 +675,19 @@ def test_only_zero_refusals_leave_an_empty_list(
     body = wired.body(days=7)
 
     assert body["refusals"] == []
+
+
+def test_a_kind_with_zero_redactions_is_left_out(
+    wired: Wired, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Catches a route that passes Prometheus's zero-count redaction series straight through,
+    so the page shows a row `Ppsn | 0` instead of only the kinds that were redacted."""
+    monkeypatch.setitem(
+        ANSWERS,
+        REDACTIONS_7D,
+        [series({"kind": "ppsn"}, "0"), series({"kind": "email"}, "3")],
+    )
+
+    body = wired.body(days=7)
+
+    assert body["redactions"] == [{"kind": "email", "count": 3}]

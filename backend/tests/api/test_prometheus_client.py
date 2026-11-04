@@ -338,7 +338,7 @@ def test_the_named_queries_are_pinned() -> None:
         "histogram_quantile(0.95, sum by (le) (rate(gateway_request_latency_seconds_bucket[1d])))"
     )
     assert ERROR_RATE_QUERY == (
-        'sum(rate(gateway_requests_total{status=~"5.."}[1d]))'
+        '(sum(rate(gateway_requests_total{status=~"5.."}[1d])) or vector(0))'
         " / sum(rate(gateway_requests_total[1d]))"
     )
     assert CIRCUITS_QUERY == "max by (provider) (gateway_circuit_state)"
@@ -348,4 +348,14 @@ def test_the_named_queries_are_pinned() -> None:
     )
     assert fallbacks_query(90) == (
         "sum by (tenant, alias, provider) (increase(gateway_fallbacks_total[90d]))"
+    )
+
+
+def test_error_rate_numerator_falls_back_to_zero() -> None:
+    """Catches an error rate whose numerator is empty when no 5xx series exists (the card then
+    reads n/a instead of 0%), a fallback put around the whole ratio (no traffic would read
+    0%), and a fallback on the denominator."""
+    assert ERROR_RATE_QUERY == (
+        '(sum(rate(gateway_requests_total{status=~"5.."}[1d])) or vector(0))'
+        " / sum(rate(gateway_requests_total[1d]))"
     )

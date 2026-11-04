@@ -72,3 +72,30 @@ const check = shape({
 export function qualityGuard(value: unknown): value is QualityBody {
   return check(value);
 }
+
+/** One stored play as the play page shows it; `play` is null when it is not stored. */
+export type PlayBody = {
+  sources: Sources;
+  play: {
+    run_id: string;
+    case_id: string;
+    play: number;
+    turns: Array<{ message: string; reply: string; tools: Array<string> }>;
+  } | null;
+};
+
+const playCheck = shape({
+  sources,
+  play: nullable(
+    shape({
+      run_id: str,
+      case_id: str,
+      play: int,
+      turns: listOf(shape({ message: str, reply: str, tools: listOf(str) })),
+    }),
+  ),
+});
+
+export function playGuard(value: unknown): value is PlayBody {
+  return playCheck(value);
+}

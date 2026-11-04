@@ -129,6 +129,16 @@ def gate_verdict(baseline_path: Path, metrics: Mapping[str, Any] | None) -> bool
     return all(verdicts)
 
 
+def baseline_threshold(baseline_path: Path) -> float | None:
+    """The baseline's outcome every play, for the home card; `None` when the baseline cannot
+    be read or is not valid. `test_home_last_eval_carries_the_baseline_threshold` pins this."""
+    try:
+        return float(load_baseline(baseline_path).outcome_every_play)
+    except BaselineInvalid as exc:
+        logger.warning("console home: eval baseline %s", exc)
+        return None
+
+
 def _count(metrics: Mapping[str, Any], name: str) -> int | None:
     """A stored case count, or `None` when the run never stored it."""
     raw = metrics.get(name)

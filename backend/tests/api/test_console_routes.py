@@ -58,6 +58,8 @@ from app.schemas.dashboard import (
     EvalRunSummary,
     LastEval,
     NeedsALookPlay,
+    PlayConversation,
+    PlayTurn,
     Regression,
     ReleaseMarker,
     Saving,
@@ -736,6 +738,7 @@ def test_the_home_body_reads_both_sources(wired: Wired) -> None:
             "finished_at": HOME_READ.model_dump(mode="json")["last_eval"]["finished_at"],
             "passed": True,
             "outcome_every_play": 57.14,
+            "threshold": 0.0,
         },
     }
     assert sorted(wired.prom.queries(QUERY_PATH)) == sorted([P95_QUERY, ERROR_RATE_QUERY])
@@ -1302,3 +1305,186 @@ def test_the_cost_body_has_no_rollup_flag(wired: Wired) -> None:
 
     assert response.status_code == 200, response.text
     assert "rollup_populated" not in response.json()
+
+
+# --- the threshold on the home card --------------------------------------------------
+
+
+def home_threshold(admin_settings: Settings, tmp_path: Path, baseline_text: str) -> Any:  # noqa: ANN401
+    """The `last_eval.threshold` the home route answers against one baseline file."""
+    path = baseline_file(tmp_path, baseline_text)
+    settings = admin_settings.model_copy(update={"eval_baseline_path": path})
+    app = create_app(settings, NO_PROVIDER_KEYS)
+    reader = StubReader()
+    with TestClient(app) as client:
+        app.state.console_reader = reader
+        response = client.get(HOME, headers=ADMIN_HEADERS)
+    assert response.status_code == 200, response.text
+    return response.json()["last_eval"]["threshold"]
+
+
+def test_home_last_eval_carries_the_baseline_threshold(
+    admin_settings: Settings, tmp_path: Path
+) -> None:
+    """Catches a home card with no threshold, one taken from the safety line (100) instead of the
+    outcome every play line (83), and a missing or unreadable baseline answered as 0 or
+    as a number instead of null."""
+    both = '{"safety": 100, "outcome_every_play": 83}'
+
+    assert home_threshold(admin_settings, tmp_path, both) == 83.0
+    assert home_threshold(admin_settings, tmp_path, "{}") is None
+    assert home_threshold(admin_settings, tmp_path, "not json") is None
+
+
+# --- one play of the newest run --------------------------------------------------------
+
+PLAY_BASE = "/console/quality/plays"
+RUN_ID = "0123456789abcdef0123456789abcdef"
+CASE_64 = "c" * 64
+
+PLAY_READ = PlayConversation(
+    run_id=RUN_ID,
+    case_id="case-012",
+    play=2,
+    turns=(
+        PlayTurn(message="Hi, I need 2.5 refunds", reply="Let me look", tools=("lookup_order",)),
+        PlayTurn(message="Yes please", reply="Done, $12.50 back", tools=()),
+    ),
+)
+
+
+class PlayReader(StubReader):
+    """The stub reader that also answers one play, recording what was asked."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.play_read: PlayConversation | None = None
+        self.asked: list[tuple[str, str, int]] = []
+
+    def play_conversation(self, run_id: str, case_id: str, play: int) -> PlayConversation | None:
+        self._record("play_conversation", run_id=run_id, case_id=case_id, play=play)
+        self.asked.append((run_id, case_id, play))
+        return self.play_read
+
+
+@pytest.fixture
+def play_wired(wired: Wired) -> PlayReader:
+    """The wired app with the play-reading stub in place of the plain stub reader."""
+    reader = PlayReader()
+    wired.app.state.console_reader = reader
+    return reader
+
+
+def play_url(run_id: str = RUN_ID, case_id: str = "case-012", play: str = "2") -> str:
+    return f"{PLAY_BASE}/{run_id}/{case_id}/{play}"
+
+
+PLAY_REJECTIONS: list[tuple[str, str]] = [
+    ("run id of 31 chars", play_url(run_id=RUN_ID[:31])),
+    ("run id of 33 chars", play_url(run_id=RUN_ID + "0")),
+    ("run id in uppercase", play_url(run_id=RUN_ID.upper().replace("0", "A"))),
+    ("run id with a trailing newline", play_url(run_id=RUN_ID[:31] + "%0A")),
+    ("run id with a trailing CRLF", play_url(run_id=RUN_ID[:30] + "%0D%0A")),
+    ("run id with a trailing space", play_url(run_id=RUN_ID[:31] + "%20")),
+    ("run id with a non-hex letter", play_url(run_id=RUN_ID[:31] + "g")),
+    ("case id of 65 chars", play_url(case_id=CASE_64 + "c")),
+    ("case id with a trailing newline", play_url(case_id="case-012%0A")),
+    ("case id with a trailing CRLF", play_url(case_id="case-012%0D%0A")),
+    ("case id with a trailing space", play_url(case_id="case-012%20")),
+    ("case id in uppercase", play_url(case_id="Case-012")),
+    ("case id with an underscore", play_url(case_id="case_012")),
+    ("case id starting with a dash", play_url(case_id="-case")),
+    ("play 0", play_url(play="0")),
+    ("play 11", play_url(play="11")),
+    ("play not a number", play_url(play="x")),
+]
+
+
+@pytest.mark.parametrize(("case", "url"), PLAY_REJECTIONS, ids=[row[0] for row in PLAY_REJECTIONS])
+def test_play_route_rejects_bad_ids(
+    case: str, url: str, play_wired: PlayReader, wired: Wired
+) -> None:
+    """Catches a play route that hands an unchecked id to the reader: each row is refused with
+    `VALIDATION` (422) before any read. The trailing newline, CRLF and space rows are one
+    character short of the run id limit, so only the pattern can refuse them, not the length."""
+    response = wired.get(url)
+
+    assert_error_body(response, status=422, code="VALIDATION")
+    assert play_wired.asked == []
+
+
+PLAY_ACCEPTED: list[tuple[str, str, str, str, int]] = [
+    ("a 32-hex run id", RUN_ID, "case-012", "2", 2),
+    ("a 64-char case id", RUN_ID, CASE_64, "2", 2),
+    ("a one-char case id", RUN_ID, "a", "2", 2),
+    ("play 1", RUN_ID, "case-012", "1", 1),
+    ("play 10", RUN_ID, "case-012", "10", 10),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "run_id", "case_id", "play", "expected"),
+    PLAY_ACCEPTED,
+    ids=[row[0] for row in PLAY_ACCEPTED],
+)
+def test_play_route_accepts_the_inclusive_limits(
+    case: str,
+    run_id: str,
+    case_id: str,
+    play: str,
+    expected: int,
+    play_wired: PlayReader,
+    wired: Wired,
+) -> None:
+    """Catches an off-by-one on either end of the case id length (64 passes) and of the play
+    number (1 and 10 pass), and a route that does not hand the three parts to the reader."""
+    response = wired.get(play_url(run_id=run_id, case_id=case_id, play=play))
+
+    assert response.status_code == 200, response.text
+    assert play_wired.asked == [(run_id, case_id, expected)]
+
+
+def test_play_route_returns_the_play(play_wired: PlayReader, wired: Wired) -> None:
+    """Catches a route that drops the turns, renames their fields, or reorders them."""
+    play_wired.play_read = PLAY_READ
+
+    body = wired.get(play_url()).json()
+
+    assert body["play"] == {
+        "run_id": RUN_ID,
+        "case_id": "case-012",
+        "play": 2,
+        "turns": [
+            {
+                "message": "Hi, I need 2.5 refunds",
+                "reply": "Let me look",
+                "tools": ["lookup_order"],
+            },
+            {"message": "Yes please", "reply": "Done, $12.50 back", "tools": []},
+        ],
+    }
+    assert body["sources"] == {"postgres": OK, "prometheus": None}
+
+
+def test_play_route_unknown_play_is_null(play_wired: PlayReader, wired: Wired) -> None:
+    """Catches a route that answers an error for a play that is not stored (there is no
+    not-found code): it answers 200 with `play: null`."""
+    play_wired.play_read = None
+
+    response = wired.get(play_url())
+
+    assert response.status_code == 200
+    assert response.json()["play"] is None
+
+
+def test_play_route_needs_the_admin_key(play_wired: PlayReader, wired: Wired) -> None:
+    """Catches a play route registered without the admin key check: with a working stub behind
+    it, an open route would answer 200 and record a read."""
+    play_wired.play_read = PLAY_READ
+
+    anonymous = wired.client.get(play_url())
+    tenant = wired.client.get(play_url(), headers={"Authorization": f"Bearer {TENANT_KEY}"})
+
+    assert_error_body(anonymous, status=401, code="UNAUTHORIZED")
+    assert_error_body(tenant, status=401, code="UNAUTHORIZED")
+    assert play_wired.asked == []

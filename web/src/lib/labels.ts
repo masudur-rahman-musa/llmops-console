@@ -23,6 +23,21 @@ const SCORE_LABELS: Record<string, string> = {
   eval_bug: "Eval bug",
 };
 
+/** Why a play did not pass, for the words a rule id cannot give by itself. */
+const REASON_LABELS: Record<string, string> = {
+  fault_bot: "The bot",
+  fault_case: "The case",
+  fault_eval: "The test",
+  fault_fine: "The judge found it fine",
+  judge_flagged: "The judge flagged a text",
+  no_end_state: "No right end state reached",
+};
+
+/** A reason in words: a fault word or a needs-a-look reason, else the rule id with no underscores. */
+export function reasonLabel(tag: string): string {
+  return REASON_LABELS[tag] ?? plainName(tag);
+}
+
 /** A code name as a sentence start: `wrong_tool` reads `Wrong tool`, `KIND_0` reads `Kind 0`. */
 export function plainName(key: string): string {
   const words = key.toLowerCase().replaceAll("_", " ");

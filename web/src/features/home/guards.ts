@@ -1,4 +1,4 @@
-import { bool, int, listOf, nullable, num, shape, sources, str, type Sources } from "@/lib/shapes";
+import { bool, int, isRecord, listOf, nullable, num, shape, sources, str, type Sources } from "@/lib/shapes";
 
 /** The Overview page body and its guard, checking only the fields the page renders. */
 
@@ -14,10 +14,19 @@ export type HomeBody = {
   cost_usd_today: number | null;
   p95_seconds: number | null;
   error_rate: number | null;
-  last_eval: { finished_at: string; passed: boolean | null; outcome_every_play: number | null } | null;
+  last_eval: {
+    finished_at: string;
+    passed: boolean | null;
+    outcome_every_play: number | null;
+    /** The baseline's outcome every play; left out by an older console-api. */
+    threshold?: number | null;
+  } | null;
   routing: { loaded_at: string; aliases: ReadonlyArray<RoutingAlias> };
   grafana_url: string | null;
 };
+
+/** `shape` wants every field present, so `threshold` is checked apart: an older console-api leaves it out. */
+const lastEval = shape({ finished_at: str, passed: nullable(bool), outcome_every_play: nullable(num) });
 
 const check = shape({
   sources,
@@ -25,7 +34,10 @@ const check = shape({
   cost_usd_today: nullable(num),
   p95_seconds: nullable(num),
   error_rate: nullable(num),
-  last_eval: nullable(shape({ finished_at: str, passed: nullable(bool), outcome_every_play: nullable(num) })),
+  last_eval: nullable(
+    (value: unknown) =>
+      lastEval(value) && isRecord(value) && (value.threshold === undefined || nullable(num)(value.threshold)),
+  ),
   routing: shape({
     loaded_at: str,
     aliases: listOf(

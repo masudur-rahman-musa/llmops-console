@@ -27,11 +27,12 @@ const PAGES: Record<PageName, () => Promise<ReactElement>> = {
   quality: QualityPage,
 };
 
+// Headings are compared as rendered, so an apostrophe is the escaped one.
 const HEADINGS: Record<PageName, string[]> = {
   home: ["Model routing"],
   requests: ["Redactions by kind", "Help desk refusals by reason", "Tokens per model", "Newest requests"],
   cost: ["Budgets this month", "Top users by cost", "Daily cost", "Model tradeoff"],
-  quality: ["Needs a look", "Categories", "Taxonomy", "Blocked releases"],
+  quality: ["Needs a look", "Categories", "Why plays didn&#x27;t pass", "Blocked releases"],
 };
 const NAMES = Object.keys(PAGES) as PageName[];
 
@@ -221,7 +222,7 @@ describe("panels", () => {
     const quality = fixture("quality");
     quality.taxonomy = [];
     const qualityHtml = await render("quality", quality);
-    expect(text(panelNamed(qualityHtml, "Taxonomy").html)).toContain("None in this window.");
+    expect(text(panelNamed(qualityHtml, "Why plays didn&#x27;t pass").html)).toContain("None in this window.");
 
     const cost = fixture("cost");
     cost.top_users = [];

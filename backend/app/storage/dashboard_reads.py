@@ -50,6 +50,8 @@ from app.schemas.dashboard import (
     LastEval,
     ModelTokens,
     NeedsALookPlay,
+    PlayConversation,
+    PlayTurn,
     Regression,
     ReleaseMarker,
     RequestRow,
@@ -208,6 +210,10 @@ class ConsoleReader(Protocol):
 
     def quality(self, *, days: int, now: datetime) -> QualityRead: ...
 
+    def play_conversation(
+        self, run_id: str, case_id: str, play: int
+    ) -> PlayConversation | None: ...
+
     def recent_requests(
         self, *, page: int, filters: RequestFilters, days: int, now: datetime
     ) -> RequestsRead: ...
@@ -253,6 +259,9 @@ class UnconfiguredConsoleReader:
     def quality(self, *, days: int, now: datetime) -> QualityRead:
         return QualityRead(runs=(), release_markers=(), categories=(), taxonomy=(), blocked=())
 
+    def play_conversation(self, run_id: str, case_id: str, play: int) -> PlayConversation | None:
+        return None
+
     def recent_requests(
         self, *, page: int, filters: RequestFilters, days: int, now: datetime
     ) -> RequestsRead:
@@ -271,6 +280,39 @@ class UnconfiguredConsoleReader:
 def _outcome(metrics: object) -> float | None:
     """`outcome_every_play` out of a stored metrics document, or `None`."""
     return _number(metrics.get("outcome_every_play")) if isinstance(metrics, dict) else None
+
+
+def _dict(value: object) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _list(value: object) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _play_turns(details: object, play: int) -> tuple[PlayTurn, ...] | None:
+    """The turns of play number `play` out of a stored case `details`, or `None` when that
+    play is not there. Each turn keeps the person's message, the reply and the names of the
+    tools it called, in the stored order; anything not shaped like a stored play is skipped.
+    `test_play_conversation_reads_one_play` pins this."""
+    for stored in _list(_dict(details).get("plays")):
+        if not isinstance(stored, dict) or stored.get("play") != play:
+            continue
+        turns: list[PlayTurn] = []
+        for turn in _list(stored.get("conversation")):
+            if not isinstance(turn, dict):
+                continue
+            answer = _dict(turn.get("answer"))
+            calls = [_dict(call) for call in _list(answer.get("tool_calls"))]
+            turns.append(
+                PlayTurn(
+                    message=str(turn.get("message", "")),
+                    reply=str(answer.get("reply", "")),
+                    tools=tuple(str(call["name"]) for call in calls if "name" in call),
+                )
+            )
+        return tuple(turns)
+    return None
 
 
 def _prompt_cache_saving(prices: PriceTable, row: tuple[Any, ...]) -> Decimal:
@@ -556,6 +598,14 @@ class PostgresConsoleReader:
         return {row[0]: float(row[1]) for row in rows}
 
     def quality(self, *, days: int, now: datetime) -> QualityRead:
+        """The runs in the window, newest first, and what the newest run holds.
+
+        With no run in the window it reads the single newest run ever, so the page shows
+        that run and its date instead of going empty; release markers and blocked releases
+        stay windowed. "Why plays didn't pass" counts the plays of the newest run: a failed
+        play adds each rule it broke, a needs-a-look play adds `fault_<word>` from the judge,
+        else `judge_flagged` when a text was flagged, else `no_end_state`. Setup wrong, eval
+        bug and passed plays add nothing. Tests pin both."""
         since = now - timedelta(days=days)
         runs_table = self._table("eval_runs")
         cases_table = self._table("eval_cases")
@@ -568,6 +618,13 @@ class PostgresConsoleReader:
                 ).format(runs_table),
                 (since, ROW_LIMIT),
             ).fetchall()
+            if not runs:
+                runs = conn.execute(
+                    sql.SQL(
+                        "SELECT id, started_at, run_kind, git_sha, passed, metrics FROM {} "
+                        "ORDER BY started_at DESC LIMIT 1"
+                    ).format(runs_table)
+                ).fetchall()
             markers = conn.execute(
                 sql.SQL(
                     "SELECT git_sha, deployed_at, status, eval_run_id FROM {} "
@@ -586,14 +643,23 @@ class PostgresConsoleReader:
                 if runs
                 else []
             )
-            taxonomy = conn.execute(
-                sql.SQL(
-                    "SELECT tag, count(*) FROM {} AS c JOIN {} AS r ON r.id = c.run_id, "
-                    "unnest(c.tags) AS tag WHERE r.started_at >= %s "
-                    "GROUP BY tag ORDER BY count(*) DESC, tag"
-                ).format(cases_table, runs_table),
-                (since,),
-            ).fetchall()
+            taxonomy = (
+                conn.execute(
+                    sql.SQL(
+                        "SELECT tag, count(*) FROM ("
+                        "SELECT unnest(broken) AS tag FROM {plays} "
+                        "WHERE run_id = %s AND result = 'fail' "
+                        "UNION ALL SELECT CASE WHEN fault IS NOT NULL THEN 'fault_' || fault "
+                        "WHEN cardinality(flagged) > 0 THEN 'judge_flagged' "
+                        "ELSE 'no_end_state' END FROM {plays} "
+                        "WHERE run_id = %s AND result = 'needs_a_look'"
+                        ") AS reasons GROUP BY tag ORDER BY count(*) DESC, tag LIMIT %s"
+                    ).format(plays=self._table("eval_plays")),
+                    (runs[0][0], runs[0][0], ROW_LIMIT),
+                ).fetchall()
+                if runs
+                else []
+            )
             needs_a_look = (
                 conn.execute(
                     sql.SQL(
@@ -662,6 +728,21 @@ class PostgresConsoleReader:
                 for row in needs_a_look
             ),
         )
+
+    def play_conversation(self, run_id: str, case_id: str, play: int) -> PlayConversation | None:
+        """One play of one stored case, turn by turn, from `eval_cases.details`; `None` when
+        the run, the case or the play number is not stored."""
+        with self._pool.connection() as conn:
+            row = conn.execute(
+                sql.SQL("SELECT details FROM {} WHERE run_id = %s AND case_id = %s").format(
+                    self._table("eval_cases")
+                ),
+                (run_id, case_id),
+            ).fetchone()
+        turns = None if row is None else _play_turns(row[0], play)
+        if turns is None:
+            return None
+        return PlayConversation(run_id=run_id, case_id=case_id, play=play, turns=turns)
 
     def recent_requests(
         self, *, page: int, filters: RequestFilters, days: int, now: datetime

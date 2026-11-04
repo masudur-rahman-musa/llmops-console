@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { consolePage } from "@/components/layout/console-page";
 import { ExternalLink } from "@/components/ui/external-link";
 import { LineChart } from "@/components/ui/line-chart";
@@ -6,8 +8,8 @@ import { Panel } from "@/components/ui/panel";
 import { StatCards, type StatCard } from "@/components/ui/stat-cards";
 import { NONE_IN_WINDOW, Table } from "@/components/ui/table";
 import type { GateScore } from "@/features/quality/guards";
-import { NA, points, rounded, shortSha, usd } from "@/lib/format";
-import { OUTCOME_SENTENCE, WINDOW_LINES, plainName, scoreLabel } from "@/lib/labels";
+import { NA, longDay, points, rounded, shortSha, usd } from "@/lib/format";
+import { OUTCOME_SENTENCE, WINDOW_LINES, plainName, reasonLabel, scoreLabel } from "@/lib/labels";
 import { PAGE_PARAMS, pageOf } from "@/lib/paging";
 
 export const dynamic = "force-dynamic";
@@ -29,37 +31,50 @@ function gateCard(row: GateScore): StatCard {
   return { label: row.label, value: points(row.value), sub: `Baseline ${points(row.threshold)} ${result}` };
 }
 
-/** The newest run's scores beside the gated two, and its effort; each read from the run as stored. */
+/** The newest run's scores beside the gated two, and its time per play; each read from the run as stored. */
 const RUN_SCORES = ["outcome_at_least_once", "reply_quality"] as const;
-const RUN_EFFORT = ["mean_turns", "mean_tool_calls", "mean_seconds"] as const;
 /** A mean cost per play is cents or less, so it keeps four decimals. */
 const COST_DECIMALS = 4;
 /** The judge's fault words in the words the page prints. */
 const FAULT_WORDS: Record<string, string> = { bot: "The bot", case: "The case", eval: "The test", fine: "Fine" };
-const RESULT_COUNTS = ["pass", "fail", "needs_a_look", "setup_wrong", "eval_bug"] as const;
+/** The play results the Results card counts; setup wrong and eval bug plays are not scored, so they stay off it. */
+const RESULT_COUNTS = ["pass", "fail", "needs_a_look"] as const;
+
+/** The play page of one play of the newest run, each part percent-encoded. */
+function playHref(run: string, caseId: string, play: number): string {
+  return `/quality/plays/${[run, caseId, String(play)].map(encodeURIComponent).join("/")}`;
+}
 
 function numberOf(metrics: Record<string, unknown> | undefined, key: string): number | null {
   const value = metrics?.[key];
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-/** The newest run's own cards: two scores, its effort, then one card of the five play results. */
+/**
+ * The newest run's own cards: two scores, seconds and cost per play, then one card of the
+ * three scored play results. A score the run has no value for is left out, not shown as n/a.
+ */
 function runCards(metrics: Record<string, unknown> | undefined): StatCard[] {
   const counts = RESULT_COUNTS.map((key) => {
     const value = numberOf(metrics, key);
     return `${scoreLabel(key)} ${value === null ? NA : value.toLocaleString("en-US")}`;
   });
-  return [
-    ...RUN_SCORES.map((key) => ({ label: scoreLabel(key), value: points(numberOf(metrics, key)) })),
-    ...RUN_EFFORT.map((key) => {
+  const seconds = numberOf(metrics, "mean_seconds");
+  const cost = numberOf(metrics, "mean_cost_usd");
+  const scores: StatCard[] = [
+    ...RUN_SCORES.flatMap((key) => {
       const value = numberOf(metrics, key);
-      return { label: scoreLabel(key), value: value === null ? NA : rounded(value) };
+      return value === null ? [] : [{ label: scoreLabel(key), value: points(value) }];
     }),
-    { label: scoreLabel("mean_cost_usd"), value: usd(numberOf(metrics, "mean_cost_usd"), COST_DECIMALS) },
+    ...(seconds === null ? [] : [{ label: scoreLabel("mean_seconds"), value: rounded(seconds) }]),
+    ...(cost === null ? [] : [{ label: scoreLabel("mean_cost_usd"), value: usd(cost, COST_DECIMALS) }]),
+  ];
+  return [
+    ...scores,
     {
       label: "Results",
       value: counts.join(" · "),
-      hint: "Plays in the newest run, by result. An eval bug is a play the test itself cut short; it is not scored.",
+      hint: "Plays in the newest run, by result. Plays set up wrong or cut short by the test are not scored, so they are not counted here.",
     },
   ];
 }
@@ -67,8 +82,9 @@ function runCards(metrics: Record<string, unknown> | undefined): StatCard[] {
 export default consolePage("quality", "Quality", "Does the help desk still answer well enough to ship?", (body, params) => {
   const taxonomy = pageOf(body.taxonomy, params, PAGE_PARAMS.taxonomy);
   const blocked = pageOf(body.blocked, params, PAGE_PARAMS.blocked);
-  // console-api sends the runs newest first.
-  const newest = body.runs[0]?.metrics;
+  // console-api sends the runs newest first; with none in the window it sends the newest run ever.
+  const newestRun = body.runs[0];
+  const newest = newestRun?.metrics;
   // The chart drops a run whose score is absent or null, and sorts by time itself.
   const scores = body.runs.map((run): [number, number] => {
     const value = run.metrics.outcome_every_play;
@@ -86,6 +102,7 @@ export default consolePage("quality", "Quality", "Does the help desk still answe
   const baseline = threshold === null ? undefined : { value: threshold, label: `Baseline ${points(threshold)}` };
   return (
     <>
+      {newestRun !== undefined && <p className="note">Last run {longDay(newestRun.started_at)}</p>}
       <StatCards cards={[...body.gate.map(gateCard), ...runCards(newest)]} />
       {body.gate
         .filter((row) => row.note !== null)
@@ -116,7 +133,13 @@ export default consolePage("quality", "Quality", "Does the help desk still answe
           rows={body.needs_a_look.map((item) => ({
             key: `${item.case_id}/${item.play}`,
             cells: [
-              <code key="case">{item.case_id}</code>,
+              newestRun === undefined ? (
+                <code key="case">{item.case_id}</code>
+              ) : (
+                <Link key="case" href={playHref(newestRun.id, item.case_id, item.play)}>
+                  <code>{item.case_id}</code>
+                </Link>
+              ),
               item.play,
               item.why,
               item.fault ? `${FAULT_WORDS[item.fault] ?? plainName(item.fault)}: ${item.fault_reason ?? ""}` : NA,
@@ -144,13 +167,16 @@ export default consolePage("quality", "Quality", "Does the help desk still answe
         />
       </Panel>
 
-      <Panel title="Taxonomy">
-        <p>Why cases failed: each failure tag and how many cases carry it.</p>
+      <Panel title="Why plays didn't pass">
+        <p>
+          Every play in the newest run that did not pass, by reason: each rule a failed play broke, and for a play
+          that needs a look, the judge&apos;s guess at whose fault it is.
+        </p>
         <Table
-          columns={["Failure tag", "Cases"]}
+          columns={["Reason", "Plays"]}
           rows={taxonomy.rows.map((tag) => ({
             key: tag.tag,
-            cells: [plainName(tag.tag), tag.count],
+            cells: [reasonLabel(tag.tag), tag.count],
           }))}
         />
         <Pager name={PAGE_PARAMS.taxonomy} page={taxonomy.page} pages={taxonomy.pages} params={params} />

@@ -1,6 +1,6 @@
 import { costGuard, type CostBody } from "@/features/cost/guards";
 import { homeGuard, type HomeBody } from "@/features/home/guards";
-import { qualityGuard, type QualityBody } from "@/features/quality/guards";
+import { playGuard, qualityGuard, type PlayBody, type QualityBody } from "@/features/quality/guards";
 import { requestsGuard, type RequestsBody } from "@/features/requests/guards";
 import type { RequestFilters } from "@/lib/filters";
 
@@ -21,6 +21,14 @@ export const CONSOLE_PATHS = {
 } as const;
 
 export type PageName = keyof typeof CONSOLE_PATHS;
+
+/** One stored eval play, read by the play page under Quality: `/console/quality/plays/<run>/<case>/<play>`. */
+export const PLAY_PATH = "/console/quality/plays";
+
+/** The play page's console-api path; each part is percent-encoded, and console-api checks its shape. */
+export function playPath(run: string, caseId: string, play: string): string {
+  return `${PLAY_PATH}/${[run, caseId, play].map(encodeURIComponent).join("/")}`;
+}
 
 export type PageBodies = {
   home: HomeBody;
@@ -105,10 +113,30 @@ export async function getConsolePage<N extends PageName>(
   deps: ConsoleDeps = {},
   query?: PageQuery,
 ): Promise<ConsoleResult<PageBodies[N]>> {
+  return read(name, `${CONSOLE_PATHS[name]}${queryString(name, query)}`, GUARDS[name], deps);
+}
+
+/** One stored play for the play page; `play: null` in the body when it is not stored. */
+export async function getPlay(
+  run: string,
+  caseId: string,
+  play: string,
+  deps: ConsoleDeps = {},
+): Promise<ConsoleResult<PlayBody>> {
+  return read("play", playPath(run, caseId, play), playGuard, deps);
+}
+
+/** One GET to console-api with the admin key, its body checked by `guard`; a failure is a reason. */
+async function read<T>(
+  name: string,
+  path: string,
+  guard: (value: unknown) => value is T,
+  deps: ConsoleDeps,
+): Promise<ConsoleResult<T>> {
   const env = deps.env ?? process.env;
   const logger = deps.logger ?? console;
   const doFetch = deps.fetch ?? globalThis.fetch;
-  const fail = (reason: Reason, detail: string): ConsoleResult<PageBodies[N]> => {
+  const fail = (reason: Reason, detail: string): ConsoleResult<T> => {
     logger.error(`console ${name}: ${reason}: ${detail}`);
     return { ok: false, reason };
   };
@@ -121,7 +149,7 @@ export async function getConsolePage<N extends PageName>(
 
   let response: Response;
   try {
-    response = await doFetch(`${base}${CONSOLE_PATHS[name]}${queryString(name, query)}`, {
+    response = await doFetch(`${base}${path}`, {
       method: "GET",
       headers: { Authorization: `Bearer ${key}` },
       cache: "no-store",
@@ -144,7 +172,7 @@ export async function getConsolePage<N extends PageName>(
   } catch {
     return fail("invalid", "the body is not JSON");
   }
-  if (!GUARDS[name](body)) {
+  if (!guard(body)) {
     return fail("invalid", "the body does not match the page's shape");
   }
   return { ok: true, body };

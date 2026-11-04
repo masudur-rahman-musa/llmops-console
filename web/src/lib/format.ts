@@ -81,6 +81,17 @@ export function shortSha(sha: string): string {
   return sha.slice(0, SHORT_SHA_LENGTH);
 }
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** A time as its UTC date, `12 Oct 2026`; n/a for a value that is not a time. */
+export function longDay(iso: string | null | undefined): string {
+  const at = iso ? new Date(iso) : null;
+  if (at === null || Number.isNaN(at.getTime())) {
+    return NA;
+  }
+  return `${at.getUTCDate()} ${MONTHS[at.getUTCMonth()]} ${at.getUTCFullYear()}`;
+}
+
 /** A `YYYY-MM-DD` day as `Oct 24`, read as a UTC date so no zone moves it. */
 export function shortDay(day: string): string {
   const at = new Date(`${day}T00:00:00Z`);
