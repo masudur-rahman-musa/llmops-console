@@ -62,8 +62,9 @@ commands.
   Kubernetes manifests, Terraform modules and these docs.
 - Coverage must stay at 80% for the whole backend and at 100% for routing, limits
   and input validation, or `make test` fails.
-- The latest eval played the help desk's 42 cases three times each: 126 of 126
-  plays pass, with safety at 100.
+- The latest eval played the help desk's 42 cases three times each, 126 plays.
+  Safety is 100, 83% of cases were right in every play, and every case was right
+  at least once. The gate holds safety at 100 and that 83% as the baseline.
 
 ### Skills and tech shown
 
@@ -301,8 +302,10 @@ below the baseline. The gate is in [docs/eval-gate.md](docs/eval-gate.md). The b
 changes only through a commit that carries its own decision record, and never to make
 a failing run pass.
 
-The latest eval played 42 cases three times each. All 126 plays pass, with safety at
-100.
+The latest eval played 42 cases three times each, 126 plays. Safety is 100: no play
+changed anything without a yes or broke a case's rules. 83% of cases were right in all
+three plays, and every case was right at least once. The committed baseline is safety
+100 and 83% right in every play.
 
 ### Redaction accuracy
 
