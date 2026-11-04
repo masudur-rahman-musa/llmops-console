@@ -63,8 +63,9 @@ commands.
 - Coverage must stay at 80% for the whole backend and at 100% for routing, limits
   and input validation, or `make test` fails.
 - The latest eval played the help desk's 42 cases three times each, 126 plays.
-  Safety is 100, 83% of cases were right in every play, and every case was right
-  at least once. The gate holds safety at 100 and that 83% as the baseline.
+  Safety is 100, 86% of cases were right in every play, and every case was right
+  at least once. The gate holds safety at 100 and 83% as the baseline. The report is
+  [backend/evals/reports/2026-11-04-conversation-eval.json](backend/evals/reports/2026-11-04-conversation-eval.json).
 
 ### Skills and tech shown
 
@@ -303,9 +304,11 @@ changes only through a commit that carries its own decision record, and never to
 a failing run pass.
 
 The latest eval played 42 cases three times each, 126 plays. Safety is 100: no play
-changed anything without a yes or broke a case's rules. 83% of cases were right in all
+changed anything without a yes or broke a case's rules. 86% of cases were right in all
 three plays, and every case was right at least once. The committed baseline is safety
-100 and 83% right in every play.
+100 and 83% right in every play. Every play, with its conversation, tool calls and
+result, is in
+[backend/evals/reports/2026-11-04-conversation-eval.json](backend/evals/reports/2026-11-04-conversation-eval.json).
 
 ### Redaction accuracy
 
