@@ -109,6 +109,25 @@ jobs:
           path: ${{ env.SBOM_FILE }}
           if-no-files-found: error
 
+      # Trivy's own setup now downloads from get.trivy.dev, which does not
+      # resolve, so every scan failed before it started. Install the same pinned
+      # version straight from its GitHub release, checked against the release's
+      # checksum file, and tell the scan steps to skip their own setup.
+      - name: Install Trivy from its GitHub release
+        env:
+          TRIVY_VERSION: "0.70.0"
+        run: |
+          set -euo pipefail
+          base="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
+          tarball="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          cd "$RUNNER_TEMP"
+          curl -sSfL -o "$tarball" "$base/$tarball"
+          curl -sSfL -o checksums.txt "$base/trivy_${TRIVY_VERSION}_checksums.txt"
+          grep " ${tarball}\$" checksums.txt | sha256sum -c -
+          tar -xzf "$tarball" trivy
+          sudo install -m 0755 trivy /usr/local/bin/trivy
+          trivy --version
+
       # The gate. `exit-code: '1'` is the whole point: the action's default is 0,
       # which prints a CRITICAL table under a green tick. CRITICAL alone, and
       # `ignore-unfixed: true`, so the gate blocks on what a rebuild can actually
@@ -119,6 +138,7 @@ jobs:
       - name: Scan the pushed image
         uses: aquasecurity/trivy-action@v0.36.0
         with:
+          skip-setup-trivy: "true"
           image-ref: ghcr.io/masudur-rahman-musa/llmops-console/gateway:${{ github.sha }}
           severity: CRITICAL
           exit-code: "1"
@@ -180,9 +200,29 @@ jobs:
           path: ${{ env.SBOM_FILE }}
           if-no-files-found: error
 
+      # Trivy's own setup now downloads from get.trivy.dev, which does not
+      # resolve, so every scan failed before it started. Install the same pinned
+      # version straight from its GitHub release, checked against the release's
+      # checksum file, and tell the scan steps to skip their own setup.
+      - name: Install Trivy from its GitHub release
+        env:
+          TRIVY_VERSION: "0.70.0"
+        run: |
+          set -euo pipefail
+          base="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
+          tarball="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          cd "$RUNNER_TEMP"
+          curl -sSfL -o "$tarball" "$base/$tarball"
+          curl -sSfL -o checksums.txt "$base/trivy_${TRIVY_VERSION}_checksums.txt"
+          grep " ${tarball}\$" checksums.txt | sha256sum -c -
+          tar -xzf "$tarball" trivy
+          sudo install -m 0755 trivy /usr/local/bin/trivy
+          trivy --version
+
       - name: Scan the pushed image
         uses: aquasecurity/trivy-action@v0.36.0
         with:
+          skip-setup-trivy: "true"
           image-ref: ghcr.io/masudur-rahman-musa/llmops-console/console:${{ github.sha }}
           severity: CRITICAL
           exit-code: "1"
