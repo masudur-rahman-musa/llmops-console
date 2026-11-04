@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from app.core.errors import LabelsInvalid
-from app.evals.labels import load_labels
+from app.evals.labels import OWNER_LABEL, load_labels
 
 from .label_builders import label_document, write_labels
 
@@ -144,7 +144,10 @@ def test_a_missing_file_is_an_error_and_an_empty_file_is_no_rows(tmp_path: Path)
 
 
 def test_the_shipped_labels_file_loads_and_the_old_one_is_gone() -> None:
-    """Catches a shipped file with invented rows (the project never writes labels) and the old
-    labels file left beside the new one."""
-    assert load_labels(LABELS_DIR / "labels.jsonl") == ()
+    """Catches a shipped row the owner did not label (only the owner's rows count in a
+    calibration), a shipped file that no longer loads, and the old labels file left beside
+    the new one."""
+    rows = load_labels(LABELS_DIR / "labels.jsonl")
+    assert rows, "the shipped labels file is empty"
+    assert {row.labelled_by for row in rows} == {OWNER_LABEL}
     assert not (LABELS_DIR / "conversation-labels.jsonl").exists()

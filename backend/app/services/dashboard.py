@@ -131,7 +131,7 @@ def gate_verdict(baseline_path: Path, metrics: Mapping[str, Any] | None) -> bool
 
 def baseline_threshold(baseline_path: Path) -> float | None:
     """The baseline's outcome every play, for the home card; `None` when the baseline cannot
-    be read or is not valid. `test_home_last_eval_carries_the_baseline_threshold` pins this."""
+    be read or is not valid."""
     try:
         return float(load_baseline(baseline_path).outcome_every_play)
     except BaselineInvalid as exc:

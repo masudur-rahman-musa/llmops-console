@@ -56,7 +56,7 @@ ERROR_RATE_QUERY: Final[str] = (
 
 With no 5xx series the numerator would be empty and the card would read n/a, so it falls
 back to 0. The denominator has no fallback: no traffic at all stays empty, since no traffic
-is not a 0% error rate. `test_error_rate_numerator_falls_back_to_zero` pins this."""
+is not a 0% error rate."""
 
 CIRCUITS_QUERY: Final[str] = "max by (provider) (gateway_circuit_state)"
 """The worst breaker state per provider across replicas. The breaker is in-process, so two pods

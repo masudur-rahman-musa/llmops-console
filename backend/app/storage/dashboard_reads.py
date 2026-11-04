@@ -293,8 +293,7 @@ def _list(value: object) -> list[Any]:
 def _play_turns(details: object, play: int) -> tuple[PlayTurn, ...] | None:
     """The turns of play number `play` out of a stored case `details`, or `None` when that
     play is not there. Each turn keeps the person's message, the reply and the names of the
-    tools it called, in the stored order; anything not shaped like a stored play is skipped.
-    `test_play_conversation_reads_one_play` pins this."""
+    tools it called, in the stored order; anything not shaped like a stored play is skipped."""
     for stored in _list(_dict(details).get("plays")):
         if not isinstance(stored, dict) or stored.get("play") != play:
             continue
